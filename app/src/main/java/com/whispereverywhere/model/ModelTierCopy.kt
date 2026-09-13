@@ -19,6 +19,25 @@ object ModelTierCopy {
     /** One tier's card copy: a positioning headline, badge chips, and one honest sentence. */
     data class TierCopy(val headline: String, val badges: List<String>, val body: String)
 
+    /**
+     * **The warning every heavy CPU rung carries** (4.6). One string, one place, so five cards
+     * cannot say it five ways and so a test can pin the wording.
+     *
+     * It is deliberately NOT a speed claim in reverse. It states the failure MODE and the remedy,
+     * which is what a user who hits it needs, and it is the one caution the previewer makes
+     * necessary: since 4.4.0 a streaming Zipformer puts words on the floating strip about 0.4 s
+     * behind the voice whatever the finalizer is doing, so **a finalizer that cannot keep up looks
+     * fine** — words keep appearing — right up until the typed text lags the strip by a sentence
+     * and then a paragraph. The user cannot see a growing queue; they can see text arriving late.
+     *
+     * "May not keep up with continuous speech" is the honest shape of the risk: this app's
+     * `audio_ctx` floor makes the cost per commit constant, so what a heavy rung runs out of is
+     * COMMITS PER SECOND, and only sustained speech exposes it. A ten-second trial will not.
+     */
+    const val KEEP_UP_NOTE: String =
+        "This model may not keep up with continuous speech on this device. If the typed text " +
+            "falls behind your voice, a smaller rung is the fix."
+
     private val copyById: Map<String, TierCopy> = mapOf(
         "pro" to TierCopy(
             headline = "Best English accuracy",
@@ -29,9 +48,85 @@ object ModelTierCopy {
             body = "The sharpest on-device English dictation this app ships.",
         ),
         "multi" to TierCopy(
-            headline = "Best multilingual accuracy",
+            // 4.6: was "Best multilingual accuracy" (3.7, owner-approved) — TRUE while `multi` was
+            // one of two rungs and the only multilingual one, and FALSE the moment five larger
+            // multilingual rungs are offered beside it. Correcting it is required by the same
+            // discipline that wrote the 3.7 string: a card may not claim a position it no longer
+            // holds. What `multi` uniquely holds now is that it is the only rung on the ladder
+            // anyone has MEASURED (F = 2.3 s, duty 0.42, Fold6, this repo's audio-ctx bench of
+            // 2026-08-20) — which is exactly why it is the default and the migration target.
+            headline = "Everyday accuracy, smallest download",
             badges = listOf("90+ languages", "190 MB"),
-            body = "The pick for non-English dictation.",
+            body = "The 190 MB model this app has shipped from the start, and the one rung on " +
+                "this list with a measured verdict behind it.",
+        ),
+        // ============================================ 4.6 — THE INSTRUMENT RUNGS' CARDS
+        //
+        // Six cards for the six `WhisperModel.instrument` rungs. Two rules govern every one of
+        // them, and neither is timidity:
+        //
+        //  1. **No rung here claims speed, in either direction.** Nothing on this ladder has been
+        //     measured on the owner's hardware and he is about to measure it on six devices. A
+        //     card that predicts the winner is worse than one that stays quiet — it is a claim he
+        //     has to catch instead of a finding he makes. The arithmetic also says a ranking would
+        //     probably be wrong: this app feeds whisper's FIXED-window encoder short VAD-cut
+        //     chunks with `audio_ctx` clamped to at least 512, so cost per commit is constant and
+        //     the workload is encoder-dominated — the regime published benchmark tables, which run
+        //     long files where decode dominates, do not measure. `large-v3-turbo` is large-v3's
+        //     entire 32-layer/1280-dim encoder with the decoder cut to 4 layers against medium's
+        //     24 at 1024: it wins on decode and loses on encode.
+        //  2. **Accuracy IS rankable and these cards rank it**, because whisper's own size
+        //     ordering is not a claim about this app's hardware. So each card says what its model
+        //     IS — size, depth, and the quantisation wherever that is the only thing separating it
+        //     from the card beside it — and lets six devices answer the rest.
+        //
+        // The quantisation has to be on the card or the session cannot interpret its own results:
+        // three of these rungs are the SAME MODEL as a neighbour at a different quantisation, and
+        // "the 539 MB one was slower than the 823 MB one" is only a finding if the reader can see
+        // that those two are the same weights. Every hyperparameter quoted below was read off each
+        // file's own ggml header on 2026-09-13, so every sentence is checkable.
+        //
+        // The NPU cards further down KEEP their measured "fastest": that claim is true, owner-
+        // ruled, and scoped to silicon this app has benchmarked. Removing a true claim would be
+        // the regression.
+        "small-q8" to TierCopy(
+            headline = "Same model, finer quantisation",
+            badges = listOf("90+ languages", "264 MB"),
+            body = "Whisper small — the same weights as the 190 MB rung, stored at Q8_0 instead " +
+                "of Q5_1, so its accuracy should track that rung's and only the arithmetic " +
+                "differs. Offered for measurement: its throughput on this device is unknown.",
+        ),
+        "medium-q5" to TierCopy(
+            headline = "Sharper accuracy, larger download",
+            badges = listOf("90+ languages", "539 MB"),
+            body = "Whisper medium: 24 encoder layers at 1024 dims against the 190 MB rung's 12 " +
+                "at 768, and the multilingual medium this app has not offered before. " + KEEP_UP_NOTE,
+        ),
+        "medium-q8" to TierCopy(
+            headline = "The same medium, finer quantisation",
+            badges = listOf("90+ languages", "823 MB"),
+            body = "The same whisper medium as the 539 MB rung — identical depth, dims and " +
+                "vocabulary — stored at Q8_0 instead of Q5_0, so the accuracy should match and " +
+                "only the arithmetic differs. " + KEEP_UP_NOTE,
+        ),
+        "ultra" to TierCopy(
+            headline = "Large-v3 accuracy, trimmed decoder",
+            badges = listOf("90+ languages", "574 MB"),
+            body = "Large-v3's own 32-layer encoder with its decoder cut to 4 layers, which is " +
+                "why it downloads at about half the size of the full model. " + KEEP_UP_NOTE,
+        ),
+        "ultra-q8" to TierCopy(
+            headline = "The same turbo, finer quantisation",
+            badges = listOf("90+ languages", "874 MB"),
+            body = "The same large-v3-turbo as the 574 MB rung — same encoder, same 4-layer " +
+                "decoder — stored at Q8_0 instead of Q5_0. Its accuracy should match; the " +
+                "arithmetic differs. " + KEEP_UP_NOTE,
+        ),
+        "large-v3" to TierCopy(
+            headline = "Highest accuracy, largest download",
+            badges = listOf("90+ languages", "1081 MB"),
+            body = "Whisper large-v3 at full depth: the 574 MB rung's encoder plus its complete " +
+                "32-layer decoder. " + KEEP_UP_NOTE,
         ),
         // 4.0: the gated tier. Only devices that pass the SoC gate AND have both context binaries
         // installed ever see this card, so the copy may speak about "this device" in the present

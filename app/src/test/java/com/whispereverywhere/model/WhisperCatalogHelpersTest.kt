@@ -14,14 +14,67 @@ class WhisperCatalogHelpersTest {
 
     @Test
     fun catalog_hasFiveEntries_withExpectedIds() {
-        // 4.0: 6 -> 7; 4.1: 7 -> 8. The census pin fired for `npu` and again for `npu-turbo`,
-        // exactly as designed, and is resolved here rather than relaxed — the whole point of the
-        // pin is that a tier cannot arrive unannounced. Both npu-class tiers are last because
-        // entries order is chronological, and both are GATED, so this list growing does not
-        // change what any device is offered (see the pickable/pickableFor pair below).
+        // 4.0: 6 -> 7; 4.1: 7 -> 8; 4.6: 8 -> 13. The census pin fired for `npu`, again for
+        // `npu-turbo`, and again for the five rungs of the instrument ladder — exactly as
+        // designed, and resolved here rather than relaxed: the whole point of the pin is that a
+        // tier cannot arrive unannounced.
+        //
+        // **ORDER IS LOAD-BEARING SINCE 4.6, and it is no longer arrival order.** `entries` is
+        // what the chooser renders for every tier no steer key names
+        // (`ModelTierCopy.orderedForLanguageTagFor` sorts stably over this list), so the ggml rows
+        // are grouped BY MODEL FAMILY with each quantisation twin beside its sibling — small,
+        // medium, turbo, large-v3. That is a measurement property, not decoration: the two
+        // comparisons that carry the most information are small Q5_1 vs Q8_0 and medium Q5_0 vs
+        // Q8_0, and ascending BYTES would have separated both (medium-Q8's 823 MB above turbo-Q5's
+        // 574 MB). The three retired English rows keep the front in historical order, where
+        // nothing renders them; both npu-class tiers keep the last two slots because they are
+        // GATED — for them the device decides, not the size.
         val ids = WhisperCatalog.entries.map { it.id }
-        assertEquals(8, WhisperCatalog.entries.size)
-        assertEquals(listOf("eco", "base", "pro", "extreme", "multi", "ultra", "npu", "npu-turbo"), ids)
+        assertEquals(13, WhisperCatalog.entries.size)
+        assertEquals(
+            listOf(
+                "eco", "base", "pro", "extreme",
+                "multi", "small-q8",
+                "medium-q5", "medium-q8",
+                "ultra", "ultra-q8",
+                "large-v3",
+                "npu", "npu-turbo",
+            ),
+            ids,
+        )
+    }
+
+    /**
+     * 4.6 — **the quantisation twins are ADJACENT, stated as the property rather than as a list
+     * someone edited to match.** Each pair is the same model at two quantisations, and the session
+     * that compares them has to find them side by side; an id reordered into the wrong slot passes
+     * the list above only if the list was edited too, and passes nothing here.
+     */
+    @Test fun each_quantisation_twin_is_declared_beside_its_sibling() {
+        val ids = WhisperCatalog.entries.map { it.id }
+        listOf(
+            "multi" to "small-q8",      // whisper small: Q5_1 / Q8_0 — the cheapest decisive test
+            "medium-q5" to "medium-q8", // whisper medium: Q5_0 / Q8_0 — does the repack path rescue it
+            "ultra" to "ultra-q8",      // large-v3-turbo: Q5_0 / Q8_0
+        ).forEach { (a, b) ->
+            assertEquals(
+                "'$a' and '$b' are the same weights at two quantisations and must render as " +
+                    "neighbours, or the comparison the session exists for is two scrolls apart",
+                ids.indexOf(a) + 1,
+                ids.indexOf(b),
+            )
+        }
+        // And each twin really is the same model: the byte counts differ, the file names differ
+        // only in the quantisation token, and the mel width — the one structural fact the
+        // catalogue records about the weights — is identical.
+        listOf("multi" to "small-q8", "medium-q5" to "medium-q8", "ultra" to "ultra-q8").forEach { (a, b) ->
+            val ma = WhisperCatalog.byId(a)!!
+            val mb = WhisperCatalog.byId(b)!!
+            assertEquals("'$a'/'$b' must be the same model family — same filterbank", ma.melBins, mb.melBins)
+            assertEquals("'$a'/'$b' must be the same language coverage", ma.scope, mb.scope)
+            assertTrue("'$a'/'$b' must be different files", ma.sha256 != mb.sha256)
+            assertTrue("the Q8_0 twin is the larger file", mb.approxBytes > ma.approxBytes)
+        }
     }
 
     @Test
@@ -43,8 +96,20 @@ class WhisperCatalogHelpersTest {
         assertEquals(0L, m("multi").minRamBytes)
 
         assertEquals(ModelScope.MULTILINGUAL, m("ultra").scope)
-        // 7.0e9 = genuine 8 GB-class hardware after totalMem slack.
-        assertEquals(7_000_000_000L, m("ultra").minRamBytes)
+        // 4.6: was 7.0e9 (8 GB-class after totalMem slack), set in 3.7 when `ultra` was a retired
+        // outlier. It is an INSTRUMENT now and an instrument states NO RAM threshold: it is
+        // unrecommended because nobody has measured its throughput, which is not a fact about the
+        // device in the user's hand, and a gate here would render the card as "needs more RAM than
+        // this device reports" on phones where that is false. See
+        // no_instrument_hides_behind_a_ram_threshold for the whole-set version of this claim.
+        assertEquals(0L, m("ultra").minRamBytes)
+
+        // 4.6's five new rungs: every one MULTILINGUAL (the owner's ruling — "we should really
+        // only be showing only multi language models, period"), every one ungated by RAM.
+        listOf("small-q8", "medium-q5", "medium-q8", "ultra-q8", "large-v3").forEach {
+            assertEquals("rung '$it' must be multilingual", ModelScope.MULTILINGUAL, m(it).scope)
+            assertEquals("rung '$it' is an instrument and claims no RAM class", 0L, m(it).minRamBytes)
+        }
     }
 
     @Test
@@ -64,6 +129,109 @@ class WhisperCatalogHelpersTest {
         assertEquals(574_041_195L, WhisperCatalog.byId("ultra")!!.approxBytes)
     }
 
+    /**
+     * 4.6 — **every rung of the instrument ladder, pinned as its neighbours are**: id, file name,
+     * URL at the pinned commit, exact byte count, digest, scope, mel width, the instrument flag,
+     * and the retired/gated/unsupported flags that must all be false.
+     *
+     * **Where every number came from, and how.** Both halves of each row were read TWICE,
+     * independently, on 2026-09-13:
+     *  1. the git-LFS pointer at the commit `WhisperCatalog.BASE_URL` pins —
+     *     `huggingface.co/ggerganov/whisper.cpp/raw/5359861c…/<file>` — whose `oid sha256:` line IS
+     *     the digest of the LFS content and whose `size` line is the byte count; and
+     *  2. a HEAD of the download URL itself, whose redirect carries `X-Linked-Size` and
+     *     `X-Linked-ETag` equal to exactly those two values.
+     *
+     * The method was validated against two rows ALREADY in the catalogue before any new literal
+     * was trusted — `ggml-small-q5_1.bin` → 190,085,487 / ae85e4a9… and
+     * `ggml-large-v3-turbo-q5_0.bin` → 574,041,195 / 39422170… — and reproduced both exactly.
+     *
+     * Mel widths and every structural claim in the cards' copy (encoder depth, dims, text layers,
+     * vocabulary size, quantisation) are read from each file's OWN ggml header: `n_mels` is the
+     * tenth int32 and `ftype` the twelfth, so a 48-byte RANGE READ settles a rung without
+     * downloading a gigabyte. **A wrong literal here ships a rung that can never install** (the
+     * gate is ±5% on size and exact on the digest), which is why the numbers are read and not
+     * copied — and `medium` vs `medium.en` is the live trap: 539,212,467 against 539,225,533, two
+     * different files 13,066 bytes apart, well inside each other's ±5% window, so only the digest
+     * would catch the mix-up.
+     */
+    @Test fun every_ladder_rung_states_its_twice_verified_lfs_values() {
+        val base = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/"
+        data class Rung(
+            val id: String,
+            val displayName: String,
+            val file: String,
+            val bytes: Long,
+            val sha: String,
+            val mels: Int,
+        )
+        listOf(
+            // whisper small, 12 encoder layers at 768 dims, n_vocab 51865, ftype 2007 = Q8_0.
+            // THE DECISIVE ONE: the same model as today's default, 40% larger, and the only new
+            // rung whose q8_0 arithmetic can be compared against a measured q5_1 baseline.
+            Rung(
+                "small-q8", "Multilingual (small, Q8_0)", "ggml-small-q8_0.bin", 264_464_607L,
+                "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f", 80,
+            ),
+            // whisper medium, 24 encoder layers at 1024, n_vocab 51865, ftype 1008 = Q5_0. The
+            // multilingual medium the app has never had — its only medium is medium.en.
+            Rung(
+                "medium-q5", "Multilingual (medium, Q5_0)", "ggml-medium-q5_0.bin", 539_212_467L,
+                "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f", 80,
+            ),
+            // The same medium, ftype 2007 = Q8_0. Identical hyperparameters off the header.
+            Rung(
+                "medium-q8", "Multilingual (medium, Q8_0)", "ggml-medium-q8_0.bin", 823_369_779L,
+                "42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502", 80,
+            ),
+            // large-v3-turbo, 32 encoder layers at 1280, 4 text layers, n_vocab 51866, ftype
+            // 2007 = Q8_0. 128-bin, like everything in the large-v3 family.
+            Rung(
+                "ultra-q8", "Ultra (large-v3-turbo, Q8_0)", "ggml-large-v3-turbo-q8_0.bin", 874_188_075L,
+                "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1", 128,
+            ),
+            // large-v3 itself: the same 32-layer/1280-dim encoder plus a FULL 32-layer decoder,
+            // ftype 2008 = Q5_0. The accuracy ceiling and the largest file the app can fetch.
+            Rung(
+                "large-v3", "Multilingual (large-v3, Q5_0)", "ggml-large-v3-q5_0.bin", 1_081_140_203L,
+                "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1", 128,
+            ),
+        ).forEach { r ->
+            val m = WhisperCatalog.byId(r.id)!!
+            assertEquals(r.id, r.displayName, m.displayName)
+            assertEquals(r.id, r.file, m.fileName)
+            assertEquals(r.id, base + r.file, m.url)
+            assertEquals("${r.id}: the exact LFS size — a wrong literal cannot install", r.bytes, m.approxBytes)
+            assertEquals("${r.id}: the LFS oid, lowercased hex", r.sha, m.sha256)
+            assertEquals("${r.id}: the header's own n_mels", r.mels, m.melBins)
+            assertEquals("${r.id}: the owner's ruling — multilingual rungs only", ModelScope.MULTILINGUAL, m.scope)
+            assertTrue("${r.id}: unmeasured, so an instrument", m.instrument)
+            assertFalse("${r.id}: offered — that is the point of the ruling that added it", m.retired)
+            assertFalse("${r.id}: nobody is migrated off a rung that was never advocated", m.unsupported)
+            assertFalse("${r.id}: no device is refused the experiment", m.gated)
+            assertEquals("${r.id}: an instrument claims no RAM class", 0L, m.minRamBytes)
+            assertNull("${r.id}: one file", m.pairedArtifact)
+            assertEquals("${r.id}: a single-file rung advertises its one file", m.approxBytes, m.primaryBytes)
+        }
+        // THE COPY-PASTE THIS PIN EXISTS FOR. `medium-q5` is 13,066 bytes from `extreme`, which is
+        // 2.4% — inside the ±5% size gate in both directions — so a row that took the wrong number
+        // would install nothing and the size gate would not be what caught it.
+        val mediumQ5 = WhisperCatalog.byId("medium-q5")!!
+        val extreme = WhisperCatalog.byId("extreme")!!
+        assertTrue("medium and medium.en are different files", mediumQ5.approxBytes != extreme.approxBytes)
+        assertTrue("and different weights", mediumQ5.sha256 != extreme.sha256)
+        assertTrue(
+            "the two sizes are inside each other's ±5% window, which is why the digest is the " +
+                "real guard and why each row must state its OWN byte count",
+            WhisperCatalog.sizeWithinTolerance(mediumQ5.approxBytes, extreme.approxBytes),
+        )
+        // And `large-v3` is the biggest thing the app can be asked to download.
+        assertEquals(
+            1_081_140_203L,
+            WhisperCatalog.entries.filter { it.pairedArtifact == null }.maxOf { it.approxBytes },
+        )
+    }
+
     @Test
     fun modelById_returnsNull_forUnknownId() {
         assertNull(WhisperCatalog.byId("nope"))
@@ -71,14 +239,19 @@ class WhisperCatalogHelpersTest {
 
     @Test
     fun isRecommended_boundary_atMinRam() {
-        val ultra = WhisperCatalog.byId("ultra")!! // minRam 7_000_000_000
+        // 4.6: the subject moved from `ultra` to `extreme`. `ultra` became an INSTRUMENT, whose
+        // whole contract is that no RAM makes it recommended, so it can no longer demonstrate a
+        // RAM BOUNDARY — the rule under test here. `extreme` still carries a real threshold
+        // (5.5e9, genuine 6 GB-class after totalMem slack) and is still resolvable, so the `>=`
+        // boundary is tested on a row that has one.
+        val extreme = WhisperCatalog.byId("extreme")!! // minRam 5_500_000_000
 
         // just below -> not recommended
-        assertFalse(WhisperCatalog.isRecommendedForDevice(ultra, 6_999_999_999L))
+        assertFalse(WhisperCatalog.isRecommendedForDevice(extreme, 5_499_999_999L))
         // exactly at threshold -> recommended (>=)
-        assertTrue(WhisperCatalog.isRecommendedForDevice(ultra, 7_000_000_000L))
+        assertTrue(WhisperCatalog.isRecommendedForDevice(extreme, 5_500_000_000L))
         // above -> recommended
-        assertTrue(WhisperCatalog.isRecommendedForDevice(ultra, 12_000_000_000L))
+        assertTrue(WhisperCatalog.isRecommendedForDevice(extreme, 12_000_000_000L))
     }
 
     @Test
@@ -164,6 +337,114 @@ class WhisperCatalogHelpersTest {
         assertTrue("an instrument clears the pickable filter", !instrument.retired && !instrument.gated)
     }
 
+    /**
+     * 4.6 — **THE INSTRUMENT SET, declared.** Six rungs: the five the ladder adds and `ultra`,
+     * un-retired beside them. `multi` is deliberately NOT one: it is the only rung with a measured
+     * verdict (F = 2.3 s, duty 0.42, Fold6, 2026-08-20) and therefore the only one this app is
+     * entitled to recommend, default to, or migrate anyone onto.
+     *
+     * A new rung that forgets the flag fires here, which is the alarm worth having: the failure
+     * mode is silent and its blast radius is a production user handed a 1 GB download badged
+     * *"Recommended for your device"* on the strength of nothing.
+     */
+    @Test fun the_instrument_set_is_exactly_the_unmeasured_rungs_of_the_ladder() {
+        assertEquals(
+            "the instrument set changed — a rung was added without the flag, or a rung earned a " +
+                "verdict and nobody said so here",
+            listOf("small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3"),
+            WhisperCatalog.instruments.map { it.id },
+        )
+        assertFalse(
+            "`multi` must NOT be an instrument: it is the one measured rung, which is exactly " +
+                "why it is the default and the migration target",
+            WhisperCatalog.byId("multi")!!.instrument,
+        )
+        // Derived, never a second list.
+        assertEquals(WhisperCatalog.entries.filter { it.instrument }, WhisperCatalog.instruments)
+    }
+
+    /**
+     * 4.6 — **no instrument is recommended on any device in the fleet**, asserted over the real
+     * catalogue at every RAM a phone or tablet plausibly reports, and at `Long.MAX_VALUE` so the
+     * claim cannot be outlived by hardware.
+     *
+     * This is the brief's own acceptance: *"`isRecommendedForDevice` must answer false for all of
+     * them regardless of device RAM, so no card is ever badged as the right choice."*
+     */
+    @Test fun no_instrument_is_recommended_on_any_device_in_the_fleet() {
+        val everyRam = listOf(
+            0L, 2_000_000_000L, 4_000_000_000L, 5_500_000_000L, 6_000_000_000L, 7_000_000_000L,
+            8_000_000_000L, 12_000_000_000L, 16_000_000_000L, 24_000_000_000L, Long.MAX_VALUE,
+        )
+        WhisperCatalog.instruments.forEach { model ->
+            everyRam.forEach { ram ->
+                assertFalse(
+                    "instrument '${model.id}' was recommended at $ram bytes of RAM",
+                    WhisperCatalog.isRecommendedForDevice(model, ram),
+                )
+            }
+        }
+        // The other half of the claim, and the one a RAM literal would have broken: `multi` — the
+        // measured rung — IS still recommended everywhere, so the ladder did not silently turn the
+        // chooser into a screen with no recommendation on it at all.
+        everyRam.forEach { ram ->
+            assertTrue(
+                "the measured rung must still be recommended at $ram — a chooser where NOTHING " +
+                    "is recommended is a different defect from one where the wrong thing is",
+                WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("multi")!!, ram),
+            )
+        }
+    }
+
+    /**
+     * 4.6 — **no instrument hides behind a RAM threshold.** The rejected design (research §6.3)
+     * would have set `minRamBytes` above any shipping phone, which suppresses the badge as a
+     * side effect and, on `OnboardingModelScreen`, raises *"High-end devices only — this tier
+     * needs more RAM than this device reports"* on every device that renders the card. The ladder
+     * exists so the owner can run a heavy model on a modest phone and find where it breaks; a
+     * threshold that shouts at him for doing exactly that is the wrong mechanism, and a literal 0
+     * here is what keeps `ramGated` false.
+     */
+    @Test fun no_instrument_hides_behind_a_ram_threshold() {
+        WhisperCatalog.instruments.forEach {
+            assertEquals(
+                "instrument '${it.id}' carries a RAM threshold — the flag is what withholds the " +
+                    "badge, and a threshold would make the card claim a reason that is not the " +
+                    "real one (nobody has measured it, which is not about this device)",
+                0L,
+                it.minRamBytes,
+            )
+        }
+    }
+
+    /**
+     * 4.6 — **every instrument is selectable and downloadable on every device.** *"They appear in
+     * the chooser on every device, with no RAM threshold hiding them. The owner must be able to
+     * run a heavy model on a modest phone: finding where it breaks is the point."*
+     */
+    @Test fun every_instrument_is_pickable_ungated_and_installable_by_download() {
+        val pickableIds = WhisperCatalog.pickable.map { it.id }
+        WhisperCatalog.instruments.forEach {
+            assertTrue("instrument '${it.id}' is not offered at all", pickableIds.contains(it.id))
+            assertFalse("instrument '${it.id}' is retired — it would not render", it.retired)
+            assertFalse("instrument '${it.id}' is gated — some devices could not try it", it.gated)
+            assertFalse("instrument '${it.id}' is unsupported — nobody is migrated off an offer", it.unsupported)
+            assertTrue(
+                "instrument '${it.id}' cannot be installed by download, so the offer is empty",
+                WhisperCatalog.isInstallableByDownload(it),
+            )
+            assertNull("a ggml rung has one file", it.pairedArtifact)
+            assertEquals("a single-file rung advertises exactly its one file", it.approxBytes, it.primaryBytes)
+        }
+        // And the gate answer no device can change: `pickableFor(emptySet())` — the whole
+        // non-capable fleet — offers every instrument. This is the assertion that would fail if a
+        // future edit tried to hide a heavy rung behind a device predicate.
+        val everyDeviceSees = WhisperCatalog.pickableFor(emptySet()).map { it.id }
+        WhisperCatalog.instruments.forEach {
+            assertTrue("instrument '${it.id}' is hidden from a device that failed the NPU gate", everyDeviceSees.contains(it.id))
+        }
+    }
+
     @Test
     fun sizeWithinTolerance_fivePercent() {
         val approx = 100_000_000L
@@ -183,23 +464,45 @@ class WhisperCatalogHelpersTest {
         // The app-wide gate is installedModel() != null, which starts with byId(). If byId
         // returns null for a retired tier, every user on it is force-marched into onboarding
         // with no back navigation and their model file is orphaned. Resolvable forever.
+        // Stated as a loop over the retired SET since 4.6, so the rule cannot be outlived by its
+        // examples — `ultra` was one of them and is a live rung again.
         assertNotNull(WhisperCatalog.byId("extreme"))
-        assertNotNull(WhisperCatalog.byId("ultra"))
+        WhisperCatalog.entries.filter { it.retired }.forEach {
+            assertNotNull("retired tier '${it.id}' stopped resolving", WhisperCatalog.byId(it.id))
+        }
     }
 
     @Test fun retired_tiers_are_not_pickable() {
         val ids = WhisperCatalog.pickable.map { it.id }
         assertFalse(ids.contains("extreme"))
-        assertFalse(ids.contains("ultra"))
         // 3.7 Workstream H (owner decision 2026-08-20): the 60 MB tiers join them. "Pretty much
         // useless at this point… because of the accuracy."
         assertFalse(ids.contains("eco"))
         assertFalse(ids.contains("base"))
+        // 4.6: `ultra` LEFT this list. It was retired in 3.7, which is why nobody has run
+        // large-v3-turbo on the CPU since VAD chunking landed; the owner's ruling of 2026-09-13
+        // offers it again, as an instrument, so it can be measured.
+        assertTrue("ultra is offered again — owner ruling 2026-09-13", ids.contains("ultra"))
+        // The rule itself, over the whole set rather than a list of names.
+        WhisperCatalog.entries.filter { it.retired }.forEach {
+            assertFalse("retired tier '${it.id}' is in the chooser", ids.contains(it.id))
+        }
     }
 
-    @Test fun pickable_is_exactly_pro_and_multi() {
-        // The post-3.7 lineup: pro = the English flagship, multi = the international tier.
-        assertEquals(listOf("pro", "multi"), WhisperCatalog.pickable.map { it.id })
+    /**
+     * 4.6 — **THE PICKABLE LADDER, EXACTLY AND IN ORDER.** Was
+     * `pickable_is_exactly_pro_and_multi`: the post-3.7 lineup of pro (the English flagship) and
+     * multi (the international tier). The ladder replaces it, and the order is the one the chooser
+     * renders — `multi` at the bottom with the quantisation twins grouped above it.
+     */
+    @Test fun pickable_is_exactly_the_ladder_in_order() {
+        assertEquals(
+            listOf("pro", "multi", "small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3"),
+            WhisperCatalog.pickable.map { it.id },
+        )
+        // Six of the eight are instruments; `pro` and `multi` are the two rungs the app is
+        // prepared to stand behind. (4.6's later commit retires `pro` and this list loses it.)
+        assertEquals(6, WhisperCatalog.pickable.count { it.instrument })
     }
 
     @Test fun the_sixty_megabyte_tiers_stay_resolvable_after_retirement() {
@@ -214,11 +517,30 @@ class WhisperCatalogHelpersTest {
         // THE 3.7 split. `retired` hides a tier from the chooser (fresh installs only);
         // `unsupported` is what drives Settings' migration card. eco/base are retired but
         // perfectly usable, so their installed users must see nothing at all — the spec's
-        // "existing users unaffected; no re-download forced". extreme/ultra keep both flags.
+        // "existing users unaffected; no re-download forced". `extreme` keeps both flags.
         assertFalse(WhisperCatalog.byId("eco")!!.unsupported)
         assertFalse(WhisperCatalog.byId("base")!!.unsupported)
         assertTrue(WhisperCatalog.byId("extreme")!!.unsupported)
-        assertTrue(WhisperCatalog.byId("ultra")!!.unsupported)
+        // 4.6: `ultra` dropped BOTH flags together, necessarily. A tier the app OFFERS cannot also
+        // be one it migrates people off — `decide()` gates on `unsupported` alone, so leaving that
+        // bit set would raise "This model is no longer supported" on a rung the chooser is
+        // simultaneously inviting the user to try. An `ultra` user who has carried that card since
+        // 3.7 simply has a live tier again.
+        assertFalse(WhisperCatalog.byId("ultra")!!.retired)
+        assertFalse(WhisperCatalog.byId("ultra")!!.unsupported)
+    }
+
+    /**
+     * 4.6 — **no instrument is a tier the app wants users OFF of.** The coupling matters in this
+     * direction too: `unsupported` is the only bit that raises the migration card, and a card that
+     * tells a user to leave a rung the chooser just invited them onto is the ladder arguing with
+     * itself.
+     */
+    @Test fun no_instrument_is_unsupported_or_retired() {
+        WhisperCatalog.instruments.forEach {
+            assertFalse("instrument '${it.id}' raises the migration card", it.unsupported)
+            assertFalse("instrument '${it.id}' is hidden from the chooser", it.retired)
+        }
     }
 
     @Test fun every_unsupported_tier_is_also_retired() {
@@ -340,9 +662,15 @@ class WhisperCatalogHelpersTest {
         // bit cannot say which. The empty set is the every-other-device answer and must be
         // identical to `pickable`; each id ADDS its own tier and nothing else, in catalog order.
         assertEquals(WhisperCatalog.pickable, WhisperCatalog.pickableFor(emptySet()))
-        assertEquals(listOf("pro", "multi"), WhisperCatalog.pickableFor(emptySet()).map { it.id })
+        // 4.6: the ungated lineup is the LADDER, whose exact content and order are pinned once in
+        // `pickable_is_exactly_the_ladder_in_order`. What this test is about is the GATE — each
+        // gated id adds its own tier and nothing else, in catalog order — so it composes against
+        // that list rather than restating eight ids that would then have to be edited in two
+        // places whenever the ladder changes.
+        val ladder = WhisperCatalog.pickable.map { it.id }
+        assertEquals(ladder, WhisperCatalog.pickableFor(emptySet()).map { it.id })
         assertEquals(
-            listOf("pro", "multi", "npu"),
+            ladder + "npu",
             WhisperCatalog.pickableFor(setOf("npu")).map { it.id },
         )
         // 4.3 RE-SPEC — the owner's ruling, at the one place the lineup is built. A device that
@@ -474,19 +802,29 @@ class WhisperCatalogHelpersTest {
             ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("npu", "pro")),
         )
         // A RETIRED tier on disk does NOT re-enter through this door: `!it.retired` runs first,
-        // which is why the screens may stat the whole catalog for the fallback question.
+        // which is why the screens may stat the whole catalog for the fallback question. (4.6:
+        // `ultra` left this set when it was un-retired — it is a LIVE rung now, so an installed
+        // one DOES keep its card, which is the assertion directly below rather than a hole here.)
         assertEquals(
             listOf("npu-turbo"),
-            WhisperCatalog.pickableFor(capable, setOf("eco", "base", "extreme", "ultra"))
+            WhisperCatalog.pickableFor(capable, setOf("eco", "base", "extreme"))
                 .map { it.id },
+        )
+        assertEquals(
+            "a capable device with the un-retired 574 MB rung on disk keeps its card, exactly as " +
+                "it keeps `multi`'s — the non-disturbance rule does not care how big the file is, " +
+                "and an INSTRUMENT is an ordinary offered tier for every purpose but the badge",
+            listOf("ultra", "npu-turbo"),
+            WhisperCatalog.pickableFor(capable, setOf("ultra")).map { it.id },
         )
         // Nothing here selects anything: the branch changes what is OFFERED, never what is
         // chosen. The default fallback and the migration target are untouched.
         assertEquals("pro", WhisperCatalog.DEFAULT_MODEL_ID)
         assertEquals("multi", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
         // And every tier a user could already be ON still RESOLVES, so `installedModel()` never
-        // returns null and nobody is force-marched into onboarding with a model on disk.
-        listOf("eco", "base", "pro", "extreme", "multi", "ultra", "npu", "npu-turbo").forEach {
+        // returns null and nobody is force-marched into onboarding with a model on disk. Stated
+        // over the whole catalogue since 4.6, so five new rungs cannot be forgotten out of it.
+        WhisperCatalog.entries.map { it.id }.forEach {
             assertNotNull("selected tier '$it' stopped resolving", WhisperCatalog.byId(it))
         }
     }
@@ -540,11 +878,14 @@ class WhisperCatalogHelpersTest {
     /**
      * Every row's mel width, and where each 128 comes from. The values are read off the files
      * themselves — `n_mels` is the tenth int32 of a ggml header, 40 bytes in, so a 48-byte range
-     * read settles a rung without downloading it (`ggml-large-v3-turbo-q5_0.bin` 128, verified
-     * 2026-09-13 at the pinned commit).
+     * read settles a rung without downloading it. Verified 2026-09-13 at the pinned commit, one
+     * range read per file: `ggml-small-q8_0.bin` 80, `ggml-medium-q5_0.bin` 80,
+     * `ggml-medium-q8_0.bin` 80, `ggml-large-v3-turbo-q5_0.bin` 128,
+     * `ggml-large-v3-turbo-q8_0.bin` 128, `ggml-large-v3-q5_0.bin` 128.
      *
      * The census is exhaustive on purpose: a new row inherits the 80 default, and a 128-bin row
-     * that inherits it silently is the mute-failure this field exists to prevent.
+     * that inherits it silently is the mute-failure this field exists to prevent — which 4.6 makes
+     * reachable for the first time, since it adds two 128-bin ggml rows at once.
      */
     @Test fun every_row_records_its_mel_width_and_only_the_large_v3_family_is_128() {
         val byWidth = WhisperCatalog.entries.groupBy { it.melBins }.mapValues { (_, v) -> v.map { it.id } }
@@ -554,10 +895,17 @@ class WhisperCatalogHelpersTest {
             byWidth.keys,
         )
         assertEquals(
-            "the 128-bin rows are exactly the large-v3 family: the turbo distillation of " +
-                "large-v3 and the NPU graph of that turbo",
-            listOf("ultra", "npu-turbo"),
+            "the 128-bin rows are exactly the large-v3 family: large-v3 itself, the two " +
+                "quantisations of the turbo distillation of it, and the NPU graph of that turbo",
+            listOf("ultra", "ultra-q8", "large-v3", "npu-turbo"),
             byWidth.getValue(128),
+        )
+        // The 80-bin rows are everything before large-v3 — the whole pre-v3 family — and 4.6's
+        // three new ggml rungs that belong to it take the default rather than a literal.
+        assertEquals(
+            "the 80-bin rows are the pre-v3 family",
+            listOf("eco", "base", "pro", "extreme", "multi", "small-q8", "medium-q5", "medium-q8", "npu"),
+            byWidth.getValue(80),
         )
         // The gated rows take their width FROM the spec table, so the two descriptions of one
         // tier cannot disagree — and the ggml rows' 80 default is the same number the npu-small
@@ -582,13 +930,31 @@ class WhisperCatalogHelpersTest {
     @Test fun the_cpu_fallback_predicate_admits_every_80_bin_ggml_and_nothing_else() {
         fun eligible(id: String) = WhisperCatalog.isCpuFallbackEligible(WhisperCatalog.byId(id)!!)
         // Retired tiers are eligible ON PURPOSE: an installed eco, base or pro is a real fallback.
-        listOf("eco", "base", "pro", "extreme", "multi").forEach {
+        // 4.6 adds three more 80-bin ggml rungs, and every one of them is a legal donor —
+        // OFFERING a rung and being able to FALL BACK to it are the same structural question.
+        listOf("eco", "base", "pro", "extreme", "multi", "small-q8", "medium-q5", "medium-q8").forEach {
             assertTrue("'$it' is an 80-bin ggml and must be a legal fallback", eligible(it))
         }
         // 128-bin (refused by bin count); the npu class structurally.
         assertFalse("ultra is 128-bin — pcmToMel refuses it", eligible("ultra"))
+        assertFalse("and so is its q8_0 twin, by the same recorded width", eligible("ultra-q8"))
+        assertFalse(
+            "THE DEFECT THE 4.6 MEL WIDTH CLOSES: `large-v3` is a single-file, ungated, PICKABLE " +
+                "128-bin ggml — the exact tier the old `id != \"ultra\"` clause named as its own " +
+                "residual. Admitting it hands pcmToMel a 128-bin donor under the 80-bin npu graph " +
+                "(a failed load at arm), or falls a declining session back onto a file it cannot " +
+                "compute a spectrogram with",
+            eligible("large-v3"),
+        )
         assertFalse("npu is a QAIRT context binary, not a ggml", eligible("npu"))
         assertFalse("and so is npu-turbo", eligible("npu-turbo"))
+        // The set question, over the rungs 4.6 adds: three new donors, two new refusals.
+        listOf("small-q8", "medium-q5", "medium-q8").forEach {
+            assertTrue("an installed '$it' is a real 80-bin fallback", WhisperCatalog.hasCpuFallback(setOf(it)))
+        }
+        listOf("ultra", "ultra-q8", "large-v3").forEach {
+            assertFalse("an installed '$it' cannot serve the 80-bin arm", WhisperCatalog.hasCpuFallback(setOf(it)))
+        }
         // The set question the card asks.
         assertFalse("nothing installed, nothing to fall back to", WhisperCatalog.hasCpuFallback(emptySet()))
         assertFalse(
@@ -665,11 +1031,13 @@ class WhisperCatalogHelpersTest {
         // The set is the caller's GATE answer, not a general admission list: `!it.retired` still
         // applies first, so a retired id in the set changes nothing, and an id the catalog cannot
         // resolve admits nothing at all.
-        assertEquals(WhisperCatalog.pickable, WhisperCatalog.pickableFor(setOf("ultra")))
+        // 4.6: the retired id named here is `extreme` — `ultra` is a LIVE rung now, so naming it
+        // would make the claim vacuous (it is in `pickable` on its own merits, not resurrected).
+        assertEquals(WhisperCatalog.pickable, WhisperCatalog.pickableFor(setOf("extreme")))
         assertEquals(WhisperCatalog.pickable, WhisperCatalog.pickableFor(setOf("eco", "nope")))
         assertEquals(
-            listOf("pro", "multi", "npu"),
-            WhisperCatalog.pickableFor(setOf("npu", "ultra", "nope")).map { it.id },
+            WhisperCatalog.pickable.map { it.id } + "npu",
+            WhisperCatalog.pickableFor(setOf("npu", "extreme", "nope")).map { it.id },
         )
     }
 

@@ -23,6 +23,20 @@ class ModelTierCopyTest {
      */
     private val offeredTiers = WhisperCatalog.entries.filter { !it.retired }
 
+    /**
+     * 4.6 — **the ungated lineup, spelled out once.** The ladder's exact content and order are
+     * pinned in `WhisperCatalogHelpersTest.pickable_is_exactly_the_ladder_in_order`; what the
+     * ordering tests below are about is which card LEADS, so they compose against these two rather
+     * than restating eight ids per row. `entries` order, with the steered card lifted to the
+     * front — which is the whole of the 3.7 rule, over a longer list.
+     */
+    private val englishLineup =
+        listOf("pro", "multi", "small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3")
+
+    /** The same list with `multi` lifted over `pro` — the Bengali-review rule, unchanged. */
+    private val otherLineup =
+        listOf("multi", "pro", "small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3")
+
     @Test fun every_offered_tier_has_copy() {
         offeredTiers.forEach { model ->
             assertNotNull("no copy for offered tier '${model.id}'", ModelTierCopy.forId(model.id))
@@ -85,17 +99,32 @@ class ModelTierCopyTest {
 
     @Test fun the_owner_approved_headlines_are_pinned_exactly() {
         assertEquals("Best English accuracy", ModelTierCopy.forId("pro")!!.headline)
-        assertEquals("Best multilingual accuracy", ModelTierCopy.forId("multi")!!.headline)
+        // 4.6: `multi` was "Best multilingual accuracy" — owner-approved in 3.7, TRUE while it was
+        // one of two rungs and the only multilingual one, and FALSE the moment five larger
+        // multilingual rungs are offered beside it. A card may not claim a position it no longer
+        // holds; that is the same discipline that wrote the 3.7 string. What `multi` uniquely
+        // holds now is the only measured verdict on the ladder, which the body states.
+        assertEquals("Everyday accuracy, smallest download", ModelTierCopy.forId("multi")!!.headline)
+        assertEquals(
+            "The 190 MB model this app has shipped from the start, and the one rung on this " +
+                "list with a measured verdict behind it.",
+            ModelTierCopy.forId("multi")!!.body,
+        )
     }
 
     @Test fun retired_and_unknown_tiers_have_no_copy() {
         // Retired tiers stay resolvable in WhisperCatalog but are not offered — no copy required.
         assertNull(ModelTierCopy.forId("extreme"))
-        assertNull(ModelTierCopy.forId("ultra"))
         // 3.7 Workstream H: the 60 MB tiers joined them.
         assertNull(ModelTierCopy.forId("eco"))
         assertNull(ModelTierCopy.forId("base"))
         assertNull(ModelTierCopy.forId("nope"))
+        // 4.6: `ultra` LEFT this list — it is offered again, so it has a card. Stated as the rule
+        // rather than as a list, so the next retirement or un-retirement cannot outlive it.
+        WhisperCatalog.entries.filter { it.retired }.forEach {
+            assertNull("retired tier '${it.id}' still has copy", ModelTierCopy.forId(it.id))
+        }
+        assertNotNull("ultra is offered again and must have a card", ModelTierCopy.forId("ultra"))
     }
 
     @Test fun no_offered_tier_names_a_retired_one() {
@@ -152,8 +181,18 @@ class ModelTierCopyTest {
     }
 
     @Test fun the_steered_tier_is_offered_first() {
-        assertEquals(listOf("pro", "multi"), ModelTierCopy.orderedForLanguageTag("en-US"))
-        assertEquals(listOf("multi", "pro"), ModelTierCopy.orderedForLanguageTag("bn-BD"))
+        assertEquals(englishLineup, ModelTierCopy.orderedForLanguageTag("en-US"))
+        assertEquals(otherLineup, ModelTierCopy.orderedForLanguageTag("bn-BD"))
+        // 4.6: and the six instruments stay BELOW both steered cards in every locale. The ladder
+        // is offered, not promoted — nothing about adding it moves a card to the top.
+        listOf("en-US", "bn-BD", "de-AT", "").forEach { tag ->
+            val ordered = ModelTierCopy.orderedForLanguageTag(tag)
+            val firstInstrument = ordered.indexOfFirst { WhisperCatalog.byId(it)!!.instrument }
+            assertTrue(
+                "'$tag': an instrument reached the top of the lineup — offering is not steering",
+                firstInstrument >= 2,
+            )
+        }
     }
 
     @Test fun the_order_is_always_a_permutation_of_the_pickable_catalog() {
@@ -206,17 +245,17 @@ class ModelTierCopyTest {
         // the English-only tier above the multilingual one 3.7 demoted it below — by a change
         // that was supposed to be about silicon.
         assertEquals(
-            listOf("npu", "multi", "pro"),
+            listOf("npu") + otherLineup,
             ModelTierCopy.orderedForLanguageTagFor("bn-BD", setOf("npu")),
         )
         // English locale on a capable device: `pro` leads, and the gated tier is LAST rather than
         // absent. The user can still reach it; they are simply not pushed at it.
         assertEquals(
-            listOf("pro", "multi", "npu"),
+            englishLineup + "npu",
             ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu")),
         )
-        assertEquals(listOf("multi", "pro"), ModelTierCopy.orderedForLanguageTagFor("bn-BD", emptySet()))
-        assertEquals(listOf("pro", "multi"), ModelTierCopy.orderedForLanguageTagFor("en-US", emptySet()))
+        assertEquals(otherLineup, ModelTierCopy.orderedForLanguageTagFor("bn-BD", emptySet()))
+        assertEquals(englishLineup, ModelTierCopy.orderedForLanguageTagFor("en-US", emptySet()))
     }
 
     @Test fun the_lineup_is_a_permutation_of_this_devices_pickable_set_and_the_steer_leads_it() {
@@ -265,7 +304,10 @@ class ModelTierCopyTest {
                 "'$tag': a gated tier reached a device whose gate said no",
                 ordered.contains("npu") || ordered.contains("npu-turbo"),
             )
-            assertEquals("'$tag': the ungated lineup is 3.7's two tiers", 2, ordered.size)
+            // 4.6: was 2 — 3.7's two tiers. The ungated lineup is now the eight-rung ladder, and
+            // the size is asserted against `pickable` rather than a literal so the two cannot
+            // disagree about what a device that failed the gate is offered.
+            assertEquals("'$tag': the ungated lineup is the whole ladder", WhisperCatalog.pickable.size, ordered.size)
             assertTrue(
                 "'$tag': the ungated steer is not a tier this device can pick",
                 WhisperCatalog.pickable.map { it.id }
@@ -378,10 +420,10 @@ class ModelTierCopyTest {
             Triple(setOf("npu", "npu-turbo"), "en-US", listOf("npu-turbo")),
             Triple(setOf("npu-turbo"), "bn-BD", listOf("npu-turbo")),
             Triple(setOf("npu-turbo"), "en-US", listOf("npu-turbo")),
-            Triple(setOf("npu"), "bn-BD", listOf("npu", "multi", "pro")),
-            Triple(setOf("npu"), "en-US", listOf("pro", "multi", "npu")),
-            Triple(emptySet(), "bn-BD", listOf("multi", "pro")),
-            Triple(emptySet(), "en-US", listOf("pro", "multi")),
+            Triple(setOf("npu"), "bn-BD", listOf("npu") + otherLineup),
+            Triple(setOf("npu"), "en-US", englishLineup + "npu"),
+            Triple(emptySet(), "bn-BD", otherLineup),
+            Triple(emptySet(), "en-US", englishLineup),
         )
         table.forEach { (offered, tag, expected) ->
             assertEquals(
@@ -461,18 +503,19 @@ class ModelTierCopyTest {
             Row(setOf("npu", "npu-turbo"), setOf("npu-turbo"), "en-US", listOf("npu-turbo")),
             // An installed RETIRED tier changes nothing — `!retired` runs first.
             Row(setOf("npu-turbo"), setOf("eco", "base"), "bn-BD", listOf("npu-turbo")),
-            // ---- NOT CAPABLE. Byte-identical to 3.7/4.1, installed state irrelevant.
-            Row(emptySet(), emptySet(), "en-US", listOf("pro", "multi")),
-            Row(emptySet(), emptySet(), "bn-BD", listOf("multi", "pro")),
-            Row(emptySet(), setOf("pro", "multi"), "bn-BD", listOf("multi", "pro")),
-            Row(emptySet(), setOf("npu", "npu-turbo"), "en-US", listOf("pro", "multi")),
+            // ---- NOT CAPABLE. The rule is byte-identical to 3.7/4.1 and the installed state is
+            // still irrelevant; 4.6 only made the list it orders longer (the whole ladder).
+            Row(emptySet(), emptySet(), "en-US", englishLineup),
+            Row(emptySet(), emptySet(), "bn-BD", otherLineup),
+            Row(emptySet(), setOf("pro", "multi"), "bn-BD", otherLineup),
+            Row(emptySet(), setOf("npu", "npu-turbo"), "en-US", englishLineup),
             // ---- CAPABLE FOR `npu` ONLY (no turbo row for this family). Unreachable on today's
             // census — every family carries both, pinned in NpuFleetCensusTest — but the rule
             // must still answer it, and its answer is the pre-4.3 one: turbo is what the ruling
             // is about, and a device that cannot be offered turbo keeps its menu.
-            Row(setOf("npu"), emptySet(), "bn-BD", listOf("npu", "multi", "pro")),
-            Row(setOf("npu"), emptySet(), "en-US", listOf("pro", "multi", "npu")),
-            Row(setOf("npu"), setOf("npu"), "bn-BD", listOf("npu", "multi", "pro")),
+            Row(setOf("npu"), emptySet(), "bn-BD", listOf("npu") + otherLineup),
+            Row(setOf("npu"), emptySet(), "en-US", englishLineup + "npu"),
+            Row(setOf("npu"), setOf("npu"), "bn-BD", listOf("npu") + otherLineup),
         )
         table.forEach { (offered, installed, tag, expected) ->
             assertEquals(

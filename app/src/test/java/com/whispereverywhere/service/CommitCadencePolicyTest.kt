@@ -164,9 +164,32 @@ class CommitCadencePolicyTest {
         // away. Provisional on one spike pass — Q10a measures the full tier on device.
         // 4.1: npu-turbo joined and the pin fired again. The decision: 1_200L, the FAST row —
         // see npuTurboRidesTheFastRowOnItsPublishedFigures for the reasoning and its trigger.
+        //
+        // 4.6: the INSTRUMENT LADDER joined and the pin fired for five rungs at once. THE
+        // DECISION IS THE LARGE ROW, 8_000L, FOR ALL FIVE, and it is the `else` arm already
+        // answering rather than five new arms — this branch recomposes the CHOOSER and does not
+        // touch the commit pipeline. Recorded here because recording it IS the decision this pin
+        // exists to force. Why LARGE is right for each:
+        //  - `medium-q5` is byte-for-byte the same shape as `extreme` (24 encoder layers at 1024,
+        //    539 MB), which sits on this row already; `medium-q8` is that model at a coarser
+        //    arithmetic and 823 MB.
+        //  - `ultra-q8` is `ultra`'s own encoder at 874 MB, and `ultra` sits on this row.
+        //  - `large-v3` is strictly heavier than `ultra`: same 32-layer/1280-dim encoder, eight
+        //    times the decoder.
+        //  - `small-q8` is the one that is NOT obviously heavy — it is `multi`'s own weights at
+        //    Q8_0 — and it takes LARGE anyway, because 8 s is the conservative direction for a
+        //    rung nobody has measured and this task may not invent a verdict. **THE CONFOUND THIS
+        //    CREATES IS REAL AND IS THE MEASUREMENT SESSION'S TO RECORD:** `multi` paces at 6 s
+        //    and `small-q8` at 8 s, so the cheapest decisive experiment in the whole research —
+        //    small Q5_1 against small Q8_0 — runs its two arms at DIFFERENT commit floors. The
+        //    owner must compare wall-clock lag, not duty, and the sheet must carry the floor per
+        //    rung. Moving `small-q8` onto the 6 s MULTI row is a cadence decision that wants the
+        //    measurement first, which is the whole shape of this branch.
         val expected = mapOf(
             "eco" to 1_200L, "base" to 1_200L, "pro" to 6_000L,
             "multi" to 6_000L, "extreme" to 8_000L, "ultra" to 8_000L,
+            "small-q8" to 8_000L, "medium-q5" to 8_000L, "medium-q8" to 8_000L,
+            "ultra-q8" to 8_000L, "large-v3" to 8_000L,
             "npu" to 1_200L, "npu-turbo" to 2_000L,
         )
         assertEquals(
@@ -475,6 +498,12 @@ class CommitCadencePolicyTest {
             "npu-turbo" to 3_200L,
             "pro" to 6_000L, "multi" to 6_000L,
             "extreme" to 8_000L, "ultra" to 8_000L,
+            // 4.6: each new rung's SLOW floor is its fast floor, which is what "the governor is
+            // inert by construction on every row but npu-turbo" means — all five are on the LARGE
+            // row already (see everyCatalogTierIsNamedExplicitly for that decision), so depth 2
+            // has nothing left to buy back.
+            "small-q8" to 8_000L, "medium-q5" to 8_000L, "medium-q8" to 8_000L,
+            "ultra-q8" to 8_000L, "large-v3" to 8_000L,
         )
         assertEquals(
             "a catalog tier gained or lost an entry — decide its SLOW floor as well",

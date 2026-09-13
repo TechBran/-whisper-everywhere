@@ -177,6 +177,28 @@ object WhisperCatalog {
     private const val SHA256_MULTI = "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"
     private const val SHA256_ULTRA = "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
 
+    // 4.6 — THE FIVE INSTRUMENT RUNGS. Same provenance and same method as every constant above,
+    // and both halves of each were read TWICE, independently, on 2026-09-13:
+    //  1. the git-LFS pointer at the commit [BASE_URL] pins — `raw/<that sha>/<file>` — whose
+    //     `oid sha256:` line IS the digest of the LFS content and whose `size` line is the byte
+    //     count; and
+    //  2. a HEAD of the download URL itself, where the redirect carries `X-Linked-Size` and
+    //     `X-Linked-ETag` equal to exactly those two values.
+    // The method was validated against two rows already in this file (`ggml-small-q5_1.bin` →
+    // 190,085,487 / ae85e4a9…, `ggml-large-v3-turbo-q5_0.bin` → 574,041,195 / 39422170…), which
+    // is the control this had to pass before any new literal was trusted: the same two reads
+    // reproduce the shipped constants exactly.
+    //
+    // Nothing here is rounded and nothing is copied between rows — the eco note above is why, and
+    // `medium`/`medium.en` are the live trap: two different files 13,066 bytes apart, well inside
+    // the ±[SIZE_TOLERANCE] gate, so a copy-paste between those two rows would be caught only by
+    // the digest. NEVER download a gigabyte to check a byte count; a HEAD settles it.
+    private const val SHA256_SMALL_Q8 = "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f"
+    private const val SHA256_MEDIUM_Q5 = "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f"
+    private const val SHA256_MEDIUM_Q8 = "42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502"
+    private const val SHA256_ULTRA_Q8 = "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"
+    private const val SHA256_LARGE_V3 = "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1"
+
     // The 4.0 npu tier's two context binaries. MEASURED sha256s of the EXTRACTED files (the spike
     // staged and hashed both), not of the zip that carries them — nothing here is a placeholder.
     private const val SHA256_NPU_ENCODER = "3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec"
@@ -272,7 +294,12 @@ object WhisperCatalog {
         ),
         WhisperModel(
             id = "multi",
-            displayName = "Multilingual (small)",
+            // 4.6: the quantisation joined the name. `multi` and the `small-q8` rung below are the
+            // SAME whisper-small weights at two different quantisations, and that pair is the
+            // cheapest decisive experiment in the owner's session — so a card that does not state
+            // which quantisation it is makes the session uninterpretable. Read from this file's
+            // own ggml header: ftype 1009 = Q5_1 (2026-09-13).
+            displayName = "Multilingual (small, Q5_1)",
             fileName = "ggml-small-q5_1.bin",
             url = urlFor("ggml-small-q5_1.bin"),
             approxBytes = 190_085_487L,
@@ -280,9 +307,92 @@ object WhisperCatalog {
             scope = ModelScope.MULTILINGUAL,
             minRamBytes = 0L,
         ),
+        // ================================================= 4.6 — THE INSTRUMENT LADDER
+        //
+        // Five new rungs, plus `ultra` un-retired. **Every one of them is a
+        // [WhisperModel.instrument]**: selectable on every device, recommended on none, never
+        // [DEFAULT_MODEL_ID] and never a [ModelMigration] target. The owner has six devices and
+        // has chosen to measure the CPU ladder rather than accept a prediction scaled from one
+        // Fold6 anchor — *"I wanna see all the models there so I can just select between them and
+        // try each one."* Offering is not steering.
+        //
+        // **What the session is measuring, and why the naive metric is the wrong one.** This app
+        // clamps `audio_ctx` to `max(samples/320 + 64, 512)`, and that 512 floor binds for every
+        // chunk under 8.96 s — which is every VAD-cut chunk in ordinary dictation. So the encoder
+        // cost per COMMIT is CONSTANT, the ceiling is COMMITS PER SECOND, and the queue grows iff
+        // finalize wall time exceeds the commit floor. Sparse speech buys no relief. **Not one
+        // literal in these rows is a throughput claim**, because reasoning in terms of
+        // RTF-against-audio is how a bad tier ships.
+        //
+        // **The ORDER is the ladder the chooser renders** ([entries] order; `ModelTierCopy.
+        // orderedForLanguageTagFor` sorts stably over it), and it is grouped BY MODEL FAMILY with
+        // each quantisation twin adjacent to its sibling — small, medium, turbo, large-v3 — rather
+        // than in ascending bytes. Bytes would interleave the families (medium-Q8's 823 MB above
+        // turbo-Q5's 574 MB) and separate the two comparisons that carry the most information:
+        // **small Q5_1 vs Q8_0** (same model, the quantisation axis, the cheapest decisive test)
+        // and **medium Q5_0 vs Q8_0**. A user reading the list sees each model once with its
+        // quantisations together; the owner comparing two cards finds them side by side.
+        //
+        // **The quantisation axis is why these rungs exist at all.** `Q5_0` and `Q5_1` are the
+        // only two quantisations absent from ggml's ARM i8mm repack path and the only two this app
+        // has ever shipped, while the build already compiles `+i8mm`
+        // (`docs/superpowers/research/2026-09-13-cpu-tier-upgrade.md`). Every `q8_0` rung here is
+        // ON that path. **That is a prediction, not a measurement, and no row states it as one.**
+        WhisperModel(
+            id = "small-q8",
+            displayName = "Multilingual (small, Q8_0)",
+            fileName = "ggml-small-q8_0.bin",
+            url = urlFor("ggml-small-q8_0.bin"),
+            // 264,464,607 — LFS pointer size AND X-Linked-Size, 2026-09-13.
+            approxBytes = 264_464_607L,
+            sha256 = SHA256_SMALL_Q8,
+            // n_vocab 51865, from this file's own ggml header — the multilingual vocabulary. The
+            // `.en` rows are 51864, so the scope is READ here rather than inferred from the name.
+            scope = ModelScope.MULTILINGUAL,
+            // 80, from the header (n_mels at offset 40). Same 12 encoder layers at 768 dims as
+            // `multi` — literally the same model, 40% larger, at a different quantisation.
+            minRamBytes = 0L,
+            instrument = true,
+        ),
+        WhisperModel(
+            id = "medium-q5",
+            displayName = "Multilingual (medium, Q5_0)",
+            fileName = "ggml-medium-q5_0.bin",
+            url = urlFor("ggml-medium-q5_0.bin"),
+            // 539,212,467 — NOT `extreme`'s 539,225,533. Two different files (medium vs
+            // medium.en), 13,066 bytes apart, both inside a ±5% gate of each other: each row must
+            // state its own or the size gate is being asked to cover a copy-paste.
+            approxBytes = 539_212_467L,
+            sha256 = SHA256_MEDIUM_Q5,
+            // n_vocab 51865 — the multilingual medium this app has never had. Its only medium is
+            // `extreme` (medium.en), which spends the entire bill on the one language with the
+            // smallest prize.
+            scope = ModelScope.MULTILINGUAL,
+            // 80 from the header; 24 encoder layers at 1024 dims.
+            minRamBytes = 0L,
+            instrument = true,
+        ),
+        WhisperModel(
+            id = "medium-q8",
+            displayName = "Multilingual (medium, Q8_0)",
+            fileName = "ggml-medium-q8_0.bin",
+            url = urlFor("ggml-medium-q8_0.bin"),
+            // 823,369,779 — LFS pointer size AND X-Linked-Size, 2026-09-13.
+            approxBytes = 823_369_779L,
+            sha256 = SHA256_MEDIUM_Q8,
+            scope = ModelScope.MULTILINGUAL,
+            // Byte-for-byte the same hyperparameters as `medium-q5` off the header — n_vocab
+            // 51865, 24 encoder layers at 1024, 80 mel bins — differing ONLY in ftype (2007 = Q8_0
+            // against 1008 = Q5_0). That is what makes this pair a controlled comparison.
+            minRamBytes = 0L,
+            instrument = true,
+        ),
         WhisperModel(
             id = "ultra",
-            displayName = "Ultra (large-v3-turbo)",
+            // 4.6: the quantisation joined the name, for the same reason `multi`'s did — the
+            // `ultra-q8` rung below is this same file at a different quantisation. ftype 2008 =
+            // Q5_0, from the header.
+            displayName = "Ultra (large-v3-turbo, Q5_0)",
             fileName = "ggml-large-v3-turbo-q5_0.bin",
             url = urlFor("ggml-large-v3-turbo-q5_0.bin"),
             approxBytes = 574_041_195L,
@@ -292,10 +402,63 @@ object WhisperCatalog {
             // filterbank — the fact `isCpuFallbackEligible` used to spell as `id != "ultra"`.
             // Read from this file's ggml header (n_mels, offset 40), not assumed.
             melBins = 128,
-            // See extreme tier note: 7.0e9 = genuine 8 GB-class hardware after totalMem slack.
-            minRamBytes = 7_000_000_000L,
-            retired = true,
-            unsupported = true,
+            // 4.6 — UN-RETIRED, as an INSTRUMENT, per the owner's ruling of 2026-09-13. Three
+            // literals changed together and each one has to:
+            //  - `retired` is gone, so the tier is OFFERED again. Nobody has been able to select
+            //    it since 3.7, which means nobody has run large-v3-turbo on the CPU since VAD
+            //    chunking landed — it is offered here so it can be measured, not because it has
+            //    been. The research gives it zero device minutes and refutes it by arithmetic
+            //    (turbo's whole saving is 28 removed DECODER layers in a workload that is 83-88%
+            //    encoder, and its encoder IS large-v3's). That is exactly a prediction the owner
+            //    has chosen to test.
+            //  - `unsupported` goes with it, necessarily: a tier the app OFFERS cannot also be one
+            //    it migrates people OFF ([ModelMigration.decide] raises the "no longer supported"
+            //    card on `unsupported` alone), and `every_unsupported_tier_is_also_retired` states
+            //    the same coupling from the test side. An `ultra` user who has carried that
+            //    migration card since 3.7 simply has a live tier again.
+            //  - `minRamBytes` drops from 7.0e9 to 0. An instrument makes no RAM claim: it is
+            //    unrecommended because nobody has measured its throughput, not because of the
+            //    device in the user's hand, and a RAM gate here would render the card as
+            //    "needs more RAM than this device reports" on a phone where that is false.
+            minRamBytes = 0L,
+            instrument = true,
+        ),
+        WhisperModel(
+            id = "ultra-q8",
+            displayName = "Ultra (large-v3-turbo, Q8_0)",
+            fileName = "ggml-large-v3-turbo-q8_0.bin",
+            url = urlFor("ggml-large-v3-turbo-q8_0.bin"),
+            // 874,188,075 — LFS pointer size AND X-Linked-Size, 2026-09-13.
+            approxBytes = 874_188_075L,
+            sha256 = SHA256_ULTRA_Q8,
+            scope = ModelScope.MULTILINGUAL,
+            // 128, read off THIS file's header — the same n_vocab 51866 / 32 encoder layers at
+            // 1280 / 4 text layers as `ultra`, differing only in ftype (2007 = Q8_0 against
+            // 2008 = Q5_0). So it is refused as a mel donor and as a CPU fallback for exactly the
+            // reason `ultra` is ([isCpuFallbackEligible]), by its recorded width and not by name.
+            melBins = 128,
+            minRamBytes = 0L,
+            instrument = true,
+        ),
+        WhisperModel(
+            id = "large-v3",
+            displayName = "Multilingual (large-v3, Q5_0)",
+            fileName = "ggml-large-v3-q5_0.bin",
+            url = urlFor("ggml-large-v3-q5_0.bin"),
+            // 1,081,140,203 — LFS pointer size AND X-Linked-Size, 2026-09-13. The largest single
+            // file this app can be asked to download.
+            approxBytes = 1_081_140_203L,
+            sha256 = SHA256_LARGE_V3,
+            scope = ModelScope.MULTILINGUAL,
+            // 128, read off this file's own header — the change large-v3 made to the filterbank,
+            // which `ultra` and `ultra-q8` inherit by being distilled from it. **THIS is the row
+            // that made the mel width a catalog field**: the first single-file, ungated, PICKABLE
+            // 128-bin tier, which is precisely the residual the old `id != "ultra"` clause stated
+            // about itself. Its 32 text layers against turbo's 4 are the whole difference between
+            // the two — same encoder, eight times the decoder.
+            melBins = 128,
+            minRamBytes = 0L,
+            instrument = true,
         ),
         WhisperModel(
             id = "npu",
@@ -370,6 +533,17 @@ object WhisperCatalog {
      * device-independent lineup it has always had.
      */
     val pickable: List<WhisperModel> = entries.filter { !it.retired && !it.gated }
+
+    /**
+     * The [WhisperModel.instrument] rungs, in catalog order — one home for "which rungs are
+     * offered without being advocated" (4.6).
+     *
+     * Derived, never a second list: a row carries the flag and this finds it, so a rung cannot be
+     * an instrument in one place and a recommendation in another. Read by the tests that prove no
+     * instrument is recommended, default or a migration target, and it is the handle the
+     * throughput-verdict gate keys on.
+     */
+    val instruments: List<WhisperModel> = entries.filter { it.instrument }
 
     /**
      * The tier a device powerful enough to run it is offered, and the ONLY one (4.3).
