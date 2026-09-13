@@ -48,6 +48,28 @@ data class WhisperModel(
     val approxBytes: Long,
     val sha256: String,
     val scope: ModelScope,
+    /**
+     * The width of this model's mel filterbank: **80 for every whisper model before `large-v3`,
+     * 128 for `large-v3` and everything distilled from it** (`large-v3-turbo` included). Read off
+     * each 128-bin row's own ggml header — `n_mels` is the tenth int32, 40 bytes into the file, so
+     * a 48-byte range read settles it without downloading a gigabyte. The 80 default is the whole
+     * pre-v3 family and needs no literal per row.
+     *
+     * **It exists because 4.6 adds the tier the old rule named as its own residual.**
+     * [WhisperCatalog.isCpuFallbackEligible] excluded the one 128-bin tier BY NAME (`id != "ultra"`)
+     * and said so: *"a future SINGLE-file 128-bin tier would qualify by both clauses, because the
+     * catalog records no mel-bin count. Adding one is the real fix and it is a catalog change."*
+     * The `large-v3` rung IS that tier — single-file, ungated, pickable, 128-bin — so the count is
+     * recorded here and the predicate reads it instead of a name. `pcmToMel` compares the donor
+     * model's `whisper_model_n_mels` against the arming tier's declared width and refuses a
+     * mismatch (`whisper_jni.cpp:635`), so a 128-bin donor is not a degraded choice, it is a
+     * failed load.
+     *
+     * The name is [com.whispereverywhere.npu.NpuModelSpec.melBins]'s on purpose — one vocabulary
+     * for one fact — and the two gated rows take their value FROM that table rather than restating
+     * it, so the catalog and the spec cannot disagree about a tier they both describe.
+     */
+    val melBins: Int = 80,
     val minRamBytes: Long,
     /**
      * A tier that is no longer OFFERED but must remain RESOLVABLE. Removing an entry outright
@@ -232,6 +254,10 @@ object WhisperCatalog {
             approxBytes = 574_041_195L,
             sha256 = SHA256_ULTRA,
             scope = ModelScope.MULTILINGUAL,
+            // large-v3-turbo is large-v3's own encoder, so it carries large-v3's 128-bin
+            // filterbank — the fact `isCpuFallbackEligible` used to spell as `id != "ultra"`.
+            // Read from this file's ggml header (n_mels, offset 40), not assumed.
+            melBins = 128,
             // See extreme tier note: 7.0e9 = genuine 8 GB-class hardware after totalMem slack.
             minRamBytes = 7_000_000_000L,
             retired = true,
@@ -251,6 +277,9 @@ object WhisperCatalog {
             // Same whisper-small weights as `multi`, quantised for the Hexagon: 90+ languages,
             // not an English-only tier.
             scope = ModelScope.MULTILINGUAL,
+            // FROM the spec table, not restated: this tier is the one that needs an 80-bin mel
+            // DONOR, and `pcmToMel` compares the donor's n_mels against exactly this number.
+            melBins = NpuModelSpec.SMALL.melBins,
             // No RAM gate: the SoC gate (NpuGate) already restricts this tier to 8 Gen 3-class
             // hardware, which is never RAM-poor, and a second gate would only raise the chooser's
             // "high-end devices only" note on devices that had already passed the real test.
@@ -281,6 +310,10 @@ object WhisperCatalog {
             sha256 = SHA256_NPU_TURBO_ENCODER,
             // large-v3-turbo: 100 languages, the same multilingual promise as `multi` and `npu`.
             scope = ModelScope.MULTILINGUAL,
+            // FROM the spec table, for the same reason `npu`'s is: this row and that one describe
+            // one tier, and 128 is why it carries a BUNDLED filterbank instead of asking for a
+            // donor (NpuModelSpec.TURBO.melAsset).
+            melBins = NpuModelSpec.TURBO.melBins,
             // No RAM gate, same reasoning as `npu`: the SoC gate already restricts this tier to
             // 8 Gen 3-class hardware.
             minRamBytes = 0L,
@@ -388,18 +421,26 @@ object WhisperCatalog {
      *  - `NpuModelSpec.forTier(id) == null` — STRUCTURAL, not a literal (4.1 L3): an npu-class
      *    tier's file is a QAIRT context binary, not a ggml, and asking the table that knows which
      *    tiers those are means the next row is excluded by the clause that excludes this one.
-     *  - `id != "ultra"` — by NAME, and deliberately: `large-v3-turbo` is a perfectly real whisper
-     *    model and a perfectly good fallback, refused here only because its filterbank is 128-bin
-     *    and `pcmToMel` rejects it by bin count. The real fix is a mel-bin count in the catalog,
-     *    which is a catalog change nobody has made yet.
+     *  - `melBins == NpuModelSpec.SMALL.melBins` — **4.6: THE FIX THIS CLAUSE'S OWN KDOC ASKED
+     *    FOR.** It used to read `id != "ultra"`, by name, above a stated residual: *"a future
+     *    SINGLE-file 128-bin tier would qualify by both clauses, because the catalog records no
+     *    mel-bin count. Adding one is the real fix and it is a catalog change."* The `large-v3`
+     *    rung is that tier, so the count is in the catalog ([WhisperModel.melBins]) and this reads
+     *    it. Both 128-bin rungs are now excluded by the property that disqualifies them, and the
+     *    NEXT one is excluded before anyone remembers this comment. The width compared against is
+     *    the `npu` tier's own, because that is the tier that needs a donor and `pcmToMel` refuses
+     *    any donor whose `whisper_model_n_mels` is not exactly it (`whisper_jni.cpp:635`) — a
+     *    128-bin donor is a failed load, not a worse one. `ultra` and `large-v3` remain perfectly
+     *    real whisper models; they are refused for their filterbank and nothing else.
      *  - `pairedArtifact == null` — excludes the npu class a second time, structurally, and would
      *    catch a future two-artefact tier nobody thought to name.
      *
-     * Retired tiers are ELIGIBLE on purpose: eco and base are ordinary 80-bin whisper models, and
-     * an installed one is a real fallback.
+     * Retired tiers are ELIGIBLE on purpose: eco, base and (since 4.6) pro are ordinary 80-bin
+     * whisper models, and an installed one is a real fallback.
      */
     fun isCpuFallbackEligible(model: WhisperModel): Boolean =
-        NpuModelSpec.forTier(model.id) == null && model.id != "ultra" && model.pairedArtifact == null
+        NpuModelSpec.forTier(model.id) == null &&
+            model.melBins == NpuModelSpec.SMALL.melBins && model.pairedArtifact == null
 
     /**
      * Does this device hold anything the NPU tier could decline INTO? (4.3)

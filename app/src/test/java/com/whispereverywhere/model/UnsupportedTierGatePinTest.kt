@@ -335,9 +335,10 @@ class UnsupportedTierGatePinTest {
         // 4.0 Q8. `cpuTierModelPath` answers two questions with one file (the D-Q6-1 ruling): the
         // 80-bin mel filterbank the NPU tier borrows, and the CPU backend it falls back to. Both
         // exclusions are live defects, not hygiene:
-        //  - `ultra` is large-v3-turbo, a 128-BIN model. `pcmToMel` refuses it by bin count, so as
-        //    a donor it is a failed load — and an `ultra` user would otherwise be handed it as the
-        //    preferred candidate purely because it is the tier they selected.
+        //  - A 128-BIN model — `ultra` (large-v3-turbo) and, since 4.6, `large-v3` itself.
+        //    `pcmToMel` refuses it by bin count, so as a donor it is a failed load — and that
+        //    tier's own user would otherwise be handed it as the preferred candidate purely
+        //    because it is the tier they selected.
         //  - `npu` is not a ggml file at all. It is the QAIRT encoder context this tier is trying
         //    to arm; handing it to `initMelOnly` is handing a QNN blob to a whisper.cpp loader.
         // Neither is reachable from a JVM test (the manager needs a Context), which is the same
@@ -373,18 +374,30 @@ class UnsupportedTierGatePinTest {
             1,
             liveLineCount(manager, "WhisperCatalog.isCpuFallbackEligible(model)"),
         )
-        assertEquals(
-            "128-bin large-v3-turbo is excluded BY NAME, on a LIVE line, with the reason in the " +
-                "KDoc — the real fix is a mel-bin count in the catalog, and replacing the " +
-                "literal is a catalog decision this pin exists to demand",
-            1,
-            liveLineCount(catalog, "model.id != \"ultra\""),
+        // 4.6 — THE DECISION THIS PIN EXISTED TO DEMAND, LANDED. The clause read
+        // `model.id != "ultra"` on a live line, and this assertion's own message said the real fix
+        // was a mel-bin count in the catalog. The ladder's new `large-v3` rung is the tier that
+        // forced it: a SINGLE-FILE, ungated, PICKABLE 128-bin ggml, which the by-name clause would
+        // have admitted as the mel donor under the 80-bin `npu` graph. So the count is in the
+        // catalog (WhisperModel.melBins, read off each file's own ggml header) and the clause asks
+        // the question it was always about — on a LIVE line, with the literal gone from every live
+        // line in both files, the same shape the npu-class exclusion below takes.
+        liveIndexOfOrFail(
+            catalog,
+            "WhisperModel.kt — the 128-bin exclusion must be the catalog's recorded mel WIDTH: " +
+                "`model.melBins == NpuModelSpec.SMALL.melBins` asks whether this file's " +
+                "filterbank is the one pcmToMel computes for the arming tier, so the NEXT " +
+                "128-bin rung is excluded by the clause that already excludes ultra and large-v3 " +
+                "rather than by a third literal nobody remembers to add",
+            "model.melBins == NpuModelSpec.SMALL.melBins",
         )
         assertEquals(
-            "and the manager grew no second copy of the clause — one rule, two readers, or the " +
-                "decline card can promise a fallback the backend then refuses to find",
+            "and the id literal must be gone from every LIVE line in BOTH files — left standing " +
+                "beside the width clause it is the fix landed and bypassed, and the manager must " +
+                "still carry no second copy of the rule: one rule, two readers, or the decline " +
+                "card can promise a fallback the backend then refuses to find",
             0,
-            liveLineCount(manager, "model.id != \"ultra\""),
+            liveLineCount(catalog, "model.id != \"ultra\"") + liveLineCount(manager, "model.id != \"ultra\""),
         )
         // 4.1 L3. THE NPU EXCLUSION IS STRUCTURAL NOW, AND THIS PIN IS LIVE-SCOPED FOR IT.
         //

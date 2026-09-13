@@ -171,18 +171,24 @@ class WhisperModelManager(
      * backend it falls back to (4.0, Q8; the D-Q6-1 ruling — one file, two uses, donor ⊂ fallback).
      *
      * **Both exclusions are load-bearing and both are spelled out.**
-     *  - `ultra` (`large-v3-turbo`) carries a **128-bin** filterbank. `pcmToMel` refuses it by bin
-     *    count, so as a donor it is not a degraded choice, it is a failed load — and as a *fallback*
-     *    it would otherwise be preferred by an `ultra` user purely because it is what they have.
+     *  - A **128-bin** tier — `ultra` (`large-v3-turbo`) and, since 4.6, `large-v3` — carries the
+     *    wrong filterbank. `pcmToMel` refuses it by bin count, so as a donor it is not a degraded
+     *    choice, it is a failed load — and as a *fallback* it would otherwise be preferred by that
+     *    tier's own user purely because it is what they have. Excluded by the catalog's recorded
+     *    [WhisperModel.melBins] since 4.6, not by name.
      *  - `npu` is not a ggml file at all: it is the encoder context binary this tier is trying to
      *    arm. Handing it to `initMelOnly` is handing a QAIRT blob to a whisper.cpp loader.
      *
      * The `pairedArtifact == null` clause excludes `npu` a second time, structurally, and would
      * catch a future two-artefact tier nobody thought to name here — the same "the id says why, the
-     * structure catches the next one" pairing `isInstallableByDownload` uses. The residual risk is
-     * stated rather than hidden: a future SINGLE-file 128-bin tier would qualify by both clauses,
-     * because the catalog records no mel-bin count. Adding one is the real fix and it is a catalog
-     * change, not a manager change.
+     * structure catches the next one" pairing `isInstallableByDownload` uses.
+     *
+     * **4.6 CLOSED THE RESIDUAL THIS KDOC USED TO STATE.** It read: *"a future SINGLE-file 128-bin
+     * tier would qualify by both clauses, because the catalog records no mel-bin count. Adding one
+     * is the real fix and it is a catalog change, not a manager change."* 4.6's `large-v3` rung is
+     * exactly that tier, the catalog now records [WhisperModel.melBins], and the predicate keys on
+     * it — so the exclusion is a property of the file, not a list of names, and the risk is gone
+     * rather than merely written down.
      *
      * The **selected** tier is preferred when it qualifies, so a session that falls back falls back
      * to the model the user actually chose; otherwise the first installed eligible tier in catalog
@@ -215,9 +221,9 @@ class WhisperModelManager(
      *
      * **THE RULE ITSELF MOVED TO [WhisperCatalog.isCpuFallbackEligible] AT 4.3 AND THIS
      * DELEGATES** — unchanged in body, clause for clause, with every clause's reasoning (the
-     * structural npu-class exclusion from 4.1 L3, `ultra` excluded by name for its 128-bin
-     * filterbank, `pairedArtifact == null` as the second structural catch) carried to its new
-     * home. It moved because 4.3 gave the predicate a SECOND reader: the decline card must answer
+     * structural npu-class exclusion from 4.1 L3, the 128-bin filterbank exclusion — by name until
+     * 4.6, by the catalog's recorded mel width since — and `pairedArtifact == null` as the second
+     * structural catch) carried to its new home. It moved because 4.3 gave the predicate a SECOND reader: the decline card must answer
      * *"is there anything to fall back to?"* without a `Context`, and a copy of this rule in the
      * pure layer could promise a fallback that this one then refuses to find — which is the
      * silent-failure shape the loud-fallback doctrine exists to prevent. One rule, two readers.

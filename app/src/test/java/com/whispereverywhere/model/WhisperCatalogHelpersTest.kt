@@ -455,17 +455,61 @@ class WhisperCatalogHelpersTest {
         }
     }
 
+    // ------------------------------------------------------- 4.6: the catalog records mel width
+    //
+    // The ladder gains a SECOND 128-bin rung (`large-v3`), which is the tier the old by-name
+    // exclusion named as its own residual. These pin the recorded widths and prove the predicate
+    // now keys on the width rather than on a list of ids.
+
+    /**
+     * Every row's mel width, and where each 128 comes from. The values are read off the files
+     * themselves — `n_mels` is the tenth int32 of a ggml header, 40 bytes in, so a 48-byte range
+     * read settles a rung without downloading it (`ggml-large-v3-turbo-q5_0.bin` 128, verified
+     * 2026-09-13 at the pinned commit).
+     *
+     * The census is exhaustive on purpose: a new row inherits the 80 default, and a 128-bin row
+     * that inherits it silently is the mute-failure this field exists to prevent.
+     */
+    @Test fun every_row_records_its_mel_width_and_only_the_large_v3_family_is_128() {
+        val byWidth = WhisperCatalog.entries.groupBy { it.melBins }.mapValues { (_, v) -> v.map { it.id } }
+        assertEquals(
+            "a tier gained or lost a mel width — 80 and 128 are the only two whisper has",
+            setOf(80, 128),
+            byWidth.keys,
+        )
+        assertEquals(
+            "the 128-bin rows are exactly the large-v3 family: the turbo distillation of " +
+                "large-v3 and the NPU graph of that turbo",
+            listOf("ultra", "npu-turbo"),
+            byWidth.getValue(128),
+        )
+        // The gated rows take their width FROM the spec table, so the two descriptions of one
+        // tier cannot disagree — and the ggml rows' 80 default is the same number the npu-small
+        // graph demands of a donor, which is what makes the predicate below well-posed.
+        assertEquals(NpuModelSpec.SMALL.melBins, WhisperCatalog.byId("npu")!!.melBins)
+        assertEquals(NpuModelSpec.TURBO.melBins, WhisperCatalog.byId("npu-turbo")!!.melBins)
+        assertEquals(NpuModelSpec.SMALL.melBins, WhisperCatalog.byId("multi")!!.melBins)
+        WhisperCatalog.entries.filter { it.gated }.forEach {
+            assertEquals(
+                "gated tier '${it.id}': the catalog row and the spec row describe ONE tier",
+                NpuModelSpec.forTier(it.id)!!.melBins,
+                it.melBins,
+            )
+        }
+    }
+
     /**
      * 4.3 — the CPU-fallback predicate, lifted out of `WhisperModelManager.isMelDonorEligible` so
-     * the decline card and the backend ask ONE question. Clause for clause, the manager's own.
+     * the decline card and the backend ask ONE question. Clause for clause, the manager's own —
+     * and since 4.6 the 128-bin clause is the catalog's recorded width, not the id `"ultra"`.
      */
     @Test fun the_cpu_fallback_predicate_admits_every_80_bin_ggml_and_nothing_else() {
         fun eligible(id: String) = WhisperCatalog.isCpuFallbackEligible(WhisperCatalog.byId(id)!!)
-        // Retired tiers are eligible ON PURPOSE: an installed eco or base is a real fallback.
+        // Retired tiers are eligible ON PURPOSE: an installed eco, base or pro is a real fallback.
         listOf("eco", "base", "pro", "extreme", "multi").forEach {
             assertTrue("'$it' is an 80-bin ggml and must be a legal fallback", eligible(it))
         }
-        // ultra by NAME (128-bin filterbank, refused by bin count); the npu class structurally.
+        // 128-bin (refused by bin count); the npu class structurally.
         assertFalse("ultra is 128-bin — pcmToMel refuses it", eligible("ultra"))
         assertFalse("npu is a QAIRT context binary, not a ggml", eligible("npu"))
         assertFalse("and so is npu-turbo", eligible("npu-turbo"))
@@ -483,6 +527,47 @@ class WhisperCatalogHelpersTest {
         assertTrue("a retired-but-installed tier answers yes", WhisperCatalog.hasCpuFallback(setOf("eco")))
         assertTrue(WhisperCatalog.hasCpuFallback(setOf("npu-turbo", "multi")))
         assertFalse("an unresolvable id admits nothing", WhisperCatalog.hasCpuFallback(setOf("nope")))
+    }
+
+    /**
+     * **THE 4.6 KEY CHANGE, PINNED AGAINST THE MUTATION IT REPLACES.** On today's catalog
+     * `id != "ultra"` and `melBins == 80` agree on every row, so no census above can tell the two
+     * predicates apart — the difference only shows on a tier that does not exist yet, which is
+     * exactly when nobody will be reading the comment that explains it. Both shapes are therefore
+     * constructed, the same discipline `downloadability_tracks_the_artefact_count_and_not_the_
+     * device_gate` established for the download refusal.
+     *
+     * The dangerous half is the first: a single-file 128-bin rung that is not called "ultra" would
+     * pass the old clause, become the mel donor under the 80-bin `npu` graph, and fail
+     * `pcmToMel`'s band check at load — or be handed to a declining session as a CPU fallback it
+     * cannot compute a spectrogram with.
+     */
+    @Test fun the_fallback_exclusion_keys_on_the_mel_width_and_not_on_the_id() {
+        val otherNamed128 = WhisperCatalog.byId("multi")!!.copy(id = "future-128", melBins = 128)
+        assertFalse(
+            "a 128-bin single-file ggml is refused whatever it is called — keying on the id " +
+                "`ultra` would admit it and fail pcmToMel's band check at load",
+            WhisperCatalog.isCpuFallbackEligible(otherNamed128),
+        )
+        val eightyBinUltra = WhisperCatalog.byId("ultra")!!.copy(melBins = 80)
+        assertTrue(
+            "and the NAME carries nothing any more: were ultra's filterbank 80-bin it would be a " +
+                "legal donor, because the filterbank is the whole reason it is refused",
+            WhisperCatalog.isCpuFallbackEligible(eightyBinUltra),
+        )
+        // The width compared against is the npu-small graph's own input width, not a literal: that
+        // is the tier that needs a donor, and pcmToMel refuses any donor that is not exactly it.
+        assertEquals(80, NpuModelSpec.SMALL.melBins)
+        WhisperCatalog.entries.forEach { m ->
+            if (WhisperCatalog.isCpuFallbackEligible(m)) {
+                assertEquals(
+                    "'${m.id}' is admitted as a donor, so its filterbank must be the one " +
+                        "pcmToMel computes for the arming tier",
+                    NpuModelSpec.SMALL.melBins,
+                    m.melBins,
+                )
+            }
+        }
     }
 
     /**
