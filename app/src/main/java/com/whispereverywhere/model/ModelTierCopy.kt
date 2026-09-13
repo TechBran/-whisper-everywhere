@@ -160,14 +160,35 @@ object ModelTierCopy {
         // (docs/measurements, 2026-09-02) and ~6 s per 17.6 s chunk on the Tab S10+ (2026-09-09).
         // Owner ruling 2026-09-10: "it's actually the fastest one we have and most accurate".
         // Still no absolute — "fastest" and "most accurate" rank our lineup, not the world.
+        //
+        // **4.6 T2 — THE ACCURACY HALF WAS SCOPED; THE SPEED HALF IS UNTOUCHED.** The card read
+        // "Best accuracy, fastest" / "The most accurate model this app ships", and 4.6 falsified
+        // the accuracy half by OFFERING `large-v3` — whisper's full checkpoint with its complete
+        // 32-layer decoder, against turbo's 4. So the app now ships a more accurate model than
+        // this one, and a card that says otherwise is wrong on the day the ladder lands.
+        //
+        // The fix is a SCOPE, not a deletion, and the distinction matters twice:
+        //
+        //  * The claim is true of what it is actually about. `npu` and `npu-turbo` are the only
+        //    two models that run on the AI chip and turbo is the more accurate of them — the
+        //    owner's own A/B (2026-08-29) is exactly that comparison. "The most accurate model
+        //    that runs there" is the same sentence with its real subject restored.
+        //  * **The SPEED claim is measured, owner-ruled, and stays verbatim.** Deleting a true
+        //    claim to satisfy a rule about false ones would be the regression, and the rule 4.6
+        //    adds — no CPU rung claims speed — is about rungs nobody has measured. This one has
+        //    been measured twice, on two devices, and the owner ruled on it.
+        //
+        // `large-v3` now carries the unscoped accuracy superlative ("Highest accuracy"), and it
+        // is the only card that may: `exactly_one_card_claims_the_top_of_the_accuracy_order`
+        // fails the moment a second one does, which is precisely how this defect arrived.
         "npu-turbo" to TierCopy(
-            headline = "Best accuracy, fastest",
+            headline = "Best AI-chip accuracy, fastest",
             // 1072 MB = the PAIR (encoder 775,831,552 + decoder 295,854,080), same rule as npu's
             // badge: what the user installs, not the one file WhisperModel.fileName names.
             badges = listOf("90+ languages", "1072 MB"),
-            body = "Large-v3's own encoder, on your phone's AI chip. The most accurate model this " +
-                "app ships, and the fastest on this device — ahead of the 190 MB Multilingual " +
-                "model on both counts.",
+            body = "Large-v3's own encoder, on your phone's AI chip. The most accurate model " +
+                "that runs there, and the fastest on this device — ahead of the 190 MB " +
+                "Multilingual model on both counts.",
         ),
     )
 

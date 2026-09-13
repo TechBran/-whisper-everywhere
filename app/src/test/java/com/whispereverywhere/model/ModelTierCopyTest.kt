@@ -719,10 +719,21 @@ class ModelTierCopyTest {
         // and the owner ruled on 2026-09-10: "it's actually the fastest one we have and most
         // accurate". Both words are already in POSITION_WORDS, so the census passes without the
         // constant being edited to fit the copy — which would be the wrong way round.
-        assertEquals("Best accuracy, fastest", copy.headline)
+        //
+        // 4.6 T2: was "Best accuracy, fastest". The accuracy half went false the moment the ladder
+        // OFFERED `large-v3` (full 32-layer decoder against turbo's 4), so it is now SCOPED to the
+        // silicon it is true on. The speed half is byte-identical: it is measured on two devices
+        // and owner-ruled, and `exactly_one_card_claims_the_top_of_the_accuracy_order` asserts
+        // both halves of that — one unscoped claimant, and turbo's scoped claim still present.
+        assertEquals("Best AI-chip accuracy, fastest", copy.headline)
         assertTrue(
             "the npu-turbo headline takes no speed-vs-accuracy position",
             POSITION_WORDS.any { copy.headline.lowercase().contains(it) },
+        )
+        // The word the owner ruled on, still on the card where the eye lands first.
+        assertTrue(
+            "the npu-turbo headline dropped the measured speed claim",
+            copy.headline.lowercase().contains("fastest"),
         )
     }
 
@@ -750,11 +761,22 @@ class ModelTierCopyTest {
 
     @Test fun the_npu_turbo_body_names_our_own_visible_tier_and_scopes_both_claims_to_this_device() {
         val copy = ModelTierCopy.forId("npu-turbo")!!
+        // 4.6 T2: "The most accurate model this app ships" became "The most accurate model that
+        // runs there" — the same claim with its real subject restored. `large-v3` is now offered
+        // and is more accurate than turbo, so the app-wide superlative was false; the AI-chip
+        // scope is exactly what the owner's 2026-08-29 A/B compared, so nothing measured was lost.
         assertEquals(
-            "Large-v3's own encoder, on your phone's AI chip. The most accurate model this " +
-                "app ships, and the fastest on this device — ahead of the 190 MB Multilingual " +
-                "model on both counts.",
+            "Large-v3's own encoder, on your phone's AI chip. The most accurate model " +
+                "that runs there, and the fastest on this device — ahead of the 190 MB " +
+                "Multilingual model on both counts.",
             copy.body,
+        )
+        // The scope is a word, and the word has to be there: without "that runs there" the
+        // sentence is the app-wide claim again.
+        assertTrue(copy.body.contains("that runs there"))
+        assertFalse(
+            "the card claims the app-wide accuracy top again, and `large-v3` outranks it",
+            copy.body.contains("most accurate model this app ships"),
         )
         // The comparison is OUR OWN tier — and one the user can SEE: since 4.3's one-tier-per-
         // device, "Multilingual on NPU" is never offered beside turbo, so naming it (as 4.1 did)
@@ -775,6 +797,67 @@ class ModelTierCopyTest {
         )
     }
 
+    // ------------------------------------------------- 4.6 T2 — THE ACCURACY ORDER
+    //
+    // Accuracy is the ONE axis these cards are entitled to rank, and the ladder's own comment
+    // block says why: whisper's size ordering is a property of the checkpoints, not a prediction
+    // about the owner's six phones. Ranking it costs nothing — as long as exactly ONE card claims
+    // the top. 4.6 broke that by offering `large-v3`, whose complete 32-layer decoder outranks
+    // the turbo the NPU card had been calling "the most accurate model this app ships" since 4.1.
+
+    /**
+     * **Two cards may not both claim the top of the accuracy order.** The census walks every
+     * sentence of every offered card, finds the ones that pair a superlative with an accuracy
+     * word, and demands that each belongs either to the single lineup-wide claimant or to a
+     * sentence that NAMES THE SCOPE it is true within.
+     *
+     * That shape is the fix, rather than deleting turbo's accuracy claim. The claim is TRUE of the
+     * silicon it is about — `npu` and `npu-turbo` are the only two models that run on the AI chip
+     * and turbo is the more accurate of them — and the owner ruled on it (2026-09-10, *"it's
+     * actually the fastest one we have and most accurate"*). What `large-v3` falsified is only its
+     * SCOPE. So the card keeps the claim and states where it holds, and `large-v3` carries the
+     * unscoped one. Deleting a measured claim would have been the regression.
+     *
+     * **"On this device" is deliberately NOT a scope marker here.** It scopes a SPEED claim, which
+     * is a fact about hardware; an accuracy claim is a fact about the checkpoint, so the only
+     * scope that narrows it honestly is the set of models it is being ranked against — which is
+     * what "on the AI chip" / "that runs there" names.
+     *
+     * Deliberately NOT asserted: that the claimant is derivably the most accurate row. **Byte
+     * order is not accuracy order on this ladder** — `medium-q8` (823 MB) is larger than `ultra`
+     * (574 MB) and less accurate than it, because one is whisper medium and the other is
+     * large-v3's encoder — so there is nothing in the catalogue to derive the ranking from, and a
+     * proxy that agrees today would be a worse test than a pinned id plus this census. The defect
+     * class guarded here is the one that actually happened: a SECOND card claiming the same top.
+     */
+    @Test fun exactly_one_card_claims_the_top_of_the_accuracy_order() {
+        val claimants = offeredTiers
+            .filter { model ->
+                sentencesOf(ModelTierCopy.forId(model.id)!!).any { isUnscopedAccuracyTopClaim(it) }
+            }
+            .map { it.id }
+        assertEquals(
+            "the top of the accuracy order is claimed by $claimants. Exactly one card may claim " +
+                "it, and every other accuracy superlative must name the scope it holds within — " +
+                "4.1's turbo card said 'the most accurate model this app ships', which 4.6's " +
+                "large-v3 rung made false",
+            listOf("large-v3"),
+            claimants,
+        )
+        // The other half of the same rule: turbo's measured accuracy claim is STILL THERE, and
+        // scoped. A future pass that scrubs superlatives app-wide would take a true, owner-ruled
+        // claim with it, and this line is what stops that being silent.
+        assertTrue(
+            "npu-turbo no longer claims the accuracy it measured — the claim must survive, " +
+                "scoped to the silicon it is true on",
+            sentencesOf(ModelTierCopy.forId("npu-turbo")!!).any { s ->
+                SUPERLATIVE.containsMatchIn(s) &&
+                    ACCURACY_WORD.containsMatchIn(s) &&
+                    ACCURACY_SCOPE_MARKERS.any { s.contains(it) }
+            },
+        )
+    }
+
     @Test fun no_two_offered_tiers_share_a_headline() {
         // New with the second NPU card: the lineup now holds two tiers a user must tell apart at
         // a glance, and the headline is the glance. A copy-paste that leaves two cards reading
@@ -790,5 +873,30 @@ class ModelTierCopyTest {
     private companion object {
         /** The 3.7 census's position vocabulary, shared so the npu pin cannot drift from the loop. */
         val POSITION_WORDS = listOf("fastest", "fast", "slower", "accuracy")
+
+        /**
+         * A card's claims, one per sentence — the headline plus the body split at sentence ends,
+         * lowercased. Per-SENTENCE and not per-card on purpose: a scope named in one sentence does
+         * not license an unscoped superlative in the next one, and turbo's card is exactly that
+         * shape (the AI chip is named in its first sentence, the accuracy claim lives in its
+         * second, and the second has to carry its own scope).
+         */
+        fun sentencesOf(copy: ModelTierCopy.TierCopy): List<String> =
+            (listOf(copy.headline) + copy.body.split(". ")).map { it.lowercase() }
+
+        /** Superlative forms only — a COMPARATIVE ("sharper accuracy") claims no top. */
+        val SUPERLATIVE = Regex("\\b(best|highest|most|sharpest|top)\\b")
+        val ACCURACY_WORD = Regex("\\b(accurate|accuracy|quality|sharp|sharper|sharpest)\\b")
+
+        /**
+         * The scopes an accuracy superlative may be narrowed by: the SET OF MODELS it is ranked
+         * against. "On this device" is not one of them — see the census's own KDoc.
+         */
+        val ACCURACY_SCOPE_MARKERS = listOf("ai chip", "ai-chip", "runs there", "on the npu")
+
+        fun isUnscopedAccuracyTopClaim(sentence: String): Boolean =
+            SUPERLATIVE.containsMatchIn(sentence) &&
+                ACCURACY_WORD.containsMatchIn(sentence) &&
+                ACCURACY_SCOPE_MARKERS.none { sentence.contains(it) }
     }
 }
