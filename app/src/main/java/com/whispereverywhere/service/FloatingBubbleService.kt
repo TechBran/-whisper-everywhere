@@ -305,6 +305,67 @@ internal fun previewPackToWarm(
 }
 
 /**
+ * Should a pack that JUST FINISHED INSTALLING be warmed right now? (4.5.1 Task 1 — the
+ * first-session fix.) Pure, pinned as a truth table by LocalPreviewGateTest; the ONE caller is the
+ * board collector in `onCreate`, which logs its answer.
+ *
+ * ### The defect
+ *
+ * > *"What can we do about having to transcribe a second time to get the live to work? … That's a
+ * > friction point for users. People are going to think that it doesn't work."*
+ *
+ * `warmStreamingPreview` had exactly two callers — the boot prewarm and the wrap site — and the
+ * wrap site's own KDoc says it *"arms NEXT session, not this one, because warm() is asynchronous
+ * and the gate reads isWarmFor() now"*. So an install that completed mid-process warmed nothing
+ * until a session had already started and ended: session one armed nothing, session two worked.
+ * The 4.5.0 acceptance sheet recorded that miss as EXPECTED (AF6), which was the wrong call — a
+ * user who picks a language, watches 73-128 MB arrive and then sees no words concludes the feature
+ * is broken, and nothing in the design requires it. This function is the third trigger.
+ *
+ * ### It decides WHEN, and never WHICH
+ *
+ * **[previewPackToWarm] is the one owner of *"which pack should be resident"*** — the boot prewarm,
+ * the wrap site, the release-on-selection-change collector and this all take their answer from it,
+ * so no two of them can disagree and thrash the 802-860 ms load between them. This adds only the
+ * three terms an EVENT has and a session does not:
+ *
+ *  - **the phase that landed** — [com.whispereverywhere.transcription.stream.PreviewPhase.INSTALLED]
+ *    and nothing else. It is the phase whose own KDoc says *"the marker landed and the recognizer
+ *    can open the install"*; every other phase has no model on disk yet, or never will.
+ *  - **[sessionActive] / [batchJobActive]** — the existing refusals, inherited and not re-decided.
+ *    A load beside a live session would run under the very recognizer `PreviewTeeEngine` has
+ *    BORROWED, and a batch file job is the research's §3.9 refusal. Mid-trigger is SKIPPED rather
+ *    than deferred, exactly like the trim re-prewarm and the model-switch collector: the next
+ *    session's wrap site fills this slot, at the cost of that one session's live words.
+ *  - **[residentWarmPack]** — the pack the ENGINE is warm for right now, so a repair install over a
+ *    resident pack posts no second load. A skip, not a mechanism: `warm` is idempotent on the pack.
+ *    Deliberately the engine's own `isWarmFor` answer and not `streamingPreviewPack`, which still
+ *    names the pack after an `onTrimMemory` freed the recognizer — refusing on that field would
+ *    leave the previewer cold behind a receipt promising words.
+ *
+ * @param installedLanguage the language of the board record that just changed phase. Compared with
+ *        [previewLanguage] rather than assumed equal to it: *"never warm a language that is not the
+ *        selection"*, and two packs can be arriving at once.
+ * @return the pack to hand [warmStreamingPreview], or null to do nothing at all.
+ */
+internal fun warmOnPackInstalled(
+    installedLanguage: String,
+    phase: com.whispereverywhere.transcription.stream.PreviewPhase,
+    previewLanguage: String?,
+    installedPackLanguages: Set<String>,
+    userEnabled: Boolean,
+    sessionActive: Boolean,
+    batchJobActive: Boolean,
+    residentWarmPack: com.whispereverywhere.transcription.stream.StreamingPack?,
+): com.whispereverywhere.transcription.stream.StreamingPack? {
+    if (phase != com.whispereverywhere.transcription.stream.PreviewPhase.INSTALLED) return null
+    if (previewLanguage == null || installedLanguage != previewLanguage) return null
+    if (sessionActive || batchJobActive) return null
+    val pack = previewPackToWarm(previewLanguage, installedPackLanguages, userEnabled) ?: return null
+    return if (pack == residentWarmPack) null else pack
+}
+
+/**
  * The states whose elapsed ticker runs (3.6.0, Workstream E4). PROCESSING kept for the legacy
  * branch that has always owned the ticker UI; FINALIZING added so the stop-tap drain counts up
  * visibly alongside the "Finishing…" status line instead of an unchanging spinner. The ticker's

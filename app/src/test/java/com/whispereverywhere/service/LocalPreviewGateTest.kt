@@ -1,6 +1,8 @@
 package com.whispereverywhere.service
 
 import com.whispereverywhere.model.ModelScope
+import com.whispereverywhere.transcription.stream.PreviewPhase
+import com.whispereverywhere.transcription.stream.StreamingPack
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import java.io.File
 import org.junit.Assert.assertEquals
@@ -282,6 +284,137 @@ class LocalPreviewGateTest {
         // frees it when the new selection has NONE. Between them a language change can never
         // leave the wrong model — or an unused one — in memory.
         assertEquals(StreamingPackCatalog.EN, warms("en", packs = everyPack))
+    }
+
+    // ------------------------------------------ the INSTALL's own warm (4.5.1 Task 1, the first
+    // ------------------------------------------ session fix)
+
+    /**
+     * [warmOnPackInstalled] — the third gate, and the only one whose trigger is an EVENT rather
+     * than a session or a boot.
+     *
+     * The defect it retires: an install that completes mid-process warmed nothing, because
+     * `warmStreamingPreview` was called only from the boot prewarm and from the wrap site — and the
+     * wrap site's own KDoc says it *"arms NEXT session, not this one"*. So the user who picked a
+     * language, watched 73-128 MB arrive and tapped got no words, and the session AFTER that one
+     * worked. 4.5.0's acceptance sheet recorded that as expected (AF6); the owner is right that a
+     * user meets it as *"this doesn't work"*.
+     *
+     * Every row below is the SAME question the other two gates ask about WHICH pack — the
+     * delegation to [previewPackToWarm] is pinned as an equality in
+     * [theInstallWarmAndTheSessionWarmAgreeAboutWhichPackIsResident] — plus the three terms only an
+     * event has: the phase that just landed, whether a session or a batch job is running right now,
+     * and whether the engine is already warm for that very pack.
+     */
+    private fun warmsOnInstall(
+        phase: PreviewPhase = PreviewPhase.INSTALLED,
+        recordLanguage: String = "en",
+        selection: String? = "en",
+        packs: Set<String> = setOf("en"),
+        enabled: Boolean = true,
+        session: Boolean = false,
+        batch: Boolean = false,
+        resident: StreamingPack? = null,
+    ) = warmOnPackInstalled(
+        installedLanguage = recordLanguage,
+        phase = phase,
+        previewLanguage = selection,
+        installedPackLanguages = packs,
+        userEnabled = enabled,
+        sessionActive = session,
+        batchJobActive = batch,
+        residentWarmPack = resident,
+    )
+
+    @Test fun anInstallThatCOMPLETESWarmsTheSelectedLanguagesOwnPack() {
+        // The whole point: this is the answer 4.5.0 had no way to produce, and it is produced at
+        // the moment the bytes land rather than at the end of the next session.
+        assertEquals(StreamingPackCatalog.EN, warmsOnInstall())
+        assertEquals(
+            "the row for THIS language, never the first row — the fr install must not load en",
+            "en",
+            warmsOnInstall(packs = everyPack)?.language,
+        )
+    }
+
+    @Test fun noPhaseBUTInstalledWarmsAnything() {
+        // A 73 MB transfer passes through six phases before it lands and can end in three
+        // terminal ones. Only the phase whose own KDoc says *"the marker landed and the recognizer
+        // can open the install"* has a model to load; the `when` is written out so a phase added
+        // to the machine has to be answered here rather than inheriting a warm by default.
+        for (phase in PreviewPhase.entries) {
+            val warm = warmsOnInstall(phase = phase)
+            if (phase == PreviewPhase.INSTALLED) {
+                assertEquals("the landing warms: $phase", StreamingPackCatalog.EN, warm)
+            } else {
+                assertNull("nothing to load yet, or ever: $phase", warm)
+            }
+        }
+    }
+
+    @Test fun aLanguageThatIsNotTheSELECTIONIsNeverWarmed() {
+        // The brief's own refusal — *"never warm a language that is not the selection"*. Reachable
+        // and not theoretical: the board is keyed per language and two packs can arrive at once,
+        // so an install completing for a language the user has since moved off must not evict the
+        // model for the one they are on. Auto (null) gets no live words at all, by owner ruling, so
+        // it gets no load either.
+        assertNull("a record for another language", warmsOnInstall(recordLanguage = "fr", packs = setOf("en", "fr")))
+        assertNull("Auto — no live words, and so no +169 MB", warmsOnInstall(selection = null))
+        assertNull("the raw picker code, if it ever reached here", warmsOnInstall(selection = "auto"))
+        assertNull("the switch off is still off", warmsOnInstall(enabled = false))
+        assertNull("a marker that is not on disk is nothing to load", warmsOnInstall(packs = emptySet()))
+    }
+
+    @Test fun aLiveSessionOrARunningBatchJobRefusesTheLoad() {
+        // The existing refusals, inherited rather than re-decided: a second 802-860 ms load and
+        // +169 MB beside a live session would run under the very recognizer `PreviewTeeEngine` has
+        // BORROWED (the release collector's own reason), and a batch file job is the research's
+        // §3.9 refusal — two CPU consumers beside whisper's bursts.
+        //
+        // SKIPPED, not deferred, exactly like the trim re-prewarm and the model-switch collector:
+        // the next session's wrap site is the thing that fills this slot. What it costs is stated
+        // in the report, because it is the one shape where this build's promise is delayed.
+        assertNull("a session is running", warmsOnInstall(session = true))
+        assertNull("a batch file job is running", warmsOnInstall(batch = true))
+        assertNull("both", warmsOnInstall(session = true, batch = true))
+    }
+
+    @Test fun aPackTheEngineIsAlreadyWARMForIsNotReloaded() {
+        // A repair install over a resident, warm pack is the reachable shape. `warm()` is
+        // idempotent on the pack and would no-op anyway, so this is a skip and not a mechanism —
+        // it spares Main a posted task and the log a line that would read as a second load.
+        //
+        // The term is the ENGINE's `isWarmFor(pack)` and deliberately NOT `streamingPreviewPack`:
+        // after an `onTrimMemory` that field still names the pack while the recognizer is freed,
+        // and refusing on it would leave the previewer cold with a receipt promising words.
+        assertNull("already warm for it", warmsOnInstall(resident = StreamingPackCatalog.EN))
+        assertEquals(
+            "warm for ANOTHER language's pack is exactly when this load must happen — the engine " +
+                "releases that one inside its own task before it loads this",
+            StreamingPackCatalog.EN,
+            warmsOnInstall(resident = StreamingPackCatalog.forLanguage("fr")),
+        )
+    }
+
+    @Test fun theInstallWarmAndTheSessionWarmAgreeAboutWhichPackIsResident() {
+        // ONE OWNER FOR *"which pack should be resident"*, held as an equality rather than by
+        // reading two call sites — the same discipline
+        // [theWarmSiteAsksOfTheLANGUAGEExactlyWhatTheArmSiteAsks] applies to the other pair. This
+        // gate adds terms about WHEN; it must add none about WHICH, or an install could load a pack
+        // the release collector (which branches on `previewPackToWarm == null`) then frees, and the
+        // two would thrash the 802-860 ms load between them.
+        val languages = listOf(null, "auto", "en", "es", "zh")
+        val sets = listOf(emptySet<String>(), setOf("en"), setOf("es"), everyPack)
+        for (lang in languages) for (packs in sets) for (enabled in listOf(true, false)) {
+            val case = "lang=$lang installed=$packs enabled=$enabled"
+            // The record is the SELECTED language's, which is the only shape the call site can
+            // produce (the board is keyed by language and it looks the selection up).
+            val onInstall = lang?.let {
+                warmsOnInstall(recordLanguage = it, selection = it, packs = packs, enabled = enabled)
+            }
+            val onSession = warms(lang, packs = packs, enabled = enabled)
+            assertEquals("install == session: $case", onSession, onInstall)
+        }
     }
 
     // ------------------------------------------------------------------ R3, the switch's default
