@@ -30,7 +30,7 @@ import java.security.MessageDigest
  * |---|---|
  * | the two licence texts are present in FULL, clause by clause, rather than summarised or linked | that reproducing them discharges §4 — that is a legal conclusion, and no test makes one |
  * | every pack the catalogue can fetch has an attribution row naming its upstream, its pinned revision and its declared licence | that the attribution is CORRECT about the upstream — it is checked against this repo's own record, which is the thing under review |
- * | the corpora that ask for credit are credited by the name each asks to be named by | that the corpus list is complete. Three of the seven rows have an UNDISCLOSED corpus and the page says so |
+ * | the corpora that ask for credit are credited by the name each asks to be named by | that the corpus list is complete. Two of the seven rows have an UNDISCLOSED corpus and the page says so |
  * | the modifications we actually make are stated, and no modification we do not make is claimed | that §4(b) is satisfied, for the same reason as row one |
  * | the page is reachable: a Settings row opens a route that opens THIS asset | that a human can see it on a device. Only a device session can say that |
  *
