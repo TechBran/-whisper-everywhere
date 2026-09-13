@@ -280,6 +280,81 @@ class ModelTierCopyTest {
     }
 
     /**
+     * **EVERY HEAVY RUNG WARNS, AND THE ONE EXEMPTION IS EARNED RATHER THAN LISTED.**
+     *
+     * The note has to be the LAST thing on the card, not a clause buried mid-paragraph — it is
+     * the sentence a user comes back to after the typed text has fallen a paragraph behind, and
+     * the previewer guarantees they will not notice before then (words keep landing on the strip
+     * at 0.4 s whatever the finalizer is doing). It also may not be the WHOLE card: a rung that
+     * only warns has not said what it is.
+     *
+     * **`small-q8` is the one instrument that does not warn, and the test derives that rather
+     * than accepting it.** The exemption rule: an instrument may stay silent only if it is the
+     * QUANTISATION TWIN of a rung that is not an instrument — i.e. of the one rung on this ladder
+     * with a measured verdict behind it. `small-q8` is `multi`'s twin: the same 12-layer, 768-dim
+     * whisper small, measured at F = 2.3 s and duty 0.42 on the Fold6, stored at `Q8_0` instead
+     * of `Q5_1`. Warning that THAT may not keep up would be a speed claim in reverse about the
+     * one rung the research predicts is FASTER (it is the twin that sits on ggml's ARM i8mm
+     * repack path). So the card says its throughput is unknown instead, which the test also
+     * requires — the exemption buys a different sentence, never silence.
+     *
+     * Nothing with a measured verdict warns at all: `multi` and the two NPU tiers have numbers
+     * behind them, and a caution on a measured pass would train the user to ignore the caution.
+     */
+    @Test fun every_heavy_rung_warns_and_the_one_exemption_is_earned() {
+        val note = ModelTierCopy.KEEP_UP_NOTE
+        val instruments = WhisperCatalog.entries.filter { it.instrument }
+        assertEquals("the instrument set is not six rungs any more", 6, instruments.size)
+
+        val warners = instruments.filter { ModelTierCopy.forId(it.id)!!.body.endsWith(note) }
+        val silent = instruments - warners.toSet()
+        assertEquals(
+            "the heavy rungs must end their card with the keep-up warning",
+            listOf("medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3"),
+            warners.map { it.id },
+        )
+        warners.forEach {
+            val body = ModelTierCopy.forId(it.id)!!.body
+            assertTrue(
+                "'${it.id}' warns and says nothing else — a card that only cautions has not said " +
+                    "what the model IS, which is the whole of what these cards are for",
+                body.removeSuffix(note).trim().length > 40,
+            )
+        }
+
+        assertEquals("exactly one instrument may stay quiet", 1, silent.size)
+        silent.forEach { model ->
+            val twin = twinOf(model)
+            assertNotNull(
+                "instrument '${model.id}' carries no keep-up warning and is nobody's quantisation " +
+                    "twin. Silence is earned ONLY by being the twin of a rung with a measured " +
+                    "verdict; every other rung on this ladder must warn",
+                twin,
+            )
+            assertFalse(
+                "instrument '${model.id}' is exempt because it is '${twin!!.id}'s twin, but " +
+                    "'${twin.id}' is an instrument too — so neither of them has a measured " +
+                    "verdict and the exemption rests on nothing",
+                twin.instrument,
+            )
+            // The exemption buys a DIFFERENT sentence, not silence.
+            val body = ModelTierCopy.forId(model.id)!!.body.lowercase()
+            assertTrue(
+                "'${model.id}' neither warns nor states that its throughput is unmeasured",
+                body.contains("throughput") && body.contains("unknown"),
+            )
+        }
+
+        (offeredTiers - instruments.toSet()).forEach { model ->
+            assertFalse(
+                "'${model.id}' has a measured verdict and still carries the keep-up warning — a " +
+                    "caution on a measured pass teaches the user to ignore cautions",
+                ModelTierCopy.forId(model.id)!!.body.contains(note),
+            )
+        }
+    }
+
+    /**
      * 4.6 — was `english_locales_are_steered_to_pro`. The English branch is GONE because the tier
      * it pointed at is retired (owner ruling 2026-09-13: multilingual rungs only), and a steer at
      * a retired tier is not a steer — the chooser does not render that card, so nothing would be
@@ -1022,6 +1097,38 @@ class ModelTierCopyTest {
          *    `ultra`'s displayName and body. Renaming someone else's checkpoint to dodge a word
          *    census would make the cards harder to match to the files they fetch.
          */
+        /**
+         * A displayName that ends in `(family, QUANT)` — the shape 4.6 gave every ggml rung so
+         * that two cards for the same weights are distinguishable on the card itself. The npu
+         * rows' names (`Multilingual on NPU (small)`) carry no quantisation token and therefore
+         * match nothing here, which is correct: their w8a16 conversion is not one of these.
+         */
+        val QUANT_IN_NAME = Regex("^(.*)\\((.+), (Q\\d_\\d)\\)$")
+
+        /** The quantisation token a card's own displayName states, or null if it states none. */
+        fun quantOf(model: WhisperModel): String? =
+            QUANT_IN_NAME.matchEntire(model.displayName)?.groupValues?.get(3)
+
+        /**
+         * The row that is THE SAME MODEL as this one at a different quantisation — derived from
+         * the displayNames rather than from a pair table, so a twin cannot be declared in the
+         * test and absent from the catalogue. Two rows are twins when their names agree on
+         * everything but the quantisation token AND the catalogue agrees they are the same
+         * model (same mel width, same language scope).
+         */
+        fun twinOf(model: WhisperModel): WhisperModel? {
+            val mine = QUANT_IN_NAME.matchEntire(model.displayName) ?: return null
+            return WhisperCatalog.entries.firstOrNull { other ->
+                if (other.id == model.id) return@firstOrNull false
+                val theirs = QUANT_IN_NAME.matchEntire(other.displayName) ?: return@firstOrNull false
+                theirs.groupValues[1] == mine.groupValues[1] &&
+                    theirs.groupValues[2] == mine.groupValues[2] &&
+                    theirs.groupValues[3] != mine.groupValues[3] &&
+                    other.melBins == model.melBins &&
+                    other.scope == model.scope
+            }
+        }
+
         val SPEED_CLAIM_WORDS = listOf(
             "fast", "faster", "fastest", "quick", "quicker", "quickest", "quickly",
             "speedy", "snappy", "swift", "swifter", "rapid", "rapidly",
