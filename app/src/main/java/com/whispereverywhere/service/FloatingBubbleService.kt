@@ -1431,7 +1431,12 @@ class FloatingBubbleService : Service(),
         setBubbleWidth(160)
         waveformView.visibility = View.VISIBLE
         waveformView.start()
-        blobView.fillColor = android.graphics.Color.parseColor("#000000")
+        // (4.5.1 Task 2) ONE definition of the recording pill's black, and it is the resource
+        // that state already had: `@color/bubble_recording` is what `bubble_background_recording`
+        // is drawn from, and it was otherwise unread from code while two sites here carried the
+        // same hex literal. This is the mic BLOB, not the transcript panel — the panel's fill is
+        // the user's, through applyBubbleColours().
+        blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_recording)
         blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.RECORDING)
         speechStopIcon.visibility = View.VISIBLE
         ttsScrubber.setProgress(0, 0, 0, false)
@@ -2164,6 +2169,7 @@ class FloatingBubbleService : Service(),
 
         transcriptionEditText.movementMethod = android.text.method.ScrollingMovementMethod()
         applyPreviewSize()
+        applyBubbleColours()
 
         windowManager.addView(bubbleView, params)
 
@@ -2197,6 +2203,50 @@ class FloatingBubbleService : Service(),
         transcriptionEditText.layoutParams = transcriptionEditText.layoutParams.apply { width = widthPx }
         transcriptionEditText.maxHeight = heightPx
         transcriptionDeltaText.layoutParams = transcriptionDeltaText.layoutParams.apply { width = widthPx }
+    }
+
+    /**
+     * THE BUBBLE'S THREE USER-OWNED PRESENTATION FACTS, read from the preference and painted
+     * (4.5.1 Task 2, owner ruling 2026-09-12: *"users can change the colour of their live words
+     * and of their transcribed committed words as well … and maybe even the clarity of the black
+     * bubble background"*).
+     *
+     * **It decides nothing.** Which values are allowed, why the opacity has a floor and why the
+     * default red is not `#FF0000` all live in [BubbleColours], asserted there by a contrast
+     * cross product; the preference re-clamps every read through the same object. This function
+     * reads three numbers and paints three views.
+     *
+     * **One view covers every live path.** `transcriptionDeltaText` is the live strip, and
+     * [deltaOwnsPreviewStrip] already hands it to the on-device previewer when there is one and
+     * to the four live cloud providers' `onDelta` when there is not — so one colour on this one
+     * view is the owner's *"even for cloud providers, if we can separate it"*, already answered.
+     *
+     * ### Why it runs at SHOW time and not once at service start
+     *
+     * Called from [createBubbleView] and from both paths that make the panel visible, each
+     * immediately after [applyPreviewSize] — the geometry re-clamp that already runs at every
+     * one of them, and for the same reason. The service outlives Settings, so a value read once
+     * at start would go stale the moment the user picked a colour. The panel is `GONE` between
+     * sessions, so "when it next appears" is indistinguishable from "immediately" for everything
+     * except a colour changed *during* a live session, which is not a gesture that exists (the
+     * only way to reach the palette is the Settings screen). No collector, therefore, and no
+     * fourth thing to keep in step.
+     *
+     * The layout's own `#FFFFFF` / `#E6FFFFFF` / `#E6000000` stay as the pre-first-apply
+     * defaults — the relationship the layout already documents for the 280dp panel width — and
+     * a background that is not the shape drawable we expect keeps them, silently, rather than
+     * throwing on a bubble the user is looking at.
+     */
+    private fun applyBubbleColours() {
+        transcriptionEditText.setTextColor(app.preferencesManager.bubbleCommittedColour)
+        // Derived, not a fourth setting: the "Listening…" hint would otherwise stay white under
+        // a user who made the committed text amber, which reads as a bug and not as their choice.
+        transcriptionEditText.setHintTextColor(BubbleColours.hintArgb(app.preferencesManager.bubbleCommittedColour))
+        transcriptionDeltaText.setTextColor(app.preferencesManager.bubbleLiveColour)
+        // The fill is set on the SHAPE so the drawable's 16dp corners survive, and `mutate()`
+        // first because an un-mutated drawable is shared by every view that inflated it.
+        (transcriptionPreviewContainer.background?.mutate() as? android.graphics.drawable.GradientDrawable)
+            ?.setColor(BubbleColours.panelArgb(app.preferencesManager.bubbleOpacityPercent))
     }
 
     /**
@@ -3659,6 +3709,7 @@ class FloatingBubbleService : Service(),
      */
     private fun showSessionPreview(live: Boolean) {
         applyPreviewSize()
+        applyBubbleColours()
         // The preview appearing is a geometry change: the window just grew upward/rightward.
         // Posted so the measure pass has run and currentWindowSize() sees the REAL new dims.
         bubbleView.post { reclampNow() }
@@ -3777,6 +3828,7 @@ class FloatingBubbleService : Service(),
             // start renders the panel at whatever geometry was left over, then jumps when
             // showSessionPreview runs at onOpen.
             applyPreviewSize()
+            applyBubbleColours()
             transcriptionEditText.visibility = View.GONE
             transcriptionDeltaText.text = label
             transcriptionDeltaText.scrollTo(0, 0)
@@ -5014,8 +5066,10 @@ class FloatingBubbleService : Service(),
                     waveformView.visibility = View.VISIBLE
                     waveformView.start()
                     // Deep black pill per the design reference — the aurora waves carry all the
-                    // color; the red recording accent lives in the timer dot.
-                    blobView.fillColor = android.graphics.Color.parseColor("#000000")
+                    // color; the red recording accent lives in the timer dot. (4.5.1 Task 2) The
+                    // second of the two sites that carried this as a hex literal; folded onto
+                    // `@color/bubble_recording`, the one definition of this state's black.
+                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_recording)
                     blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.RECORDING)
                     // Live recording timer: red dot + mm:ss, bottom-left in the pill.
                     recordingTimerText.visibility = View.VISIBLE
