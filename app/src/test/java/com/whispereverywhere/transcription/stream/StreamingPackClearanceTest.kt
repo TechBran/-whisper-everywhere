@@ -485,6 +485,9 @@ class StreamingPackClearanceTest {
             "permission from" to "no permission was granted by anybody for this record to cite",
             "legal opinion" to "no written legal opinion was obtained for any of these rows",
             "legally cleared" to "no lawyer cleared anything — the owner accepted a basis",
+            "sent to counsel" to "no row was ever sent to counsel. id, ko and zh were DESIGNATED " +
+                "counsel rows, and each designation was withdrawn with the claim it rested on. " +
+                "Record the designation and its withdrawal; the sending never happened",
             "certif" to "there is no certification of any kind behind these rows",
             "confirmed by" to "nobody confirmed anything: the German uploader was never asked, " +
                 "and NIA never replied because nothing was ever sent",
@@ -568,8 +571,9 @@ class StreamingPackClearanceTest {
      * What this record used to assert, and what is wrong with it: it said the shipped checkpoint
      * was trained on **WenetSpeech-L, 12,000 h**, and that its publisher's *"available to download
      * for non-commercial purposes"* made this *"a NAMED restriction … a worse position than an
-     * unnamed unknown"*. That is the sentence that made `zh` the weakest row in the survey and sent
-     * it to counsel. **It is not established.** Three reads disagree with it:
+     * unnamed unknown"*. That is the sentence that made `zh` the weakest row in the survey and
+     * DESIGNATED it a counsel row — nothing was ever sent, and the designation went with the claim.
+     * **It is not established.** Three reads disagree with it:
      *
      *  - the exact shipped mirror's own environment dump reads `training_subset: 'mix'`;
      *  - the official sherpa-onnx documentation describes an *internal* corpus;
@@ -701,7 +705,8 @@ class StreamingPackClearanceTest {
         assertTrue(
             "the 이용정책 clauses must be labelled as what they are: rules about ACCESS TO THE " +
                 "DATA, which we never sought. Left standing as terms on these weights they are " +
-                "the reason this row was sent to counsel",
+                "the reason this row was once DESIGNATED a counsel row — a designation withdrawn " +
+                "with them, since nothing was ever sent",
             corpora.contains("ACCESS TO THE DATA"),
         )
         // The residual, and the word it is recorded under. ACCEPTED is not RESOLVED.

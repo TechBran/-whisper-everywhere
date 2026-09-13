@@ -556,19 +556,21 @@ object PackClearanceRecord {
      * than its verdict.** It used to say the checkpoint was trained on WenetSpeech-L, 12,000 h, and
      * that the corpus publisher's non-commercial term made this *"a NAMED restriction … a worse
      * position than an unnamed unknown"*. That framing made `zh` the weakest row in the survey and
-     * sent it to counsel, and **it was not established**: the shipped mirror's own environment dump
-     * reads `training_subset: 'mix'`, the official sherpa-onnx documentation describes an internal
-     * corpus, and the `12k_hour` string is on the FORK PARENT's card. The parent's disclosure is
-     * lineage, not a disclosure about these bytes, so the corpus reads UNDISCLOSED and the
-     * non-commercial claim is withdrawn. `StreamingPackClearanceTest` holds both halves, including
-     * that no row converts an evaluation set into a training set.
+     * DESIGNATED it a counsel row — a designation withdrawn with the claim, because nothing was
+     * ever sent and no opinion was sought. And **it was not established**: the shipped mirror's own
+     * environment dump reads `training_subset: 'mix'`, the official sherpa-onnx documentation
+     * describes an internal corpus, and the `12k_hour` string is on the FORK PARENT's card. The
+     * parent's disclosure is lineage, not a disclosure about these bytes, so the corpus reads
+     * UNDISCLOSED and the non-commercial claim is withdrawn. `StreamingPackClearanceTest` holds
+     * both halves, including that no row converts an evaluation set into a training set.
      */
     val ZH = PackClearance(
         language = "zh",
         verdict = ClearanceVerdict.Cleared(
             grantedBy = "Brandon Slacum, decision owner, 2026-09-13 — and the row he accepted is " +
                 "not the row this record used to describe: its corpus claim was corrected the " +
-                "same day, and the counsel question it was sent to counsel for went with it",
+                "same day, and the counsel DESIGNATION that claim earned went with it. Nothing " +
+                "was ever sent, no opinion was sought and none exists",
             because = "apache-2.0 read in the front matter and platform-surfaced on every link of " +
                 "the chain, over a checkpoint whose training corpus is UNDISCLOSED — the card's " +
                 "own environment dump reads training_subset: 'mix', the official sherpa-onnx " +

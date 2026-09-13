@@ -482,8 +482,8 @@ not its 198 MB sibling.
 
 **CLEARED — Brandon Slacum, 2026-09-13**, on the corrected basis below: an Apache-2.0 grant over an
 **undisclosed** corpus, which is Russian's shape exactly. What was ACCEPTED is that unsized risk. No
-counsel opinion was sought, and the question this row was sent to counsel *for* went with the
-correction.
+counsel opinion was sought and nothing was ever sent: the corpus claim that had **designated** this
+a counsel row went with the correction, and the designation went with it.
 
 **CORRECTED 2026-09-13, and this section is the correction.** What it said before: that the weights
 were trained on **WenetSpeech-L** (12,000 h), whose publisher states the corpus is *"available to
