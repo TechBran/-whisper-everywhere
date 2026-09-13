@@ -222,6 +222,78 @@ class OssNoticePackagingTest {
         )
     }
 
+    // ------------------------------------------------------- 4. the observation, and its gap
+
+    /**
+     * The promotion checklist records what was actually opened, and the **notice page's own length
+     * and digest are derived from the file** — which is the whole point of this test.
+     *
+     * A bundle inspection is a statement about a file as it was on the day it was opened. Edit the
+     * page afterwards and the recorded observation quietly stops describing what ships, with
+     * nothing to say so: every content assertion in [OssNoticeTest] still passes, because those
+     * read the page, and the doc still reads confidently, because prose does not know its subject
+     * changed. So the doc must cite this page's exact byte count and `sha256`, and an edit to the
+     * page reddens THIS test until somebody opens a bundle again and re-records what they saw.
+     *
+     * The two release-side constants are literals because they are history: the 4.5.1/93 bundle the
+     * controller built and verified, and the notice entry inside its `base/`. They are the evidence
+     * that the release path carries this asset unmodified, and a record that loses them loses the
+     * only observation of `bundleRelease` there is.
+     *
+     * **And the gap has to stay stated.** No release bundle of 4.5.2 exists yet, so the doc must
+     * keep saying so. The forbidden scan below catches the three sentences a careless edit would
+     * write; it cannot catch every rewording, which is why the positive sentence is required too.
+     */
+    @Test fun theChecklistRecordsTheBundleObservationAndTheGapThatRemains() {
+        val checklist = File(repoRoot(), CLEARANCE_DOC).readText().replace("\r\n", "\n")
+        val notice = File(repoRoot(), BASE_MODULE_NOTICE).readBytes()
+        val length = String.format(java.util.Locale.ROOT, "%,d", notice.size)
+        val digest = sha256(notice)
+
+        assertTrue(
+            "the checklist does not cite this page's own byte count ($length B) and sha256 " +
+                "($digest). Those are DERIVED from the file here, so if the page was edited after " +
+                "the bundle inspection was recorded, this is the assertion that says so: the " +
+                "recorded observation now describes a page that no longer exists. Re-open a " +
+                "bundle, read the base/ entry, and record what you saw — do not retype the " +
+                "numbers from the file",
+            checklist.contains("$length B") && checklist.contains(digest),
+        )
+        assertTrue(
+            "the checklist no longer carries the 4.5.1/93 release bundle's identity " +
+                "($RELEASE_451_AAB_SHA256) and the digest of the notice entry inside its base/ " +
+                "($RELEASE_451_NOTICE_SHA256). That pair is the ONLY observation this project has " +
+                "of a bundleRelease artefact carrying this asset, and a record without it has " +
+                "nothing but a debug bundle behind the claim that the notices ship",
+            checklist.contains(RELEASE_451_AAB_SHA256) &&
+                checklist.contains(RELEASE_451_NOTICE_SHA256),
+        )
+        assertTrue(
+            "the checklist must keep saying that no RELEASE bundle of 4.5.2 has been opened, and " +
+                "that a debug bundle is not one. The two halves observed — the release path " +
+                "carries this asset unmodified, and this branch's page lands in base/ — are two " +
+                "facts, and putting them together is an INFERENCE about an artefact nobody has " +
+                "built yet. A promotion is decided from this document, so the inference must not " +
+                "be readable as an observation",
+            checklist.contains("no release bundle of 4.5.2") &&
+                checklist.contains("bundleRelease") &&
+                checklist.contains("not legal clearance"),
+        )
+        for (claim in listOf(
+            "observed in the release bundle",
+            "the 4.5.2 release bundle was opened",
+            "verified in the artefact that ships",
+        )) {
+            assertTrue(
+                "the checklist now says \"$claim\". Nobody has built a 4.5.2 release bundle. " +
+                    "Relabelling the debug-bundle observation as the release one is the same " +
+                    "class of error as inventing an approval, and this is the document a " +
+                    "promotion is read from",
+                !checklist.contains(claim),
+            )
+        }
+    }
+
     // ------------------------------------------------------- the house source walker
 
     /** `app/build.gradle.kts`, LF-normalised so the needles above are written once. */
@@ -245,6 +317,10 @@ class OssNoticePackagingTest {
         return Regex("\":([A-Za-z0-9_]+)\"").findAll(expression).map { ":" + it.groupValues[1] }.toList()
     }
 
+    private fun sha256(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+
     private fun repoRoot(): File {
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
         while (dir != null) {
@@ -260,5 +336,19 @@ class OssNoticePackagingTest {
 
         /** The only non-payload file a pack payload directory may carry (`PREVIEW_ANCHOR`). */
         const val PAYLOAD_ANCHOR = ".gitkeep"
+
+        /** The document a promotion is decided from. A declared input of the test task. */
+        const val CLEARANCE_DOC = "docs/LANGUAGE-CLEARANCE.md"
+
+        /**
+         * The 4.5.1/93 release bundle the controller built and verified — 5,438,505,736 B — and
+         * the digest of `base/assets/oss_licenses.html` inside it, which is byte-identical to that
+         * release's own committed page. History, so literals: this is the project's one observation
+         * of the RELEASE path carrying this asset into `base/` unmodified.
+         */
+        const val RELEASE_451_AAB_SHA256 =
+            "4a168f0a1794cb4fc2a13501ca382fd59d4b848516cd8d7a9c1f705782e2cd65"
+        const val RELEASE_451_NOTICE_SHA256 =
+            "7901187a688a45c0478e1b165b67d1e59ed5af86bc1e519bbb5172b89913e524"
     }
 }

@@ -645,12 +645,21 @@ class OssNoticeTest {
                 checklist.contains(test),
             )
         }
+        // (4.5.2 Task 4) The sentence this asserted — "a condition written down rather than a
+        // condition observed" — was written when NOTHING had been opened. Two artefacts have been
+        // since, so the checklist now states the negative in two parts: what the suite alone
+        // proves about packaging (nothing), and which artefact each observation came from. This
+        // needle keeps the first part, which is this suite's own claim about itself; the
+        // observation record and the gap that remains are OssNoticePackagingTest's to hold.
         assertTrue(
             "…and the checklist must say what the suite CANNOT establish: it reads the asset in " +
                 "the source tree, so it is neither legal clearance nor evidence that the file was " +
-                "packaged into a bundle's base/. Only an inspection of a built AAB can say that",
-            checklist.contains("base/") &&
-                checklist.contains("condition written down rather than a condition observed"),
+                "packaged into a bundle's base/. Only an inspection of a built artefact can say " +
+                "that, and the checklist must not let a green suite stand in for one",
+            checklist.contains("A green suite is not legal clearance") &&
+                checklist.contains(
+                    "no evidence at all that the asset was packaged into a bundle's `base/`"
+                ),
         )
         assertTrue(
             "…and the checklist's NOTICE row must be scoped the way the page is scoped: SIX of " +

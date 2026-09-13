@@ -316,11 +316,26 @@ Before promoting a release from the internal track to production:
    | §4(b): what we actually change — **selection, naming, packaging**, and nothing else. All 28 files are downloaded byte-for-byte at the pinned revision and refused on a digest mismatch; the `int8` export is the upstream publisher's, and the Russian decoder is not quantised at all | `OssNoticeTest.theModificationsStatedAreTheOnesWeActuallyMake` — the naming half is derived from `PackFile.path` vs `name`, and a **forbidden-phrase scan** fails the build if the page starts claiming a modification we do not make |
    | it is **reachable**: a Settings row → `onNavigateToLicenses` → the `open_source_licenses` route → *this* asset | `OssNoticeTest.theLicencesScreenIsReachableFromSettingsAndOpensThisAsset` — four one-line links, each of which breaks silently |
 
-   **And what none of that establishes.** Every row above reads
-   `app/src/main/assets/oss_licenses.html` **in the source tree**. A green suite is not legal
-   clearance, and it is **not evidence that the asset was packaged into a bundle's `base/`** — only
-   an inspection of a built AAB can say that, and until one has been done the condition is a
-   condition written down rather than a condition observed.
+   **What none of that establishes, and what two inspections did.** Every row above reads
+   `app/src/main/assets/oss_licenses.html` **in the source tree**. A green suite is not legal clearance,
+   and on its own it is no evidence at all that the asset was packaged into a bundle's `base/`. Two
+   artefacts were opened on 2026-09-13 (4.5.2 Task 4), and **they are two separate facts**:
+
+   | what was opened | what was read inside it | what that establishes |
+   |---|---|---|
+   | the **4.5.1/93 RELEASE bundle** — the artefact the controller built and verified: `bundleRelease`, 5,438,505,736 B, `sha256 4a168f0a1794cb4fc2a13501ca382fd59d4b848516cd8d7a9c1f705782e2cd65` | `base/assets/oss_licenses.html`, 12,492 B, `sha256 7901187a688a45c0478e1b165b67d1e59ed5af86bc1e519bbb5172b89913e524` — **byte-identical** to that release's own committed page (its CRLF working-tree form) | the RELEASE path carries this asset into `base/` **unmodified**, with `isMinifyEnabled` and `isShrinkResources` both on. It says nothing about 4.5.2's notices: that bundle was built before them |
+   | a **DEBUG bundle** built from this branch at `0663afe` — the three payload gates excluded with `-x` and all ten asset packs therefore empty, which is the only bundle this worktree can build | `base/assets/oss_licenses.html`, **39,024 B**, `sha256 73ecd96b27544a57cd7355086356f17c51096a1225a1ec174fef9d26d50ee11c` — byte-identical to the committed page. Every notice element probed PRESENT inside the packaged entry (both licence texts with the Apache APPENDIX line and ggml's real copyright line, all seven `id="pack-*"` rows carrying seven distinct 40-character revisions, KsponSpeech + aihub.or.kr + the NIA credit, the five corpora, the §4(b) statement) and a deliberately wrong control probe MISSING; and the Settings row → route → asset chain's four strings present in the packaged dex | **this exact page** reaches `base/assets/` of a bundle built from this branch, intact to the byte |
+
+   **And the gap, stated as a gap: no release bundle of 4.5.2 has been opened, because none has been
+   built.** A debug bundle is not a release bundle — different build type, no R8, the payload gates
+   skipped, the packs empty — so reading the two rows above as one conclusion is an **inference**
+   about an artefact that does not exist yet. What closes it is one `bundleRelease` of 4.5.2 and one
+   read of its `base/assets/oss_licenses.html`. Until then the notices condition is written down,
+   observed on the release path for the ASSET and observed in a debug bundle for the CONTENT — and
+   **if that read ever comes back missing, the condition is unmet and the Korean pack must not be
+   promoted, whatever this suite reports.** `OssNoticePackagingTest` derives the byte count and
+   digest above from the page itself, so editing the page reddens the build until somebody opens a
+   bundle again and records what they saw.
 4. Run the §AL acceptance rows on device for every language being published.
 
 ---
