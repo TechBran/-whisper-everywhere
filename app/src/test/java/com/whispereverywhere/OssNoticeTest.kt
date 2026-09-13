@@ -1,6 +1,9 @@
 package com.whispereverywhere
 
+import com.whispereverywhere.transcription.stream.PackClearanceRecord
+import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -224,6 +227,143 @@ class OssNoticeTest {
                 "each MIT item carries. Where an upstream supplies no holder and no year, the " +
                 "page says so — and the Indonesian pack is that case",
             page.contains("no copyright holder and no year"),
+        )
+    }
+
+    // ------------------------------------------------- 3. one attribution row per fetchable pack
+
+    /**
+     * **THE FAILURE MODE THIS EXISTS FOR IS AN EIGHTH LANGUAGE.** A pack module added, a catalogue
+     * row added, a clearance verdict written — and no attribution. That is one omission, on a legal
+     * surface, in a build where nothing else would notice: the pack downloads, installs, arms and
+     * puts words on the strip whether or not anybody credited the people who trained it.
+     *
+     * So nothing here is typed. The loop is [StreamingPackCatalog.packs] itself, and each row is
+     * demanded **by the pack's own identity**:
+     *
+     *  - the row exists, at `id="pack-<language>"`, and it is inside the live-words section rather
+     *    than filed under the transcription model or the bundled audio;
+     *  - it carries the **forty-character revision the bytes are actually downloaded at**, taken
+     *    out of [StreamingPack.baseUrl]. Not the short form and not a tag: `resolve/main` is a
+     *    mutable ref, so a revision recorded to eight characters names a commit nobody can be sure
+     *    they have. A re-pin to a new upstream commit that leaves the page saying the old one is
+     *    red here;
+     *  - it names **the repository the four files come from**, which for Russian is NOT the
+     *    repository the grant is read at — the bytes come from an untagged mirror. Both belong on
+     *    that row, and [PackClearanceRecord]'s `readAt` is held on the page by
+     *    `StreamingPackClearanceTest.theLicencePageNamesTheWeightsOfEveryLanguageTheAppCanFetch`,
+     *    so between the two tests the row cannot drop either half;
+     *  - it spells the licence **as the upstream declares it** (`license: apache-2.0`,
+     *    `license: mit`), from [PackClearance.licence] rather than from prose, because "Apache
+     *    License 2.0" is what the licence asks to be called and `license: apache-2.0` is what the
+     *    model card actually says. The page carries both, and the two tests split them.
+     *
+     * ### The NOTICE finding, and why it is a finding rather than an omission
+     *
+     * §4(d) asks that a NOTICE file's contents be carried *where the upstream supplies one*, and
+     * §4(c) asks that copyright notices be retained. **None of the seven repositories contains a
+     * `NOTICE`, `LICENSE` or `COPYING` file**, and each declares its grant as a bare identifier in
+     * its model card's front matter with no copyright line attached. That was read from each
+     * repository's complete recursive file listing at the revision pinned on its row.
+     *
+     * A page that simply said nothing about it would be indistinguishable from a page whose author
+     * never looked, so the page states the finding — and states it without inventing a holder or a
+     * year for any row, which is the specific thing the owner's decision of 2026-09-13 forbids.
+     * This asserts the statement is there and that it is scoped to what was read.
+     *
+     * **What this does NOT establish:** that the upstreams' declarations are valid, that the
+     * revisions are the right ones to have pinned, or that no notice obligation exists that this
+     * page has missed. It establishes that every pack the app can fetch is credited, at the
+     * revision it is fetched at, and that an eighth one cannot arrive uncredited.
+     */
+    @Test fun everyPackTheAppCanFetchHasAnAttributionRowWithItsPinnedRevision() {
+        val page = noticeAsset().readText().replace("\r\n", "\n")
+        val liveWords = page.indexOf("<h2>Live words (the streaming preview)</h2>")
+        assertTrue("the live-words section is gone from the page", liveWords >= 0)
+
+        for (pack in StreamingPackCatalog.packs) {
+            val marker = "id=\"pack-${pack.language}\""
+            assertTrue(
+                "the licences page has no attribution row $marker. Every pack the app can fetch " +
+                    "needs one, and this is the test that stops an eighth language from arriving " +
+                    "in the bundle uncredited — it downloads, installs and arms whether or not " +
+                    "anybody credited the people who trained it",
+                page.contains(marker),
+            )
+            assertTrue(
+                "'${pack.language}'s attribution row is outside the live-words section — a " +
+                    "preview pack is neither the transcription model nor the bundled audio",
+                page.indexOf(marker) > liveWords,
+            )
+            val row = page.substringAfter(marker).substringBefore("</div>")
+
+            assertTrue(
+                "'${pack.language}'s row must name the model. Found: $row",
+                row.contains("Streaming Zipformer"),
+            )
+
+            // The revision the BYTES come from, in full, out of the catalogue's own URL.
+            val revision = pack.baseUrl.substringAfter("/resolve/").substringBefore("/")
+            assertEquals(
+                "'${pack.language}'s baseUrl is not commit-pinned to a 40-character sha — " +
+                    "nothing on this page can be pinned to a revision that does not exist",
+                40,
+                revision.length,
+            )
+            assertTrue(
+                "'${pack.language}'s attribution row does not carry its pinned revision " +
+                    "$revision in full. Eight characters names a commit nobody can be sure they " +
+                    "have, and a re-pin that leaves this page on the old revision is a notice " +
+                    "about weights the app no longer ships. Found: $row",
+                row.contains(revision),
+            )
+
+            // The repository the four files are downloaded from — which for `ru` is the untagged
+            // mirror, not the tagged upstream the grant is read at.
+            val repo = pack.baseUrl.removePrefix("https://huggingface.co/").substringBefore("/resolve/")
+            assertTrue(
+                "'${pack.language}'s row does not name $repo, the repository its four files are " +
+                    "downloaded from. Found: $row",
+                row.contains(repo),
+            )
+
+            // The licence spelled as the upstream declares it, from the record rather than prose.
+            val record = PackClearanceRecord.forLanguage(pack.language)
+            assertNotNull("'${pack.language}' ships with no clearance record at all", record)
+            assertTrue(
+                "'${pack.language}'s row must reproduce the declaration the upstream actually " +
+                    "makes — \"license: ${record!!.licence}\" — and not only the licence's " +
+                    "prose name. Found: $row",
+                row.contains("license: ${record.licence}"),
+            )
+
+            assertEquals(
+                "'${pack.language}' is no longer a four-file pack, so the page's \"four files\" " +
+                    "is stale",
+                4,
+                pack.files.size,
+            )
+        }
+
+        // The NOTICE finding: stated, and scoped to what was read.
+        for (phrase in listOf(
+            "NOTICE",
+            "COPYING",
+            "complete recursive file listing",
+            "no copyright line",
+        )) {
+            assertTrue(
+                "the page must record what the upstreams supply as a notice and what they do " +
+                    "not, in terms a reader can check — \"$phrase\" is missing. §4(d) carries a " +
+                    "NOTICE file's contents where one exists; a page silent on the question is " +
+                    "indistinguishable from a page whose author never looked",
+                page.contains(phrase),
+            )
+        }
+        assertTrue(
+            "…and it must say that nothing was invented where nothing was supplied. That is the " +
+                "one thing the owner's decision of 2026-09-13 forbids outright",
+            page.contains("none has been invented") || page.contains("nothing has been invented"),
         )
     }
 
