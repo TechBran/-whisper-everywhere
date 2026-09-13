@@ -262,9 +262,13 @@ class OssNoticeTest {
      *
      * §4(d) asks that a NOTICE file's contents be carried *where the upstream supplies one*, and
      * §4(c) asks that copyright notices be retained. **None of the seven repositories contains a
-     * `NOTICE`, `LICENSE` or `COPYING` file**, and each declares its grant as a bare identifier in
-     * its model card's front matter with no copyright line attached. That was read from each
-     * repository's complete recursive file listing at the revision pinned on its row.
+     * `NOTICE`, `LICENSE` or `COPYING` file**, and **six of the seven** declare their grant as a
+     * bare identifier in the model card's own front matter with no copyright line attached.
+     * **The seventh is the Russian row**: the mirror its bytes come from declares nothing of its
+     * own at all, and the grant relied on there is the one on the tagged upstream named on that
+     * row, to which its four files are byte-identical — so saying "each declares" would assert a
+     * grant on a repository that asserts none. That was read from each repository's complete
+     * recursive file listing at the revision pinned on its row.
      *
      * A page that simply said nothing about it would be indistinguishable from a page whose author
      * never looked, so the page states the finding — and states it without inventing a holder or a
@@ -647,6 +651,17 @@ class OssNoticeTest {
                 "packaged into a bundle's base/. Only an inspection of a built AAB can say that",
             checklist.contains("base/") &&
                 checklist.contains("condition written down rather than a condition observed"),
+        )
+        assertTrue(
+            "…and the checklist's NOTICE row must be scoped the way the page is scoped: SIX of " +
+                "the seven upstreams declare a front-matter identifier, and THE SEVENTH IS THE " +
+                "RUSSIAN MIRROR, which declares none of its own. \"each declares\" asserts a " +
+                "grant on a repository that asserts none — an over-claim about a third party on " +
+                "a legal surface, in the direction of more permission than exists, on the one " +
+                "document a promotion is decided from. Nothing else guarded this sentence, " +
+                "which is how it survived the fix to the page",
+            checklist.contains("six of the seven", ignoreCase = true) &&
+                checklist.contains("the seventh is the Russian mirror", ignoreCase = true),
         )
     }
 
