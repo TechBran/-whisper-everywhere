@@ -405,10 +405,15 @@ class LivePreviewSelectorStripPinTest {
             // (fix round 2, review r2's N2) The membership test is a rule too, which is why the
             // SET is handed over whole and not a Boolean the strip computed.
             "in disabledLanguages", "isOff(",
-            // (4.5.1 Task 1) ...and so is the warm comparison. `work.language == warmLanguage` is
-            // the term that turns *the files landed* into *the next tap works*, and it belongs in
-            // the function whose KDoc argues for it, not on a Compose file no JVM test can reach.
+            // (4.5.1 Task 1) ...and so is the warm comparison, which is the term that turns *the
+            // files landed* into *the next tap works*. It belongs in the function whose KDoc argues
+            // for it, not on a Compose file no JVM test can reach.
+            //
+            // (fix round 1, review r1's B1) The THREE-state read is the same rule and a sharper
+            // case of it: deciding here what `NoEngine` means is deciding, on an unreachable file,
+            // whether a user who has never started the bubble is told their language is ready.
             "== warmLanguage", "isWarm(",
+            "PreviewWarmth.NoEngine", "PreviewWarmth.Cold", "is PreviewWarmth.Warm",
         )) {
             assertEquals(
                 "<<$rule>> on the strip: which sentence is true is selectorLine's answer",
@@ -420,7 +425,7 @@ class LivePreviewSelectorStripPinTest {
             "showLiveWords = showLiveWords",
             "localTierInstalled = localTierInstalled",
             "disabledLanguages = disabledLanguages",
-            "warmLanguage = warmLanguage",
+            "warmth = warmth",
         )) {
             assertEquals(
                 "<<$fact>>: handed through by name, so a call site cannot pass one of them in " +
@@ -454,7 +459,10 @@ class LivePreviewSelectorStripPinTest {
                 "disabledLanguages = emptySet()",
                 // (4.5.1 Task 1) The fifth fact's own cheap edit: a literal that compiles and says
                 // "this language is loaded", which is the 4.5.0 receipt coming straight back.
-                "warmLanguage = \"",
+                // (fix round 1, review r1's B1) Now any of the three as a constant — `NoEngine` is
+                // the same 4.5.0 receipt by a newer route, and `Warm("en")` is it outright.
+                "warmth = PreviewWarmth.",
+                "warmth = com.whispereverywhere.transcription.stream.PreviewWarmth.",
             )) {
                 assertEquals(
                     "$site: <<$literal>> is the assumption coming back as a constant",
@@ -500,16 +508,29 @@ class LivePreviewSelectorStripPinTest {
         // step more urgently: it moves the instant an 802-860 ms load arms or a trim frees the
         // recognizer, and it is what the READY receipt now rests on. A remembered read here would
         // show *ready* for a model that has since been freed.
+        //
+        // (fix round 1, review r1's B1) And it is the THREE-state register that is collected, not
+        // the language: these two surfaces are usually composed with no bubble service running and
+        // therefore no engine in the process, and a nullable language made that indistinguishable
+        // from a cold engine — which took the receipt, and with it the whole strip, off Home the
+        // moment a download finished.
         assertEquals(
             "the picker collects the warm register",
-            1, liveLineCount(picker, "PreviewWarm.language.collectAsState()"),
+            1, liveLineCount(picker, "PreviewWarm.warmth.collectAsState()"),
         )
-        assertEquals(1, liveLineCount(picker, "warmLanguage = previewWarm,"))
+        assertEquals(1, liveLineCount(picker, "warmth = previewWarm,"))
         assertEquals(
             "and so does the onboarding flow, beside the verdict at flow level",
-            1, liveLineCount(onboarding, "PreviewWarm.language.collectAsState()"),
+            1, liveLineCount(onboarding, "PreviewWarm.warmth.collectAsState()"),
         )
-        assertEquals(1, liveLineCount(step, "warmLanguage = liveWarmLanguage,"))
+        assertEquals(1, liveLineCount(step, "warmth = liveWarmth,"))
+        for ((site, scope) in listOf("picker" to picker, "onboarding" to onboarding)) {
+            assertEquals(
+                "$site: the LANGUAGE alone is not collected any more — that read is the two-state " +
+                    "register B1 was about",
+                0, liveLineCount(scope, "PreviewWarm.language"),
+            )
+        }
         for ((site, scope) in listOf("picker" to picker, "onboarding" to onboarding)) {
             assertEquals(
                 "$site: the verdict is a COLLECTOR, not a remembered read",

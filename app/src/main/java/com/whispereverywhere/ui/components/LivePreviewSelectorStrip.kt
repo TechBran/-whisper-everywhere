@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.transcription.stream.PreviewWarmth
 import com.whispereverywhere.transcription.stream.PreviewWorkboard
 import com.whispereverywhere.transcription.stream.StreamingPackCopy
 
@@ -91,11 +92,15 @@ import com.whispereverywhere.transcription.stream.StreamingPackCopy
  *        right to call them installed; what is false is only *"words appear whenever you pick
  *        it"*, and until fix round 2 that was the one fact this strip could not ask about
  *        (review r2's N2).
- * @param warmLanguage the language whose previewer is loaded and usable RIGHT NOW (`PreviewWarm`,
- *        written by the engine's own answer). The fifth fact, and the one that makes the READY
- *        receipt mean *the next tap works* rather than *the files landed* (4.5.1 Task 1): the
- *        owner's *"having to transcribe a second time to get the live to work"* was this sentence
- *        being true of a session two taps away. Handed over UNJUDGED like the other four.
+ * @param warmth what the previewer's engine can be asked and what it answered (`PreviewWarm`). The
+ *        fifth fact, and the one that makes the READY receipt mean *the next tap works* rather than
+ *        *the files landed* (4.5.1 Task 1): the owner's *"having to transcribe a second time to get
+ *        the live to work"* was this sentence being true of a session two taps away. THREE states,
+ *        because this screen is usually read with no bubble service running and therefore no engine
+ *        in the process to ask — and a nullable language made that indistinguishable from a cold
+ *        engine, which took this whole strip off screen the moment a download finished (fix round 1,
+ *        review r1's B1). Handed over UNJUDGED like the other four: which of the three means a
+ *        promise is `selectorLine`'s answer.
  */
 @Composable
 fun LivePreviewSelectorStrip(
@@ -103,7 +108,7 @@ fun LivePreviewSelectorStrip(
     showLiveWords: Boolean,
     localTierInstalled: Boolean,
     disabledLanguages: Set<String>,
-    warmLanguage: String?,
+    warmth: PreviewWarmth,
     modifier: Modifier = Modifier,
 ) {
     val board by PreviewWorkboard.work.collectAsState()
@@ -125,7 +130,7 @@ fun LivePreviewSelectorStrip(
             showLiveWords = showLiveWords,
             localTierInstalled = localTierInstalled,
             disabledLanguages = disabledLanguages,
-            warmLanguage = warmLanguage,
+            warmth = warmth,
         )?.let { line ->
             StreamingPackCopy.featureTitle(language) to line
         }

@@ -1578,6 +1578,15 @@ class FloatingBubbleService : Service(),
         localEngine = null
         streamingPreview?.release()
         streamingPreview = null
+        // (4.5.1 Task 1 fix round 1, review r1's B1) ...and with it goes the ability to ask
+        // anything about warmth at all, so say so rather than leaving a NO standing. The receipt
+        // above the language selector goes back to what 4.5.0's sentence meant and what is true
+        // again here — the language is ready to SELECT, and the next bubble start arms it through
+        // the prewarm. This must come AFTER the field is nulled and it un-claims before it
+        // publishes: `release()` above POSTS its withdrawal to the engine's own executor, so a
+        // dying engine's last word lands after this line and would otherwise overwrite *no engine*
+        // with *not warm* for the rest of the process (`PreviewWarm`'s KDoc).
+        com.whispereverywhere.transcription.stream.PreviewWarm.engineGone()
         httpTransport = null
         liveWsFactory = null
         // Shut the reconnect scheduler's daemon executor down BEFORE nulling the field, or the
@@ -3371,7 +3380,18 @@ class FloatingBubbleService : Service(),
             onWarm = { resident ->
                 com.whispereverywhere.transcription.stream.PreviewWarm.note(resident?.language)
             },
-        ).also { streamingPreview = it }
+        ).also {
+            streamingPreview = it
+            // (4.5.1 Task 1 fix round 1, review r1's B1) ...AND THE ONE HALF OF THAT FACT THE
+            // ENGINE CANNOT HAND OVER: that it exists. Until an engine is built nobody in this
+            // process can be asked whether a language is warm, and reading that absence as a NO
+            // took the READY receipt — with it the whole strip — off Home the moment a 73-128 MB
+            // install finished, which is where AF5 sends the user and where no service is running.
+            // So the register keeps *no engine* apart from *not warm*, and this class states the
+            // half it owns, at the ONE site an engine is ever constructed. Before `warm` below, so
+            // no arming answer can be dropped as unclaimed.
+            com.whispereverywhere.transcription.stream.PreviewWarm.engineBuilt()
+        }
         streamingPreviewPack = pack
         engine.warm(dir, pack)
         return engine

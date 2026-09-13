@@ -1056,11 +1056,31 @@ object StreamingPackCopy {
      * > are going to think that it doesn't work."*
      *
      * The receipt said READY on *the files landed*, while the engine was cold and the gate reads
-     * `isWarmFor()` — so the promise was about a session TWO taps away. [warmLanguage] closes it,
+     * `isWarmFor()` — so the promise was about a session TWO taps away. [warmth] closes it,
      * and the sentence is now true of the very next tap. It is only honest to assert because the
      * other half of this task made it reachable: the install's completion now warms the pack
      * (`warmOnPackInstalled`), so the receipt appears 802-860 ms after a 73-128 MB transfer rather
      * than never. A user would have to tap inside that second to see the silence.
+     *
+     * ### ...but the engine's answer is a term only where there IS an engine to ask
+     *
+     * Fix round 1, review r1's B1. `StreamingPreviewEngine` is a private field of
+     * `FloatingBubbleService`, and that service is not started when the app launches. The first
+     * version of this term was a nullable language, so *"no engine exists in this process"* and
+     * *"the engine says no"* arrived here as the same null and this arm refused both — which took
+     * the receipt away on the very screen AF5 sends the user to: onboarding picks a language, the
+     * progress shows on HOME, the 73-128 MB install completes with no service running, and the row
+     * this arm was rendering disappeared (the strip drops empty rows, so the whole surface went
+     * with it). A user who watches 128 MB arrive and is then told nothing concludes exactly what
+     * the owner concluded.
+     *
+     * So [warmth] has three states and this arm reads them as three ([PreviewWarmth]'s KDoc argues
+     * the model): with NO engine the 4.5.0 receipt stands, and there it is TRUE — the promise is
+     * about a language being ready to SELECT (ruling 3c's own words, *"know that their language is
+     * ready for selection"*), and starting the bubble arms it through the boot prewarm. With an
+     * engine, *ready* means what Task 1 made it mean: the next tap. The lesson is the general one
+     * every round of this feature has re-learnt in a new place — **a promise may be gated on the
+     * engine's answer only where an engine can be asked.**
      *
      * [disabledLanguages] STAYS, though warm subsumes it today (a disabled language is not warm, by
      * the engine's own `isWarm()`): the two facts have different writers and different lifetimes —
@@ -1120,12 +1140,15 @@ object StreamingPackCopy {
      *        `installedPackLanguages`' reason: the strip renders a row per language, and one
      *        language going off says nothing about another's. Compared against
      *        [PreviewWork.language] rather than [language], because the verdict is keyed by code.
-     * @param warmLanguage the language whose previewer is LOADED AND USABLE right now
-     *        ([PreviewWarm], written by the engine's own answer) — null when nothing is. ONE code
-     *        and not a set, because the engine holds one recognizer: warming German is releasing
-     *        French. Compared against [PreviewWork.language] for [disabledLanguages]' reason, and
-     *        an equality rather than a membership for the same reason `isWarmFor` is not `isWarm` —
-     *        a French model resident during an English row is not English's promise.
+     * @param warmth what the previewer's engine can be asked and what it answered ([PreviewWarm],
+     *        written by the engine's own answer for the warm half and by the service for the
+     *        existence half). THREE states rather than a nullable language, because *"no engine
+     *        exists to ask"* is not a no (fix round 1, review r1's B1, argued above and in
+     *        [PreviewWarmth]). [PreviewWarmth.Warm] carries ONE code and not a set, because the
+     *        engine holds one recognizer: warming German is releasing French. Compared against
+     *        [PreviewWork.language] for [disabledLanguages]' reason, and an equality rather than a
+     *        membership for the same reason `isWarmFor` is not `isWarm` — a French model resident
+     *        during an English row is not English's promise.
      */
     fun selectorLine(
         work: PreviewWork,
@@ -1134,7 +1157,7 @@ object StreamingPackCopy {
         showLiveWords: Boolean,
         localTierInstalled: Boolean,
         disabledLanguages: Set<String>,
-        warmLanguage: String?,
+        warmth: PreviewWarmth,
     ): String? = when (work.phase) {
         // The one sentence the work line has no phase for, and the one the ruling asks for by
         // name. The board keeps a terminal record, so this is the receipt for an arrival THIS
@@ -1152,9 +1175,11 @@ object StreamingPackCopy {
             val arrived = StreamingPackCatalog.forLanguage(work.language)
             if (arrived != null &&
                 showLiveWords && localTierInstalled && work.language !in disabledLanguages &&
-                // (4.5.1 Task 1) AND THE ENGINE IS WARM FOR IT. The term that turns this receipt
-                // from *the files landed* into *the next tap works* — see the parameter's own note.
-                work.language == warmLanguage
+                // (4.5.1 Task 1) AND THE ENGINE IS WARM FOR IT — wherever there is an engine to
+                // ask. The term that turns this receipt from *the files landed* into *the next tap
+                // works*, without taking it away where nobody can answer: see the parameter's own
+                // note and the two sections above it.
+                engineCanPromise(work.language, warmth)
             ) {
                 selectorReady(language, arrived.stripUnit)
             } else {
@@ -1190,6 +1215,32 @@ object StreamingPackCopy {
                 AnswerGesture.RE_PICK
             },
         )
+    }
+
+    /**
+     * MAY THE READY RECEIPT BE MADE FOR [language], given what the engine can be asked (4.5.1
+     * Task 1, fix round 1, review r1's B1)?
+     *
+     * Three answers for three states, and the `when` is exhaustive on purpose so a fourth state
+     * cannot inherit a branch by default — which is precisely how the two-state version came to
+     * read *"nobody asked"* as *"no"*:
+     *
+     *  - [PreviewWarmth.NoEngine] — nothing in this process can answer. The receipt stands, and in
+     *    this state it is TRUE on 4.5.0's own reading: the promise is that the language is ready to
+     *    SELECT, and starting the bubble arms it through the boot prewarm. This is the state the
+     *    strip is read in on Home before the bubble has ever been started — AF5's flow, and the one
+     *    the surface was ruled in for.
+     *  - [PreviewWarmth.Cold] — an engine exists and answered no: the 802-860 ms load window, a
+     *    trim that freed the recognizer, an install that landed mid-session. Silent, which is the
+     *    honest half of Task 1.
+     *  - [PreviewWarmth.Warm] — an equality against the RECORD's language, never a membership: a
+     *    French recognizer resident during an English row is not English's promise, for the reason
+     *    `isWarmFor` is not `isWarm`.
+     */
+    private fun engineCanPromise(language: String, warmth: PreviewWarmth): Boolean = when (warmth) {
+        PreviewWarmth.NoEngine -> true
+        PreviewWarmth.Cold -> false
+        is PreviewWarmth.Warm -> warmth.language == language
     }
 
     /**

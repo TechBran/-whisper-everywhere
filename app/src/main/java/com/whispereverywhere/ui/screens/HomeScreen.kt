@@ -1470,7 +1470,12 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
     // this value is written the instant an 802-860 ms load arms or a trim frees the recognizer, and
     // the READY receipt is a term of it now. A `remember` here would show *ready* for a model that
     // has since been freed, which is the exact sentence Task 1 exists to make true.
-    val previewWarm by PreviewWarm.language.collectAsState()
+    //
+    // (fix round 1, review r1's B1) THREE states, and this screen is why: the bubble service owns
+    // the engine and is NOT started when the app launches, so the ordinary reading of this card
+    // has no engine in the process at all. A nullable language made that the same value as a cold
+    // engine, and the receipt — with it the whole strip — vanished the moment a download finished.
+    val previewWarm by PreviewWarm.warmth.collectAsState()
     var expanded by remember { mutableStateOf(false) }
 
     // Find the display name for the current selection — through the one owner of code-to-word
@@ -1582,7 +1587,7 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
                 showLiveWords = showLiveWords,
                 localTierInstalled = localTierInstalled,
                 disabledLanguages = previewDisabled,
-                warmLanguage = previewWarm,
+                warmth = previewWarm,
             )
 
             // Dropdown menu

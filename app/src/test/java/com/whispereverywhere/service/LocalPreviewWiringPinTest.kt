@@ -508,6 +508,38 @@ class LocalPreviewWiringPinTest {
             0,
             count(text, "onWarm = { streamingPreviewPack"),
         )
+        // (fix round 1, review r1's B1) ...AND THE ONE HALF OF THAT FACT NO HOOK CAN CARRY: that an
+        // engine EXISTS. This class owns it — an object cannot report its own absence — and it must
+        // be stated, because reading "nobody was asked" as "no" took the READY receipt, and with it
+        // the whole strip, off Home the moment a 73-128 MB install finished: the bubble service is
+        // not started when the app launches, so that is where most users read the surface.
+        assertEquals(
+            "claimed at the ONE site an engine is ever constructed, so it cannot be claimed for " +
+                "an engine that was not built",
+            1,
+            count(text, "PreviewWarm.engineBuilt()"),
+        )
+        assertEquals(
+            "and un-claimed where the service drops it",
+            1,
+            count(text, "PreviewWarm.engineGone()"),
+        )
+        // ...and in that ORDER, with the un-claim AFTER the field is nulled: `release()` posts its
+        // withdrawal to the engine's own executor, so a dying engine's last word lands after
+        // onDestroy and would otherwise overwrite *no engine* with *not warm* for the rest of the
+        // process. The register drops an unclaimed note; this is the line that un-claims.
+        val destroyRelease = indexOfOrFail(text, "        streamingPreview?.release()\n        streamingPreview = null\n")
+        val gone = indexOfOrFail(text, "PreviewWarm.engineGone()")
+        assertTrue(
+            "the un-claim comes after release() and after the field is nulled",
+            gone > destroyRelease,
+        )
+        val built = indexOfOrFail(text, "PreviewWarm.engineBuilt()")
+        assertTrue(
+            "and the claim comes before the warm that follows construction, or an arming answer " +
+                "would be dropped as unclaimed",
+            built < indexOfOrFail(text, "engine.warm(dir, pack)"),
+        )
     }
 
     @Test

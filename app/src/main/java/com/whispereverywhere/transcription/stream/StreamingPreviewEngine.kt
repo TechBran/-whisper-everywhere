@@ -101,6 +101,12 @@ class StreamingPreviewEngine(
      * Called from [publishWarm] at every site that moves `warm` or `loadedPack`, with this engine's
      * OWN answer rather than the pack any caller believes it asked for — Main's belief is exactly
      * the thing that is a load ahead of the truth.
+     *
+     * A null here is *"nothing is resident"* and nothing more. It is deliberately NOT the whole of
+     * what a surface needs, because this engine cannot report its own absence: whether an engine
+     * exists at all is the service's fact, and [PreviewWarmth] keeps the two apart (fix round 1,
+     * review r1's B1 — reading "nobody asked" as a no took the READY receipt off the one screen
+     * where no service runs).
      */
     private val onWarm: (StreamingPack?) -> Unit = {},
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { r ->

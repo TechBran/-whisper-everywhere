@@ -1048,7 +1048,7 @@ class StreamingPackCopyTest {
         showLiveWords: Boolean = true,
         localTierInstalled: Boolean = true,
         disabledLanguages: Set<String> = emptySet(),
-        warmLanguage: String? = "en",
+        warmth: PreviewWarmth = PreviewWarmth.Warm("en"),
     ): String? = StreamingPackCopy.selectorLine(
         work = work,
         language = language,
@@ -1056,7 +1056,7 @@ class StreamingPackCopyTest {
         showLiveWords = showLiveWords,
         localTierInstalled = localTierInstalled,
         disabledLanguages = disabledLanguages,
-        warmLanguage = warmLanguage,
+        warmth = warmth,
     )
 
     @Test fun theSelectorStripSaysWhatIsArrivingForEveryPhaseThatIsArriving() {
@@ -1158,18 +1158,42 @@ class StreamingPackCopyTest {
         assertNull(
             "nothing is loaded: the bytes are on disk and the recognizer is not, which is the " +
                 "state the 4.5.0 sheet's AF6 told the owner to expect",
-            strip(installed, warmLanguage = null),
+            strip(installed, warmth = PreviewWarmth.Cold),
         )
         assertNull(
             "and ANOTHER language's model being resident is not this one's promise — the tee " +
                 "would borrow the wrong recognizer, which is exactly what isWarmFor refuses",
-            strip(installed, warmLanguage = "fr"),
+            strip(installed, warmth = PreviewWarmth.Warm("fr")),
         )
         assertEquals(
             "the warm language is read off the RECORD's language too, never the selection's: the " +
                 "record outlives the selection and each row is about its own pack",
             StreamingPackCopy.selectorReady(en, words),
-            strip(installed, selectedLanguage = "fr", warmLanguage = "en"),
+            strip(installed, selectedLanguage = "fr", warmth = PreviewWarmth.Warm("en")),
+        )
+        // (fix round 1, review r1's B1) ...AND THE ENGINE'S ANSWER IS A TERM ONLY WHERE THERE IS AN
+        // ENGINE. `NoEngine` is not a cold engine: the bubble service owns the previewer and is not
+        // started when the app launches, so the ordinary reading of this line — on Home, after
+        // onboarding picked a language and AF5's fetch landed there — has nothing in the process to
+        // ask. Refusing it suppressed the row, the strip renders nothing with no rows, and the
+        // surface narrating a 128 MB download went blank the instant it completed.
+        assertEquals(
+            "no engine exists to ask: the 4.5.0 receipt stands, and there it is TRUE — the " +
+                "language is ready to SELECT (ruling 3c's own words) and the next bubble start " +
+                "arms it through the prewarm",
+            StreamingPackCopy.selectorReady(en, words),
+            strip(installed, warmth = PreviewWarmth.NoEngine),
+        )
+        assertNull(
+            "and the OTHER four facts still refuse it there — a state nobody can ask about is " +
+                "not a licence to promise words the switch, the tier or a verdict has withdrawn",
+            strip(installed, warmth = PreviewWarmth.NoEngine, showLiveWords = false),
+        )
+        assertNull(
+            strip(installed, warmth = PreviewWarmth.NoEngine, localTierInstalled = false),
+        )
+        assertNull(
+            strip(installed, warmth = PreviewWarmth.NoEngine, disabledLanguages = setOf("en")),
         )
         // ...and the four facts silence ONLY the promise. A transfer that is actually happening
         // is narrated whoever started it and whatever the device can arm: hiding a running 73 MB
@@ -1186,13 +1210,17 @@ class StreamingPackCopyTest {
                     showLiveWords = false,
                     localTierInstalled = false,
                     disabledLanguages = setOf("en"),
-                    warmLanguage = null,
+                    warmth = PreviewWarmth.Cold,
                 ),
             )
             assertNotNull("$phase must still say something", strip(running, showLiveWords = false))
             assertNotNull(
                 "$phase: and a cold engine cannot silence a line about bytes that are moving",
-                strip(running, warmLanguage = null),
+                strip(running, warmth = PreviewWarmth.Cold),
+            )
+            assertNotNull(
+                "$phase: nor can there being no engine at all — an in-flight line is about bytes",
+                strip(running, warmth = PreviewWarmth.NoEngine),
             )
         }
     }

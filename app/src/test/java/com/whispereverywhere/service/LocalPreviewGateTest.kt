@@ -472,6 +472,16 @@ class LocalPreviewGateTest {
             row.contains("while a dictation or a batch file job is running") &&
                 row.contains("ALREADY installed"),
         )
+        assertTrue(
+            "(fix round 1, review r1's B1) ...and the row states the CONDITION on the receipt it " +
+                "tells the tester to watch for. *Warm* is the engine's answer and the bubble " +
+                "service is the only thing that owns an engine, so with the bubble not running the " +
+                "strip keeps 4.5.0's receipt — a promise about the language being ready to SELECT. " +
+                "A row that did not say so would have a device session file the immediate receipt " +
+                "as this row failing",
+            row.contains("Do this row with the bubble RUNNING") &&
+                row.contains("ready to SELECT"),
+        )
     }
 
     // ------------------------------------------------------------------ R3, the switch's default

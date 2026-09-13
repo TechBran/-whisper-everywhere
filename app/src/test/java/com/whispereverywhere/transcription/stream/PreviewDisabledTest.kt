@@ -78,7 +78,7 @@ class PreviewDisabledTest {
             disabledLanguages = PreviewDisabled.languages.value,
             // (4.5.1 Task 1) The fifth fact, and this class is about the verdict: English is the
             // warm language throughout, so the only thing that moves below is the verdict.
-            warmLanguage = "en",
+            warmth = PreviewWarmth.Warm("en"),
         )
         // The receipt names what the ARRIVED pack puts on the strip (4.5.0 Task 4), and the
         // record above is English's, whose unit its own tokens.txt proves.
@@ -97,7 +97,7 @@ class PreviewDisabledTest {
                 showLiveWords = true,
                 localTierInstalled = true,
                 disabledLanguages = PreviewDisabled.languages.value,
-                warmLanguage = "en",
+                warmth = PreviewWarmth.Warm("en"),
             ),
         )
         // ...and an IN-FLIGHT line for the same language still says what is happening: a repair
@@ -112,7 +112,7 @@ class PreviewDisabledTest {
                 showLiveWords = true,
                 localTierInstalled = true,
                 disabledLanguages = setOf("en"),
-                warmLanguage = null,
+                warmth = PreviewWarmth.Cold,
             ),
         )
     }

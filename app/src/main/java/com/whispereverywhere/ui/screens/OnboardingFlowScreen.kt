@@ -152,11 +152,16 @@ fun OnboardingFlowScreen(
         com.whispereverywhere.transcription.stream.PreviewDisabled.languages.collectAsState()
 
     // (4.5.1 Task 1) The FOURTH fact, and the one that makes *"ready"* mean the next tap works:
-    // which language's previewer is warm. COLLECTED for the verdict's reason and one step more
-    // urgently — it moves on the engine's executor the instant a load arms or a trim frees the
-    // recognizer. Null for the whole of a first run, like the set above, and asked honestly anyway.
-    val liveWarmLanguage by
-        com.whispereverywhere.transcription.stream.PreviewWarm.language.collectAsState()
+    // what the previewer's engine can be asked, and what it answered. COLLECTED for the verdict's
+    // reason and one step more urgently — it moves on the engine's executor the instant a load arms
+    // or a trim frees the recognizer.
+    //
+    // (fix round 1, review r1's B1) `NoEngine` for the whole of a first run — the bubble service
+    // owns the engine and onboarding has not started it — which is a DIFFERENT fact from a cold
+    // engine and no longer the same value. Conflating them made the receipt, and with it the strip,
+    // disappear the moment the pack finished installing.
+    val liveWarmth by
+        com.whispereverywhere.transcription.stream.PreviewWarm.warmth.collectAsState()
 
     // Permission state lives at flow level (3.5.x): the pinned footer gates Continue on the
     // bubble's two required permissions (mic, overlay — 4.3.3 made accessibility a
@@ -270,7 +275,7 @@ fun OnboardingFlowScreen(
                         liveTierInstalled = liveTierInstalled,
                         liveWordsSwitchOn = liveWordsSwitchOn,
                         liveDisabledLanguages = liveDisabledLanguages,
-                        liveWarmLanguage = liveWarmLanguage,
+                        liveWarmth = liveWarmth,
                     )
                     Step.ENGINES -> EnginesStep(
                         vm = setupVm,
@@ -633,7 +638,7 @@ private fun LanguageStep(
     liveTierInstalled: Boolean,
     liveWordsSwitchOn: Boolean,
     liveDisabledLanguages: Set<String>,
-    liveWarmLanguage: String?,
+    liveWarmth: com.whispereverywhere.transcription.stream.PreviewWarmth,
 ) {
     Text(
         OnboardingLogic.LANGUAGE_HINT,
@@ -671,7 +676,7 @@ private fun LanguageStep(
         showLiveWords = liveWordsSwitchOn,
         localTierInstalled = liveTierInstalled,
         disabledLanguages = liveDisabledLanguages,
-        warmLanguage = liveWarmLanguage,
+        warmth = liveWarmth,
     )
     val deviceCode = OnboardingLogic.deviceLanguageCode(languageTag)
     OnboardingLogic.languageRows(languageTag).forEach { (code, displayName) ->

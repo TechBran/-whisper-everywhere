@@ -767,6 +767,14 @@ AF6. **Changing language in the app — REWRITTEN in 4.5.1, and it now expects t
     ready: words appear on the bubble whenever you pick it"* only once the engine is **warm**, not when
     the files land. So the loop closes where the user is looking — the download finishes, the strip says
     ready, the next tap shows words.
+    **Do this row with the bubble RUNNING**, because that sentence is about the engine and the bubble
+    service is the only thing that owns one. With the bubble not running there is no engine in the
+    process to ask, and the strip deliberately keeps 4.5.0's receipt as soon as the files land — in that
+    state it is a promise about the language being ready to SELECT, which is true, and the next bubble
+    start arms it through the prewarm (fix round 1, review r1's B1: reading *"nobody was asked"* as
+    *"not warm"* made the whole strip disappear the moment a download finished). So: bubble running →
+    the receipt waits ~1 s for the warm; bubble not running → the receipt is immediate. Neither is this
+    row failing.
     FAIL: the first session after the install shows no words and the second does. That is 4.5.0's
     behaviour surviving.
     NOTE two shapes that are **not** this row failing, both deliberate: an install that completes
