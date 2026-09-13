@@ -417,6 +417,206 @@ class LocalPreviewGateTest {
         }
     }
 
+    // ------------------------------------------ THE EVENT SET (4.5.1 pass 2) — every moment at
+    // ------------------------------------------ which residency can disagree with the owner
+
+    /**
+     * [previewResidency] as the table it is: {every member} × {answer} × {session} × {batch} ×
+     * {resident}.
+     *
+     * Task 1 added a third warm trigger and its report then named two more gestures that still
+     * missed, while its reviewer named a third defect of the same family — the 4.4.1 state-model
+     * shape, where the bug was never any one missing trigger but that the set of moments had never
+     * been enumerated. These rows hold the SET: that it is exactly the members named, that each
+     * one asks the same owner about WHICH pack, and that the three rules apply to the members the
+     * `when` says they apply to.
+     */
+    private val someSets = listOf(emptySet<String>(), setOf("en"), setOf("es"), everyPack)
+
+    private fun residency(
+        event: PreviewResidencyEvent,
+        pack: StreamingPack? = StreamingPackCatalog.EN,
+        session: Boolean = false,
+        batch: Boolean = false,
+        resident: StreamingPack? = null,
+    ) = previewResidency(
+        event = event,
+        packToWarm = pack,
+        sessionActive = session,
+        batchJobActive = batch,
+        residentWarmPack = resident,
+    )
+
+    @Test fun theSetOfMomentsThatChangeWhichPackIsResidentIsEXACTLYTheseAndNothingElse() {
+        // THE LIST, asserted as a list. A sixth gesture added to the enum fails HERE as well as
+        // in LocalPreviewWiringPinTest — so the author has to come and say what the new moment is
+        // and where it is wired, which is the whole point of writing the set down. (The loudest
+        // failure is earlier still: a new member makes `previewResidency`'s `when` non-exhaustive,
+        // which does not compile.)
+        assertEquals(
+            listOf("SERVICE_START", "SELECTION_CHANGED", "PACK_INSTALLED", "SESSION_START", "MEMORY_TRIM"),
+            PreviewResidencyEvent.entries.map { it.name },
+        )
+    }
+
+    @Test fun everyMemberOfTheSetTakesItsWHICHAnswerFromTheOneOwner() {
+        // ONE OWNER for *"which pack should be resident"*, held as an equality over the cross
+        // product rather than by reading five call sites: whatever `previewPackToWarm` answers is
+        // what the member warms, and no member can name a pack of its own. This is what makes the
+        // release arm safe — a null is one member's release and every other member's no-op, so
+        // two members can never thrash the 802-860 ms load between them.
+        for (event in PreviewResidencyEvent.entries) {
+            for (lang in listOf(null, "auto", "en", "es", "zh")) for (packs in someSets) {
+                val owner = previewPackToWarm(lang, packs, userEnabled = true)
+                val answer = residency(event, pack = owner)
+                assertEquals(
+                    "$event lang=$lang installed=$packs",
+                    owner,
+                    (answer as? PreviewResidency.Warm)?.pack,
+                )
+            }
+        }
+    }
+
+    @Test fun aLiveSessionOrABatchJobRefusesEveryMemberExceptTheTwoThatEstablishResidency() {
+        // The inherited refusal: a second 802-860 ms / ~169 MB load must not land under the
+        // recognizer PreviewTeeEngine has BORROWED. SESSION_START is exempt because it warms for
+        // the session AFTER the one it runs in — that is its whole purpose — and SERVICE_START
+        // because a prewarm 1.5 s into the process has nothing to land under; both keep the exact
+        // answer their call sites had before the set existed.
+        for (event in PreviewResidencyEvent.entries) {
+            val exempt = event == PreviewResidencyEvent.SERVICE_START ||
+                event == PreviewResidencyEvent.SESSION_START
+            val expected =
+                if (exempt) PreviewResidency.Warm(StreamingPackCatalog.EN) else PreviewResidency.Leave
+            assertEquals("$event, session", expected, residency(event, session = true))
+            assertEquals("$event, batch", expected, residency(event, batch = true))
+            assertEquals("$event, both", expected, residency(event, session = true, batch = true))
+        }
+    }
+
+    @Test fun aNullAnswerIsARELEASEForTheSELECTIONAndNothingToDoForEveryOtherMember() {
+        // 4.4.1 pass 3 ITEM 2's release, and WHY only one member owns it: the selection moving to
+        // Auto is the one event that leaves 169 MB loaded for a language that will not arm. A trim
+        // has just freed the recognizer itself, an install did not move the selection, and the two
+        // establishing moments have nothing resident to hand back — a release from any of them
+        // would be a second opinion about residency rather than a repair.
+        for (event in PreviewResidencyEvent.entries) {
+            val expected =
+                if (event == PreviewResidencyEvent.SELECTION_CHANGED) PreviewResidency.Release
+                else PreviewResidency.Leave
+            assertEquals("$event", expected, residency(event, pack = null))
+            assertEquals(
+                "$event, with a recognizer resident",
+                expected,
+                residency(event, pack = null, resident = StreamingPackCatalog.EN),
+            )
+        }
+    }
+
+    @Test fun thePackTheEngineIsALREADYWarmForIsNotReloaded() {
+        // A skip and not a mechanism — `warm()` is idempotent on the pack — so it spares Main a
+        // posted task and the log a line that reads like a second load. The two establishing
+        // moments deliberately do NOT take it: their call sites use the answer to decide what to
+        // pass on (the wrap site's `preview` is `warmStreamingPreview`'s return value), so a skip
+        // there would change a value rather than save a load.
+        for (event in PreviewResidencyEvent.entries) {
+            val establishing = event == PreviewResidencyEvent.SERVICE_START ||
+                event == PreviewResidencyEvent.SESSION_START
+            val expected =
+                if (establishing) PreviewResidency.Warm(StreamingPackCatalog.EN) else PreviewResidency.Leave
+            assertEquals("$event", expected, residency(event, resident = StreamingPackCatalog.EN))
+            assertEquals(
+                "warm for ANOTHER language's pack is exactly when the load must happen: $event",
+                PreviewResidency.Warm(StreamingPackCatalog.EN),
+                residency(event, resident = StreamingPackCatalog.forLanguage("fr")),
+            )
+        }
+    }
+
+    @Test fun rePickingAnALREADYInstalledLanguageWarmsItsPack_theOwnersOwnGesture() {
+        // **ITEM 1, as the sequence the owner performs.** `pick English → switch to Auto → switch
+        // back to English`: 4.5.0 and Task 1 both warmed nothing on that third step, because the
+        // collector acted on the NULL answer only and let a non-null answer fall through — so the
+        // first session after the re-pick showed no live words and the one after it worked. That is
+        // the owner's *"having to transcribe a second time to get the live to work"*, reached by
+        // the gesture he performs most: he tests on Auto deliberately and moves between languages
+        // to compare them.
+        val installed = setOf("en")
+        val pickEnglish = previewPackToWarm("en", installed, userEnabled = true)
+        val pickAuto = previewPackToWarm(null, installed, userEnabled = true)
+        assertEquals(
+            "1. pick English — the pack is on disk, so it warms",
+            PreviewResidency.Warm(StreamingPackCatalog.EN),
+            residency(PreviewResidencyEvent.SELECTION_CHANGED, pack = pickEnglish),
+        )
+        assertEquals(
+            "2. switch to Auto — the 169 MB comes back",
+            PreviewResidency.Release,
+            residency(
+                PreviewResidencyEvent.SELECTION_CHANGED,
+                pack = pickAuto,
+                resident = StreamingPackCatalog.EN,
+            ),
+        )
+        assertEquals(
+            "3. switch BACK to English — and THIS is what 4.5.0 answered with nothing at all. " +
+                "The release above left the engine cold, so the pack must load again for the next " +
+                "session to arm",
+            PreviewResidency.Warm(StreamingPackCatalog.EN),
+            residency(PreviewResidencyEvent.SELECTION_CHANGED, pack = pickEnglish),
+        )
+    }
+
+    @Test fun aTrimThatFreedTheRecognizerIsReAskedRatherThanCostingTheNextSession() {
+        // MEMORY_TRIM, the member no gesture produces. `onTrimMemory` frees the previewer's
+        // +169 MB while the service is idle and, until 4.5.1 pass 2, nothing warmed it again: the
+        // next tap found it cold and that session showed no words, then the wrap site armed the
+        // one after — ITEM 1's miss with no user action at all. TRIM_MEMORY_UI_HIDDEN is 20 and
+        // the release's guard is `>= TRIM_MEMORY_RUNNING_LOW` (10), so merely leaving the app can
+        // reach it, which makes this the most routine member of the set.
+        val installed = setOf("en")
+        val answer = previewPackToWarm("en", installed, userEnabled = true)
+        assertEquals(
+            "the trim freed it, so the engine is warm for nothing and the pack loads again",
+            PreviewResidency.Warm(StreamingPackCatalog.EN),
+            residency(PreviewResidencyEvent.MEMORY_TRIM, pack = answer),
+        )
+        assertEquals(
+            "and a trim that did NOT free this pack (the release skipped, mid-session) is not a " +
+                "second load",
+            PreviewResidency.Leave,
+            residency(
+                PreviewResidencyEvent.MEMORY_TRIM,
+                pack = answer,
+                resident = StreamingPackCatalog.EN,
+            ),
+        )
+    }
+
+    @Test fun theInstallGateIsTheSetsPACKINSTALLEDArmAndAddsNoRuleOfItsOwn() {
+        // `warmOnPackInstalled` keeps its own signature and truth table — the phase and the
+        // record's language are terms only a board record has — but every term it SHARES with the
+        // other moments is the set's, not a copy: held here as an equality over the refusals, the
+        // resident skip and the owner's answer.
+        for (session in listOf(false, true)) for (batch in listOf(false, true)) {
+            for (resident in listOf(null, StreamingPackCatalog.EN, StreamingPackCatalog.forLanguage("fr"))) {
+                for (packs in someSets) {
+                    val case = "session=$session batch=$batch resident=$resident installed=$packs"
+                    val viaGate = warmsOnInstall(
+                        packs = packs, session = session, batch = batch, resident = resident,
+                    )
+                    val viaSet = residency(
+                        PreviewResidencyEvent.PACK_INSTALLED,
+                        pack = previewPackToWarm("en", packs, userEnabled = true),
+                        session = session, batch = batch, resident = resident,
+                    )
+                    assertEquals(case, (viaSet as? PreviewResidency.Warm)?.pack, viaGate)
+                }
+            }
+        }
+    }
+
     /**
      * **AF6 IS RETIRED BY BEING INVERTED, AND ITS OLD TEXT STAYS READABLE** (4.5.1 Task 1).
      *

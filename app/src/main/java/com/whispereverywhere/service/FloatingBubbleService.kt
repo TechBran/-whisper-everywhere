@@ -306,6 +306,160 @@ internal fun previewPackToWarm(
 }
 
 /**
+ * **THE SET OF MOMENTS AT WHICH THE RESIDENT PREVIEWER CAN DISAGREE WITH [previewPackToWarm]**
+ * (4.5.1 pass 2 — the controller's framing ruling).
+ *
+ * ### Why this is a set and not a fourth trigger
+ *
+ * Task 1 answered the owner's complaint — *"having to transcribe a second time to get the live to
+ * work … people are going to think that it doesn't work"* — by adding a THIRD warm trigger beside
+ * the boot prewarm and the session wrap. Its own report then named two more gestures that still
+ * missed, and its reviewer named a third defect of the same family. That is the state-model shape
+ * that burned three review rounds in 4.4.1: **the bug was never any one missing trigger, it was
+ * that the set of moments which change WHICH PACK SHOULD BE RESIDENT had never been written
+ * down.** So it is written down here, once. Every member asks the same question of the same owner
+ * ([previewPackToWarm]) and acts on the answer ([previewResidency]).
+ *
+ * A member added later cannot go unwired: it makes [previewResidency]'s `when` non-exhaustive,
+ * which is a compile error, and `LocalPreviewWiringPinTest` then demands a site that names it.
+ *
+ * Membership is *"could the resident recognizer now differ from [previewPackToWarm]'s answer?"* —
+ * which is why two members are not user gestures at all.
+ */
+internal enum class PreviewResidencyEvent {
+    /**
+     * The process gained an engine, so residency is ESTABLISHED rather than changed: the boot
+     * prewarm's call, 1.5 s after `onCreate`, off the session's critical path.
+     */
+    SERVICE_START,
+
+    /**
+     * The user picked a different language, **in either direction** — to a language whose pack is
+     * installed (warm it) and away from one (hand the 169 MB back). The second half has existed
+     * since 4.4.1 pass 3 ITEM 2; the first half is 4.5.1 pass 2 ITEM 1, and its absence was the
+     * owner's complaint reached by the gesture he performs most, because he tests on Auto
+     * deliberately and moves between languages to compare them.
+     */
+    SELECTION_CHANGED,
+
+    /**
+     * An install completed. [warmOnPackInstalled] is this member's adapter — it adds the two terms
+     * only a board record has, the phase and the record's language, and then asks exactly this
+     * question of exactly this owner.
+     */
+    PACK_INSTALLED,
+
+    /**
+     * A session started. The one member that deliberately acts DURING a session, because it arms
+     * the session AFTER this one: `warm()` is asynchronous and the gate reads `isWarmFor()` now.
+     */
+    SESSION_START,
+
+    /**
+     * `onTrimMemory` freed the recognizer while the service was idle, and until 4.5.1 pass 2
+     * nothing re-asked: the next tap found a cold previewer and that session showed no words —
+     * ITEM 1's miss, reached without the user touching anything. `TRIM_MEMORY_UI_HIDDEN` is 20 and
+     * the release's guard is `>= TRIM_MEMORY_RUNNING_LOW` (10), so merely leaving the app after
+     * starting the bubble can clear it, which makes this the most routine member of the set.
+     */
+    MEMORY_TRIM,
+}
+
+/**
+ * What one [PreviewResidencyEvent] does with [previewPackToWarm]'s answer — the only three things
+ * this process ever does about residency, so that every member's outcome is one of the same three.
+ */
+internal sealed interface PreviewResidency {
+    /**
+     * Load [pack]. The engine releases whatever other pack it holds inside its own single-thread
+     * task before the new model allocates, so this never needs a release of its own.
+     */
+    data class Warm(
+        val pack: com.whispereverywhere.transcription.stream.StreamingPack,
+    ) : PreviewResidency
+
+    /** Hand the resident recognizer back: this selection has nothing it wants loaded. */
+    data object Release : PreviewResidency
+
+    /** Nothing to do — already right, or refused for now. */
+    data object Leave : PreviewResidency
+}
+
+/**
+ * THE ONE DECISION FOR THE WHOLE EVENT SET (4.5.1 pass 2). Pure, and pinned as a truth table by
+ * LocalPreviewGateTest over {every member} × {answer} × {session} × {batch} × {resident}.
+ *
+ * **It decides WHEN and never WHICH.** [packToWarm] is [previewPackToWarm]'s answer, handed in by
+ * the caller, so no member can hold a second opinion about which pack should be resident and no
+ * two members can thrash the 802-860 ms load between them. That property is what makes the release
+ * arm safe: a null is one member's release and every other member's no-op.
+ *
+ * The `when` below is the table, and it says which of the three rules each member lives under:
+ *
+ *  - **A live session or a batch job refuses the load.** A second 802-860 ms / ~169 MB load must
+ *    not land under the recognizer `PreviewTeeEngine` has BORROWED, and a batch file job is the
+ *    research's §3.9 refusal. Skipped, never deferred — the house rule the trim re-prewarm and the
+ *    model-switch collector already follow. [PreviewResidencyEvent.SESSION_START] is exempt
+ *    because it warms *for the next session*, and [PreviewResidencyEvent.SERVICE_START] because a
+ *    prewarm 1.5 s into the process has nothing to land under.
+ *  - **A null answer is a RELEASE** — but only for the members that can find a recognizer nobody
+ *    wants. [PreviewResidencyEvent.SELECTION_CHANGED] is the one that can: moving to Auto leaves
+ *    169 MB loaded for a language that will not arm (4.4.1 pass 3, ITEM 2). For
+ *    [PreviewResidencyEvent.MEMORY_TRIM] the recognizer has just been freed by the trim itself, and
+ *    for [PreviewResidencyEvent.PACK_INSTALLED] the selection has not moved, so a second release
+ *    there would be a second opinion rather than a repair.
+ *  - **The pack the engine is already warm for is not reloaded.** A skip, not a mechanism —
+ *    `warm()` is idempotent on the pack and would no-op anyway; this spares Main a posted task and
+ *    the log a line that reads like a second load. The two establishing moments do not take the
+ *    skip, so their call sites keep the exact shape (and the exact return value) they had before
+ *    the set existed.
+ *
+ * @param residentWarmPack the pack the ENGINE is warm for right now, never the field Main moves:
+ *        after an `onTrimMemory` that field still names a pack whose recognizer is freed, and
+ *        refusing on it would leave the previewer cold behind a receipt promising words.
+ */
+internal fun previewResidency(
+    event: PreviewResidencyEvent,
+    packToWarm: com.whispereverywhere.transcription.stream.StreamingPack?,
+    sessionActive: Boolean,
+    batchJobActive: Boolean,
+    residentWarmPack: com.whispereverywhere.transcription.stream.StreamingPack?,
+): PreviewResidency {
+    val busy = sessionActive || batchJobActive
+    return when (event) {
+        // ESTABLISHING, not changing: no refusal and no skip, so both sites answer exactly what
+        // they answered before this function existed.
+        PreviewResidencyEvent.SERVICE_START,
+        PreviewResidencyEvent.SESSION_START,
+        ->
+            if (packToWarm == null) PreviewResidency.Leave else PreviewResidency.Warm(packToWarm)
+
+        // The answer CHANGED under us, and a null means nothing should be resident for this
+        // selection any more.
+        PreviewResidencyEvent.SELECTION_CHANGED,
+        ->
+            if (busy) PreviewResidency.Leave
+            else if (packToWarm == null) PreviewResidency.Release
+            else warmUnlessAlreadyResident(packToWarm, residentWarmPack)
+
+        // Residency was lost or could not be taken, and nothing here can ask for a release: the
+        // install did not move the selection, and the trim has already freed the recognizer.
+        PreviewResidencyEvent.PACK_INSTALLED,
+        PreviewResidencyEvent.MEMORY_TRIM,
+        ->
+            if (busy) PreviewResidency.Leave
+            else warmUnlessAlreadyResident(packToWarm, residentWarmPack)
+    }
+}
+
+private fun warmUnlessAlreadyResident(
+    packToWarm: com.whispereverywhere.transcription.stream.StreamingPack?,
+    residentWarmPack: com.whispereverywhere.transcription.stream.StreamingPack?,
+): PreviewResidency =
+    if (packToWarm == null || packToWarm == residentWarmPack) PreviewResidency.Leave
+    else PreviewResidency.Warm(packToWarm)
+
+/**
  * Should a pack that JUST FINISHED INSTALLING be warmed right now? (4.5.1 Task 1 — the
  * first-session fix.) Pure, pinned as a truth table by LocalPreviewGateTest; the ONE caller is the
  * board collector in `onCreate`, which logs its answer.
@@ -361,9 +515,18 @@ internal fun warmOnPackInstalled(
 ): com.whispereverywhere.transcription.stream.StreamingPack? {
     if (phase != com.whispereverywhere.transcription.stream.PreviewPhase.INSTALLED) return null
     if (previewLanguage == null || installedLanguage != previewLanguage) return null
-    if (sessionActive || batchJobActive) return null
-    val pack = previewPackToWarm(previewLanguage, installedPackLanguages, userEnabled) ?: return null
-    return if (pack == residentWarmPack) null else pack
+    // (4.5.1 pass 2) ...and the three terms this gate SHARES with every other moment are the one
+    // decision's, not a copy of it: the refusals, the release/skip rule and the delegation to
+    // `previewPackToWarm` are [previewResidency]'s PACK_INSTALLED arm, so an install can never
+    // disagree with a selection change about which pack should be resident.
+    val residency = previewResidency(
+        event = PreviewResidencyEvent.PACK_INSTALLED,
+        packToWarm = previewPackToWarm(previewLanguage, installedPackLanguages, userEnabled),
+        sessionActive = sessionActive,
+        batchJobActive = batchJobActive,
+        residentWarmPack = residentWarmPack,
+    )
+    return (residency as? PreviewResidency.Warm)?.pack
 }
 
 /**
@@ -686,6 +849,19 @@ class FloatingBubbleService : Service(),
     // selection moved during a load) — but @Volatile stays: the cost is nothing and the field is
     // written on Main while the engine it describes lives on another thread.
     @Volatile private var streamingPreviewPack: com.whispereverywhere.transcription.stream.StreamingPack? = null
+
+    /**
+     * WHAT IS RESIDENT AND USABLE RIGHT NOW — the ENGINE's own answer, in the one place it is
+     * written (4.5.1 pass 2). Every member of [PreviewResidencyEvent] reads it, so the discipline
+     * cannot be kept at one site and lost at the next.
+     *
+     * Deliberately not [streamingPreviewPack] alone: after an `onTrimMemory` that field still names
+     * the pack while the recognizer is freed, so refusing a warm on it would leave the previewer
+     * cold behind a receipt promising words. The field narrows the question to one pack; `isWarmFor`
+     * answers it.
+     */
+    private val residentWarmPreviewPack: com.whispereverywhere.transcription.stream.StreamingPack?
+        get() = streamingPreviewPack?.takeIf { streamingPreview?.isWarmFor(it) == true }
 
     // WHICH npu-class tier [localEngine] was built on, or null for the shared CPU backend
     // (4.0 Q9 as a Boolean; a tier ID since 4.1 L8). It cannot be asked of the engine — `backend`
@@ -1082,66 +1258,53 @@ class FloatingBubbleService : Service(),
             // critical path. (4.4.1, CHANGE 5) For the SELECTED language's pack and no other —
             // the same lookup the arm site takes, so Auto warms nothing and hands back both the
             // load and the +169 MB RSS. RULING ASSUMED (R3): the switch defaults on.
-            previewPackToWarm(
-                previewLanguage = app.preferencesManager.getLanguageForApi(),
-                installedPackLanguages = app.streamingPackManager.installedLanguages(),
-                userEnabled = app.preferencesManager.localPreviewEnabled,
-            )?.let { warmStreamingPreview(it) }
+            //
+            // (4.5.1 pass 2) SERVICE_START is this moment's name in the one event set, and the
+            // set's ESTABLISHING half: nothing is resident 1.5 s into the process, so the arm
+            // takes no refusal and no skip and this site answers exactly what it answered before
+            // the set existed.
+            val residency = previewResidency(
+                event = PreviewResidencyEvent.SERVICE_START,
+                packToWarm = previewPackToWarm(
+                    previewLanguage = app.preferencesManager.getLanguageForApi(),
+                    installedPackLanguages = app.streamingPackManager.installedLanguages(),
+                    userEnabled = app.preferencesManager.localPreviewEnabled,
+                ),
+                sessionActive = currentState != BubbleState.IDLE && currentState != BubbleState.ERROR,
+                batchJobActive = BatchJobController.active != null,
+                residentWarmPack = residentWarmPreviewPack,
+            )
+            if (residency is PreviewResidency.Warm) warmStreamingPreview(residency.pack)
         }
 
-        // (4.4.1 pass 3, ITEM 2) THE OTHER HALF OF CHANGE 5: the +169 MB comes back when the
-        // selection moves AWAY from an installed pack language. CHANGE 5 stopped the boot warm
-        // for a user on Auto, so nothing is LOADED for them at boot — but nothing released a
-        // RESIDENT engine, so a user who dictated in English and then switched to Auto kept the
-        // recognizer until `onTrimMemory` or `onDestroy` (review r2, nit 2). CHANGE 5's words
-        // were met; its purpose was not.
+        // SELECTION_CHANGED — the event set's member for a language pick, IN EITHER DIRECTION
+        // (4.4.1 pass 3 ITEM 2 for the release; 4.5.1 pass 2 ITEM 1 for the warm).
         //
-        // ONE site, ONE condition, and the condition is the warm gate's OWN ANSWER: nothing to
-        // warm for the new selection is nothing that should stay resident for it. It is the exact
-        // COMPLEMENT of `warmStreamingPreview`'s release — that one frees the old recognizer when
-        // the new selection has a DIFFERENT pack, this one frees it when the new selection has
-        // NONE — so between them a language change can never leave the wrong model, or an unused
-        // one, in memory. `streamingPreviewPack` is deliberately left pointing at what the engine
-        // last held: that is exactly the `onTrimMemory` shape, so re-picking that language reloads
-        // through the `==` branch instead of releasing an already-released engine first.
+        // The release half: CHANGE 5 stopped the boot warm for a user on Auto, so nothing is
+        // LOADED for them at boot — but nothing released a RESIDENT engine, so a user who dictated
+        // in English and then switched to Auto kept the recognizer until `onTrimMemory` or
+        // `onDestroy` (pass 3, review r2 nit 2). CHANGE 5's words were met; its purpose was not.
         //
-        // `drop(1)` skips the replay of the value already in place — the prewarm above has just
-        // asked the same question of it and warmed nothing. Mid-session triggers are SKIPPED
-        // rather than deferred, like the model-switch collector's below and for a stronger
-        // reason: the session's `PreviewTeeEngine` BORROWS this recognizer, so freeing it under a
-        // live session would leave the strip up with nothing left to draw on it. The next trim,
-        // or the next selection change, hands the memory back instead. The disk census is off
-        // Main because it is a marker read plus four exact byte counts per catalogue row.
+        // The warm half, and it is the owner's own complaint reached by the gesture he performs
+        // most: this collector used to act on `previewPackToWarm`'s NULL answer only and let a
+        // non-null answer fall through, so `pick English → switch to Auto → switch back` warmed
+        // nothing until the next session's wrap site, which arms the session AFTER that one. He
+        // tests on Auto deliberately and moves between languages to compare them, so he meets that
+        // as *"having to transcribe a second time to get the live to work"*.
+        //
+        // BOTH halves are now the one answer acted on, in [askPreviewResidency] — the same body
+        // every other event-shaped member runs, which is what keeps two members from disagreeing
+        // about which pack should be resident. `streamingPreviewPack` is still deliberately left
+        // pointing at what the engine last held: that is exactly the `onTrimMemory` shape, so
+        // re-picking the language just left reloads through `warmStreamingPreview`'s `==` branch
+        // instead of releasing an already-released engine first.
+        //
+        // `drop(1)` skips the replay of the value already in place — SERVICE_START above has just
+        // asked the same question of it. The collect body SUSPENDS, so two rapid picks are handled
+        // in order and never race each other across the census hop.
         serviceScope.launch(Dispatchers.Main) {
             app.preferencesManager.selectedLanguage.drop(1).collect {
-                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) return@collect
-                if (streamingPreview == null) return@collect
-                val keep = withContext(Dispatchers.IO) {
-                    previewPackToWarm(
-                        previewLanguage = app.preferencesManager.getLanguageForApi(),
-                        installedPackLanguages = app.streamingPackManager.installedLanguages(),
-                        userEnabled = app.preferencesManager.localPreviewEnabled,
-                    )
-                }
-                // THE SKIP, RE-READ BELOW THE SUSPENSION (pass 3 fix round 1, H-B1) — the
-                // model-switch collector's own lesson 50 lines below, for the identical shape.
-                // The check at the top of this block was taken before the census hopped to IO and
-                // back, so by here it is stale: across that window the user can re-pick the
-                // pack's language AND start a session, which finds the pack installed and
-                // isWarmFor() true, arms, and lets PreviewTeeEngine BORROW this recognizer — and the
-                // stale body would then free it under that live session, leaving the strip up with
-                // nothing left to draw on. This read is what makes the release below safe, and it
-                // is safe *because* nothing between it and the release suspends: currentState is
-                // Main-confined with one writer, `keep` is already in hand, and Log.i and
-                // release() are ordinary calls. One uninterrupted run on Main.
-                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) return@collect
-                if (streamingPreview == null) return@collect
-                if (keep != null) return@collect
-                android.util.Log.i(
-                    "WE-DIAG",
-                    "stream-warm: the selection has no pack to warm — resident previewer released",
-                )
-                streamingPreview?.release()
+                askPreviewResidency(event = PreviewResidencyEvent.SELECTION_CHANGED)
             }
         }
 
@@ -1209,7 +1372,7 @@ class FloatingBubbleService : Service(),
                         userEnabled = app.preferencesManager.localPreviewEnabled,
                         sessionActive = currentState != BubbleState.IDLE && currentState != BubbleState.ERROR,
                         batchJobActive = BatchJobController.active != null,
-                        residentWarmPack = streamingPreviewPack?.takeIf { streamingPreview?.isWarmFor(it) == true },
+                        residentWarmPack = residentWarmPreviewPack,
                     ) ?: return@collect
                     android.util.Log.i(
                         "WE-DIAG",
@@ -3396,6 +3559,66 @@ class FloatingBubbleService : Service(),
     }
 
     /**
+     * **THE ONE BODY EVERY EVENT-SHAPED MEMBER OF [PreviewResidencyEvent] RUNS** (4.5.1 pass 2):
+     * ask [previewPackToWarm] which pack should be resident, ask [previewResidency] what this
+     * moment does with that answer, and do it. Three members share it —
+     * [PreviewResidencyEvent.SELECTION_CHANGED] and [PreviewResidencyEvent.MEMORY_TRIM] here, plus
+     * one more from ITEM 2 — because three copies of this body is how the last three rounds
+     * produced three moments that disagreed.
+     *
+     * **The ordering is the release collector's earned shape, now structural for every member**
+     * rather than re-argued per site (pass 3 fix round 1, H-B1):
+     *
+     *  - the disk census is OFF MAIN — `installedLanguages()` is a marker read plus four exact byte
+     *    counts per catalogue row — and the SELECTION is read inside the same hop, so the answer
+     *    cannot be computed from a pick the user has since moved off;
+     *  - the terms that MOVE — the session, the batch job, what the engine is warm for — are read
+     *    BELOW the suspension, because across that window a session can have started and BORROWED
+     *    this recognizer, and a body holding stale terms would then free it under that live session
+     *    or post a 169 MB load beside it;
+     *  - and nothing between that read and the act suspends: the `when` is ordinary, `Log.i` is
+     *    ordinary, `release()` and `warmStreamingPreview()` only post to the engine's own executor.
+     *    One uninterrupted run on Main.
+     *
+     * Callers on Main only (this reads `currentState`, which is Main-confined with one writer).
+     */
+    private suspend fun askPreviewResidency(event: PreviewResidencyEvent) {
+        val packToWarm = withContext(Dispatchers.IO) {
+            previewPackToWarm(
+                previewLanguage = app.preferencesManager.getLanguageForApi(),
+                installedPackLanguages = app.streamingPackManager.installedLanguages(),
+                userEnabled = app.preferencesManager.localPreviewEnabled,
+            )
+        }
+        val residency = previewResidency(
+            event = event,
+            packToWarm = packToWarm,
+            sessionActive = currentState != BubbleState.IDLE && currentState != BubbleState.ERROR,
+            batchJobActive = BatchJobController.active != null,
+            residentWarmPack = residentWarmPreviewPack,
+        )
+        when (residency) {
+            is PreviewResidency.Warm -> {
+                android.util.Log.i(
+                    "WE-DIAG",
+                    "stream-warm: $event — warming ${residency.pack.language}'s pack now, " +
+                        "so the next session arms",
+                )
+                warmStreamingPreview(residency.pack)
+            }
+            PreviewResidency.Release -> {
+                android.util.Log.i(
+                    "WE-DIAG",
+                    "stream-warm: $event — nothing to warm for this selection, " +
+                        "resident previewer released",
+                )
+                streamingPreview?.release()
+            }
+            PreviewResidency.Leave -> Unit
+        }
+    }
+
+    /**
      * 4.4.0: build (once) and warm the resident previewer — load + canary on its own executor —
      * for [pack]; null when that pack is not installed after all (the gate then says pack=0).
      * Idempotent ON THE PACK (4.5.0 T2, defect 1): warming the pack the engine already holds is
@@ -3938,7 +4161,20 @@ class FloatingBubbleService : Service(),
             installedPackLanguages = installedPreviewLanguages,
             userEnabled = userEnabled,
         )
-        val preview = if (packToWarm != null) warmStreamingPreview(packToWarm) else streamingPreview
+        // (4.5.1 pass 2) SESSION_START is this moment's name in the one event set, and the one
+        // member that deliberately acts DURING a session — so its arm takes neither the refusal
+        // nor the already-resident skip, and `residency is Warm` is exactly the `packToWarm !=
+        // null` this line tested before the set existed.
+        val residency = previewResidency(
+            event = PreviewResidencyEvent.SESSION_START,
+            packToWarm = packToWarm,
+            sessionActive = currentState != BubbleState.IDLE && currentState != BubbleState.ERROR,
+            batchJobActive = BatchJobController.active != null,
+            residentWarmPack = residentWarmPreviewPack,
+        )
+        val preview =
+            if (residency is PreviewResidency.Warm) warmStreamingPreview(residency.pack)
+            else streamingPreview
         // (4.5.0 T2, defect 4) `isWarmFor`, not `isWarm`: the engine's verdict and its recognizer
         // are per-PACK now, so "is the previewer ready" has to name the pack it is ready FOR.
         // `isWarm()` alone would answer yes for a French recognizer during an English session —
@@ -4740,6 +4976,16 @@ class FloatingBubbleService : Service(),
             val rearm = prewarmRearmsAfterTrim(currentState)
             android.util.Log.i("WE-DIAG", "trim re-prewarm: level=$level state=$currentState rearm=$rearm")
             if (rearm && localEngine != null) warmLocalEngine().prewarm()
+            // (4.5.1 pass 2) MEMORY_TRIM — and the previewer's recognizer, freed by the trim
+            // above, had NO counterpart at all until here: the next tap found it cold and that
+            // session showed no live words, which is ITEM 1's miss reached without the user
+            // touching anything. Asked in THIS job rather than in `onTrimMemory` for both of the
+            // reasons the whisper re-arm is: a trim arrives as a storm and cancelling the pending
+            // job collapses it into one re-ask after the LAST trim, and handing a gigabyte back in
+            // the same Main pass as the release would not be re-arming, it would be deleting the
+            // trim. The `rearm` gate spares the census when a session has started in the gap;
+            // `askPreviewResidency` re-reads that term below its own hop regardless.
+            if (rearm) askPreviewResidency(event = PreviewResidencyEvent.MEMORY_TRIM)
         }
     }
 

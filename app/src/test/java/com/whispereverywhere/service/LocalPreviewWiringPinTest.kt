@@ -154,10 +154,10 @@ class LocalPreviewWiringPinTest {
         )
         assertEquals(
             "read in exactly four places in the service: here, the boot warm's own lookup " +
-                "(CHANGE 5), the release-on-selection-change collector's (pass 3, ITEM 2), and " +
-                "the warm-on-install collector's (4.5.1 Task 1) — every one of them the same " +
-                "seam, because a previewer decision taken on any other reading of the pick is the " +
-                "defect owner ruling 1 retired",
+                "(CHANGE 5), the ONE body every event-shaped member of the set runs (4.5.1 pass " +
+                "2), and the warm-on-install collector's (4.5.1 Task 1) — every one of them the " +
+                "same seam, because a previewer decision taken on any other reading of the pick " +
+                "is the defect owner ruling 1 retired",
             4,
             count(text, "app.preferencesManager.getLanguageForApi()"),
         )
@@ -198,7 +198,13 @@ class LocalPreviewWiringPinTest {
                     "            batchJobActive = BatchJobController.active != null,\n",
             ),
         )
-        assertEquals(1, count(startRecording, "            batchJobActive = BatchJobController.active != null,\n"))
+        assertEquals(
+            "TWO at this indent since 4.5.1 pass 2: the gate's own, and SESSION_START's — the " +
+                "wrap site is a member of the event set now and passes the set's terms, even " +
+                "though that member's arm is exempt from the refusal (it warms for the NEXT " +
+                "session, which is the whole reason it runs during this one)",
+            2, count(startRecording, "            batchJobActive = BatchJobController.active != null,\n"),
+        )
         val gate = indexOfOrFail(startRecording, "        val previewArmed = localPreviewArms(\n")
         val line = indexOfOrFail(startRecording, "StreamDiag.gateLine(")
         val flag = indexOfOrFail(startRecording, "        sessionHasLocalPreview = previewArmed\n")
@@ -221,68 +227,84 @@ class LocalPreviewWiringPinTest {
         assertTrue("released under the same three-state guard, after the local context", trimLocal < trimPreview)
         indexOfOrFail(onDestroy, "        streamingPreview?.release()\n        streamingPreview = null\n")
         assertEquals(
-            "THREE release sites: trim, destroy, and the selection moving away from the resident " +
-                "pack's language (4.4.1 pass 3, ITEM 2). A fourth is a recognizer freed under a " +
-                "session that borrowed it",
+            "THREE release sites: trim, destroy, and the ONE body the event set's members run — " +
+                "which takes it on SELECTION_CHANGED's null answer, i.e. the selection moving " +
+                "away from the resident pack's language (4.4.1 pass 3, ITEM 2). A fourth is a " +
+                "recognizer freed under a session that borrowed it",
             3, count(text, "streamingPreview?.release()"),
         )
     }
 
+    /**
+     * **RE-SPECIFIED IN 4.5.1 PASS 2 (ITEM 1), AND WHAT IT PROTECTS IS STILL TRUE.**
+     *
+     * This pin held the release-on-selection-change collector's exact source shape — the
+     * mid-session skip read twice, the engine-exists check beside it, the census off Main, the
+     * release taken on `previewPackToWarm`'s own null answer, and nothing suspending between the
+     * re-read and the release. The *ordering* was earned over three review rounds (pass 3 fix
+     * round 1, H-B1) and none of it is given up here; what changed is that those five properties
+     * now live in the ONE body every event-shaped member of the set runs
+     * ([askPreviewResidency]) instead of in this collector's own inlined copy, because the
+     * collector had to grow a second arm (warm on a non-null answer) and a fourth copy of the
+     * ordering argument is how three moments came to disagree in the first place.
+     *
+     * Two assertions were deliberately retired rather than moved:
+     *
+     *  - `if (keep != null) return@collect` — the FALL-THROUGH, which was ITEM 1's defect. The
+     *    property it stood for (*the condition is `previewPackToWarm`'s own answer, never a second
+     *    language comparison*) is asserted below in its new form: the body hands that answer to
+     *    `previewResidency` as `packToWarm` and compares no languages of its own.
+     *  - `if (streamingPreview == null) return@collect`, read twice. Correct for a release and
+     *    WRONG for a warm: `warmStreamingPreview` BUILDS the engine when the field is null, which
+     *    is exactly the state a user who has only ever been on Auto is in. A release of a null
+     *    field is a no-op, so nothing it protected is lost.
+     */
     @Test
     fun theResidentPreviewerIsHandedBackWhenTheSelectionMovesAwayFromItsPack() {
-        // (4.4.1 pass 3, ITEM 2 — review r2's nit 2.) CHANGE 5 stopped the boot WARM for a user
-        // on Auto, but nothing released a RESIDENT engine when the selection moved away from an
-        // installed pack language: a user who dictated in English and then switched to Auto kept
-        // the recognizer and its +169 MB until onTrimMemory or onDestroy. One site, one
-        // condition, and the condition is the warm gate's own answer — LocalPreviewGateTest
-        // holds the two together, so this pins only the wiring.
-        val collector = indexOfOrFail(
-            text,
-            "            app.preferencesManager.selectedLanguage.drop(1).collect {\n",
+        val ask = indexOfOrFail(text, "    private suspend fun askPreviewResidency(event: PreviewResidencyEvent) {\n")
+        assertEquals(
+            "ONE body for every event-shaped member: the release and the warm can no longer be " +
+                "argued differently at two sites",
+            1, count(text, "private suspend fun askPreviewResidency("),
+        )
+        // THE CENSUS IS OFF MAIN — installedLanguages() is a marker read plus four exact byte
+        // counts per catalogue row — and the SELECTION is read INSIDE the same hop, which is the
+        // hazard the board collector was carrying separately (pass 2, ITEM 3).
+        val census = indexOfOrFail(text, "        val packToWarm = withContext(Dispatchers.IO) {\n")
+        // Searched FROM this body: the boot prewarm asks the same question with the same lines at
+        // the same indent, so a whole-file `indexOf` would measure SERVICE_START's ordering here.
+        val pick = text.indexOf(
+            "                previewLanguage = app.preferencesManager.getLanguageForApi(),\n",
+            census,
+        )
+        val decision = text.indexOf("\n        val residency = previewResidency(\n", census)
+        assertTrue("the census is the first thing the body does", census > ask && census < decision)
+        assertTrue("with the pick inside it", pick > census && pick < decision)
+        // (pass 3 fix round 1, H-B1) THE TERMS THAT MOVE ARE READ BELOW THE SUSPENSION: across the
+        // census hop a session can have started and BORROWED this recognizer, and a stale body
+        // would then free it under that live session — or post a 169 MB load beside it.
+        val session = text.indexOf(
+            "            sessionActive = currentState != BubbleState.IDLE && currentState != BubbleState.ERROR,\n",
+            decision,
+        )
+        val resident = text.indexOf("            residentWarmPack = residentWarmPreviewPack,\n", decision)
+        assertTrue("the session term is read below the hop", session > decision)
+        assertTrue("and so is what the engine is warm for", resident > session)
+        // ...and nothing between that read and the act suspends: the `when` is ordinary, Log.i is
+        // ordinary, and release()/warmStreamingPreview() only post to the engine's own executor.
+        val release = text.indexOf("                streamingPreview?.release()\n", decision)
+        val warm = text.indexOf("                warmStreamingPreview(residency.pack)\n", decision)
+        assertTrue("both arms are inside this body", release > resident && warm > resident)
+        assertEquals(
+            "the release is the answer's own, never a second language comparison — a release that " +
+                "disagreed with the warm would thrash the 802-860 ms load between them",
+            1, count(text, "            PreviewResidency.Release -> {\n"),
         )
         assertEquals(
-            "ONE collector on the selection in the service, and it is this one",
-            1, count(text, "app.preferencesManager.selectedLanguage"),
-        )
-        assertEquals(
-            "drop(1): the prewarm above has just asked the same question of the value already " +
-                "in place and warmed nothing for it",
-            1, count(text, "selectedLanguage.drop(1)"),
-        )
-        val skip =
-            "                if (currentState != BubbleState.IDLE && currentState != BubbleState.ERROR) return@collect\n"
-        val resident = "                if (streamingPreview == null) return@collect\n"
-        // (fix round 1, H-B1) The skip is read TWICE, and the second read is the one that makes
-        // the release safe: the first was taken above `withContext`, i.e. before the collector's
-        // only suspension point, and across that window a session can have started and BORROWED
-        // this recognizer. Same defect, same fix, as the model-switch collector's "THE GATE,
-        // RE-READ BELOW THE SUSPENSION" 50 lines below.
-        assertEquals("the mid-session skip is read twice, not once", 2, count(text, skip))
-        assertEquals("and so is the resident check it travels with", 2, count(text, resident))
-        val guard = indexOfOrFail(text, skip)
-        val condition = indexOfOrFail(text, "                val keep = withContext(Dispatchers.IO) {\n")
-        val reRead = text.indexOf(skip, condition)
-        val reReadResident = text.indexOf(resident, condition)
-        val keepCheck = indexOfOrFail(text, "                if (keep != null) return@collect\n")
-        val release = text.indexOf("                streamingPreview?.release()\n")
-        assertTrue("the mid-session skip comes FIRST: the tee BORROWS this recognizer", collector < guard)
-        assertTrue("then the condition", guard < condition)
-        assertTrue("the skip is RE-READ below the suspension", condition < reRead)
-        assertTrue("with the resident check", reRead < reReadResident)
-        assertTrue(
-            "and nothing between that re-read and the release suspends — the keep test is " +
-                "already in hand, Log.i and release() are ordinary calls",
-            reReadResident < keepCheck && keepCheck in 0 until release,
-        )
-        assertEquals(
-            "the condition is previewPackToWarm's own answer, never a second language " +
-                "comparison — a release that disagreed with the warm would thrash the load",
-            1, count(text, "                if (keep != null) return@collect\n"),
-        )
-        assertEquals(
-            "the census is off Main: installedLanguages() is a marker read plus four byte " +
-                "counts per catalogue row",
-            1, count(text, "val keep = withContext(Dispatchers.IO) {"),
+            "and the answer handed in is previewPackToWarm's, so this body decides nothing about " +
+                "WHICH pack — twice at this indent, because the wrap site hands its own lookup " +
+                "over the same way",
+            2, count(text, "            packToWarm = packToWarm,\n"),
         )
         assertEquals(
             "and `streamingPreviewPack` is deliberately NOT cleared — that is the onTrimMemory " +
@@ -291,8 +313,8 @@ class LocalPreviewWiringPinTest {
             1, count(text, "streamingPreviewPack = "),
         )
         assertEquals(
-            "the pick is read through the one seam, now in four places: the wrap site, the boot " +
-                "warm's lookup, this collector's, and the warm-on-install collector's (4.5.1 T1)",
+            "the pick is read through the one seam, still in four places: the wrap site, the boot " +
+                "warm's lookup, this shared body's, and the warm-on-install collector's",
             4,
             count(text, "app.preferencesManager.getLanguageForApi()"),
         )
@@ -358,22 +380,27 @@ class LocalPreviewWiringPinTest {
         // that field still names the pack while the recognizer is freed, and refusing on it would
         // leave the previewer cold behind a receipt promising words.
         assertEquals(
+            "written in ONE place (4.5.1 pass 2) — every member of the event set reads the same " +
+                "getter, so the discipline cannot be kept at one site and lost at the next",
             1,
-            count(
-                text,
-                "                        residentWarmPack = streamingPreviewPack?.takeIf { streamingPreview?.isWarmFor(it) == true },\n",
-            ),
+            count(text, "        get() = streamingPreviewPack?.takeIf { streamingPreview?.isWarmFor(it) == true }\n"),
+        )
+        assertEquals(
+            "and this collector reads it",
+            1,
+            count(text, "                        residentWarmPack = residentWarmPreviewPack,\n"),
         )
         // ...and the answer goes straight to the EXISTING warm path. No restart of the service:
         // that was the owner's other option and it would tear down the overlay he is looking at.
         val warm = indexOfOrFail(text, "                    warmStreamingPreview(pack)\n")
         assertTrue("the warm is the last thing the collector does", warm > decision)
         assertEquals(
-            "three warm calls in the service now, every one of them handed a pack",
-            3,
-            count(text, "warmStreamingPreview(it)") +
-                count(text, "warmStreamingPreview(packToWarm)") +
-                count(text, "warmStreamingPreview(pack)"),
+            "FOUR warm calls in the service now, every one of them handed a pack and every one of " +
+                "them a member of the event set's answer: this collector's, and the three that " +
+                "take the pack out of `previewResidency`'s Warm",
+            4,
+            count(text, "warmStreamingPreview(pack)\n") +
+                count(text, "warmStreamingPreview(residency.pack)"),
         )
         assertEquals(
             "and the pack is armed by WARMING and never by restarting the service — the owner " +
@@ -391,8 +418,8 @@ class LocalPreviewWiringPinTest {
         // Off the session's critical path: the ~0.8 s load + the canary run in the same delayed
         // coroutine as the whisper prewarm, for the pack previewPackToWarm names and no other.
         val prewarm = indexOfOrFail(text, "            warmLocalEngine().prewarm()\n")
-        val ours = indexOfOrFail(text, "            previewPackToWarm(\n")
-        assertTrue("directly beside the local prewarm", ours > prewarm && ours - prewarm < 700)
+        val ours = indexOfOrFail(text, "                packToWarm = previewPackToWarm(\n")
+        assertTrue("directly beside the local prewarm", ours > prewarm && ours - prewarm < 1200)
         assertEquals(1, count(text, "    private fun warmStreamingPreview(\n"))
     }
 
@@ -408,12 +435,29 @@ class LocalPreviewWiringPinTest {
         // Anchored on the newline, so the indent is EXACT: the release collector (pass 3, ITEM 2)
         // asks the same function from deeper inside a coroutine, and an unanchored needle would
         // count that too and turn this pin into "at least one warm site".
-        assertEquals("the boot prewarm asks it", 1, count(text, "\n            previewPackToWarm(\n"))
-        assertEquals("and it hands the answer straight over", 1, count(text, "            )?.let { warmStreamingPreview(it) }\n"))
+        assertEquals(
+            "the boot prewarm asks it — inside SERVICE_START's own decision now (4.5.1 pass 2), " +
+                "which is what makes the boot a MEMBER of the event set rather than a fourth " +
+                "opinion beside it",
+            1, count(text, "\n                packToWarm = previewPackToWarm(\n"),
+        )
+        assertEquals(
+            "and it hands the answer straight over (the leading `)` anchors this to the boot's " +
+                "own statement — the wrap site's identically-indented line is the initialiser " +
+                "below, and an unanchored needle would count both)",
+            1,
+            count(
+                text,
+                "            )\n" +
+                    "            if (residency is PreviewResidency.Warm) warmStreamingPreview(residency.pack)\n",
+            ),
+        )
         val wrapSite = indexOfOrFail(startRecording, "        val packToWarm = previewPackToWarm(\n")
         val warmCall = indexOfOrFail(
             startRecording,
-            "        val preview = if (packToWarm != null) warmStreamingPreview(packToWarm) else streamingPreview\n",
+            "        val preview =\n" +
+                "            if (residency is PreviewResidency.Warm) warmStreamingPreview(residency.pack)\n" +
+                "            else streamingPreview\n",
         )
         assertTrue("the wrap site asks it too, before it warms", wrapSite < warmCall)
         assertEquals("the wrap site's lookup reads the SELECTION and the session's own set", 1, count(startRecording, "            previewLanguage = previewLanguage,\n"))
@@ -425,12 +469,11 @@ class LocalPreviewWiringPinTest {
         assertEquals("read once", 1, count(startRecording, "        val installedPreviewLanguages = app.streamingPackManager.installedLanguages()\n"))
         assertEquals("no English literal is left anywhere in the service", 0, count(text, "StreamingPackCatalog.EN"))
         assertEquals(
-            "three warm calls, all handed a pack — the third is the install's own " +
-                "(aFreshlyInstalledPackIsWarmedTheMOMENTTHEINSTALLCOMPLETES)",
-            3,
-            count(text, "warmStreamingPreview(it)") +
-                count(text, "warmStreamingPreview(packToWarm)") +
-                count(text, "warmStreamingPreview(pack)"),
+            "four warm calls, all handed a pack and all of them a member of the event set's " +
+                "answer (theSetOfMomentsThatChangeWhichPackIsResidentIsWrittenDownAndEveryMemberIsWired)",
+            4,
+            count(text, "warmStreamingPreview(pack)\n") +
+                count(text, "warmStreamingPreview(residency.pack)"),
         )
     }
 
@@ -539,6 +582,124 @@ class LocalPreviewWiringPinTest {
             "and the claim comes before the warm that follows construction, or an arming answer " +
                 "would be dropped as unclaimed",
             built < indexOfOrFail(text, "engine.warm(dir, pack)"),
+        )
+    }
+
+    /**
+     * **THE SET OF MOMENTS AT WHICH THE RESIDENT PREVIEWER CAN DISAGREE WITH `previewPackToWarm`,
+     * WRITTEN DOWN** (4.5.1 pass 2, the controller's framing ruling).
+     *
+     * Task 1 added a THIRD warm trigger and its own report then named two more gestures that still
+     * missed, while its reviewer named a third defect of the same family. That is the state-model
+     * shape that burned three rounds in 4.4.1: *the bug is not any one missing trigger, it is that
+     * "the set of moments that change which pack should be resident" was never enumerated.* So the
+     * set is an ENUM, every member is wired to the one decision, and this pin is what makes a
+     * SIXTH gesture fail loudly instead of silently missing:
+     *
+     *  - a member added to the enum makes `previewResidency`'s `when` non-exhaustive — a COMPILE
+     *    error, the loudest failure available;
+     *  - a member that is given an arm but no site fails the per-member count below;
+     *  - a warm or a release that does not come from a member's answer fails the call-site counts.
+     */
+    @Test
+    fun theSetOfMomentsThatChangeWhichPackIsResidentIsWrittenDownAndEveryMemberIsWired() {
+        val events = listOf("SERVICE_START", "SELECTION_CHANGED", "PACK_INSTALLED", "SESSION_START", "MEMORY_TRIM")
+        assertEquals(
+            "the set is declared exactly once",
+            1, count(text, "internal enum class PreviewResidencyEvent {"),
+        )
+        val set = body("internal enum class PreviewResidencyEvent {", "\n}\n")
+        events.forEach { event ->
+            assertEquals("$event is a member of the set", 1, count(set, "\n    $event,\n"))
+        }
+        assertEquals(
+            "...and the set is exactly these members: a member added here has to be wired below, " +
+                "which is the whole point of writing the set down",
+            events.size,
+            Regex("(?m)^    [A-Z][A-Z_]+,$").findAll(set).count(),
+        )
+        events.forEach { event ->
+            assertEquals(
+                "$event names itself at exactly one site — the site is what makes it an event " +
+                    "rather than a comment",
+                1, count(text, "event = PreviewResidencyEvent.$event"),
+            )
+        }
+        assertEquals(
+            "ONE decision for the whole set, so a member cannot acquire a policy of its own",
+            1, count(text, "internal fun previewResidency(\n"),
+        )
+        assertEquals(
+            "and it is asked at three sites: ONE shared body for the event-shaped members " +
+                "(askPreviewResidency) plus the two establishing moments, which ask it where they " +
+                "stand so that their call sites keep the shape they had before the set existed",
+            3,
+            // Anchored on the newline, so each indent is EXACT: the shallower needle is a
+            // substring of the deeper line, and an unanchored count would triple-count.
+            count(text, "\n        val residency = previewResidency(\n") +
+                count(text, "\n            val residency = previewResidency(\n"),
+        )
+        assertEquals(
+            "...and a fourth time inside warmOnPackInstalled, which is PACK_INSTALLED's adapter " +
+                "rather than a second decision: it adds the phase and the record's language and " +
+                "delegates every shared term",
+            1, count(text, "\n    val residency = previewResidency(\n"),
+        )
+        // EVERY warm of the previewer is an event's answer, and every release is too.
+        assertEquals(
+            "the warm path is entered from the event's answer or from the install gate's, and " +
+                "from nowhere else",
+            3, count(text, "warmStreamingPreview(residency.pack)"),
+        )
+        assertEquals("plus the install gate's own answer", 1, count(text, "warmStreamingPreview(pack)\n"))
+        assertEquals(
+            "THREE release sites: the trim, the destroy, and the one event-shaped re-ask",
+            3, count(text, "streamingPreview?.release()"),
+        )
+    }
+
+    /**
+     * **ITEM 1 — re-picking an ALREADY-INSTALLED language must not miss its first session.**
+     *
+     * The selection-change collector acted on `previewPackToWarm`'s NULL answer only (release) and
+     * let a non-null answer fall through, so `pick English → switch to Auto → switch back` warmed
+     * nothing until the NEXT session's wrap site, which arms the session after that. That is the
+     * owner's own complaint — *"having to transcribe a second time to get the live to work"* —
+     * reached by the gesture he performs most, because he tests on Auto deliberately and moves
+     * between languages to compare them.
+     *
+     * The collector's `streamingPreview == null` guard went with it: correct for a release (there
+     * is nothing to hand back), wrong for a warm (`warmStreamingPreview` BUILDS the engine when
+     * the field is null, which is exactly the state a user who has only ever been on Auto is in).
+     */
+    @Test
+    fun rePickingAnAlreadyInstalledLanguageWarmsItsPackInsteadOfFallingThrough() {
+        val collector = indexOfOrFail(
+            text,
+            "            app.preferencesManager.selectedLanguage.drop(1).collect {\n",
+        )
+        assertEquals(
+            "ONE collector on the selection in the service, and it is this one",
+            1, count(text, "app.preferencesManager.selectedLanguage"),
+        )
+        assertEquals(
+            "drop(1): the value already in place is the boot prewarm's — SERVICE_START is its own " +
+                "member of the set",
+            1, count(text, "selectedLanguage.drop(1)"),
+        )
+        val ask = indexOfOrFail(
+            text,
+            "                askPreviewResidency(event = PreviewResidencyEvent.SELECTION_CHANGED)\n",
+        )
+        assertTrue("the collector's whole body is the re-ask", ask > collector && ask - collector < 200)
+        assertEquals(
+            "the FALL-THROUGH IS GONE: a non-null answer was a `return@collect` and is now a warm",
+            0, count(text, "if (keep != null) return@collect"),
+        )
+        assertEquals(
+            "and the engine-exists guard with it — it was right for the release and wrong for the " +
+                "warm, and a release of a null field is a no-op anyway",
+            0, count(text, "if (streamingPreview == null) return@collect"),
         )
     }
 
