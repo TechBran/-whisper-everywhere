@@ -151,6 +151,13 @@ fun OnboardingFlowScreen(
     val liveDisabledLanguages by
         com.whispereverywhere.transcription.stream.PreviewDisabled.languages.collectAsState()
 
+    // (4.5.1 Task 1) The FOURTH fact, and the one that makes *"ready"* mean the next tap works:
+    // which language's previewer is warm. COLLECTED for the verdict's reason and one step more
+    // urgently — it moves on the engine's executor the instant a load arms or a trim frees the
+    // recognizer. Null for the whole of a first run, like the set above, and asked honestly anyway.
+    val liveWarmLanguage by
+        com.whispereverywhere.transcription.stream.PreviewWarm.language.collectAsState()
+
     // Permission state lives at flow level (3.5.x): the pinned footer gates Continue on the
     // bubble's two required permissions (mic, overlay — 4.3.3 made accessibility a
     // recommendation), so the step and the footer read the same truth. Re-checked on every
@@ -263,6 +270,7 @@ fun OnboardingFlowScreen(
                         liveTierInstalled = liveTierInstalled,
                         liveWordsSwitchOn = liveWordsSwitchOn,
                         liveDisabledLanguages = liveDisabledLanguages,
+                        liveWarmLanguage = liveWarmLanguage,
                     )
                     Step.ENGINES -> EnginesStep(
                         vm = setupVm,
@@ -625,6 +633,7 @@ private fun LanguageStep(
     liveTierInstalled: Boolean,
     liveWordsSwitchOn: Boolean,
     liveDisabledLanguages: Set<String>,
+    liveWarmLanguage: String?,
 ) {
     Text(
         OnboardingLogic.LANGUAGE_HINT,
@@ -650,17 +659,19 @@ private fun LanguageStep(
     // made here is recorded by the selection's one writer and honoured on Home, where the tier
     // is. See the component's own KDoc.
     //
-    // The four facts are this step's own: the pick IS the selection here (there is no
+    // The five facts are this step's own: the pick IS the selection here (there is no
     // `PreferencesManager` selection until Continue), the tier and the switch are read once at
-    // flow level, and the previewer's own per-process verdict is collected there — so the READY
-    // receipt cannot promise words a device with no tier, a user with the switch off, or a
-    // language the previewer has taken off will never see (fix round 1, review r1's B2; fix
-    // round 2, review r2's N2).
+    // flow level, and the previewer's own per-process verdict and its WARM language are collected
+    // there — so the READY receipt cannot promise words a device with no tier, a user with the
+    // switch off, or a language the previewer has taken off will never see, and cannot promise them
+    // for a model that is not loaded yet (fix round 1, review r1's B2; fix round 2, review r2's N2;
+    // 4.5.1 Task 1).
     com.whispereverywhere.ui.components.LivePreviewSelectorStrip(
         selectedLanguage = picked,
         showLiveWords = liveWordsSwitchOn,
         localTierInstalled = liveTierInstalled,
         disabledLanguages = liveDisabledLanguages,
+        warmLanguage = liveWarmLanguage,
     )
     val deviceCode = OnboardingLogic.deviceLanguageCode(languageTag)
     OnboardingLogic.languageRows(languageTag).forEach { (code, displayName) ->

@@ -50,9 +50,10 @@ class StreamingPreviewEngineTest {
         capacity: Int = StreamingPreviewTuning.QUEUE_CAPACITY,
         onLoadFailure: (StreamingPack) -> Unit = {},
         onDisabled: (StreamingPack) -> Unit = {},
+        onWarm: (StreamingPack?) -> Unit = {},
     ) = StreamingPreviewEngine(
         factory = factory, canaryClip = { clip }, onLoadFailure = onLoadFailure,
-        onDisabled = onDisabled, executor = executor,
+        onDisabled = onDisabled, onWarm = onWarm, executor = executor,
         clock = { now }, nanoClock = { 0L }, queueCapacity = capacity, log = { logs += it }, enterExecutorThread = {},
     )
 
@@ -503,6 +504,43 @@ class StreamingPreviewEngineTest {
         assertTrue(rec.released)
         assertFalse(e.isWarm())
         assertFalse("release is not a verdict", e.isDisabled(pack))
+    }
+
+    @Test fun theEngineHandsOverWHATISRESIDENTEveryTimeThatChanges() {
+        // (4.5.1 Task 1.) The third hand-over hook, and the one the READY receipt above the
+        // language selector now rests on. `isWarm()` is the answer the session gate itself reads
+        // and it had no reader outside the service, so the strip's promise meant *the files
+        // landed* — which is the owner's *"people are going to think that it doesn't work"*.
+        //
+        // The published value is the ENGINE's own answer — `if (isWarm()) loadedPack else null` —
+        // at every site that moves either half, so it cannot drift from `isWarmFor`.
+        val seen = mutableListOf<StreamingPack?>()
+        val rec = ScriptedRecognizer(listOf("HELLO"), canaryText = CANARY)
+        val e = engine(rec, onWarm = { seen += it })
+        e.warm(dir, pack)
+        assertEquals("armed: the pack, and only after the canary passed", listOf(pack), seen)
+        e.open { emitted += it }
+        e.close()
+        assertEquals("a session boundary is not a change: the recognizer stays resident", listOf(pack), seen)
+        e.release()
+        assertEquals("a trim or a destroy withdraws it", listOf(pack, null), seen)
+
+        // A load that never armed publishes the withdrawal and never the pack: a canary that
+        // failed leaves 73 MB installed and intact, and this is the fact that stops the strip
+        // promising words from it.
+        val failed = mutableListOf<StreamingPack?>()
+        engine(ScriptedRecognizer(listOf("HELLO"), canaryText = ""), onWarm = { failed += it })
+            .warm(dir, pack)
+        assertEquals(listOf<StreamingPack?>(null), failed)
+
+        // ...and so does the language going off mid-session on three decode throws.
+        val struck = mutableListOf<StreamingPack?>()
+        val flaky = ScriptedRecognizer(listOf("A"), failDecodesFrom = 10, canaryText = CANARY)
+        val f = engine(flaky, onWarm = { struck += it })
+        f.warm(dir, pack)
+        f.open { emitted += it }
+        feedMs(f, 1_600)
+        assertEquals(listOf(pack, null), struck)
     }
 
     @Test fun aCommitBeforeWarmFreezesBlank() {

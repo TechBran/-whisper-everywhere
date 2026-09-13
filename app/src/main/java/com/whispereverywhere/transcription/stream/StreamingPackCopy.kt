@@ -1046,6 +1046,28 @@ object StreamingPackCopy {
      * receipt outlived a pack the previewer had taken out from under it, with the bytes still
      * installed and nothing anywhere saying so.
      *
+     * ### And since 4.5.1 the MOMENTARY half is a term too, which is the whole of Task 1
+     *
+     * 4.5.0 took `previewReady`'s standing half and left its momentary half out, on the reading
+     * that *"whenever you pick it"* is a promise about the next session rather than about this
+     * instant. That reading is what the owner met as the feature not working:
+     *
+     * > *"What can we do about having to transcribe a second time to get the live to work? … People
+     * > are going to think that it doesn't work."*
+     *
+     * The receipt said READY on *the files landed*, while the engine was cold and the gate reads
+     * `isWarmFor()` — so the promise was about a session TWO taps away. [warmLanguage] closes it,
+     * and the sentence is now true of the very next tap. It is only honest to assert because the
+     * other half of this task made it reachable: the install's completion now warms the pack
+     * (`warmOnPackInstalled`), so the receipt appears 802-860 ms after a 73-128 MB transfer rather
+     * than never. A user would have to tap inside that second to see the silence.
+     *
+     * [disabledLanguages] STAYS, though warm subsumes it today (a disabled language is not warm, by
+     * the engine's own `isWarm()`): the two facts have different writers and different lifetimes —
+     * one is withdrawn and re-granted all day, the other is a permanent verdict — and a receipt
+     * that could come back for a language this process has taken off would be the r2 N2 defect
+     * again. Two terms that agree are cheaper than one that has to be read twice to be believed.
+     *
      * There is deliberately no `userSaidNo` term, because the gate has none either: a user who
      * declined and then installed from the Settings row really does get live words, and the card's
      * silence there is about not nagging rather than about truth.
@@ -1098,6 +1120,12 @@ object StreamingPackCopy {
      *        `installedPackLanguages`' reason: the strip renders a row per language, and one
      *        language going off says nothing about another's. Compared against
      *        [PreviewWork.language] rather than [language], because the verdict is keyed by code.
+     * @param warmLanguage the language whose previewer is LOADED AND USABLE right now
+     *        ([PreviewWarm], written by the engine's own answer) — null when nothing is. ONE code
+     *        and not a set, because the engine holds one recognizer: warming German is releasing
+     *        French. Compared against [PreviewWork.language] for [disabledLanguages]' reason, and
+     *        an equality rather than a membership for the same reason `isWarmFor` is not `isWarm` —
+     *        a French model resident during an English row is not English's promise.
      */
     fun selectorLine(
         work: PreviewWork,
@@ -1106,6 +1134,7 @@ object StreamingPackCopy {
         showLiveWords: Boolean,
         localTierInstalled: Boolean,
         disabledLanguages: Set<String>,
+        warmLanguage: String?,
     ): String? = when (work.phase) {
         // The one sentence the work line has no phase for, and the one the ruling asks for by
         // name. The board keeps a terminal record, so this is the receipt for an arrival THIS
@@ -1122,7 +1151,10 @@ object StreamingPackCopy {
             // question asked.
             val arrived = StreamingPackCatalog.forLanguage(work.language)
             if (arrived != null &&
-                showLiveWords && localTierInstalled && work.language !in disabledLanguages
+                showLiveWords && localTierInstalled && work.language !in disabledLanguages &&
+                // (4.5.1 Task 1) AND THE ENGINE IS WARM FOR IT. The term that turns this receipt
+                // from *the files landed* into *the next tap works* — see the parameter's own note.
+                work.language == warmLanguage
             ) {
                 selectorReady(language, arrived.stripUnit)
             } else {

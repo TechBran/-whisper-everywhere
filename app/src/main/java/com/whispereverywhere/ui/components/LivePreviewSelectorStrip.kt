@@ -91,6 +91,11 @@ import com.whispereverywhere.transcription.stream.StreamingPackCopy
  *        right to call them installed; what is false is only *"words appear whenever you pick
  *        it"*, and until fix round 2 that was the one fact this strip could not ask about
  *        (review r2's N2).
+ * @param warmLanguage the language whose previewer is loaded and usable RIGHT NOW (`PreviewWarm`,
+ *        written by the engine's own answer). The fifth fact, and the one that makes the READY
+ *        receipt mean *the next tap works* rather than *the files landed* (4.5.1 Task 1): the
+ *        owner's *"having to transcribe a second time to get the live to work"* was this sentence
+ *        being true of a session two taps away. Handed over UNJUDGED like the other four.
  */
 @Composable
 fun LivePreviewSelectorStrip(
@@ -98,6 +103,7 @@ fun LivePreviewSelectorStrip(
     showLiveWords: Boolean,
     localTierInstalled: Boolean,
     disabledLanguages: Set<String>,
+    warmLanguage: String?,
     modifier: Modifier = Modifier,
 ) {
     val board by PreviewWorkboard.work.collectAsState()
@@ -119,6 +125,7 @@ fun LivePreviewSelectorStrip(
             showLiveWords = showLiveWords,
             localTierInstalled = localTierInstalled,
             disabledLanguages = disabledLanguages,
+            warmLanguage = warmLanguage,
         )?.let { line ->
             StreamingPackCopy.featureTitle(language) to line
         }

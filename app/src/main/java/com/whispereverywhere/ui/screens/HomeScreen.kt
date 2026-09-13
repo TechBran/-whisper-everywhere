@@ -44,6 +44,7 @@ import com.whispereverywhere.service.resolveSttProvider
 import com.whispereverywhere.transcription.stream.PreviewAutoFetch
 import com.whispereverywhere.transcription.stream.PreviewAutoFetchController
 import com.whispereverywhere.transcription.stream.PreviewDisabled
+import com.whispereverywhere.transcription.stream.PreviewWarm
 import com.whispereverywhere.transcription.stream.PreviewPhase
 import com.whispereverywhere.transcription.stream.PreviewPicks
 import com.whispereverywhere.transcription.stream.PreviewTrigger
@@ -1464,6 +1465,12 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
     // from. No disk is touched — a failed canary leaves 73 MB installed and valid, which is
     // exactly why `state()` cannot answer this question.
     val previewDisabled by PreviewDisabled.languages.collectAsState()
+    // (4.5.1 Task 1) WARM for this process — the engine's own `isWarm()` answer, published for the
+    // same reason the verdict above is and collected for the same reason too, one step stronger:
+    // this value is written the instant an 802-860 ms load arms or a trim frees the recognizer, and
+    // the READY receipt is a term of it now. A `remember` here would show *ready* for a model that
+    // has since been freed, which is the exact sentence Task 1 exists to make true.
+    val previewWarm by PreviewWarm.language.collectAsState()
     var expanded by remember { mutableStateOf(false) }
 
     // Find the display name for the current selection — through the one owner of code-to-word
@@ -1562,17 +1569,20 @@ fun LanguageSelectionCard(localTierInstalled: Boolean) {
             // it happening. The strip reads the ONE observable and this card reads nothing: no
             // decision, no board, no actuator here — the selection still writes one preference.
             //
-            // The four facts it is TOLD are the four its sentences depend on (fix round 1, review
-            // r1's B2; fix round 2, review r2's N2): the selection, so *"Pick that language again
-            // to answer"* renders only where re-picking would change something; the switch, the
-            // tier and the previewer's own per-process verdict, so the READY receipt is not a
-            // promise this device, this user's switch or this process can no longer keep. Every
-            // rule about them lives in `StreamingPackCopy.selectorLine` — none is judged here.
+            // The five facts it is TOLD are the five its sentences depend on (fix round 1, review
+            // r1's B2; fix round 2, review r2's N2; 4.5.1 Task 1): the selection, so *"Pick that
+            // language again to answer"* renders only where re-picking would change something; the
+            // switch, the tier and the previewer's own per-process verdict, so the READY receipt is
+            // not a promise this device, this user's switch or this process can no longer keep; and
+            // WHICH LANGUAGE IS WARM, so *"ready"* means the next tap works rather than the files
+            // landed. Every rule about them lives in `StreamingPackCopy.selectorLine` — none is
+            // judged here.
             LivePreviewSelectorStrip(
                 selectedLanguage = selectedLanguage,
                 showLiveWords = showLiveWords,
                 localTierInstalled = localTierInstalled,
                 disabledLanguages = previewDisabled,
+                warmLanguage = previewWarm,
             )
 
             // Dropdown menu

@@ -3352,6 +3352,15 @@ class FloatingBubbleService : Service(),
             onDisabled = { wentOff ->
                 com.whispereverywhere.transcription.stream.PreviewDisabled.note(wentOff.language)
             },
+            // (4.5.1 Task 1) THE THIRD HAND-OVER, and the same discipline: what is RESIDENT AND
+            // USABLE now, named by the engine rather than by this class. `isWarmFor(pack)` is the
+            // answer the session gate itself reads and it had no reader outside this service
+            // either, so the strip above the language selector could only promise words off *the
+            // files landed* — the owner's *"having to transcribe a second time to get the live to
+            // work"*. Published here, read there, and the READY receipt is a term of it.
+            onWarm = { resident ->
+                com.whispereverywhere.transcription.stream.PreviewWarm.note(resident?.language)
+            },
         ).also { streamingPreview = it }
         streamingPreviewPack = pack
         engine.warm(dir, pack)

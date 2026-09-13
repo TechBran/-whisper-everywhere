@@ -86,6 +86,23 @@ class StreamingPreviewEngine(
      * read. Called from [disable], the ONE writer of the set, so no failure path can forget it.
      */
     private val onDisabled: (StreamingPack) -> Unit = {},
+    /**
+     * WHAT IS RESIDENT AND USABLE NOW — the pack this engine is warm for, or null when nothing is
+     * (4.5.1 Task 1). Handed over for [onDisabled]'s reason and it is a THIRD event, not a
+     * refinement of either: the other two hooks fire when something went wrong, and this one fires
+     * every time [isWarm] changes in either direction — a load that armed, a trim, a language
+     * change, a verdict.
+     *
+     * It exists because `isWarmFor(pack)` — the answer the session gate itself reads — had no
+     * reader outside the service either, so the strip above the language selector could only
+     * promise words off *the files landed*, and a user who tapped inside the 802-860 ms load saw
+     * none. The service publishes it into [PreviewWarm] and the READY receipt is a term of it now.
+     *
+     * Called from [publishWarm] at every site that moves `warm` or `loadedPack`, with this engine's
+     * OWN answer rather than the pack any caller believes it asked for — Main's belief is exactly
+     * the thing that is a load ahead of the truth.
+     */
+    private val onWarm: (StreamingPack?) -> Unit = {},
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { r ->
         Thread(r, "stream-preview").apply { isDaemon = true }
     },
@@ -215,6 +232,22 @@ class StreamingPreviewEngine(
             onDisabled(pack)
         }
         off = true
+        // `off` is half of `isWarm()`, so a verdict is a warm change: the READY receipt above the
+        // language selector has to come down (4.5.1 Task 1). After `off`, for the same reason.
+        publishWarm()
+    }
+
+    /**
+     * Hand [onWarm] this engine's OWN answer about what is resident and usable (4.5.1 Task 1).
+     *
+     * Called from every site that moves either half of [isWarm] — the armed branch of [warm],
+     * [releaseResident], and [disable] — and it recomputes rather than being told, so the published
+     * fact cannot drift from what [isWarmFor] would answer. That is the whole discipline: a
+     * surface's promise about live words must be the engine's answer, never a caller's belief about
+     * a load that takes 802-860 ms to become true.
+     */
+    private fun publishWarm() {
+        onWarm(if (isWarm()) loadedPack else null)
     }
 
     /**
@@ -289,6 +322,10 @@ class StreamingPreviewEngine(
                 recognizer = rec
                 loadedPack = pack
                 warm = true
+                // The moment the strip above the language selector is waiting for: READY means
+                // WARM now, so this is what makes the receipt appear (4.5.1 Task 1). After the
+                // three fields, so the hook cannot read a half-armed engine.
+                publishWarm()
             } else {
                 runCatching { rec.release() }
                 // Takes THIS language off, and no other: the clip is the pack's, so a verdict
@@ -399,6 +436,9 @@ class StreamingPreviewEngine(
         recognizer = null
         loadedPack = null
         warm = false
+        // Both halves of the published fact have just gone: a trim, a destroy or a language change
+        // leaves nothing to promise words from (4.5.1 Task 1).
+        publishWarm()
         queue.clear()
         ring.clear()
         resetSegment()

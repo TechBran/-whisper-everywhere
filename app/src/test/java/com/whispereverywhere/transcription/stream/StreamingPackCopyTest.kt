@@ -1036,8 +1036,10 @@ class StreamingPackCopyTest {
 
     /**
      * The strip's line, with the ordinary case as the default: the record's own language is the
-     * selected one (which is WHY the record exists), the switch is on and a tier is installed.
-     * Every test below states only the fact it is about.
+     * selected one (which is WHY the record exists), the switch is on, a tier is installed and —
+     * since 4.5.1 Task 1 — the engine is WARM for that language, which is the state the install's
+     * own warm trigger reaches 802-860 ms after the bytes land. Every test below states only the
+     * fact it is about.
      */
     private fun strip(
         work: PreviewWork,
@@ -1046,6 +1048,7 @@ class StreamingPackCopyTest {
         showLiveWords: Boolean = true,
         localTierInstalled: Boolean = true,
         disabledLanguages: Set<String> = emptySet(),
+        warmLanguage: String? = "en",
     ): String? = StreamingPackCopy.selectorLine(
         work = work,
         language = language,
@@ -1053,6 +1056,7 @@ class StreamingPackCopyTest {
         showLiveWords = showLiveWords,
         localTierInstalled = localTierInstalled,
         disabledLanguages = disabledLanguages,
+        warmLanguage = warmLanguage,
     )
 
     @Test fun theSelectorStripSaysWhatIsArrivingForEveryPhaseThatIsArriving() {
@@ -1142,7 +1146,32 @@ class StreamingPackCopyTest {
                 "outlives the selection and each row is about its own pack",
             strip(installed, selectedLanguage = "fr", disabledLanguages = setOf("en")),
         )
-        // ...and the three facts silence ONLY the promise. A transfer that is actually happening
+        // (4.5.1 TASK 1) ...AND THE ENGINE BEING WARM FOR IT, which is the whole of this build's
+        // first half. The owner:
+        //
+        // > *"What can we do about having to transcribe a second time to get the live to work?
+        // > People are going to think that it doesn't work."*
+        //
+        // 4.5.0 printed this receipt on *the files landed*, while the engine was still cold and the
+        // session gate reads `isWarmFor()` — so *"words appear whenever you pick it"* was a promise
+        // about a session TWO taps away. Now it means the next tap.
+        assertNull(
+            "nothing is loaded: the bytes are on disk and the recognizer is not, which is the " +
+                "state the 4.5.0 sheet's AF6 told the owner to expect",
+            strip(installed, warmLanguage = null),
+        )
+        assertNull(
+            "and ANOTHER language's model being resident is not this one's promise — the tee " +
+                "would borrow the wrong recognizer, which is exactly what isWarmFor refuses",
+            strip(installed, warmLanguage = "fr"),
+        )
+        assertEquals(
+            "the warm language is read off the RECORD's language too, never the selection's: the " +
+                "record outlives the selection and each row is about its own pack",
+            StreamingPackCopy.selectorReady(en, words),
+            strip(installed, selectedLanguage = "fr", warmLanguage = "en"),
+        )
+        // ...and the four facts silence ONLY the promise. A transfer that is actually happening
         // is narrated whoever started it and whatever the device can arm: hiding a running 73 MB
         // from the user is the silent spend ruling 3c exists to close. A repair fetch for a
         // language this process has disabled is exactly that case — the bytes are moving.
@@ -1157,9 +1186,14 @@ class StreamingPackCopyTest {
                     showLiveWords = false,
                     localTierInstalled = false,
                     disabledLanguages = setOf("en"),
+                    warmLanguage = null,
                 ),
             )
             assertNotNull("$phase must still say something", strip(running, showLiveWords = false))
+            assertNotNull(
+                "$phase: and a cold engine cannot silence a line about bytes that are moving",
+                strip(running, warmLanguage = null),
+            )
         }
     }
 

@@ -474,6 +474,28 @@ class LocalPreviewWiringPinTest {
             count(text, "onDisabled = { streamingPreviewPack"),
         )
         assertEquals("the field is written in exactly that one place", 1, count(text, "streamingPreviewPack = "))
+        // (4.5.1 Task 1) THE THIRD HOOK, and a third event again: not a failure of any kind, but
+        // what is RESIDENT AND USABLE now — which changes when a load arms, when a trim frees the
+        // recognizer, when the language changes and when a verdict lands. `isWarmFor(pack)` is the
+        // answer the session gate itself reads and it had no reader outside this class, so the
+        // strip above the language selector could only promise words off *the files landed*; this
+        // is what makes READY mean the next tap works.
+        assertEquals(
+            "the engine names what is resident, exactly as the two hooks above name their packs",
+            1,
+            count(text, "onWarm = { resident ->"),
+        )
+        assertEquals(
+            "into the one register both selection surfaces read",
+            1,
+            count(text, "PreviewWarm.note(resident?.language)"),
+        )
+        assertEquals(
+            "and never off the field Main moves — Main's belief is the thing that is an 802-860 ms " +
+                "load ahead of the truth, which is worse here than in either hook above",
+            0,
+            count(text, "onWarm = { streamingPreviewPack"),
+        )
     }
 
     @Test

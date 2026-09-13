@@ -405,6 +405,10 @@ class LivePreviewSelectorStripPinTest {
             // (fix round 2, review r2's N2) The membership test is a rule too, which is why the
             // SET is handed over whole and not a Boolean the strip computed.
             "in disabledLanguages", "isOff(",
+            // (4.5.1 Task 1) ...and so is the warm comparison. `work.language == warmLanguage` is
+            // the term that turns *the files landed* into *the next tap works*, and it belongs in
+            // the function whose KDoc argues for it, not on a Compose file no JVM test can reach.
+            "== warmLanguage", "isWarm(",
         )) {
             assertEquals(
                 "<<$rule>> on the strip: which sentence is true is selectorLine's answer",
@@ -416,6 +420,7 @@ class LivePreviewSelectorStripPinTest {
             "showLiveWords = showLiveWords",
             "localTierInstalled = localTierInstalled",
             "disabledLanguages = disabledLanguages",
+            "warmLanguage = warmLanguage",
         )) {
             assertEquals(
                 "<<$fact>>: handed through by name, so a call site cannot pass one of them in " +
@@ -430,7 +435,7 @@ class LivePreviewSelectorStripPinTest {
         )
     }
 
-    @Test fun bothSitesHandTheStripTheFourFactsAndNeitherOfThemFakesOne() {
+    @Test fun bothSitesHandTheStripTheFiveFactsAndNeitherOfThemFakesOne() {
         // (fix round 1, review r1's B2) The defect was not a sentence, it was a component built to
         // hold nothing that had three unstated assumptions. The facts now arrive from the call
         // site, and the edit this pin catches is the cheap one: a `true` literal to make it
@@ -447,6 +452,9 @@ class LivePreviewSelectorStripPinTest {
                 "localTierInstalled = true",
                 "selectedLanguage = \"",
                 "disabledLanguages = emptySet()",
+                // (4.5.1 Task 1) The fifth fact's own cheap edit: a literal that compiles and says
+                // "this language is loaded", which is the 4.5.0 receipt coming straight back.
+                "warmLanguage = \"",
             )) {
                 assertEquals(
                     "$site: <<$literal>> is the assumption coming back as a constant",
@@ -488,10 +496,28 @@ class LivePreviewSelectorStripPinTest {
             1, liveLineCount(onboarding, "PreviewDisabled.languages.collectAsState()"),
         )
         assertEquals(1, liveLineCount(step, "disabledLanguages = liveDisabledLanguages,"))
+        // (4.5.1 Task 1) THE FIFTH FACT, collected at both sites for the verdict's reason and one
+        // step more urgently: it moves the instant an 802-860 ms load arms or a trim frees the
+        // recognizer, and it is what the READY receipt now rests on. A remembered read here would
+        // show *ready* for a model that has since been freed.
+        assertEquals(
+            "the picker collects the warm register",
+            1, liveLineCount(picker, "PreviewWarm.language.collectAsState()"),
+        )
+        assertEquals(1, liveLineCount(picker, "warmLanguage = previewWarm,"))
+        assertEquals(
+            "and so does the onboarding flow, beside the verdict at flow level",
+            1, liveLineCount(onboarding, "PreviewWarm.language.collectAsState()"),
+        )
+        assertEquals(1, liveLineCount(step, "warmLanguage = liveWarmLanguage,"))
         for ((site, scope) in listOf("picker" to picker, "onboarding" to onboarding)) {
             assertEquals(
                 "$site: the verdict is a COLLECTOR, not a remembered read",
                 0, liveLineCount(scope, "remember { PreviewDisabled"),
+            )
+            assertEquals(
+                "$site: and so is the warm register",
+                0, liveLineCount(scope, "remember { PreviewWarm"),
             )
         }
     }
