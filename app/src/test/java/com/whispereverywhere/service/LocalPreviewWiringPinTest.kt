@@ -359,16 +359,17 @@ class LocalPreviewWiringPinTest {
         assertEquals("the decision is declared once, beside its two twins", 1, count(text, "internal fun warmOnPackInstalled(\n"))
         assertEquals("and asked once", 1, count(text, "val pack = warmOnPackInstalled(\n"))
         assertEquals(
-            "the record is the SELECTED language's, looked up in the one observable",
+            "the record is the SELECTED language's, looked up in the one observable — and looked " +
+                "up from the pick read in the SAME hop (4.5.1 pass 2, ITEM 3)",
             1,
-            count(text, "                    val record = com.whispereverywhere.transcription.stream.PreviewWorkboard.of(selection)\n"),
+            count(text, "                            com.whispereverywhere.transcription.stream.PreviewWorkboard.of(pick),\n"),
         )
         // THE TERMS THAT MOVE ARE READ BELOW THE SUSPENSION — the release collector's own H-B1
         // lesson, for the identical shape: across the census hop a session can have started, and a
         // load posted under it would run beside the recognizer `PreviewTeeEngine` has borrowed.
         val census = indexOfOrFail(
             text,
-            "                    val installed = withContext(Dispatchers.IO) { app.streamingPackManager.installedLanguages() }\n",
+            "                    val (selection, record, installed) = withContext(Dispatchers.IO) {\n",
         )
         assertTrue("the census is off Main, and above the decision", dedupe < census && census < decision)
         val session = indexOfOrFail(
@@ -753,6 +754,68 @@ class LocalPreviewWiringPinTest {
             body.indexOf("serviceScope.launch(Dispatchers.Main) {", ask - 200) in (assign + 1) until ask,
         )
         assertTrue("this is all inside updateBubbleState", write >= 0)
+    }
+
+    /**
+     * **ITEM 3 — ONE SHAPE FOR BOTH COLLECTORS: the selection is read INSIDE the census hop, never
+     * above it** (the reviewer's N1, carried from round 1).
+     *
+     * The board collector read the pick on Main, suspended for the disk census, and then passed
+     * that now-stale pick as `previewLanguage` — while its twin fifty lines above read its own pick
+     * *inside* the same `withContext(Dispatchers.IO)` block for exactly this reason. Two collectors
+     * disagreeing about a hazard one of them had already solved is the shape this pass exists to
+     * retire.
+     *
+     * Worst case, and it is why this is not cosmetic: across the hop the user moves the selection
+     * off the language whose install just landed; the event-shaped re-ask frees the recognizer for
+     * the new (pack-less) selection, and this collector then loads the pack the selection has left
+     * — re-taking the +169 MB that 4.4.1 pass 3 ITEM 2 exists to hand back, and breaking *"never
+     * warm a language that is not the selection"* in the letter.
+     */
+    @Test
+    fun neitherCollectorReadsTheSELECTIONAboveItsCensusHop() {
+        assertEquals(
+            "the pick is read through the one seam, four times",
+            4, count(text, "app.preferencesManager.getLanguageForApi()"),
+        )
+        // 1. The shared body every event-shaped member runs: the pick is an argument of the
+        //    lookup, inside the hop.
+        val sharedHop = indexOfOrFail(text, "        val packToWarm = withContext(Dispatchers.IO) {\n")
+        val sharedPick = text.indexOf(
+            "                previewLanguage = app.preferencesManager.getLanguageForApi(),\n",
+            sharedHop,
+        )
+        val sharedClose = text.indexOf("\n        }\n", sharedHop)
+        assertTrue("the shared body reads the pick inside its hop", sharedPick in (sharedHop + 1) until sharedClose)
+        // 2. The board collector: the pick is the first line of its hop, and the record is looked
+        //    up FROM it in the same block, so the phase and the language cannot come from
+        //    different instants either.
+        val boardHop = indexOfOrFail(
+            text,
+            "                    val (selection, record, installed) = withContext(Dispatchers.IO) {\n",
+        )
+        val boardPick = text.indexOf(
+            "                        val pick = app.preferencesManager.getLanguageForApi()\n",
+            boardHop,
+        )
+        val boardClose = text.indexOf("\n                    }\n", boardHop)
+        assertTrue("the board collector reads the pick inside its hop", boardPick in (boardHop + 1) until boardClose)
+        val boardRecord = text.indexOf(
+            "                            com.whispereverywhere.transcription.stream.PreviewWorkboard.of(pick),\n",
+            boardHop,
+        )
+        assertTrue("and looks the record up from it, in the same block", boardRecord in (boardPick + 1) until boardClose)
+        // 3. ...and the terms that move are still read BELOW both hops.
+        val boardSession = text.indexOf(
+            "                        sessionActive = currentState != BubbleState.IDLE && currentState != BubbleState.ERROR,\n",
+            boardClose,
+        )
+        assertTrue("the session term is read after the board's suspension", boardSession > boardClose)
+        assertEquals(
+            "and the pick is used under ONE name in that collector, so a second read cannot creep " +
+                "back above the hop",
+            1, count(text, "                        previewLanguage = selection,\n"),
+        )
     }
 
     @Test

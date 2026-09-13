@@ -551,6 +551,14 @@ internal fun previewSessionEnded(
  * @param installedLanguage the language of the board record that just changed phase. Compared with
  *        [previewLanguage] rather than assumed equal to it: *"never warm a language that is not the
  *        selection"*, and two packs can be arriving at once.
+ *
+ *        **The ONE caller today cannot make the two differ** (review r1's N2), and that is worth
+ *        saying rather than leaving the term to read as work it cannot do: the collector looks the
+ *        record up BY the selection, in one instant, inside a single hop (pass 2, ITEM 3) — so the
+ *        record's language and the selection are the same string by construction and this guard
+ *        cannot fire. It stays because the board is keyed per language and a caller that ever hands
+ *        over the record which CHANGED, rather than the record for the pick, makes it live
+ *        immediately; the truth table asserts it either way.
  * @return the pack to hand [warmStreamingPreview], or null to do nothing at all.
  */
 internal fun warmOnPackInstalled(
@@ -1404,10 +1412,23 @@ class FloatingBubbleService : Service(),
                 // while the service is up, which is the only case AF6 was ever about.
                 .drop(1)
                 .collect {
-                    val selection = app.preferencesManager.getLanguageForApi()
-                    val record = com.whispereverywhere.transcription.stream.PreviewWorkboard.of(selection)
-                        ?: return@collect
-                    val installed = withContext(Dispatchers.IO) { app.streamingPackManager.installedLanguages() }
+                    // (4.5.1 pass 2, ITEM 3 — review r1's N1) THE SELECTION IS READ INSIDE THE HOP,
+                    // like the twin above, and the record is looked up FROM it in the same block.
+                    // Read on Main above the census, it was stale by the time it was passed as
+                    // `previewLanguage`: across that window the user can move off the language
+                    // whose install just landed, the event-shaped re-ask frees the recognizer for
+                    // the new (pack-less) selection, and this collector then loads the pack the
+                    // selection has LEFT — re-taking the +169 MB that 4.4.1 pass 3 ITEM 2 exists to
+                    // hand back. One instant for the pick, the record's phase and the disk census.
+                    val (selection, record, installed) = withContext(Dispatchers.IO) {
+                        val pick = app.preferencesManager.getLanguageForApi()
+                        Triple(
+                            pick,
+                            com.whispereverywhere.transcription.stream.PreviewWorkboard.of(pick),
+                            app.streamingPackManager.installedLanguages(),
+                        )
+                    }
+                    if (record == null) return@collect
                     // THE TERMS THAT MOVE ARE READ BELOW THE SUSPENSION — the release collector's
                     // own H-B1 lesson, for the identical shape. Across the census hop a session can
                     // have started, and a load posted under it would allocate 169 MB beside the
