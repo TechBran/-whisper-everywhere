@@ -395,6 +395,26 @@ internal enum class PreviewResidencyEvent {
     SESSION_END,
 
     /**
+     * A BATCH FILE JOB ended (4.5.1 pass 2 fix round 1, review r1's B2) — the other conjunct of
+     * the refusal [SESSION_END] repaired.
+     *
+     * The refusal is `sessionActive || batchJobActive`, and ITEM 2 gave the first conjunct a
+     * member while the second had none. `BatchJobController.active` is written by a DIFFERENT
+     * service, which never touches `currentState`, so a batch job started and ended with the
+     * bubble sitting in IDLE: `updateBubbleState` was never called and [SESSION_END] never fired.
+     * An hour-long file runs many minutes (`BatchTranscriptionService`'s own KDoc), and an install
+     * completing or a language re-picked inside that window was refused and then never re-asked —
+     * the next tap posted the load and read `isWarmFor` in the same breath, so that session showed
+     * no live words and the one after it worked.
+     *
+     * It shares [SESSION_END]'s arm for [SESSION_END]'s reason, which was always about the
+     * refusal and never about the session: a change declined while something borrowed the
+     * recognizer leaves a recognizer nobody wants, and the moment that borrower finishes is the
+     * first moment the answer can be taken.
+     */
+    BATCH_END,
+
+    /**
      * `onTrimMemory` freed the recognizer while the service was idle, and until 4.5.1 pass 2
      * nothing re-asked: the next tap found a cold previewer and that session showed no words —
      * ITEM 1's miss, reached without the user touching anything. `TRIM_MEMORY_UI_HIDDEN` is 20 and
@@ -474,14 +494,17 @@ internal fun previewResidency(
         ->
             if (packToWarm == null) PreviewResidency.Leave else PreviewResidency.Warm(packToWarm)
 
-        // The answer CHANGED under us, or a change was REFUSED while a session held the
+        // The answer CHANGED under us, or a change was REFUSED while something held the
         // recognizer — and either way a null means nothing should be resident for this selection
-        // any more. SESSION_END is in this group and not the one below precisely because of that
-        // refusal: a selection change skipped mid-session leaves a recognizer nobody wants, and
-        // this is the first moment it can be handed back.
+        // any more. SESSION_END and BATCH_END are in this group and not the one below precisely
+        // because of that refusal: a change skipped while the recognizer was borrowed leaves a
+        // recognizer nobody wants, and the borrower finishing is the first moment it can be handed
+        // back. They are the TWO CONJUNCTS of `busy` and they arrive together for that reason —
+        // giving one a member and not the other is how the refusal and the re-ask drift apart.
         PreviewResidencyEvent.SELECTION_CHANGED,
         PreviewResidencyEvent.SWITCH_CHANGED,
         PreviewResidencyEvent.SESSION_END,
+        PreviewResidencyEvent.BATCH_END,
         ->
             if (busy) PreviewResidency.Leave
             else if (packToWarm == null) PreviewResidency.Release
@@ -1407,6 +1430,31 @@ class FloatingBubbleService : Service(),
             app.preferencesManager.localPreviewEnabledFlow.drop(1).collect {
                 askPreviewResidency(event = PreviewResidencyEvent.SWITCH_CHANGED)
             }
+        }
+
+        // BATCH_END — the OTHER CONJUNCT of the refusal (fix round 1, review r1's B2). `busy` is
+        // `sessionActive || batchJobActive`; SESSION_END gave the first half a member and the
+        // second half had none, so the two drifted: `BatchJobController.active` is written by a
+        // DIFFERENT service which never touches `currentState`, so a batch file job starts and
+        // ends with the bubble in IDLE, `updateBubbleState` is never called, and SESSION_END never
+        // fires. An hour-long file runs many minutes, and an install landing or a language
+        // re-picked inside that window was refused and then never re-asked — the next tap posted
+        // the load and read `isWarmFor` in the same breath, so THAT session showed no live words
+        // and the one after it worked. ITEM 2's own miss, on the other conjunct.
+        //
+        // The job STARTING is deliberately not a moment: it makes `busy` true, which every arm
+        // already refuses on. Only the falling edge can take an answer, hence the narrowing to the
+        // boolean, the de-duplication (the field is nulled once, but a Boolean makes that explicit
+        // rather than relying on it) and the `!running` filter. `drop(1)` for the collectors
+        // above's reason — the value in place is SERVICE_START's, which read the same term.
+        serviceScope.launch(Dispatchers.Main) {
+            BatchJobController.activeFlow
+                .map { it != null }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { running ->
+                    if (!running) askPreviewResidency(event = PreviewResidencyEvent.BATCH_END)
+                }
         }
 
         // (4.5.1 TASK 1) THE THIRD WARM TRIGGER — and the only one that is an EVENT rather than a

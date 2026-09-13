@@ -456,7 +456,7 @@ class LocalPreviewGateTest {
         assertEquals(
             listOf(
                 "SERVICE_START", "SELECTION_CHANGED", "SWITCH_CHANGED", "PACK_INSTALLED",
-                "SESSION_START", "SESSION_END", "MEMORY_TRIM",
+                "SESSION_START", "SESSION_END", "BATCH_END", "MEMORY_TRIM",
             ),
             PreviewResidencyEvent.entries.map { it.name },
         )
@@ -555,6 +555,14 @@ class LocalPreviewGateTest {
             PreviewResidency.Leave,
             residency(PreviewResidencyEvent.SESSION_END, pack = answer, batch = true),
         )
+        assertEquals(
+            "...which is why THAT job ending is a moment as well (fix round 1, review r1's B2). " +
+                "Until it was, this line stated a hole and nothing closed it: the batch job is " +
+                "another service's field, so the bubble never leaves IDLE while one runs and " +
+                "SESSION_END cannot fire for it",
+            PreviewResidency.Warm(StreamingPackCatalog.EN),
+            residency(PreviewResidencyEvent.BATCH_END, pack = answer),
+        )
     }
 
     @Test fun everyMemberOfTheSetTakesItsWHICHAnswerFromTheOneOwner() {
@@ -604,15 +612,17 @@ class LocalPreviewGateTest {
         // 4.4.1 pass 3 ITEM 2's release, and WHY these members own it and not the others: the
         // selection moving to Auto is the event that leaves 169 MB loaded for a language that will
         // not arm, the SWITCH beneath it reaches that same allocation in one tap (fix round 1,
-        // review r1's B1), and a session end is the first moment such a change can be acted on if
-        // it was refused while the session held the recognizer. A trim has just freed the
-        // recognizer itself, an install did not move the selection, and the two establishing
+        // review r1's B1), and a session or a batch job ENDING is the first moment such a change
+        // can be acted on if it was refused while that borrower held the recognizer — the two
+        // conjuncts of `busy`, which own this arm together (review r1's B2). A trim has just freed
+        // the recognizer itself, an install did not move the selection, and the two establishing
         // moments have nothing resident to hand back — a release from any of those would be a
         // second opinion about residency rather than a repair.
         for (event in PreviewResidencyEvent.entries) {
             val releases = event == PreviewResidencyEvent.SELECTION_CHANGED ||
                 event == PreviewResidencyEvent.SWITCH_CHANGED ||
-                event == PreviewResidencyEvent.SESSION_END
+                event == PreviewResidencyEvent.SESSION_END ||
+                event == PreviewResidencyEvent.BATCH_END
             val expected = if (releases) PreviewResidency.Release else PreviewResidency.Leave
             assertEquals("$event", expected, residency(event, pack = null))
             assertEquals(
@@ -674,6 +684,61 @@ class LocalPreviewGateTest {
                 "session to arm",
             PreviewResidency.Warm(StreamingPackCatalog.EN),
             residency(PreviewResidencyEvent.SELECTION_CHANGED, pack = pickEnglish),
+        )
+    }
+
+    @Test fun aBatchFileJobENDINGIsTheOtherConjunctOfTheRefusal_andItsOwnMoment() {
+        // **B2, as the sequence.** `busy = sessionActive || batchJobActive`. ITEM 2 gave the first
+        // conjunct a member (SESSION_END) and the second had none — and the second is the one the
+        // bubble cannot see: `BatchJobController.active` is written by another service which never
+        // touches `currentState`, so a batch file job starts and ends with the bubble sitting in
+        // IDLE, `updateBubbleState` is never called and SESSION_END never fires. An hour-long file
+        // runs many minutes.
+        val installed = setOf("en")
+        val answer = previewPackToWarm("en", installed, userEnabled = true)
+        assertEquals(
+            "1. bubble idle, a batch file job running, the selected language's pack install " +
+                "completes — refused, and rightly: a second 802-860 ms / 169 MB load must not " +
+                "land beside the job's own decode",
+            PreviewResidency.Leave,
+            residency(PreviewResidencyEvent.PACK_INSTALLED, pack = answer, batch = true),
+        )
+        assertEquals(
+            "2. the same refusal for a language RE-PICKED during the job",
+            PreviewResidency.Leave,
+            residency(PreviewResidencyEvent.SELECTION_CHANGED, pack = answer, batch = true),
+        )
+        assertEquals(
+            "3. the batch job ends — and THIS is the re-ask that did not exist. Without it the " +
+                "next tap posted the load and read isWarmFor in the same breath, so that session " +
+                "showed no live words and the one after it worked",
+            PreviewResidency.Warm(StreamingPackCatalog.EN),
+            residency(PreviewResidencyEvent.BATCH_END, pack = answer),
+        )
+        assertEquals(
+            "4. ...and it is not posted twice: the pack is resident by the next session",
+            PreviewResidency.Leave,
+            residency(
+                PreviewResidencyEvent.BATCH_END,
+                pack = answer,
+                resident = StreamingPackCatalog.EN,
+            ),
+        )
+        assertEquals(
+            "and a job that ends while a DICTATION is running is still a refusal — the other " +
+                "conjunct still holds, and SESSION_END is the member that takes it then",
+            PreviewResidency.Leave,
+            residency(PreviewResidencyEvent.BATCH_END, pack = answer, session = true),
+        )
+        assertEquals(
+            "a null answer at that moment is the release, exactly as at a session end: a change " +
+                "refused while the job ran left a recognizer nobody wants",
+            PreviewResidency.Release,
+            residency(
+                PreviewResidencyEvent.BATCH_END,
+                pack = null,
+                resident = StreamingPackCatalog.EN,
+            ),
         )
     }
 

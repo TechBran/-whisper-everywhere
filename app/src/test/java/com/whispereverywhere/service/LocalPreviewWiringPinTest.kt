@@ -66,6 +66,16 @@ class LocalPreviewWiringPinTest {
             .replace("\r\n", "\n")
     }
 
+    /**
+     * The OTHER conjunct of the previewer's refusal lives in another service's file (fix round 1,
+     * review r1's B2), so half of that blocker's fix is pinned there.
+     */
+    private val batchText: String by lazy {
+        source("src/main/java/com/whispereverywhere/service/BatchTranscriptionService.kt")
+            .readText()
+            .replace("\r\n", "\n")
+    }
+
     private val startRecording: String by lazy { body("    private fun startRecording() {", "\n    }\n") }
     private val onTrim: String by lazy { body("    override fun onTrimMemory(level: Int) {", "\n    }\n") }
     private val onDestroy: String by lazy { body("    override fun onDestroy() {", "\n    }\n") }
@@ -340,20 +350,24 @@ class LocalPreviewWiringPinTest {
         // marker read plus four exact byte counts per catalogue row. Every TERM of the decision is
         // in the pure function.
         val narrow = indexOfOrFail(text, "                .map { board -> board.values.associate { it.language to it.phase } }\n")
-        val dedupe = indexOfOrFail(text, "                .distinctUntilChanged()\n")
+        // Sought FROM this collector's own first line, not from the top of the file: the batch
+        // job's falling-edge collector (fix round 1, review r1's B2) is narrowed and de-duplicated
+        // at the same indent, so an unanchored search would find ITS operators and pin this
+        // collector's shape against another one's (which is exactly what it did).
+        val dedupe = text.indexOf("                .distinctUntilChanged()\n", narrow)
         assertTrue("phases first", collector < narrow && narrow < dedupe)
         // The REPLAY belongs to the boot prewarm, which does the same work for the same pack
         // through the same function after a deliberate `delay(1500)`. The board is process-scoped
         // and outlives this service, so without this a second service start would pay the
         // 802-860 ms load during view inflation and call it an install event.
-        val replay = indexOfOrFail(text, "                .drop(1)\n")
+        val replay = text.indexOf("                .drop(1)\n", dedupe)
         assertTrue("and the value already in place is dropped, after the de-duplication", replay > dedupe)
         assertEquals(
-            "FOUR drops in the service now — the selection, the live-words SWITCH (fix round 1, " +
-                "review r1's B1), the model switch, and this one: every collector whose trigger " +
-                "is a CHANGE rather than a state, because the state that was already there is the " +
-                "boot prewarm's",
-            4, count(text, ".drop(1)"),
+            "FIVE drops in the service now — the selection, the live-words SWITCH, the batch " +
+                "job's falling edge (fix round 1, review r1's B1 and B2), the model switch, and " +
+                "this one: every collector whose trigger is a CHANGE rather than a state, because " +
+                "the state that was already there is the boot prewarm's",
+            5, count(text, ".drop(1)"),
         )
         // THE SERVICE DECIDES NOTHING: one call to the pure gate, and the warm is its answer.
         val decision = indexOfOrFail(text, "                    val pack = warmOnPackInstalled(\n")
@@ -607,7 +621,7 @@ class LocalPreviewWiringPinTest {
     fun theSetOfMomentsThatChangeWhichPackIsResidentIsWrittenDownAndEveryMemberIsWired() {
         val events = listOf(
             "SERVICE_START", "SELECTION_CHANGED", "SWITCH_CHANGED", "PACK_INSTALLED",
-            "SESSION_START", "SESSION_END", "MEMORY_TRIM",
+            "SESSION_START", "SESSION_END", "BATCH_END", "MEMORY_TRIM",
         )
         assertEquals(
             "the set is declared exactly once",
@@ -807,6 +821,70 @@ class LocalPreviewWiringPinTest {
             body.indexOf("serviceScope.launch(Dispatchers.Main) {", ask - 200) in (assign + 1) until ask,
         )
         assertTrue("this is all inside updateBubbleState", write >= 0)
+    }
+
+    /**
+     * **B2 — BOTH CONJUNCTS OF THE REFUSAL HAVE A MEMBER, so the refusal and the re-ask cannot
+     * drift** (fix round 1, review r1's B2).
+     *
+     * The refusal is `sessionActive || batchJobActive`. ITEM 2 gave the FIRST conjunct a member
+     * and the second had none — and the second is the one this service cannot see on its own:
+     * `BatchJobController.active` is written by `BatchTranscriptionService`, which never touches
+     * `currentState`, so a batch file job starts and ends with the bubble sitting in IDLE,
+     * `updateBubbleState` is never called and `SESSION_END` never fires. An install landing (or a
+     * language re-picked) during a job that runs many minutes was refused and never re-asked.
+     *
+     * Pinned over BOTH files, because the fix has a half in each: the term is now a `StateFlow`'s
+     * value rather than a plain field — the flow IS the field, so one writer still, and no mirror
+     * to drift — and this service collects its falling edge.
+     */
+    @Test
+    fun bothConjunctsOfTheRefusalHaveAMember_theBatchJobsENDIncluded() {
+        // 1. The term is observable, and the observable is the term.
+        assertEquals(
+            "the flow IS the field: `active`'s accessors are its value, so the refusal four sites " +
+                "read and the edge this service collects can never disagree",
+            1, count(batchText, "    private val _active = MutableStateFlow<BatchTranscriber?>(null)\n"),
+        )
+        assertEquals(
+            1, count(batchText, "    val activeFlow: StateFlow<BatchTranscriber?> = _active.asStateFlow()\n"),
+        )
+        assertEquals(
+            "the getter is that field — not a second field mirrored into a flow, which is the " +
+                "drift this blocker was",
+            1, count(batchText, "        get() = _active.value\n"),
+        )
+        assertEquals(
+            "and so is the setter, so there is still exactly ONE writer",
+            1, count(batchText, "        set(value) { _active.value = value }\n"),
+        )
+        assertEquals(
+            "and the @Volatile backing field is gone with it — MutableStateFlow.value publishes " +
+                "safely across threads, which is what the annotation was there for",
+            0, count(batchText, "    @Volatile\n    internal var active"),
+        )
+        // 2. The falling edge is the moment, and the rising edge deliberately is not: a job
+        //    STARTING makes `busy` true, which every arm already refuses on.
+        val collector = indexOfOrFail(text, "            BatchJobController.activeFlow\n")
+        assertEquals(
+            "ONE collector on it in this service: a second would be a second residency policy",
+            1, count(text, "BatchJobController.activeFlow"),
+        )
+        val ask = indexOfOrFail(
+            text,
+            "                    if (!running) askPreviewResidency(event = PreviewResidencyEvent.BATCH_END)\n",
+        )
+        assertTrue("the collector's whole body is the guarded re-ask", ask > collector && ask - collector < 400)
+        val narrow = indexOfOrFail(text, "                .map { it != null }\n")
+        val dedupe = text.indexOf("                .distinctUntilChanged()\n", narrow)
+        assertTrue("narrowed to the refusal's own boolean, then de-duplicated", collector < narrow && narrow < dedupe)
+        // 3. And the arm it shares is SESSION_END's, stated in the `when` as the pair rather than
+        //    per member — the two conjuncts arrive together.
+        val arm = indexOfOrFail(
+            text,
+            "        PreviewResidencyEvent.SESSION_END,\n        PreviewResidencyEvent.BATCH_END,\n",
+        )
+        assertTrue("BATCH_END sits in SESSION_END's arm", arm > 0)
     }
 
     /**

@@ -38,6 +38,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -54,9 +56,30 @@ object BatchJobController {
     /** null before any job; the latest [BatchProgress] once one starts. Written ONLY by the service. */
     val progress = MutableStateFlow<BatchProgress?>(null)
 
+    /**
+     * WHETHER A BATCH JOB IS IN FLIGHT, OBSERVABLY (4.5.1 pass 2 fix round 1, review r1's B2).
+     *
+     * [active] is the refusal term four previewer-residency sites read
+     * (`BatchJobController.active != null`), and it was a plain field written by THIS service
+     * while [com.whispereverywhere.service.FloatingBubbleService] holds the recognizer the
+     * refusal protects — so a batch job started and ended with the bubble sitting in IDLE,
+     * nothing called `updateBubbleState`, and `PreviewResidencyEvent.SESSION_END` never fired. A
+     * change refused because a batch job was running was therefore never re-asked, and the next
+     * tap posted the 802-860 ms load and read `isWarmFor` in the same breath: that session showed
+     * no live words and the one after it worked.
+     *
+     * The flow IS the field, not a mirror of it: [active]'s accessors are this flow's value, so
+     * there is still exactly one writer and the observable cannot drift from the term. `@Volatile`
+     * is gone with the backing field and nothing is lost — `MutableStateFlow.value` publishes
+     * safely across threads, which is the guarantee the annotation was there for.
+     */
+    private val _active = MutableStateFlow<BatchTranscriber?>(null)
+    val activeFlow: StateFlow<BatchTranscriber?> = _active.asStateFlow()
+
     /** The in-flight transcriber, so a Cancel tap can reach it without a binder. */
-    @Volatile
-    internal var active: BatchTranscriber? = null
+    internal var active: BatchTranscriber?
+        get() = _active.value
+        set(value) { _active.value = value }
 
     /** Cooperative cancel: the transcriber stops between chunks and keeps its partial checkpoint. */
     fun cancelActive() { active?.cancel() }
