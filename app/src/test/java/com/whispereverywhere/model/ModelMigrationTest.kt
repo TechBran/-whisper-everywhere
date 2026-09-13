@@ -279,4 +279,107 @@ class ModelMigrationTest {
             )
         }
     }
+
+    /**
+     * **4.6 T2 — the migration card is the app's ONE non-NPU speed claim, and this is its
+     * premise.** `SettingsScreen.kt:354` renders *"${target.displayName} is much faster and works
+     * well for everyday dictation. We'll download it (…), then free up the space your old model
+     * is using."* That sentence names a CPU rung and claims speed for it, which the 4.6 copy rule
+     * forbids everywhere else — and it is kept, because unlike every claim on the ladder's cards
+     * it is not a ranking of two unmeasured rungs. It is an our-own before/after between the model
+     * this user is running and the one replacing it, in the only direction the code can produce.
+     *
+     * The direction is what the test pins. Today the only source is `extreme` (medium.en Q5_0:
+     * 24 encoder layers at 1024 dims, read from that file's own ggml header) and the only target
+     * is `multi` (small Q5_1: 12 at 768) — strictly fewer and narrower layers, so strictly less
+     * work per commit in this app's encoder-dominated regime, where the `audio_ctx` floor makes
+     * the cost per commit constant. That is an architectural fact, not a device measurement.
+     *
+     * **Bytes are NOT the test, and finding that out is why this reads the way it does.** The
+     * obvious assertion — target smaller than source — was written first and then MUTATION-KILLED:
+     * point the multilingual target at `medium-q5` and it still passes, because `ggml-medium-q5_0`
+     * (539,212,467) is 13,066 bytes SMALLER than `ggml-medium.en-q5_0` (539,225,533) while being
+     * the same 24 layers at 1024 dims. "Much faster" would be flatly false and a byte proxy would
+     * wave it through. So the claim is checked against the whisper SIZE FAMILY, parsed out of each
+     * row's own upstream file name, and the target's family must rank strictly below the source's.
+     *
+     * The byte inequality is still asserted, because it is the card's SECOND promise — *"then free
+     * up the space your old model is using"* — and it is a different fact from the first. One
+     * sentence, two claims, two assertions.
+     *
+     * The instrument rungs cannot reach this card at all — `no_migration_target_is_ever_retired_or_an_instrument`
+     * proves that over the full cross product — which matters because an UNMEASURED target would
+     * make the claim exactly the thing 4.6 forbids.
+     */
+    @Test fun the_migration_cards_faster_claim_has_a_lighter_target_behind_it() {
+        val sources = WhisperCatalog.entries.filter { it.unsupported }
+        assertEquals(
+            "the only tier the migration card can name as the source is `extreme`; a new one " +
+                "needs its own look at the card's two promises",
+            listOf("extreme"),
+            sources.map { it.id },
+        )
+        sources.forEach { source ->
+            val target = WhisperCatalog.byId(ModelMigration.targetIdFor(source.scope))!!
+            assertEquals(
+                ModelMigration.Action.SwapAndDelete(source.id, target.id),
+                decide(source.id, targetInstalled = true),
+            )
+            assertTrue(
+                "the Settings migration card says '${target.displayName} is much faster', but " +
+                    "'${target.id}' is whisper ${sizeFamilyOf(target)} and '${source.id}' is " +
+                    "whisper ${sizeFamilyOf(source)} — the target must be a SHALLOWER family for " +
+                    "that sentence to be true. Bytes will not settle this: ggml-medium-q5_0 is " +
+                    "13 KB smaller than ggml-medium.en-q5_0 at identical depth",
+                sizeRankOf(target) < sizeRankOf(source),
+            )
+            assertTrue(
+                "the card's second promise — 'free up the space your old model is using' — needs " +
+                    "the target to be the smaller file, but it is ${target.approxBytes} bytes " +
+                    "against the source's ${source.approxBytes}",
+                target.approxBytes < source.approxBytes,
+            )
+        }
+        // And the durable half, because the pair above is ONE pair. `extreme` is ENGLISH-scope, so
+        // it resolves through DEFAULT_MODEL_ID and `targetIdFor`'s multilingual arm has no source
+        // to be reached from at all today — which means the loop above cannot speak for a row
+        // marked unsupported tomorrow. This can: every target must be the SHALLOWEST whisper
+        // family the app offers, and nothing can be lighter than the lightest, so "much faster"
+        // survives any future source without anyone re-deriving it.
+        val shallowest = WhisperCatalog.pickable.minOf { sizeRankOf(it) }
+        ModelScope.entries.forEach { scope ->
+            val target = WhisperCatalog.byId(ModelMigration.targetIdFor(scope))!!
+            assertEquals(
+                "the $scope migration target is whisper ${sizeFamilyOf(target)}, and the app " +
+                    "offers a shallower family than that. A target that is not the lightest rung " +
+                    "can be reached from a source it is not faster than",
+                shallowest,
+                sizeRankOf(target),
+            )
+        }
+    }
+
+    /**
+     * The whisper size family this row's UPSTREAM FILE NAME states — `ggml-medium.en-q5_0.bin` is
+     * `medium`, `ggml-large-v3-turbo-q8_0.bin` is `large-v3-turbo`. The name is the architecture:
+     * the quantisation and the `.en` vocabulary head ride on the same 24 or 12 layers.
+     */
+    private fun sizeFamilyOf(model: WhisperModel): String =
+        Regex("^ggml-(.+?)(\\.en)?-q\\d_\\d\\.bin$").matchEntire(model.fileName)?.groupValues?.get(1)
+            ?: error("unparseable ggml file name '${model.fileName}' for tier '${model.id}'")
+
+    /**
+     * Encoder depth order, which is the order that decides cost in this app: `base` 6 layers at
+     * 512 dims, `small` 12 at 768, `medium` 24 at 1024, the two `large-v3` families 32 at 1280
+     * (turbo differs only in its 4-layer decoder). Every value read from the files' own ggml
+     * headers on 2026-09-13.
+     *
+     * A family absent from this table is an ERROR rather than a default, so the next rung added
+     * forces someone to decide where it sits before the migration card may claim speed against it.
+     */
+    private fun sizeRankOf(model: WhisperModel): Int {
+        val family = sizeFamilyOf(model)
+        return listOf("base", "small", "medium", "large-v3-turbo", "large-v3").indexOf(family)
+            .also { require(it >= 0) { "no encoder-depth rank for whisper family '$family'" } }
+    }
 }

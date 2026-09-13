@@ -43,11 +43,17 @@ object OnboardingLogic {
      * unchanged (LanguagePin never pins it; NpuWhisperBackend runs no detect for it), so every
      * phrase is that language — the accuracy case for a one-language speaker, and for dictation.
      * SCOPED to the multilingual models on purpose (review MC-1): on an ENGLISH-scope tier the
-     * service REPLACES the pick with "en" (FloatingBubbleService, `connect lang resolved=`), and
-     * `pro` (small.en) is pickable on every non-NPU device and heads the lineup on an en-US phone
-     * whatever was picked — an unscoped "locks every phrase" was false there. "Multilingual" is
-     * the app's own name for those tiers (WhisperModel displayNames; ModelTierCopy). OUR-OWN-APP
-     * relative, never a cross-app claim. Pinned verbatim by OnboardingLogicTest.
+     * service REPLACES the pick with "en" (FloatingBubbleService, `connect lang resolved=`), so an
+     * unscoped "locks every phrase" is false there. **4.6 narrowed WHO that scope protects and did
+     * not remove it.** When this was written, `pro` (small.en) was pickable on every non-NPU
+     * device and headed the lineup on an en-US phone, so the qualifier was about a card a fresh
+     * install could tap; the owner's ruling of 2026-09-13 retires every English-only rung, so the
+     * lineup can no longer reach one. The scope still earns its place for the users who are
+     * ALREADY on `pro` or `eco` — retiring a tier hides it and does not uninstall it, which is the
+     * same reason `sessionLanguageFor`'s ENGLISH-scope Auto pin stays (FloatingBubbleService).
+     * "Multilingual" is the app's own name for those tiers (WhisperModel displayNames;
+     * ModelTierCopy). OUR-OWN-APP relative, never a cross-app claim. Pinned verbatim by
+     * OnboardingLogicTest.
      */
     const val LANGUAGE_HINT =
         "On the multilingual models, choosing one language locks every phrase to it — the most " +

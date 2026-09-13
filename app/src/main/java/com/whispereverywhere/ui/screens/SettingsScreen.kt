@@ -269,8 +269,13 @@ fun SettingsScreen(
 
     val installedModel = remember(modelRefreshKey) { modelManager.installedModel() }
 
-    // Unsupported-tier migration: non-null only for extreme/ultra. Merely retired tiers
-    // (eco, base) never raise this card — see WhisperModel.unsupported.
+    // Unsupported-tier migration: non-null only for `extreme`. Merely RETIRED tiers never raise
+    // this card — see WhisperModel.unsupported — and 4.6 made that distinction carry far more
+    // weight than it used to: `pro` (small.en) joined the retired set and it is the tier the
+    // largest number of English users are on, while `ultra` LEFT the unsupported set entirely
+    // (it is offered again as an instrument). Nobody dictating happily on small.en may be shown
+    // "This model is no longer supported", and nobody on `ultra` may be told to leave the rung
+    // the chooser is inviting them to try.
     val retiredModel = remember(modelRefreshKey) { modelManager.unsupportedInstalledModel() }
     val migrationScope = rememberCoroutineScope()
     var migrationBusy by remember { mutableStateOf(false) }
