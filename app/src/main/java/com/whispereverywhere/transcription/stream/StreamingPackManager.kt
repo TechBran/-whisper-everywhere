@@ -12,6 +12,9 @@ import com.whispereverywhere.play.PlayPacks
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -49,6 +52,32 @@ class StreamingPackManager(private val context: Context) {
      */
     @Volatile
     private var playRefused = false
+
+    /**
+     * **A PACK STOPPED BEING INSTALLED** (4.5.1 pass 2 fix round 1, review r1's B3) —
+     * [installedLanguages] has just SHRUNK, which is the one change to the previewer-residency
+     * owner's three inputs that had no observable at all.
+     *
+     * The growing direction has one: an install's completion reaches
+     * `FloatingBubbleService`'s board collector through [PreviewWorkboard]. The shrinking
+     * direction did not, and the board cannot serve as it — the board is PROCESS-SCOPED, so
+     * deleting a pack that was installed in an earlier run finds no record to retire and emits
+     * nothing at all. The resident recognizer and its +169 MB then stayed loaded for a pack that
+     * no longer exists on disk until a trim or `onDestroy`, while the delete row's own copy
+     * promised *"Frees 73 MB. Live words stop"*.
+     *
+     * Emitted by the two doors in this class that change whether a pack is installed — [delete]
+     * and [markCorrupt] — i.e. exactly the two that already retire the board's record, and pinned
+     * as that same count so a third cannot be added silently.
+     *
+     * `SharedFlow<Unit>` with `extraBufferCapacity = 1` and the suspend-free `tryEmit`, which is
+     * `PreferencesManager.modelInstalled`'s shape for the same reasons: consecutive deletes must
+     * each emit, there is no meaningful "current value", the emitter must never block or need a
+     * scope, and a dropped duplicate is harmless because the collector re-asks one question whose
+     * answer does not depend on how many deletes reached it.
+     */
+    private val _installWithdrawn = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val installWithdrawn: SharedFlow<Unit> = _installWithdrawn.asSharedFlow()
 
     /** context.filesDir/zf-stream, created if missing. */
     fun root(): File {
@@ -98,6 +127,7 @@ class StreamingPackManager(private val context: Context) {
     fun markCorrupt(pack: StreamingPack) {
         StreamingPackInstall.markCorrupt(root(), pack)
         PreviewWorkboard.retire(pack.language)
+        _installWithdrawn.tryEmit(Unit)
     }
 
     /**
@@ -155,12 +185,21 @@ class StreamingPackManager(private val context: Context) {
      * the house rule this file already follows: a guard that trusts its caller to remember is not
      * a guard, and this is the one production deleter. [PreviewWorkboard.retire] leaves a RUNNING
      * record alone, so this can never blank a live progress row or make `busy()` lie.
+     *
+     * ...AND THE RESIDENT RECOGNIZER (4.5.1 pass 2 fix round 1, review r1's B3). This row's own
+     * copy in the LIVE case is *"Frees 73 MB. Live words stop"*, and until this build the larger
+     * allocation did not move: the previewer kept its +169 MB loaded for a pack that no longer
+     * existed on disk, until a trim or `onDestroy`. [installWithdrawn] is that fact, emitted here
+     * rather than at the Settings row for this function's own stated rule, and the bubble's
+     * `PACK_DELETED` member releases on it — through the same one owner of *which pack should be
+     * resident*, so it is a repair and never a second opinion.
      */
     fun delete(pack: StreamingPack) {
         StreamingPackInstall.delete(root(), pack)
         stagingDir(pack).deleteRecursively()
         removeStaleDownloads(downloadManager(), pack)
         PreviewWorkboard.retire(pack.language)
+        _installWithdrawn.tryEmit(Unit)
     }
 
     /**

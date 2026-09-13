@@ -456,7 +456,7 @@ class LocalPreviewGateTest {
         assertEquals(
             listOf(
                 "SERVICE_START", "SELECTION_CHANGED", "SWITCH_CHANGED", "PACK_INSTALLED",
-                "SESSION_START", "SESSION_END", "BATCH_END", "MEMORY_TRIM",
+                "PACK_DELETED", "SESSION_START", "SESSION_END", "BATCH_END", "MEMORY_TRIM",
             ),
             PreviewResidencyEvent.entries.map { it.name },
         )
@@ -614,13 +614,16 @@ class LocalPreviewGateTest {
         // not arm, the SWITCH beneath it reaches that same allocation in one tap (fix round 1,
         // review r1's B1), and a session or a batch job ENDING is the first moment such a change
         // can be acted on if it was refused while that borrower held the recognizer — the two
-        // conjuncts of `busy`, which own this arm together (review r1's B2). A trim has just freed
-        // the recognizer itself, an install did not move the selection, and the two establishing
-        // moments have nothing resident to hand back — a release from any of those would be a
-        // second opinion about residency rather than a repair.
+        // conjuncts of `busy`, which own this arm together (review r1's B2). DELETING the pack is
+        // the same allocation reached a third way (review r1's B3): the selection does not move,
+        // so the one owner simply starts answering null for it. A trim has just freed the
+        // recognizer itself, an install has not made anything stop being true, and the two
+        // establishing moments have nothing resident to hand back — a release from any of those
+        // would be a second opinion about residency rather than a repair.
         for (event in PreviewResidencyEvent.entries) {
             val releases = event == PreviewResidencyEvent.SELECTION_CHANGED ||
                 event == PreviewResidencyEvent.SWITCH_CHANGED ||
+                event == PreviewResidencyEvent.PACK_DELETED ||
                 event == PreviewResidencyEvent.SESSION_END ||
                 event == PreviewResidencyEvent.BATCH_END
             val expected = if (releases) PreviewResidency.Release else PreviewResidency.Leave
@@ -684,6 +687,54 @@ class LocalPreviewGateTest {
                 "session to arm",
             PreviewResidency.Warm(StreamingPackCatalog.EN),
             residency(PreviewResidencyEvent.SELECTION_CHANGED, pack = pickEnglish),
+        )
+    }
+
+    @Test fun deletingThePackHandsBackTheRecognizerItWasOpenedFrom_notJustThe73MB() {
+        // **B3, as the sequence.** The install term moves in two directions and only one had a
+        // member. The selection does not move when a pack is deleted, so the one owner simply
+        // begins answering null for an unchanged pick — and until fix round 1 nothing asked: the
+        // resident recognizer and its +169 MB stayed loaded for a model no longer on disk, until a
+        // trim or onDestroy, while the delete row's own copy in the LIVE case promised "Frees
+        // 73 MB. Live words stop".
+        val before = previewPackToWarm("en", setOf("en"), userEnabled = true)
+        val after = previewPackToWarm("en", emptySet(), userEnabled = true)
+        assertEquals("English was resident and warm", StreamingPackCatalog.EN, before)
+        assertEquals(
+            "and after the delete the one owner answers null for the SAME pick — the pack is not " +
+                "installed any more, which is its second line",
+            null,
+            after,
+        )
+        assertEquals(
+            "so the recognizer is handed back. 4.5.0 and pass 2 both answered this with nothing " +
+                "at all, and the promise on the row was the smaller half of the memory",
+            PreviewResidency.Release,
+            residency(
+                PreviewResidencyEvent.PACK_DELETED,
+                pack = after,
+                resident = StreamingPackCatalog.EN,
+            ),
+        )
+        assertEquals(
+            "a delete of ANOTHER language's pack leaves the selection's own alone — the member " +
+                "carries no language of its own, it just re-asks the one owner",
+            PreviewResidency.Leave,
+            residency(
+                PreviewResidencyEvent.PACK_DELETED,
+                pack = before,
+                resident = StreamingPackCatalog.EN,
+            ),
+        )
+        assertEquals(
+            "and a delete mid-session is refused like every other change: SESSION_END re-asks it",
+            PreviewResidency.Leave,
+            residency(
+                PreviewResidencyEvent.PACK_DELETED,
+                pack = after,
+                resident = StreamingPackCatalog.EN,
+                session = true,
+            ),
         )
     }
 

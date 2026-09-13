@@ -76,6 +76,16 @@ class LocalPreviewWiringPinTest {
             .replace("\r\n", "\n")
     }
 
+    /**
+     * The install set's SHRINKING direction is owned by the class that owns the bytes (fix round
+     * 1, review r1's B3), so that member's door is pinned there.
+     */
+    private val packManagerText: String by lazy {
+        source("src/main/java/com/whispereverywhere/transcription/stream/StreamingPackManager.kt")
+            .readText()
+            .replace("\r\n", "\n")
+    }
+
     private val startRecording: String by lazy { body("    private fun startRecording() {", "\n    }\n") }
     private val onTrim: String by lazy { body("    override fun onTrimMemory(level: Int) {", "\n    }\n") }
     private val onDestroy: String by lazy { body("    override fun onDestroy() {", "\n    }\n") }
@@ -621,7 +631,7 @@ class LocalPreviewWiringPinTest {
     fun theSetOfMomentsThatChangeWhichPackIsResidentIsWrittenDownAndEveryMemberIsWired() {
         val events = listOf(
             "SERVICE_START", "SELECTION_CHANGED", "SWITCH_CHANGED", "PACK_INSTALLED",
-            "SESSION_START", "SESSION_END", "BATCH_END", "MEMORY_TRIM",
+            "PACK_DELETED", "SESSION_START", "SESSION_END", "BATCH_END", "MEMORY_TRIM",
         )
         assertEquals(
             "the set is declared exactly once",
@@ -821,6 +831,69 @@ class LocalPreviewWiringPinTest {
             body.indexOf("serviceScope.launch(Dispatchers.Main) {", ask - 200) in (assign + 1) until ask,
         )
         assertTrue("this is all inside updateBubbleState", write >= 0)
+    }
+
+    /**
+     * **B3 — THE INSTALL TERM MOVES IN TWO DIRECTIONS AND BOTH HAVE A MEMBER** (fix round 1,
+     * review r1's B3).
+     *
+     * A pack ARRIVING had the board collector. A pack going away had nothing, and because the
+     * selection does not move when one is deleted, `previewPackToWarm` simply began answering
+     * null for an unchanged pick: the resident recognizer and its +169 MB stayed loaded for a
+     * model no longer on disk until a trim or `onDestroy`, while the delete row's own copy in the
+     * LIVE case promised *"Frees 73 MB. Live words stop"*.
+     *
+     * **The board cannot be the door, and that is the load-bearing half of this pin.**
+     * `PreviewWorkboard.retire` does emit, so the install collector wakes — but the board is
+     * PROCESS-SCOPED, so deleting a pack installed in an earlier run finds no record to retire and
+     * emits nothing at all. The signal is therefore the class that owns the bytes, from the two
+     * doors in it that change whether a pack is installed — counted against the doors themselves,
+     * exactly as `StreamingPackShellPinTest` counts their board retires, so a third door cannot be
+     * added silently.
+     */
+    @Test
+    fun deletingTheINSTALLIsAMomentTooAndItsDoorIsTheClassThatOwnsTheBytes() {
+        assertEquals(
+            "the signal is declared once, in the class that owns the install",
+            1,
+            count(packManagerText, "    private val _installWithdrawn = MutableSharedFlow<Unit>(extraBufferCapacity = 1)\n"),
+        )
+        assertEquals(
+            1, count(packManagerText, "    val installWithdrawn: SharedFlow<Unit> = _installWithdrawn.asSharedFlow()\n"),
+        )
+        assertEquals(
+            "EVERY door in that class which changes whether a pack is installed emits it — the " +
+                "two that already retire the board's record, counted rather than listed",
+            count(packManagerText, "        PreviewWorkboard.retire(pack.language)\n"),
+            count(packManagerText, "        _installWithdrawn.tryEmit(Unit)\n"),
+        )
+        assertEquals(
+            "and it is the suspend-free tryEmit, like PreferencesManager.modelInstalled: the " +
+                "emitter is a plain call inside delete(), with no scope and nothing to block on",
+            0, count(packManagerText, "_installWithdrawn.emit("),
+        )
+        // ...and the bubble's member is wired to it, with no drop: a SharedFlow has no value in
+        // place to replay.
+        val collector = indexOfOrFail(text, "            app.streamingPackManager.installWithdrawn.collect {\n")
+        assertEquals(
+            "ONE collector on it in the service",
+            1, count(text, "app.streamingPackManager.installWithdrawn"),
+        )
+        val ask = indexOfOrFail(
+            text,
+            "                askPreviewResidency(event = PreviewResidencyEvent.PACK_DELETED)\n",
+        )
+        assertTrue("the collector's whole body is the re-ask", ask > collector && ask - collector < 200)
+        assertEquals(
+            "and no drop(1) on it — there is no value in place to replay, and dropping the first " +
+                "real emission would be dropping the first delete",
+            0, count(text, "installWithdrawn.drop("),
+        )
+        val arm = indexOfOrFail(
+            text,
+            "        PreviewResidencyEvent.SWITCH_CHANGED,\n        PreviewResidencyEvent.PACK_DELETED,\n",
+        )
+        assertTrue("PACK_DELETED sits in SELECTION_CHANGED's arm, so a null is its release", arm > 0)
     }
 
     /**

@@ -370,6 +370,27 @@ internal enum class PreviewResidencyEvent {
     PACK_INSTALLED,
 
     /**
+     * A pack STOPPED being installed (4.5.1 pass 2 fix round 1, review r1's B3) — the other
+     * direction of [PACK_INSTALLED]'s own term, `installedPackLanguages`, and the one that had no
+     * member: the selection does not move, so [previewPackToWarm] simply begins answering null
+     * for it, and nothing asked.
+     *
+     * The resident recognizer and its +169 MB stayed loaded for a pack that no longer existed on
+     * disk until a trim or `onDestroy`, while the delete row's own copy in the LIVE case promises
+     * *"Frees 73 MB. Live words stop"*. No false promise resulted — the gate's `previewReady`
+     * needs a non-null answer from the one owner — so the harm was retention only, and it is
+     * exactly the retention 4.4.1 pass 3 ITEM 2 was written to end, reached by a user gesture in
+     * the same Settings section as [SELECTION_CHANGED] and [SWITCH_CHANGED].
+     *
+     * **Not the board, deliberately.** `PreviewWorkboard.retire` does emit, so the install
+     * collector wakes — but the board is PROCESS-SCOPED: deleting a pack installed in an earlier
+     * run finds no record to retire and emits nothing, which is the common case for a pack the
+     * user has had a while. The trigger is `StreamingPackManager.installWithdrawn`, emitted by the
+     * two doors in that class which change whether a pack is installed at all.
+     */
+    PACK_DELETED,
+
+    /**
      * A session started. The one member that deliberately acts DURING a session, because it arms
      * the session AFTER this one: `warm()` is asynchronous and the gate reads `isWarmFor()` now.
      */
@@ -463,11 +484,12 @@ internal sealed interface PreviewResidency {
  *    prewarm 1.5 s into the process has nothing to land under.
  *  - **A null answer is a RELEASE** — but only for the members that can find a recognizer nobody
  *    wants. [PreviewResidencyEvent.SELECTION_CHANGED] is the first that can: moving to Auto leaves
- *    169 MB loaded for a language that will not arm (4.4.1 pass 3, ITEM 2), and
+ *    169 MB loaded for a language that will not arm (4.4.1 pass 3, ITEM 2);
  *    [PreviewResidencyEvent.SWITCH_CHANGED] is that same allocation reached by the switch beneath
- *    it. For [PreviewResidencyEvent.MEMORY_TRIM] the recognizer has just been freed by the trim
- *    itself, and for [PreviewResidencyEvent.PACK_INSTALLED] the selection has not moved, so a
- *    second release there would be a second opinion rather than a repair.
+ *    it; and [PreviewResidencyEvent.PACK_DELETED] is it reached by deleting the model the
+ *    recognizer was opened from. For [PreviewResidencyEvent.MEMORY_TRIM] the recognizer has just
+ *    been freed by the trim itself, and for [PreviewResidencyEvent.PACK_INSTALLED] nothing has
+ *    stopped being true, so a second release there would be a second opinion rather than a repair.
  *  - **The pack the engine is already warm for is not reloaded.** A skip, not a mechanism —
  *    `warm()` is idempotent on the pack and would no-op anyway; this spares Main a posted task and
  *    the log a line that reads like a second load. The two establishing moments do not take the
@@ -503,6 +525,7 @@ internal fun previewResidency(
         // giving one a member and not the other is how the refusal and the re-ask drift apart.
         PreviewResidencyEvent.SELECTION_CHANGED,
         PreviewResidencyEvent.SWITCH_CHANGED,
+        PreviewResidencyEvent.PACK_DELETED,
         PreviewResidencyEvent.SESSION_END,
         PreviewResidencyEvent.BATCH_END,
         ->
@@ -1455,6 +1478,24 @@ class FloatingBubbleService : Service(),
                 .collect { running ->
                     if (!running) askPreviewResidency(event = PreviewResidencyEvent.BATCH_END)
                 }
+        }
+
+        // PACK_DELETED — the OTHER DIRECTION of the install term (fix round 1, review r1's B3).
+        // The board collector below covers a pack ARRIVING; nothing covered one going away, and
+        // the selection does not move when it does, so `previewPackToWarm` simply started
+        // answering null for an unchanged pick while +169 MB stayed loaded for a model no longer
+        // on disk — until a trim or onDestroy, and with the delete row's own copy promising
+        // "Frees 73 MB. Live words stop".
+        //
+        // NOT the board, and this is the reason: `PreviewWorkboard.retire` does emit, so the
+        // collector below wakes — but the board is PROCESS-SCOPED, so deleting a pack installed in
+        // an earlier run finds no record, emits nothing, and (when it does emit) `of(pick)` is
+        // null and that collector returns. The one honest door is the class that owns the bytes.
+        // No `drop(1)`: a SharedFlow has no value in place to replay.
+        serviceScope.launch(Dispatchers.Main) {
+            app.streamingPackManager.installWithdrawn.collect {
+                askPreviewResidency(event = PreviewResidencyEvent.PACK_DELETED)
+            }
         }
 
         // (4.5.1 TASK 1) THE THIRD WARM TRIGGER — and the only one that is an EVENT rather than a
