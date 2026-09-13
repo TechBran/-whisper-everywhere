@@ -345,12 +345,41 @@ class OssNoticeTest {
             )
         }
 
+        // THE ROW WHERE THE GRANT AND THE BYTES ARE IN DIFFERENT PLACES. Derived, because it is
+        // the single most error-prone row on this page: Russian's four files are downloaded from
+        // an untagged mirror that declares no licence of its own, and the grant relied on is the
+        // one on the tagged upstream. A row that named only the mirror would be a notice pointing
+        // at a repository with no grant on it; a row that named only the upstream would be a
+        // notice about bytes this app does not download. It has to name both AND say which is
+        // which — and the general statement about what these repositories declare has to be
+        // scoped so it does not sweep this row in with the six.
+        for (record in PackClearanceRecord.RECORD) {
+            val pack = StreamingPackCatalog.packs.first { it.language == record.language }
+            val downloadRepo = pack.baseUrl
+                .removePrefix("https://huggingface.co/").substringBefore("/resolve/")
+            if (record.readAt.contains(downloadRepo)) continue
+            val row = page.substringAfter("id=\"pack-${record.language}\"").substringBefore("</div>")
+            assertTrue(
+                "'${record.language}'s grant is read at ${record.readAt} but its bytes come from " +
+                    "$downloadRepo, and the row must say which is which. Naming only the mirror " +
+                    "points a notice at a repository carrying no grant; naming only the upstream " +
+                    "describes bytes this app never downloads. Found: $row",
+                row.contains(record.readAt.removePrefix("https://")) &&
+                    row.contains(downloadRepo) &&
+                    row.contains("not on this mirror"),
+            )
+        }
+
         // The NOTICE finding: stated, and scoped to what was read.
         for (phrase in listOf(
             "NOTICE",
             "COPYING",
             "complete recursive file listing",
             "no copyright line",
+            // Scoped, not universal: SIX of the seven declare a front-matter identifier. Saying
+            // "each" would sweep in the Russian mirror, which declares nothing of its own — an
+            // over-claim about somebody else's repository, on a legal surface.
+            "Six of the seven",
         )) {
             assertTrue(
                 "the page must record what the upstreams supply as a notice and what they do " +
