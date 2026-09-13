@@ -26,6 +26,17 @@ release-index based, not search-engine corroborated. The two best finds (`jgsch`
 from a **tag** enumeration, not a name search — which is itself evidence a differently-shaped index would
 surface more.
 
+> ### ⚠ ERRATA — this document has been corrected twice since it was written
+>
+> **Read §10 before relying on any licensing cell.** Two of this document's licensing claims are
+> **withdrawn**: the `zh-en` corpus (§10.1) and the framing of Korean's position (§10.2). The
+> corrections were converged on independently, and where this document and
+> `app/src/main/java/com/whispereverywhere/transcription/stream/StreamingPackClearance.kt` disagree,
+> **the clearance record is the authority** — it is the thing a release promotion is read from, and it
+> is the thing a test can fail the build over. The original claims are left in place throughout,
+> unedited, because a research document that quietly rewrites its own reads is a document nobody can
+> audit.
+
 ---
 
 ## 0. THE ANSWER IN ONE SCREEN
@@ -598,3 +609,49 @@ twice by the same author at 11.2 CV12 — better than "unverified", still not th
 id's four numbers; every CER in the kangkyu card and in particular its whisper-large-v2 comparison row;
 both bilingual zh-en cards; lyr-pt's 0.1318 (and its own card states the reservation — the test set is the
 model's own training domain).
+
+---
+
+## 10. ERRATA — the licensing claims this document got wrong
+
+**Added 2026-09-13.** Both corrections were converged on independently: by the owner's own licensing
+research, and by this project's clearance task working from the repositories rather than from §5.2.
+The original text above is **left unedited** — a research document that rewrites its own reads is a
+document nobody can audit — so this section is the authority over it, and
+`StreamingPackClearance.kt` is the authority over both.
+
+These are corrections of FACT, not of verdict. Neither says a row is safer than it looked; they say
+the reason given was not the real one.
+
+### 10.1 `zh-en`'s training corpus is UNDISCLOSED, not WenetSpeech-L
+
+**Where the withdrawn claim is written:** §0 (*"zh-en's corpus is **not 'internal'** — it is
+**WenetSpeech-L 12k h**"*), the `zh-en` row of §1.1 (its corpus cell and *"A named restriction is a
+worse position than an unnamed unknown"*), §2.3/§2.4's Chinese commentary, **C1** in §5.2, and
+correction **6** in §7 — which is itself a correction, in the wrong direction.
+
+**What is actually read, at the exact checkpoint this project ships**
+(`csukuangfj/k2fsa-zipformer-bilingual-zh-en-t` at `e2382758`, the 50 MB V1 export):
+
+| read | says |
+|---|---|
+| this repository's own 4,115-byte card, environment dump | `'training_subset': 'mix'` |
+| official sherpa-onnx documentation | an **internal** corpus |
+| the card's own header | *"Forked from `pfluo/k2fsa-zipformer-chinese-english-mixed`"* |
+| the **fork parent's** card | `'training_subset': '12k_hour'` |
+
+So `12k_hour` — WenetSpeech's own name for its L subset — is on the **parent's** card and nowhere on
+the card of the repository these four files come from. §7's correction 6 read that as *"the author's
+own card publishes it"*, collapsing two repositories into one author. **A parent's training disclosure
+is lineage, not a disclosure about the bytes we download.**
+
+**Effect on scope:** none on the artefact and none on the accuracy work. It removes the *reason* this
+row was called the weakest in the survey, and with it the **C1** counsel question as written: no
+written opinion can size a corpus nobody has named. What remains is an apache-2.0 grant over an
+undisclosed corpus — structurally Russian's row (**O4**), which this document already files as
+non-gating.
+
+**And one thing this erratum does not license.** This row publishes AiShell-1, TEST_NET and
+TEST_MEETING numbers. Those are **evaluation** sets. A row with no disclosed training corpus is
+exactly where the temptation arises to list what a model was measured on as what it was trained on;
+`StreamingPackClearanceTest` now fails the build if any clearance row's `corpora` names one.

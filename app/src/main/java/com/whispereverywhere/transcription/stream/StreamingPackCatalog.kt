@@ -1079,15 +1079,19 @@ object StreamingPackCatalog {
      * the kind of neighbour a flat name cannot tell apart.
      *
      * **Licence — apache-2.0, READ in front matter AND platform-surfaced on every link of the
-     * chain. NOT CLEARED, and the reason is a NAMED restriction rather than an unknown.** This
-     * mirror's own 4,115-byte card says *"Forked from
+     * chain. Corpus — UNDISCLOSED, and that is the CORRECTION of 2026-09-13.** This mirror's own
+     * 4,115-byte card says *"Forked from
      * https://huggingface.co/pfluo/k2fsa-zipformer-chinese-english-mixed"* and its env dump reads
-     * `'training_subset': 'mix'`; the **fork parent's** card is where `'training_subset':
-     * '12k_hour'` appears — WenetSpeech's own name for its L subset, 12,000 h, *"available to
-     * download for non-commercial purposes"*, whose publisher **disclaims the audio copyright**
-     * and mails a `PASSWORD` through a Google Form. So the corpus attribution is real and is one
-     * hop upstream of the bytes we would ship, which is a fact the clearance record has to state
-     * precisely: it was read at `pfluo`, not on this row's card.
+     * `'training_subset': 'mix'`; the official sherpa-onnx documentation describes an internal
+     * corpus. `'training_subset': '12k_hour'` — WenetSpeech's own name for its L subset — appears
+     * on the **FORK PARENT's** card and nowhere on this row's, so it is **lineage, not this row's
+     * corpus**: it was read at `pfluo`, over bytes this catalogue does not download.
+     *
+     * This comment used to draw the opposite conclusion — that the corpus attribution "is real and
+     * is one hop upstream", which the clearance record then wrote up as a NAMED non-commercial
+     * restriction and the weakest row in the survey. **That claim is withdrawn as unestablished.**
+     * A parent's card is evidence about the parent. `PackClearanceRecord.ZH` carries the corrected
+     * reads and `StreamingPackClearanceTest` pins them; nothing about the four files below moved.
      *
      * Accuracy, from this row's own card (**UNVERIFIED**, `modified-beam-search` at
      * `decode_chunk_len 64`, neither our decode mode nor our cadence): AiShell-1 4.79,

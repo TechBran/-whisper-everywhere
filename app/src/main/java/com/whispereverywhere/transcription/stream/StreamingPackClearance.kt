@@ -63,7 +63,9 @@ data class PackClearance(
      * The catalogue row this record is about — [StreamingPack.language], so the two cannot drift.
      * Note `zh`: the row the controller brief calls `zh-en` is SELECTED as Chinese and its language
      * code is `zh` (`StreamingPackCatalog.kt:1095`); the pack behind it is the bilingual export,
-     * which is why its corpus question is WenetSpeech-L's and not a Chinese-only lane's.
+     * which is why its corpus question is its own and not a Chinese-only lane's — and, corrected
+     * on 2026-09-13, why that question is an UNDISCLOSED corpus rather than WenetSpeech-L's terms.
+     * See [PackClearanceRecord.ZH].
      */
     val language: String,
     /** Cleared for publication, or not — and, either way, the thing that makes it actionable. */
@@ -101,14 +103,15 @@ enum class ClearanceAnswerer {
     /**
      * The owner's own risk call. Used where no third party is obliged to answer and no document
      * would settle it: `ru`, whose corpus is not named at all, so the risk can only be accepted or
-     * refused rather than sized.
+     * refused rather than sized — and, since the correction of 2026-09-13, `zh` for exactly the
+     * same reason.
      */
     OWNER,
 
     /** The uploader of the weights. One email, asking them to confirm what they already declared. */
     UPSTREAM_AUTHOR,
 
-    /** A written legal opinion. Not a one-email row: `id`, `ko` and `zh`. */
+    /** A written legal opinion. Not a one-email row: `id` and `ko`. */
     COUNSEL,
 }
 
@@ -195,6 +198,13 @@ sealed interface PromotionState {
  * for them: its corpus reads include the AI-Hub 데이터 이용정책 clause by clause in Korean,
  * YODAS2's shard list and hours table, and nine Mandarin corpus licences from their own
  * publishers. They are quoted here, not re-derived.
+ *
+ * **WITH ONE EXCEPTION, and it is recorded rather than quietly applied.** On 2026-09-13 the
+ * Chinese row's corpus was CORRECTED against that table: the table asserts WenetSpeech-L as this
+ * checkpoint's training corpus, and that is not established for the bytes this catalogue
+ * downloads (see [ZH]). Where this record and the table disagree about `zh`'s corpus, **this
+ * record is the authority and the table carries the correction in its own errata**. Nothing else
+ * in the table was disturbed.
  *
  * One corroboration worth recording, because it is what makes [PackClearance.pinnedCommit]
  * checkable rather than decorative: on 2026-09-12 the HF API's `sha` — the current `main` — still
@@ -418,23 +428,35 @@ object PackClearanceRecord {
     )
 
     /**
-     * Chinese — the bilingual `zh-en` export, selected as `zh`. The heaviest corpus question here,
-     * and the only row in the catalogue that puts anything on the strip when an English speaker
-     * talks mid-Chinese.
+     * Chinese — the bilingual `zh-en` export, selected as `zh`. The only row in the catalogue that
+     * puts anything on the strip when an English speaker talks mid-Chinese.
+     *
+     * **CORRECTED 2026-09-13, and this is the one row in the record whose FACTS changed rather
+     * than its verdict.** It used to say the checkpoint was trained on WenetSpeech-L, 12,000 h, and
+     * that the corpus publisher's non-commercial term made this *"a NAMED restriction … a worse
+     * position than an unnamed unknown"*. That framing made `zh` the weakest row in the survey and
+     * sent it to counsel, and **it was not established**: the shipped mirror's own environment dump
+     * reads `training_subset: 'mix'`, the official sherpa-onnx documentation describes an internal
+     * corpus, and the `12k_hour` string is on the FORK PARENT's card. The parent's disclosure is
+     * lineage, not a disclosure about these bytes, so the corpus reads UNDISCLOSED and the
+     * non-commercial claim is withdrawn. `StreamingPackClearanceTest` holds both halves, including
+     * that no row converts an evaluation set into a training set.
      */
     val ZH = PackClearance(
         language = "zh",
         verdict = ClearanceVerdict.Outstanding(
-            question = "May weights derived from WenetSpeech-L — a NAMED non-commercial corpus " +
-                "whose publisher also disclaims the copyright in the audio — ship inside a PAID " +
-                "app?",
-            action = "COUNSEL — a written opinion, not a one-email row (qualification table C1). " +
-                "It is a Chinese-LANE ruling rather than a per-row one: every Chinese-ONLY " +
-                "alternative carries WenetSpeech PLUS AISHELL-2 PLUS KeSpeech, three agreements " +
-                "where this bilingual row carries one, so refusing this row does not open a " +
-                "cheaper door. The table's own instruction: do not spend the measurement day " +
-                "until counsel answers, because no accuracy number changes it.",
-            answerer = ClearanceAnswerer.COUNSEL,
+            question = "What was it trained on? Nothing in this repository names a corpus: the " +
+                "card's own environment dump reads training_subset: 'mix' and the official " +
+                "sherpa-onnx documentation describes an internal corpus. So this is an " +
+                "apache-2.0 grant over an undisclosed corpus — the same shape as Russian's, and " +
+                "the risk can only be accepted or refused rather than sized.",
+            action = "The OWNER's own risk call, on the same terms as Russian. CORRECTED " +
+                "2026-09-13: the earlier framing — a WenetSpeech-L corpus with a non-commercial " +
+                "term on the card, which made this the weakest row in the survey and sent it to " +
+                "counsel as qualification-table C1 — is WITHDRAWN as unestablished, because the " +
+                "12k_hour string belongs to the fork parent. What is left is an undisclosed " +
+                "corpus, which no written opinion can size either.",
+            answerer = ClearanceAnswerer.OWNER,
         ),
         licence = "apache-2.0",
         readAt = "https://huggingface.co/csukuangfj/k2fsa-zipformer-bilingual-zh-en-t",
@@ -446,14 +468,18 @@ object PackClearanceRecord {
             "grant and the corpus below are read on the repository this catalogue actually " +
             "downloads from.",
         corpora = listOf(
-            "WenetSpeech-L, 12,000 h. Not the \"internal multilingual dataset\" the first survey " +
-                "quoted — that phrase is the sherpa-onnx docs' and appears nowhere in the repo. " +
-                "The AUTHOR's own card publishes training_subset: '12k_hour', which is " +
-                "WenetSpeech's own name for its L subset.",
-            "WenetSpeech's own terms: \"available to download for non-commercial purposes\", " +
-                "\"WenetSpeech doesn't own the copyright of the audios\", and a Google-Form " +
-                "mailed PASSWORD. A NAMED restriction is a worse position than an unnamed " +
-                "unknown, because it converts \"we did not know\" into \"it was on the card\".",
+            "UNDISCLOSED. Nothing in the repository these four files are downloaded from names a " +
+                "training corpus. Its own 4,115-byte card carries an environment dump reading " +
+                "training_subset: 'mix', and the official sherpa-onnx documentation describes an " +
+                "internal corpus. Corrected 2026-09-13: this line previously asserted " +
+                "WenetSpeech-L, 12,000 h, and that was never established for these bytes.",
+            "LINEAGE, not corpus. The card says \"Forked from " +
+                "https://huggingface.co/pfluo/k2fsa-zipformer-chinese-english-mixed\", and it is " +
+                "the FORK PARENT's card — not this one — that publishes " +
+                "training_subset: '12k_hour'. That is recorded here as lineage because a parent's " +
+                "disclosure is not a disclosure about the bytes this catalogue downloads, the " +
+                "same distinction Russian's row makes about its untagged mirror. The withdrawn " +
+                "claim was that a corpus term travelled with it.",
         ),
         pinnedCommit = "e2382758de9a0219b4efe682b95af30b399db3b8",
     )

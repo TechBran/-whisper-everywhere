@@ -327,7 +327,11 @@ class StreamingPackClearanceTest {
                 "ru" to ClearanceAnswerer.OWNER,
                 "id" to ClearanceAnswerer.COUNSEL,
                 "ko" to ClearanceAnswerer.COUNSEL,
-                "zh" to ClearanceAnswerer.COUNSEL,
+                // Corrected 2026-09-13: `zh` was COUNSEL on the strength of a WenetSpeech-L
+                // corpus term that is not established for these bytes. With the corpus recorded
+                // as undisclosed, the row has the same shape as Russian's and the same answerer —
+                // no written opinion can size a corpus nobody has named.
+                "zh" to ClearanceAnswerer.OWNER,
             ),
             outstanding,
         )
@@ -369,6 +373,93 @@ class StreamingPackClearanceTest {
                     "huggingface.co — say where a reader can re-read it",
                 record.readAt.startsWith("https://huggingface.co/"),
             )
+        }
+    }
+
+    // --------------------------- 4b. the facts this record asserted and had to take back
+
+    /**
+     * **CORRECTED 2026-09-13 — the Chinese row's training corpus is UNDISCLOSED, and the fork
+     * parent's `12k_hour` is LINEAGE rather than this row's corpus.**
+     *
+     * What this record used to assert, and what is wrong with it: it said the shipped checkpoint
+     * was trained on **WenetSpeech-L, 12,000 h**, and that its publisher's *"available to download
+     * for non-commercial purposes"* made this *"a NAMED restriction … a worse position than an
+     * unnamed unknown"*. That is the sentence that made `zh` the weakest row in the survey and sent
+     * it to counsel. **It is not established.** Three reads disagree with it:
+     *
+     *  - the exact shipped mirror's own environment dump reads `training_subset: 'mix'`;
+     *  - the official sherpa-onnx documentation describes an *internal* corpus;
+     *  - the `12k_hour` string is on the card of the **fork parent**,
+     *    `pfluo/k2fsa-zipformer-chinese-english-mixed`, not on the card of the repository these
+     *    four files are downloaded from.
+     *
+     * A parent's training disclosure is **lineage**, not a disclosure about these bytes — the same
+     * distinction the record already makes for Russian's untagged mirror, where the grant is
+     * upstream and the bytes are tied to it cryptographically rather than by name. So the corpus
+     * line reads UNDISCLOSED, the fork parent is recorded as lineage, and the non-commercial claim
+     * is withdrawn.
+     *
+     * **And the second half of the correction, which applies to every row:** an evaluation set is
+     * not a training set. This row's card publishes AiShell-1, TEST_NET and TEST_MEETING numbers,
+     * and the temptation on a row with no corpus is to list what it was *measured* on as what it
+     * was *trained* on. No `corpora` line may name one, and this test holds that across the whole
+     * record rather than only here.
+     */
+    @Test fun theChineseRowsCorpusIsUndisclosedAndTheForkParentIsRecordedAsLineage() {
+        val zh = PackClearanceRecord.forLanguage("zh")
+        assertNotNull("the Chinese row is gone from the record", zh)
+        val corpora = zh!!.corpora
+        assertTrue(
+            "the Chinese row's corpus line must OPEN with UNDISCLOSED, the way Russian's does — a " +
+                "reader who stops after one line must not come away with a corpus this row does " +
+                "not disclose",
+            corpora.first().startsWith("UNDISCLOSED"),
+        )
+        val joined = corpora.joinToString(" ")
+        for (read in listOf("training_subset: 'mix'", "sherpa-onnx")) {
+            assertTrue(
+                "the Chinese corpus line must cite the read it rests on ('$read') — \"undisclosed\" " +
+                    "with no reads behind it is indistinguishable from nobody having looked",
+                joined.contains(read),
+            )
+        }
+        assertTrue(
+            "the fork parent (pfluo/k2fsa-zipformer-chinese-english-mixed) must be recorded, and " +
+                "recorded as LINEAGE — it is where '12k_hour' actually appears, and a parent's " +
+                "card is not a disclosure about the bytes this catalogue downloads",
+            joined.contains("pfluo/k2fsa-zipformer-chinese-english-mixed") &&
+                joined.contains("lineage", ignoreCase = true),
+        )
+        // The withdrawn claim, in the two spellings the record and the docs used for it. This is
+        // the assertion that stops it being reinstated by a reader who finds the old survey first.
+        val everything = PackClearanceRecord.RECORD.joinToString(" ") { record ->
+            val verdict = when (val v = record.verdict) {
+                is ClearanceVerdict.Cleared -> "${v.grantedBy} ${v.because}"
+                is ClearanceVerdict.Outstanding -> "${v.question} ${v.action}"
+            }
+            "$verdict ${record.provenance} ${record.corpora.joinToString(" ")}"
+        }
+        for (withdrawn in listOf("named non-commercial", "derived from WenetSpeech-L")) {
+            assertTrue(
+                "the record still asserts '$withdrawn'. The Chinese row's corpus is not " +
+                    "established: the card says training_subset: 'mix', the sherpa-onnx docs say " +
+                    "an internal corpus, and '12k_hour' is the FORK PARENT's. Record the corpus as " +
+                    "undisclosed and the parent as lineage",
+                !everything.contains(withdrawn, ignoreCase = true),
+            )
+        }
+        // An evaluation set is not a training set — held over the whole record, not just this row.
+        for (record in PackClearanceRecord.RECORD) {
+            for (evaluationOnly in listOf("AiShell", "TEST_NET", "TEST_MEETING")) {
+                assertTrue(
+                    "'${record.language}'s corpora names '$evaluationOnly', which this project has " +
+                        "only ever seen as an EVALUATION set on a model card. A number measured on " +
+                        "a corpus is not a disclosure that the weights were trained on it, and " +
+                        "converting one into the other is how a row with no corpus acquires three",
+                    record.corpora.none { it.contains(evaluationOnly, ignoreCase = true) },
+                )
+            }
         }
     }
 

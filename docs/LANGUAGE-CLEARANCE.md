@@ -66,7 +66,7 @@ them is his to make on a technical basis.
 | `ru` Russian | outstanding | **you** | an undisclosed corpus: accept the risk, or refuse the row |
 | `id` Indonesian | outstanding | counsel | YODAS2, four questions |
 | `ko` Korean | outstanding | counsel | AI-Hub / NIA, two questions |
-| `zh` Chinese | outstanding | counsel | WenetSpeech-L's named non-commercial restriction |
+| `zh` Chinese | outstanding | **you** | an undisclosed corpus — **corrected 2026-09-13**, see its section: accept the risk, or refuse the row |
 
 `zh` is the row the build brief calls `zh-en`: it is **selected** as Chinese and its language code is
 `zh`, and the pack behind it is the bilingual Chinese-English export — the only pack in the catalogue
@@ -332,34 +332,48 @@ and no sale; and attribution to NIA is **mandatory and extends to derivative wor
 platform-surfaced on every link of the chain (re-read 2026-09-12). This is the **50 MB V1 export**,
 not its 198 MB sibling.
 
-**The question for counsel** (qualification table C1) — *"the heaviest corpus question in the
-document"*, and it wants a **written opinion**, not an email:
+**CORRECTED 2026-09-13, and this section is the correction.** What it said before: that the weights
+were trained on **WenetSpeech-L** (12,000 h), whose publisher states the corpus is *"available to
+download for non-commercial purposes"*, and that this **named** restriction made `zh` the weakest row
+in the survey — *"the heaviest corpus question in the document"*, a **counsel** row wanting a written
+opinion. **That is not established, and the claim is withdrawn.** Three reads say so:
 
-> May weights derived from **WenetSpeech-L** (12,000 h) — a corpus whose publisher states it is
-> *"available to download for non-commercial purposes"* and that *"WenetSpeech doesn't own the
-> copyright of the audios"*, and whose access is a Google-Form-mailed password — ship inside a
-> **paid** app, under the uploader's Apache-2.0 grant over the exported weights?
+- the exact shipped mirror's own 4,115-byte card carries an environment dump reading
+  `training_subset: 'mix'`;
+- the official **sherpa-onnx documentation** describes an *internal* corpus;
+- `training_subset: '12k_hour'` — WenetSpeech's own name for its L subset — is on the card of the
+  **fork parent**, `pfluo/k2fsa-zipformer-chinese-english-mixed`, and nowhere on this row's.
 
-**Where the evidence lives.** The corpus is named by the **author**, not inferred: his card publishes
-`training_subset: '12k_hour'`, which is WenetSpeech's own name for its L subset. (The *"internal
-multilingual dataset"* phrase an earlier survey quoted appears nowhere in the repository — it is the
-sherpa-onnx documentation's description.) A **named** restriction is a worse position than an unnamed
-unknown, because it converts *"we did not know"* into *"it was on the card"*.
+**So this row is `LINEAGE`, not a corpus term.** A parent's training disclosure is evidence about the
+parent; it is not a disclosure about the bytes this catalogue downloads, which is the same
+distinction Russian's row already makes about its untagged mirror. What is left is an **apache-2.0
+grant over an undisclosed corpus** — Russian's exact shape.
+
+**So this is now your own risk call**, not counsel's: no written opinion can size a corpus nobody has
+named, and paying for one would buy an answer about `pfluo`'s bytes rather than about ours. If you are
+comfortable, record yourself as the grantor with that reasoning in `because`.
+
+**What must NOT be written back into this record.** Two things, because both are one search away:
+
+1. the *"named non-commercial restriction"* framing above — it is in the qualification table
+   (`§7`, correction 6) and in the earlier survey, and the table now carries this correction in its
+   own errata;
+2. the card's **evaluation** numbers as **training** corpora. This row publishes AiShell-1, TEST_NET
+   and TEST_MEETING figures. A number measured on a corpus is not a disclosure that the weights were
+   trained on it, and a row with no corpus is exactly where that conversion gets made. The suite pins
+   it across every row.
 
 **What changes on a yes:** the three edits above — **and, if the clearance comes with an attribution
 or a notice condition, one credits line** in `app/src/main/assets/oss_licenses.html`. Today that
-page's Chinese entry names **no corpus at all**, deliberately: the page is an attribution surface,
-and publishing an admission about a restriction counsel has not yet ruled on belongs in the clearance
-record and in this section, which is where it is. The consequence is that nothing on that page points
-at this row, so if counsel attaches a condition the edit has to be made on purpose — nothing will
-prompt it.
+page's Chinese entry names **no corpus at all**, and after this correction that is simply accurate:
+there is no corpus to name. The consequence is that nothing on that page points at this row, so if a
+condition is ever attached the edit has to be made on purpose — nothing will prompt it.
 
-**Read this before deciding it row by row.** It is a **Chinese-lane** ruling, not a per-row one:
-every Chinese-**only** alternative carries WenetSpeech **plus** AISHELL-2 **plus** KeSpeech — three
-agreements where this bilingual row carries one, and one of those (KeSpeech) bars *"Adaptations"* and
-is revocable on the licensor's notice, while another (`aidatatang_200zh`) is delisted so its licence
-cannot even be read. Refusing this row does not open a cheaper door. The table's own instruction:
-**do not spend the measurement day until counsel answers**, because no accuracy number changes it.
+**One thing the correction does NOT dissolve.** A Chinese-**only** alternative is still worse, and for
+reasons that have nothing to do with this row: every one of them carries WenetSpeech **plus**
+AISHELL-2 **plus** KeSpeech as *declared* corpora — three agreements, one of which (KeSpeech) bars
+*"Adaptations"* and is revocable on the licensor's notice, while another (`aidatatang_200zh`) is
+delisted so its licence cannot even be read. Refusing this row does not open a cheaper door.
 
 ---
 

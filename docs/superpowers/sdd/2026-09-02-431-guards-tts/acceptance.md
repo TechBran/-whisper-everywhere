@@ -882,8 +882,13 @@ So:
   reports `Withheld([de, ru, id, ko, zh])`.
 - **The checklist is `docs/LANGUAGE-CLEARANCE.md`** — one section per outstanding language, with the
   exact question, where the evidence lives, and the three edits that record an answer. German is one
-  email; Russian is your own risk call on an undisclosed corpus; Indonesian, Korean and Chinese want
-  counsel.
+  email; Russian **and now Chinese** are your own risk call on an undisclosed corpus; Indonesian and
+  Korean want counsel.
+  **Chinese corrected 2026-09-13:** its corpus is **not** established as WenetSpeech-L — the shipped
+  card reads `training_subset: 'mix'`, sherpa's docs say an internal corpus, and the `12k_hour`
+  string is the **fork parent's**. The "named non-commercial restriction" that made it the heaviest
+  counsel question in the survey is withdrawn as unestablished; an undisclosed corpus is not a
+  question a written opinion can answer.
 
 `[ ] the record names every shipped language — promotion may proceed`
 `[ ] it does not — INTERNAL TRACK ONLY`
