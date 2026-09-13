@@ -218,6 +218,68 @@ class ModelTierCopyTest {
     }
 
     /**
+     * **NO NON-NPU RUNG CLAIMS SPEED, AND THE TWO NPU CARDS STILL DO.** One test for both halves,
+     * on purpose: they are the same rule seen from its two ends, and a census that only forbade
+     * would be satisfied by scrubbing the lineup silent — which would delete two claims that are
+     * measured, owner-ruled and true.
+     *
+     * **The forbidding half.** Six of the seven CPU rungs are [WhisperModel.instrument]s, offered
+     * so the owner can measure them on six devices, and the seventh (`multi`) has one measured
+     * verdict that its card states as a verdict rather than as a rank. None of the seven has been
+     * measured against another, so none may be ranked against another — in EITHER direction. The
+     * reverse claim is the one that feels safe and is not: the research this build serves predicts
+     * the intuitive ordering is wrong, because the LARGER `q8_0` file is the one on ggml's ARM
+     * i8mm repack path. See [SPEED_CLAIM_WORDS] for the vocabulary and for the three words that
+     * are deliberately not in it.
+     *
+     * **The requiring half.** `npu` and `npu-turbo` are gated tiers whose speed was measured on
+     * our own devices (encode 1.78 s fixed per commit on the Fold6 against Multilingual's 2.3 s;
+     * ~6 s per 17.6 s chunk on the Tab S10+) and ruled on by the owner (2026-09-10). Their cards
+     * must go on saying so. This is the assertion that makes a future "scrub every speed word"
+     * pass fail loudly instead of quietly costing the app a true claim.
+     *
+     * Note how this composes with the 3.7 census: [every_tier_takes_a_speed_vs_accuracy_position]
+     * requires one of [POSITION_WORDS], and this one forbids the speed members of that list on
+     * every CPU card — so a CPU rung has to satisfy the 3.7 rule with "accuracy", which is the one
+     * axis whisper's own checkpoint ordering entitles these cards to rank.
+     */
+    @Test fun no_cpu_rung_claims_speed_and_the_two_npu_cards_still_do() {
+        val cpuRungs = offeredTiers.filter { !it.gated }
+        // Guard the census's own reach: if the ladder ever loses its CPU rows, this test must not
+        // pass by iterating nothing.
+        assertEquals("the CPU ladder is not seven rungs any more", 7, cpuRungs.size)
+        cpuRungs.forEach { model ->
+            val copy = ModelTierCopy.forId(model.id)!!
+            // The displayName rides on the same card (OnboardingModelScreen.kt:686), above the
+            // headline, so it is part of what the user reads as this rung's claim.
+            val all = (
+                model.displayName + " " + copy.headline + " " + copy.body + " " +
+                    copy.badges.joinToString(" ")
+                ).lowercase()
+            SPEED_CLAIM_WORDS.forEach { word ->
+                assertFalse(
+                    "CPU rung '${model.id}' claims speed with '$word'. Nothing on this ladder has " +
+                        "been measured on the owner's hardware and he is about to measure it on " +
+                        "six devices — a card that predicts the winner, or the loser, is a claim " +
+                        "he has to catch instead of a finding he makes",
+                    Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(all),
+                )
+            }
+        }
+        val npuCards = offeredTiers.filter { it.gated }
+        assertEquals(listOf("npu", "npu-turbo"), npuCards.map { it.id })
+        npuCards.forEach { model ->
+            val copy = ModelTierCopy.forId(model.id)!!
+            assertTrue(
+                "gated tier '${model.id}' no longer claims the speed it measured. This claim is " +
+                    "true, scoped to silicon this app has benchmarked, and owner-ruled " +
+                    "(2026-09-10) — removing it is the regression, not the fix",
+                listOf("fastest", "faster").any { (copy.headline + " " + copy.body).lowercase().contains(it) },
+            )
+        }
+    }
+
+    /**
      * 4.6 — was `english_locales_are_steered_to_pro`. The English branch is GONE because the tier
      * it pointed at is retired (owner ruling 2026-09-13: multilingual rungs only), and a steer at
      * a retired tier is not a steer — the chooser does not render that card, so nothing would be
