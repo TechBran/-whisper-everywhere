@@ -7,6 +7,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import java.io.File
 
 /**
  * THE THROUGHPUT GATE, executed (4.6 Task 3). *"A rung with no recorded throughput verdict may not
@@ -398,4 +399,113 @@ class TierThroughputTest {
             TierThroughputRecord.state(setOf("nope"), listOf("multi", "large-v3"), one),
         )
     }
+
+    // ----------------------------------------------- THE GATE'S BOUNDARY WITH THE APP
+
+    /**
+     * **THE GATE MUST NOT REACH THE CHOOSER, AND THIS IS THE ONLY TEST THAT CAN PROVE IT.**
+     *
+     * The obvious implementation of *"an unmeasured rung may not be promoted"* is to filter the
+     * unmeasured rungs out of [WhisperCatalog.pickable]. That would destroy the entire branch: the
+     * owner asked to *"see all the models there so I can just select between them and try each
+     * one"*, and he cannot measure a rung the app declines to offer him. The failure would also be
+     * SILENT — six cards simply absent, exactly the symptom he reported that started this work.
+     *
+     * So the record is a PROMOTION artefact with no runtime reader, and the negative is proved the
+     * way its clearance twin proves it: by reading the app's own sources
+     * (`StreamingPackClearanceTest.theClearanceStateReachesNothingTheAppRuns`). A COMMENT pointing
+     * at this record is fine and welcome; a live reference is not.
+     */
+    @Test fun the_gate_reaches_nothing_the_app_runs() {
+        val vocabulary = listOf(
+            "TierThroughput",
+            "ThroughputVerdict",
+            "ThroughputMeasurement",
+            "ThroughputPromotionState",
+            "PRODUCTION_PROMOTABLE",
+            "KeepUp",
+        )
+        val home = "TierThroughput.kt"
+        val scanned = mutableListOf<String>()
+        for (file in appSources()) {
+            if (file.name == home) continue
+            scanned += file.name
+            val text = file.readText().replace("\r\n", "\n")
+            for (needle in vocabulary) {
+                val live = text.lineSequence().filter { line ->
+                    val trimmed = line.trimStart()
+                    val commented = trimmed.startsWith("//") || trimmed.startsWith("*") ||
+                        trimmed.startsWith("/*")
+                    !commented && line.contains(needle)
+                }.toList()
+                assertEquals(
+                    "${file.name} has a LIVE reference to '$needle'. The throughput record is a " +
+                        "PROMOTION record: it must not reach the chooser, the catalogue, the " +
+                        "download paths, the commit pipeline or anything the app reads at " +
+                        "runtime. Every rung in it is selectable and downloadable on every " +
+                        "device — that is the whole point of 4.6, and the owner cannot measure a " +
+                        "rung the app will not offer him. A COMMENT pointing at it is fine.",
+                    emptyList<String>(),
+                    live.map { it.trim() },
+                )
+            }
+        }
+        // The scan has to have found the app, or it proves nothing: a broken path would make this
+        // test pass over zero files.
+        assertTrue("the source scan found only ${scanned.size} files — it is not reading the app", scanned.size > 100)
+        assertTrue(
+            "the scan must cover the files that would do the filtering if anyone tried",
+            scanned.containsAll(listOf("WhisperModel.kt", "ModelTierCopy.kt", "ModelMigration.kt")),
+        )
+    }
+
+    /**
+     * **The default and every migration target carry a CLEARING verdict**, over the full input
+     * cross product.
+     *
+     * T1 already pins both against [WhisperModel.instrument], which was the strongest statement
+     * available before this record existed. This is the stronger one, and it is not a duplicate:
+     * the flag says *"we are not advocating this"*, while the verdict says *"here is what it did
+     * to the typed text"* — so this assertion also catches a target whose throughput was measured
+     * and came back BEHIND, a state the flag cannot express at all.
+     *
+     * The brief calls a migration target that is retired or unmeasured *"the one unrecoverable
+     * defect"* in the ladder task, and the reason is the blast radius: [WhisperCatalog
+     * .DEFAULT_MODEL_ID] is what every path with no pick on record falls back to, so an unmeasured
+     * rung here reaches precisely the users who never made a choice.
+     */
+    @Test fun the_default_and_every_migration_target_carry_a_clearing_verdict() {
+        val default = TierThroughputRecord.forTier(WhisperCatalog.DEFAULT_MODEL_ID)
+        assertNotNull("the default rung has no throughput row at all", default)
+        assertTrue(
+            "DEFAULT_MODEL_ID is '${WhisperCatalog.DEFAULT_MODEL_ID}', whose throughput verdict " +
+                "does not clear production. It is the fallback for every path with no pick on " +
+                "record, so this hands an untimed finalizer to the users who made no choice",
+            default!!.verdict.clearsProduction,
+        )
+        // Exhaustive over the migration function's whole input domain.
+        ModelScope.entries.forEach { scope ->
+            val target = ModelMigration.targetIdFor(scope)
+            val row = TierThroughputRecord.forTier(target)
+            assertNotNull("the $scope migration target '$target' has no throughput row", row)
+            assertTrue(
+                "the $scope migration target is '$target', whose throughput verdict does not " +
+                    "clear production — a migration MOVES a user who did not ask to be moved, so " +
+                    "it may not move them onto a rung nobody has timed",
+                row!!.verdict.clearsProduction,
+            )
+        }
+    }
+
+    private fun repoRoot(): File {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            if (File(dir, "settings.gradle.kts").isFile) return dir
+            dir = dir.parentFile
+        }
+        throw AssertionError("cannot locate the repository root from ${System.getProperty("user.dir")}")
+    }
+
+    private fun appSources(): List<File> =
+        File(repoRoot(), "app/src/main/java").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
 }
