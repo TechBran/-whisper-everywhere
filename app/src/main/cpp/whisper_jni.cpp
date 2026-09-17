@@ -940,7 +940,16 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
         }
     }
 
+    // Timed HERE, natively, because R8 strips every android.util.Log in release
+    // (proguard-rules.pro -assumenosideeffects), so the Kotlin diag lines never reach a
+    // production capture and the release build otherwise emits NO finalize duration at all. This
+    // one line is what turns "medium Q8 feels faster" into a number the owner can read off
+    // `adb logcat -s WE-DIAG` per chunk, per model, per device. No transcript content: wall
+    // time, the frames the encoder was billed, threads, audio length, segment count.
+    const auto t_full_start = std::chrono::steady_clock::now();
     const int fullRc = whisper_full(ctx, params, pcm.data(), static_cast<int>(pcm.size()));
+    const double fullWallMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t_full_start).count();
     if (cbCtx.callback != nullptr) {
         env->DeleteGlobalRef(cbCtx.callback);
     }
@@ -951,6 +960,15 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
 
     std::string result;
     const int nSeg = whisper_full_n_segments(ctx);
+    // audioMs is the SPEECH-ONLY length after we_vad_filter, which is what whisper_full saw. The
+    // ratio that matters for the ladder is fullWallMs against the COMMIT FLOOR (6,000 ms on the
+    // small tiers, 8,000 on every other CPU rung), not against audioMs: below ~9 s of audio the
+    // encoder is billed the audio_ctx floor regardless of length, so cost per commit is constant
+    // and the queue grows iff fullWallMs exceeds the floor. Both numbers are here so either
+    // comparison can be made from the capture.
+    LOGDIAG("finalize: wallMs=%.0f audio_ctx=%d threads=%d audioMs=%.0f segments=%d",
+            fullWallMs, params.audio_ctx, params.n_threads,
+            static_cast<double>(pcm.size()) * 1000.0 / 16000.0, nSeg);
     for (int i = 0; i < nSeg; ++i) {
         const char *seg = whisper_full_get_segment_text(ctx, i);
         if (seg != nullptr) {
