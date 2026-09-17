@@ -103,6 +103,14 @@ data class WhisperModel(
      * claim was unproved and granted it only after the owner's on-device A/B (`ModelTierCopy`'s
      * turbo card). Same shape, one axis over — throughput instead of accuracy. Clearing the flag
      * is what a measured verdict earns.
+     *
+     * **AND THE VERDICT HAS A HOME: [TierThroughputRecord].** This flag says *"we are not
+     * advocating this"*; the record says *what the rung did to the typed text*, with the device,
+     * the finalize time, the date and who measured it. The two are held EQUAL by
+     * `TierThroughputTest.the_one_measured_rung_is_multi_and_the_other_six_are_unmeasured` — the
+     * instrument set must be exactly the record's unmeasured rungs — so **clearing this flag
+     * without recording a measurement is a red suite**, and so is recording one without clearing
+     * the flag. That is deliberate: they are one claim and the flag is the half a reader sees.
      */
     val instrument: Boolean = false,
     /**

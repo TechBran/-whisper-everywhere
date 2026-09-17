@@ -45,6 +45,14 @@ import com.whispereverywhere.audio.Endpointer
  * is queue latency rather than corruption, and a floor moved without a measurement is the same
  * mistake this rule exists to name.
  * - extreme/ultra (539-574 MB): UNMEASURED. 8 s is the conservative placeholder; H2 may revise it.
+ * - 4.6's six instrument rungs: UNMEASURED, all on the LARGE row via `else`, the decision recorded
+ *   in `CommitCadencePolicyTest.everyCatalogTierIsNamedExplicitly`. **That "UNMEASURED" is no
+ *   longer only a word in this KDoc**: `TierThroughputRecord` carries it per rung with its
+ *   evidence, and `TierThroughputTest.an_unmeasured_rung_is_paced_at_the_conservative_large_floor`
+ *   holds the two together — an unmeasured rung may not be paced faster than this row, so moving
+ *   `small-q8` onto multi's 6 s floor before measuring it is a red suite rather than a judgement
+ *   call. The rule above already demanded F be MEASURED; that record is what finally lets it fail
+ *   a build.
  * - cloud batch: every commit is one HTTP POST (Semaphore(3) in flight, shed at 24). Same
  *   reasoning that made the 4 s first cap LOCAL-only.
  *
