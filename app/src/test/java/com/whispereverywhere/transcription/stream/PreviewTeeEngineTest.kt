@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -286,5 +287,67 @@ class PreviewTeeEngineTest {
         tee.shutdown()
         assertTrue(local.shut)
         assertFalse(preview.closed)
+    }
+
+    /**
+     * (4.8.1) THE TEE OVER A PREVIEWER THAT IS STILL LOADING — the fresh-install first session.
+     *
+     * The gate arms on the POSTED warm now (FloatingBubbleService.startRecording), so this tee is
+     * built and connected while the load sits on the previewer's executor. Pinned over the REAL
+     * engine on a held FIFO executor rather than [FakePreview], because the claim is about the
+     * engine's own entry points: `local` receives every connect, chunk and commit in order and
+     * the owner hears `onOpen`/`onSegmentResolved` exactly as on a warm session; the strip stays
+     * blank (no `onDelta` at all) until the previewer's first partial; and once the load lands
+     * behind `open()` the words flow from the next chunk. Whisper's own deltas stay swallowed
+     * either way — the composer is the one delta source — which is the one thing a still-loading
+     * previewer costs: a blank strip, never a wrong one.
+     */
+    @Test fun aTeeWhosePreviewerIsStillLoadingForwardsLocalUntouchedAndTheStripStaysBlankUntilTheFirstPartial() {
+        var now = 0L
+        val rec = ScriptedRecognizer(listOf("HELLO", "HELLO THERE"), canaryText = "ONE TWO THREE FOUR FIVE")
+        val exec = ManualExecutorService()
+        val previewer = StreamingPreviewEngine(
+            factory = ScriptedFactory(rec), canaryClip = { FloatArray(40_960) }, executor = exec,
+            clock = { now }, nanoClock = { 0L }, log = {}, enterExecutorThread = {},
+        )
+        previewer.warm(File("unused"), StreamingPackCatalog.EN)      // posted — the boot prewarm's / wrap site's shape
+        assertFalse("the load is in flight", previewer.isWarmFor(StreamingPackCatalog.EN))
+        assertFalse("and the gate's term says arm", previewer.isDisabled(StreamingPackCatalog.EN))
+        val cold = PreviewTeeEngine(previewer, local)
+        val chunk = ByteArray(1024)
+
+        cold.connect("en", owner)                                    // open() posts behind the warm; local connects NOW
+        assertEquals("local connected at once — the previewer's open only posted", listOf("local.connect"), order)
+        assertEquals("and the owner heard onOpen from local, untouched", 1, owner.opened)
+        repeat(20) { now += 32; cold.sendAudio(chunk) }
+        assertEquals("every chunk reached local, in order", 20, local.audio.size)
+        assertEquals(listOf("local.connect") + List(20) { "local" }, order)
+        assertTrue("no stream exists yet — nothing has run", rec.streams.isEmpty())
+        assertTrue("and the strip is BLANK, not wrong: no delta of any kind", owner.deltas.isEmpty())
+        local.delta(" Hello")                                        // whisper's own burst
+        assertTrue("swallowed, exactly as on a warm session", owner.deltas.isEmpty())
+
+        exec.runAll()                                                // the warm lands, THEN open, THEN the drains
+        assertTrue(previewer.isWarmFor(StreamingPackCatalog.EN))
+        assertEquals("canary + the session's stream", 2, rec.streams.size)
+        assertEquals("the twenty chunks queued during the load were shed at open", 0, rec.streams[1].fed.size)
+        assertTrue(owner.deltas.isEmpty())
+
+        repeat(15) { now += 32; cold.sendAudio(chunk); exec.runAll() }   // 7,680 samples: the first decode
+        assertEquals("words from the first chunk after the load landed", listOf("hello"), owner.deltas)
+        assertEquals(35, local.audio.size)
+
+        // And the commit path is the warm session's: local's seq, the freeze under it, whisper's
+        // resolution through first and the prefix dropped after it.
+        assertEquals(0L, cold.commit())
+        assertEquals(listOf(0L to SpeechEvidence.UNKNOWN), local.commits)
+        exec.runAll()
+        assertEquals("hello there", owner.deltas.last())
+        local.resolve(0L, SegmentOutcome.Text("Hello there."))
+        assertEquals(listOf("resolved:0", "delta:"), owner.events.takeLast(2))
+        cold.close()
+        exec.runAll()
+        assertTrue(local.closed)
+        assertEquals(1, owner.closedCalls)
     }
 }

@@ -7,29 +7,18 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
-import java.util.concurrent.AbstractExecutorService
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.TimeUnit
 
 /**
  * The previewer's loop over the scripted recognizer, with the measurements as fixtures: the
  * canary's four partials (rung 3 §5.3 — `ONE`, `ONE TWO THREE`, `… FOUR`, `… FIVE`, the last
  * from the pad), the T=45 / 320 ms decode cadence, the leading-space tokens, the 500 ms pad.
  * Executor: SameThreadExecutorService (LocalWhisperEngineTest's), so every posted task runs
- * inline and the assertions read a settled engine.
+ * inline and the assertions read a settled engine — except in the cold-engine section, which
+ * uses [ManualExecutorService] to hold a posted warm in flight, because the 4.8.1 gate arms on
+ * exactly that window.
  */
 class StreamingPreviewEngineTest {
-
-    private class ManualExecutor : AbstractExecutorService() {
-        val tasks = ArrayDeque<Runnable>()
-        override fun execute(command: Runnable) { tasks.addLast(command) }
-        fun runAll() { while (tasks.isNotEmpty()) tasks.removeFirst().run() }
-        override fun shutdown() = Unit
-        override fun shutdownNow(): MutableList<Runnable> = mutableListOf()
-        override fun isShutdown() = false
-        override fun isTerminated() = false
-        override fun awaitTermination(timeout: Long, unit: TimeUnit) = true
-    }
 
     private companion object {
         const val CANARY = "ONE TWO THREE FOUR FIVE"
@@ -383,7 +372,7 @@ class StreamingPreviewEngineTest {
 
     @Test fun queueOverflowShedsTheChunkAndSaysSoOnTheTimingLine() {
         val rec = ScriptedRecognizer(listOf("A"), canaryText = CANARY)
-        val exec = ManualExecutor()
+        val exec = ManualExecutorService()
         val e = warmOpen(rec, executor = exec, capacity = 2)
         exec.runAll()
         repeat(3) { e.sendAudio(ByteArray(1024)) }   // the executor is starved: the third chunk has nowhere to go
@@ -549,5 +538,129 @@ class StreamingPreviewEngineTest {
         e.commit(7L, 0L) { _, text -> frozen = text }
         assertEquals("", frozen)
         assertNull(logs.lastOrNull())
+    }
+
+    // ------------------------------------------------------------- a COLD engine (4.8.1)
+    //
+    // The session gate arms on the POSTED warm since 4.8.1 (FloatingBubbleService.startRecording:
+    // `previewReady = packToWarm != null && preview != null && !preview.isDisabled(packToWarm)`),
+    // so the tee can be built — and connect, and be fed — while the load is still on this engine's
+    // executor. These three tests pin the facts that make that safe, on the executor rather than
+    // by assertion: ONE FIFO thread orders a posted warm before a later open (the await IS the
+    // queue), every entry point tolerates a null recognizer, and audio queued during the load is
+    // shed rather than fed to the eventual stream. On a fresh install the first tap lands 2.5-3.5 s
+    // after the bubble toggle while the boot prewarm's load is in flight; until 4.8.1 the gate read
+    // `isWarmFor` in the same Main pass that posted the warm, so the whole first session ran
+    // without live words and the second worked — the owner's "users will just think it's broken".
+
+    /** Feeds [ms] of 32 ms chunks, letting the held executor take each one — the same-thread shape, one chunk at a time. */
+    private fun feedMsHeld(e: StreamingPreviewEngine, exec: ManualExecutorService, ms: Int) {
+        repeat(ms / 32) { now += 32; e.sendAudio(ByteArray(1024)); exec.runAll() }
+    }
+
+    @Test fun openPostedBehindAnInFlightWarmCreatesTheStreamOnceTheWarmLands() {
+        val rec = ScriptedRecognizer(CANARY_PARTIALS, canaryText = CANARY)
+        val exec = ManualExecutorService()
+        val e = engine(rec, exec)
+
+        // The boot prewarm's (or the wrap site's) post: the load is queued, nothing has run.
+        e.warm(dir, pack)
+        assertFalse("the load has not landed — this is the answer the OLD gate read", e.isWarmFor(pack))
+        assertFalse("and the term the gate reads NOW says arm", e.isDisabled(pack))
+        assertEquals("one task held: the warm", 1, exec.tasks.size)
+
+        // The tee's connect, posted BEHIND it on the same executor; then audio during the load.
+        e.open { emitted += it }
+        assertEquals("open posts, it does not run", 2, exec.tasks.size)
+        repeat(20) { now += 32; e.sendAudio(ByteArray(1024)) }
+        assertEquals("nothing ran: no stream of any kind", 0, rec.streams.size)
+
+        exec.runOne()                                   // the warm lands, FIRST
+        assertTrue("warm for the pack the moment its task completes", e.isWarmFor(pack))
+        assertEquals("the canary's throwaway stream only", 1, rec.streams.size)
+        exec.runAll()                                   // then open, then the twenty drains
+        assertEquals("the session's stream is created behind the warm, never before", 2, rec.streams.size)
+        assertEquals("open cleared what queued during the load", 0, rec.streams[1].fed.size)
+        assertTrue("so no partial was manufactured from shed audio", emitted.isEmpty())
+
+        // From here it is an ordinary warm session: the four canary partials at the decode cadence.
+        feedMsHeld(e, exec, 2_560)
+        assertEquals(listOf("one", "one two three", "one two three four", "one two three four five"), emitted)
+    }
+
+    @Test fun openAndCommitBehindAWarmThatFailsAreSafeAndFreezeBlank() {
+        // (a) the LOAD throws — the corrupt-pack shape. `disable` runs on the executor, so at the
+        //     tap the verdict is not in and the gate arms; every call the tee then makes must be
+        //     a no-op that freezes blank, and the verdict must reach both hooks.
+        val disabled = mutableListOf<StreamingPack>()
+        val corrupt = mutableListOf<StreamingPack>()
+        val exec = ManualExecutorService()
+        val e = engine(
+            null, exec, factory = ScriptedFactory(null, throwAtLoad = true),
+            onLoadFailure = { corrupt += it }, onDisabled = { disabled += it },
+        )
+        e.warm(dir, pack)
+        assertFalse("no verdict yet, so the 4.8.1 gate arms over this load", e.isDisabled(pack))
+        e.open { emitted += it }
+        repeat(10) { now += 32; e.sendAudio(ByteArray(1024)) }
+        var frozen: Pair<Long, String>? = null
+        e.commit(3L, 0L) { seq, text -> frozen = seq to text }
+        exec.runAll()                                   // load throws, open returns, drains clear, commit freezes blank
+        assertTrue(e.isDisabled(pack))
+        assertEquals("the verdict reaches the selection surfaces", listOf(pack), disabled)
+        assertEquals("and the pack that FAILED is the one marked corrupt", listOf(pack), corrupt)
+        assertEquals("the freeze is blank under the seq it was asked for", 3L to "", frozen)
+        assertTrue("no partial ever reached the strip", emitted.isEmpty())
+        assertEquals("one line — the open's `load=fail warm=0`; no timing line for a stream that never existed", 1, logs.size)
+        assertTrue(logs.single().endsWith(" load=fail warm=0"))
+        // ...and after the verdict, audio is refused at the door (`off`) rather than queued.
+        repeat(10) { now += 32; e.sendAudio(ByteArray(1024)) }
+        assertEquals("nothing posted for it", 0, exec.tasks.size)
+
+        // (b) the CANARY fails — the bytes on disk are valid, so `markCorrupt` must NOT be
+        //     called, but the session over it is the same blank, safe shape.
+        logs.clear(); emitted.clear()
+        val canaryRec = ScriptedRecognizer(listOf("A"), canaryText = "")
+        val exec2 = ManualExecutorService()
+        val struck = mutableListOf<StreamingPack>()
+        val corrupt2 = mutableListOf<StreamingPack>()
+        val f = engine(canaryRec, exec2, onLoadFailure = { corrupt2 += it }, onDisabled = { struck += it })
+        f.warm(dir, pack)
+        f.open { emitted += it }
+        repeat(10) { now += 32; f.sendAudio(ByteArray(1024)) }
+        var frozen2: Pair<Long, String>? = null
+        f.commit(0L, 0L) { seq, text -> frozen2 = seq to text }
+        exec2.runAll()
+        assertTrue(f.isDisabled(pack))
+        assertTrue("the recognizer that failed its canary is freed, not left resident", canaryRec.released)
+        assertEquals("only the canary's stream was ever created — open found no recognizer", 1, canaryRec.streams.size)
+        assertEquals(listOf(pack), struck)
+        assertEquals("a failed canary is not corruption", emptyList<StreamingPack>(), corrupt2)
+        assertEquals(0L to "", frozen2)
+        assertTrue(emitted.isEmpty())
+        f.close(); f.release(); exec2.runAll()          // and the lifecycle calls are no-ops on it
+    }
+
+    @Test fun audioThatArrivesBeforeOpenIsShedNotFedToTheNextStream() {
+        // Bounded loss is the design; cross-session contamination is not. Chunks offered while
+        // the load is in flight sit in the queue (capacity 128 — none of these overflow, so this
+        // is NOT the `shed=1` path) and `open()` clears them, so the session's stream begins at
+        // the first chunk AFTER open ran and the timing line counts only that audio.
+        val rec = ScriptedRecognizer(listOf("A"), canaryText = CANARY)
+        val exec = ManualExecutorService()
+        val e = engine(rec, exec)
+        e.warm(dir, pack)
+        e.open { emitted += it }
+        repeat(40) { now += 32; e.sendAudio(ByteArray(1024)) }   // 1,280 ms queued during the load
+        assertEquals("all forty offers were accepted: nothing overflowed", 2 + 40, exec.tasks.size)
+        exec.runAll()
+        feedMsHeld(e, exec, 480)                                   // 15 chunks after open
+        val session = rec.streams[1]
+        assertEquals("exactly the post-open chunks reached the stream", 15, session.fed.size)
+        assertEquals(15 * 512L, session.samples)
+        e.commit(0L, 0L) { _, _ -> }
+        exec.runAll()
+        assertTrue("480 ms of audio on the line, not 1,760", logs.last().contains(" audio=480 "))
+        assertTrue("and no overflow was recorded: the queue held them and open discarded them", logs.last().contains(" shed=0 "))
     }
 }

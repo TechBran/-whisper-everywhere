@@ -344,9 +344,11 @@ class LocalPreviewWiringPinTest {
     fun aFreshlyInstalledPackIsWarmedTheMOMENTTHEINSTALLCOMPLETES() {
         // (4.5.1 Task 1.) THE THIRD WARM TRIGGER, and the only one that is an EVENT. Without it
         // `warmStreamingPreview` is reached only from a boot and from a session START — and the
-        // wrap site's own KDoc says it "arms NEXT session, not this one" — so an install completing
-        // mid-process armed nothing until a session had been and gone. The owner met that as
-        // "having to transcribe a second time to get the live to work".
+        // wrap site's own KDoc said, until 4.8.1, that it "arms NEXT session, not this one" — so
+        // an install completing mid-process armed nothing until a session had been and gone. The
+        // owner met that as "having to transcribe a second time to get the live to work". (Since
+        // 4.8.1 the wrap site arms THIS session on the posted warm; this collector still matters
+        // because it is what makes the load land BEFORE the tap rather than during CONNECTING.)
         val collector = indexOfOrFail(
             text,
             "            com.whispereverywhere.transcription.stream.PreviewWorkboard.work\n",
@@ -819,12 +821,14 @@ class LocalPreviewWiringPinTest {
      * too.**
      *
      * The refusals correctly decline to warm while a session or a batch job is in flight, and
-     * nothing re-asked when it ended. The existing "session wrap" warm does NOT cover this: it
-     * sits at session START (`startRecording`, before `connect`) and its own KDoc says it *"arms
-     * NEXT session, not this one, because warm() is asynchronous and the gate reads isWarmFor()
-     * now"*. So an install landing mid-session costs that session AND the next one — session two
-     * posts the load and reads `isWarmFor` in the same breath — and session three is the first with
-     * live words.
+     * nothing re-asked when it ended. The "session wrap" warm did NOT cover this when this member
+     * was added: it sits at session START (`startRecording`, before `connect`) and its own KDoc
+     * said, until 4.8.1, that it *"arms NEXT session, not this one, because warm() is asynchronous
+     * and the gate reads isWarmFor() now"*. So an install landing mid-session cost that session
+     * AND the next one — session two posted the load and read `isWarmFor` in the same breath — and
+     * session three was the first with live words. (4.8.1 arms session two on the posted warm; this
+     * member still places the load BETWEEN the sessions so that session two's words start at its
+     * first chunk rather than a beat after.)
      *
      * SESSION_END is the member that closes it, at the ONE site a session ends: the single writer
      * of `currentState`. That is deliberately not `teardownRealtime()`, which runs BEFORE the state
@@ -1071,5 +1075,90 @@ class LocalPreviewWiringPinTest {
         // SherpaPreviewRecognizer is the ONE adapter; everything else sees the seam.
         assertEquals(0, count(text, "com.k2fsa"))
         assertEquals(1, count(text, "SherpaPreviewRecognizerFactory()"))
+    }
+
+    /**
+     * **4.8.1 — THE GATE ARMS ON THE POSTED WARM, NOT THE LANDED ONE.**
+     *
+     * The wrap site used to read `preview?.isWarmFor(packToWarm) == true` in the same Main pass
+     * that had just posted the load, and nothing re-checked (`onOpen` only flips `engineReady`).
+     * On a fresh install the first warm is the boot prewarm's — onboarding never starts this
+     * service, the install collector `.drop(1)`s the replayed record, the prewarm waits 1,500 ms
+     * and the load takes ~0.8-0.9 s — so a tap inside the first ~2.5-3.5 s after the toggle read
+     * `false`, built no tee, and the WHOLE first session ran without live words. The owner, on a
+     * fresh 4.8.0/97 (2026-09-17): *"users will just think it's broken"*.
+     *
+     * What makes the new term sufficient is an ORDER, and the order is pinned here as source: the
+     * warm for this pack is posted on the engine's one FIFO executor ABOVE the term, the term is
+     * read ABOVE the tee, and the tee's `connect` posts `open()` behind that warm (PreviewTeeEngine
+     * :42-43; the engine's own tolerance of a cold recognizer is pinned in
+     * StreamingPreviewEngineTest's cold-engine section). `LocalPreviewGateTest` holds the truth
+     * table the term feeds `localPreviewArms`.
+     */
+    @Test
+    fun theGateArmsOnThePostedWarmAndReadsIsWarmForOnlyForTheCardsRetirement() {
+        val ready = indexOfOrFail(
+            startRecording,
+            "        val previewReady = packToWarm != null && preview != null && !preview.isDisabled(packToWarm)\n",
+        )
+        assertEquals("ONE readiness term, spelled exactly so", 1, count(text, "val previewReady = "))
+        assertEquals(
+            "and it is NOT the landed-warm snapshot any more — that is the fresh-install defect",
+            0, count(text, "previewReady = packToWarm != null && preview?.isWarmFor"),
+        )
+        assertEquals(
+            "isWarmFor is read in startRecording for exactly one purpose now — the card's " +
+                "retirement in onOpen — and never for the arm",
+            1, count(startRecording, "isWarmFor("),
+        )
+        // THE ORDER THE TERM RESTS ON: warm posted, term read, tee built, connect (which posts open).
+        val warm = indexOfOrFail(startRecording, "warmStreamingPreview(residency.pack)")
+        val gate = indexOfOrFail(startRecording, "        val previewArmed = localPreviewArms(\n")
+        val wrap = indexOfOrFail(startRecording, "PreviewTeeEngine(requireNotNull(preview), baseEngine)")
+        val connect = indexOfOrFail(startRecording, "        engine.connect(lang, object : TranscriptionEngine.Listener {")
+        assertTrue("the warm for THIS pack is posted before the term is read", warm < ready)
+        assertTrue("the term feeds the gate", ready < gate)
+        assertTrue("the tee is built after the gate", gate < wrap)
+        assertTrue("and connect — the tee's open() post — comes last", wrap < connect)
+        assertEquals(
+            "the term's `preview` IS warmStreamingPreview's return on SESSION_START (null only " +
+                "when the pack dir is gone), so `preview != null` means a warm was posted or was " +
+                "already resident",
+            1,
+            count(
+                startRecording,
+                "        val preview =\n" +
+                    "            if (residency is PreviewResidency.Warm) warmStreamingPreview(residency.pack)\n" +
+                    "            else streamingPreview\n",
+            ),
+        )
+        // ...and warmStreamingPreview's last act is the post itself, on the engine it returns.
+        assertEquals(
+            "the warm is posted on the very engine the wrap site is handed",
+            1, count(text, "        engine.warm(dir, pack)\n        return engine\n    }\n"),
+        )
+        assertEquals(
+            "warm() refuses at its door only on a verdict — the same term the gate reads",
+            1, count(text, "!preview.isDisabled(packToWarm)"),
+        )
+        // THE CARD RETIRES ON REAL WARMTH: `previewArmed` alone no longer means a word could have
+        // appeared, so onOpen's write takes the engine's snapshot as its second conjunct.
+        val onOpen = indexOfOrFail(startRecording, "override fun onOpen() {")
+        val snapshot = indexOfOrFail(
+            startRecording,
+            "                    val previewWarmAtOpen = packToWarm != null && preview?.isWarmFor(packToWarm) == true\n",
+        )
+        val write = indexOfOrFail(
+            startRecording,
+            "                    if (previewArmed && previewWarmAtOpen) app.preferencesManager.livePreviewArmedOnce = true\n",
+        )
+        assertTrue("the snapshot is taken inside onOpen", onOpen < snapshot)
+        assertTrue("and the write is gated on it", snapshot < write)
+        assertEquals("no write on the gate's answer alone survives", 0, count(text, "if (previewArmed) app.preferencesManager.livePreviewArmedOnce"))
+        // NOTHING ELSE MOVED: which pack warms, when, the refusal and the release rules are 4.5.1's.
+        assertEquals(1, count(text, "internal fun previewPackToWarm(\n"))
+        assertEquals(1, count(text, "internal fun previewResidency(\n"))
+        assertEquals(1, count(text, "internal fun warmOnPackInstalled(\n"))
+        assertEquals("the boot prewarm still waits its 1,500 ms — onboarding does NOT start the service to compensate", 1, count(text, "            delay(1500)\n            warmLocalEngine().prewarm()\n"))
     }
 }

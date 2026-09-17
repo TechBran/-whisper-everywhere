@@ -1,9 +1,14 @@
 package com.whispereverywhere.service
 
 import com.whispereverywhere.model.ModelScope
+import com.whispereverywhere.transcription.SameThreadExecutorService
+import com.whispereverywhere.transcription.stream.ManualExecutorService
 import com.whispereverywhere.transcription.stream.PreviewPhase
+import com.whispereverywhere.transcription.stream.ScriptedFactory
+import com.whispereverywhere.transcription.stream.ScriptedRecognizer
 import com.whispereverywhere.transcription.stream.StreamingPack
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
+import com.whispereverywhere.transcription.stream.StreamingPreviewEngine
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -295,7 +300,7 @@ class LocalPreviewGateTest {
      *
      * The defect it retires: an install that completes mid-process warmed nothing, because
      * `warmStreamingPreview` was called only from the boot prewarm and from the wrap site — and the
-     * wrap site's own KDoc says it *"arms NEXT session, not this one"*. So the user who picked a
+     * wrap site's own KDoc said, until 4.8.1, that it *"arms NEXT session, not this one"*. So the user who picked a
      * language, watched 73-128 MB arrive and tapped got no words, and the session AFTER that one
      * worked. 4.5.0's acceptance sheet recorded that as expected (AF6); the owner is right that a
      * user meets it as *"this doesn't work"*.
@@ -537,12 +542,14 @@ class LocalPreviewGateTest {
         // the recognizer PreviewTeeEngine has BORROWED — and the repair is that the question is
         // asked again the moment the session ends.
         //
-        // Why the session wrap does NOT already cover it: that warm sits at session START and its
-        // own KDoc says it "arms NEXT session, not this one, because warm() is asynchronous and
-        // the gate reads isWarmFor() now". So without SESSION_END the sequence was: session one
-        // refuses, session two posts the load and reads isWarmFor in the same breath (no words),
-        // session three works. With it, the load is placed between the two sessions and session
-        // two arms.
+        // Why the session wrap did NOT cover it when this member was added: that warm sits at
+        // session START and its own KDoc said, until 4.8.1, that it "arms NEXT session, not this
+        // one, because warm() is asynchronous and the gate reads isWarmFor() now". So without
+        // SESSION_END the sequence was: session one refuses, session two posts the load and reads
+        // isWarmFor in the same breath (no words), session three works. With it, the load is
+        // placed between the two sessions and session two arms — and since 4.8.1 the wrap site
+        // arms on the POSTED warm, so session two would show words even without this member; it
+        // still earns its place by landing the load BEFORE session two's first chunk.
         val answer = previewPackToWarm("en", setOf("en"), userEnabled = true)
         assertEquals(
             "1. the install lands mid-session — refused, and rightly",
@@ -898,6 +905,84 @@ class LocalPreviewGateTest {
                 }
             }
         }
+    }
+
+    // ------------------------------------------ the wrap site's readiness term (4.8.1, the
+    // ------------------------------------------ FRESH-INSTALL first session)
+
+    /**
+     * **THE GATE ARMS ON THE POSTED WARM, NOT THE LANDED ONE** (4.8.1).
+     *
+     * `previewReady` used to be the engine's `isWarmFor(pack)`, read in the same Main pass that
+     * had just posted the load. On a fresh install nothing warms the previewer before the first
+     * tap — onboarding never starts the bubble service, the install collector `.drop(1)`s the
+     * replayed INSTALLED record by design, and the boot prewarm posts the load ~1.5 s after
+     * `onCreate` — so a tap inside the first ~2.5-3.5 s after the toggle read `false`, built no
+     * tee, and the WHOLE first session ran without live words (the owner, 2026-09-17, on a fresh
+     * 4.8.0/97: *"users will just think it's broken"*). The second worked only because the load had
+     * landed in the meantime.
+     *
+     * The term is now *"an engine exists and THIS pack's verdict is not against it"*, and that is
+     * enough because `warmStreamingPreview` has just posted (or an earlier member already posted)
+     * the warm for this pack on the engine's ONE FIFO executor, so it runs before this session's
+     * `open()`; every engine entry point is safe on a cold recognizer
+     * (`StreamingPreviewEngineTest`'s cold-engine section pins each). `localPreviewArms` itself is
+     * UNCHANGED — [everyOtherInputIsAVeto] still holds `previewReady = false` as a veto; what
+     * changed is which fact the wrap site feeds it, and this table is that fact, computed here
+     * over real engines exactly as `startRecording` computes it.
+     */
+    @Test fun aWarmInFlightForThisPackArmsTHISSession_theFreshInstallOrder() {
+        val en = StreamingPackCatalog.EN
+        val fr = en.copy(language = "fr", dirName = "fr-2023-04-14", packName = "preview_fr")
+        val canary = "ONE TWO THREE FOUR FIVE"
+        // The wrap site's term, spelled once here exactly as `startRecording` spells it
+        // (LocalPreviewWiringPinTest pins the source line).
+        fun ready(preview: StreamingPreviewEngine?, packToWarm: StreamingPack?) =
+            packToWarm != null && preview != null && !preview.isDisabled(packToWarm)
+        fun armsWith(preview: StreamingPreviewEngine?, packToWarm: StreamingPack?, lang: String = "en") =
+            localPreviewArms(
+                sessionLanguage = lang, installedPackLanguages = setOf(lang), isCloudSession = false,
+                batchJobActive = false, userEnabled = true, previewReady = ready(preview, packToWarm),
+            )
+        fun engineOn(exec: java.util.concurrent.ExecutorService, rec: ScriptedRecognizer) = StreamingPreviewEngine(
+            factory = ScriptedFactory(rec), canaryClip = { FloatArray(40_960) }, executor = exec,
+            clock = { 0L }, nanoClock = { 0L }, log = {}, enterExecutorThread = {},
+        )
+
+        // 1. NO ENGINE — the boot prewarm has not built one and the wrap site's warm found no pack
+        //    dir. Nothing to open, so nothing arms: `preview != null` is the term.
+        assertFalse("no engine: refuse", armsWith(null, en))
+
+        // 2. A COLD ENGINE WITH THE WARM POSTED — the fresh-install tap. THE FIX.
+        val exec = ManualExecutorService()
+        val cold = engineOn(exec, ScriptedRecognizer(listOf("A"), canaryText = canary))
+        cold.warm(File("unused"), en)
+        assertFalse("the OLD term, at the tap: the load has not landed", cold.isWarmFor(en))
+        assertTrue("the NEW term, at the tap: arm — the FIFO orders the warm before open()", armsWith(cold, en))
+        assertFalse("a null packToWarm (Auto, the switch off, no pack on disk) still refuses", armsWith(cold, null))
+
+        // 3. A WARM ENGINE — the ordinary session; the two terms agree.
+        exec.runAll()
+        assertTrue(cold.isWarmFor(en))
+        assertTrue(armsWith(cold, en))
+
+        // 4. WARM FOR ANOTHER LANGUAGE — the T2 defect-4 shape. It arms, and that is right NOW
+        //    for the same reason as row 2: SESSION_START's residency is Warm(pack) and
+        //    `warmStreamingPreview` has posted `warm(fr)`, which releases the English recognizer
+        //    and loads French inside ONE executor task ahead of this session's open(). The tee
+        //    never borrows the wrong model; it waits (shedding) for the right one.
+        assertFalse(cold.isWarmFor(fr))
+        cold.warm(File("unused"), fr)   // posted: the swap is queued ahead of open
+        assertTrue(armsWith(cold, fr, lang = "fr"))
+
+        // 5. DISABLED FOR THIS PACK — a verdict is the one thing the term refuses on, and it is
+        //    per language: English's failed canary is not French's.
+        val off = engineOn(SameThreadExecutorService(), ScriptedRecognizer(listOf("A"), canaryText = ""))
+        off.warm(File("unused"), en)
+        assertTrue(off.isDisabled(en))
+        assertFalse("the verdict refuses", armsWith(off, en))
+        assertFalse("and it is the SAME refusal warm() itself makes at its door — no load is posted", off.isWarmFor(en))
+        assertTrue("another language on the same engine is untouched by it", armsWith(off, fr, lang = "fr"))
     }
 
     /**

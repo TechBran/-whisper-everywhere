@@ -93,10 +93,11 @@ class StreamingPreviewEngine(
      * every time [isWarm] changes in either direction — a load that armed, a trim, a language
      * change, a verdict.
      *
-     * It exists because `isWarmFor(pack)` — the answer the session gate itself reads — had no
-     * reader outside the service either, so the strip above the language selector could only
-     * promise words off *the files landed*, and a user who tapped inside the 802-860 ms load saw
-     * none. The service publishes it into [PreviewWarm] and the READY receipt is a term of it now.
+     * It exists because `isWarmFor(pack)` — the answer the session gate read until 4.8.1, and the
+     * one Home's card still retires on — had no reader outside the service either, so the strip
+     * above the language selector could only promise words off *the files landed*, and a user who
+     * tapped inside the 802-860 ms load saw none. The service publishes it into [PreviewWarm] and
+     * the READY receipt is a term of it now.
      *
      * Called from [publishWarm] at every site that moves `warm` or `loadedPack`, with this engine's
      * OWN answer rather than the pack any caller believes it asked for — Main's belief is exactly
@@ -211,13 +212,56 @@ class StreamingPreviewEngine(
     /**
      * Is the resident recognizer usable AND is it [pack]'s?
      *
-     * The gate's question, and it needs both halves now that the engine can hold a different
-     * language than the one being asked about: [isWarm] alone would answer "yes, ready" for a
-     * French recognizer during an English session and let the tee borrow it.
+     * It needs both halves now that the engine can hold a different language than the one being
+     * asked about: [isWarm] alone would answer "yes, ready" for a French recognizer during an
+     * English session and let the tee borrow it.
+     *
+     * **Since 4.8.1 this is NOT the session gate's term** — it is the `warm_now=` diagnostic on
+     * the `stream-gate:` line, the receipt above the language selector ([onWarm]), the
+     * already-resident skip every event-shaped residency member takes, and the condition under
+     * which Home's "Live words are on" card retires. The gate itself arms on [isDisabled] (below):
+     * on a fresh install the first tap lands 2.5-3.5 s after the bubble toggle while the boot
+     * prewarm's load is still on this executor, and a gate that read THIS answer in the same Main
+     * pass that posted the warm lost the whole first session's live words — the owner's
+     * *"users will just think it's broken"* (2026-09-17).
      */
     fun isWarmFor(pack: StreamingPack): Boolean = isWarm() && loadedPack == pack
 
-    /** Is this pack's previewer off for the rest of this process? */
+    /**
+     * Is this pack's previewer off for the rest of this process? True after a load that threw, a
+     * canary that failed, a clip the row named that would not load, or three consecutive decode
+     * throws in one session ([disable], the one writer); false otherwise — INCLUDING while a load
+     * for [pack] is still queued or running on the executor, and before any load at all.
+     *
+     * **THE SESSION GATE'S READINESS TERM SINCE 4.8.1** (`FloatingBubbleService.startRecording`'s
+     * `previewReady`), read on Main off the `@Volatile` [disabledLangs]. The gate may arm on a
+     * cold engine because the caller has just posted [warm] for this very pack on this engine's
+     * single-thread FIFO [executor] (or an earlier residency member already did), and every entry
+     * point the tee will use is already safe before that load lands:
+     *
+     *  - [open] posts its stream creation behind the warm and returns on a null [recognizer]
+     *    (`val rec = recognizer ?: return@execute`), so the session's stream is created the
+     *    moment the warm has landed and never before;
+     *  - [sendAudio] on the capture thread is a ring write and a non-blocking `queue.offer` into
+     *    a [queueCapacity]-chunk queue ([StreamingPreviewTuning.QUEUE_CAPACITY] = 128 chunks of
+     *    32 ms ≈ 4 s); an overflow drops the chunk and marks the segment `shed`; it never blocks
+     *    and never decodes;
+     *  - [drain] clears the queue and returns when there is no recognizer or stream, so audio
+     *    queued during the load is SHED rather than fed to the eventual stream as pre-session
+     *    audio (and [open] clears it again when it runs);
+     *  - [commit] freezes blank — `onFrozen(seq, "")` — when the recognizer or the stream is
+     *    null, so the tee's composer is handed an empty prefix and whisper's resolution still
+     *    passes through untouched;
+     *  - [close] and [release] post work that is a no-op on a cold engine (`stream?.let`,
+     *    `recognizer?.let`).
+     *
+     * What a still-loading previewer costs, then, is at most the audio queued before the load
+     * lands (bounded by the queue) and a blank strip until the first partial; the typed
+     * transcript is `local`'s alone by the tee's construction. A verdict that lands BETWEEN this
+     * read and [open] (a canary Fail on the first load of a corrupt pack) leaves that one session
+     * with a blank strip — the same shape as the accepted three-strike mid-session disable — and
+     * never a throw.
+     */
     fun isDisabled(pack: StreamingPack): Boolean = pack.language in disabledLangs
 
     /**

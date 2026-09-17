@@ -4419,13 +4419,76 @@ class FloatingBubbleService : Service(),
         val preview =
             if (residency is PreviewResidency.Warm) warmStreamingPreview(residency.pack)
             else streamingPreview
-        // (4.5.0 T2, defect 4) `isWarmFor`, not `isWarm`: the engine's verdict and its recognizer
-        // are per-PACK now, so "is the previewer ready" has to name the pack it is ready FOR.
-        // `isWarm()` alone would answer yes for a French recognizer during an English session —
-        // the tee would then borrow the wrong language's model. The armed answer below is
-        // unchanged today either way: a null `packToWarm` means the selection has no installed
-        // pack or the switch is off, and `localPreviewArms` refuses on those same terms.
-        val previewReady = packToWarm != null && preview?.isWarmFor(packToWarm) == true
+        // (4.8.1) THE GATE ARMS ON THE POSTED WARM, NOT THE LANDED ONE — "the FIFO is the await".
+        //
+        // Until 4.8.1 this line read the engine's `isWarmFor` answer for the pack: a one-shot
+        // snapshot taken in the SAME Main pass that had just posted the load. On every fresh
+        // install nothing has warmed the previewer before the first tap — onboarding never starts
+        // this service, so on both routes (sideload card tap, Play silent fetch) the pack is on
+        // disk before an engine exists; the install collector in onCreate drops the board's
+        // replayed INSTALLED record by design (its `drop(1)`); and the first warm is the boot
+        // prewarm's, posted ~1.5 s after onCreate and landing ~0.8-0.9 s + canary later. A tap
+        // inside that window —
+        // the owner's, 2026-09-17, on a fresh 4.8.0/97 — read `false` here, built no tee, and
+        // nothing re-checked (`onOpen` only flips `engineReady`), so the WHOLE first session ran
+        // without live words and the second worked. *"Users will just think it's broken."*
+        //
+        // The term now: the engine EXISTS, and THIS pack's verdict is not against it. That is
+        // sufficient because of an ordering the engine already guarantees and every entry point
+        // it already tolerates — each claim verified in `StreamingPreviewEngine.kt` (engine) and
+        // `PreviewTeeEngine.kt` (tee) at the lines cited:
+        //
+        //  - a warm for THIS pack has been posted on the engine's ONE single-thread FIFO executor
+        //    (engine:113-115, `Executors.newSingleThreadExecutor`) — `warmStreamingPreview` two
+        //    statements above posts it (`engine.warm(dir, pack)`; engine:318-386, the load and
+        //    the canary inside one task, `warm = true` at :374), or refuses at the door only when
+        //    the pack is already disabled (engine:319), or is the idempotent no-op when the pack
+        //    is already resident (engine:324); SESSION_START's residency is `Warm(pack)` whenever
+        //    `packToWarm` is non-null (`previewResidency`, the ESTABLISHING group), so `preview`
+        //    here is exactly `warmStreamingPreview`'s return — null only when the pack's dir is
+        //    gone (`installedDir(pack) ?: return null`), which the `preview != null` term catches;
+        //  - the tee's `connect` calls `preview.open(...)` (tee:42) BEFORE `local.connect`
+        //    (tee:43), and `open()` POSTS its stream creation (engine:388-399), so on the FIFO it
+        //    runs strictly AFTER the warm posted above and returns on a null recognizer
+        //    (engine:391) — a stream exists the moment the load has landed and never before;
+        //  - `sendAudio()` on the capture thread is a ring write and a non-blocking `queue.offer`
+        //    (engine:402-406) into a `QUEUE_CAPACITY = 128`-chunk queue (engine:182,
+        //    `StreamingPreviewTuning.kt:74`; 128 × 32 ms ≈ 4 s); overflow drops the chunk and
+        //    marks the segment `shed` — it never blocks and never decodes;
+        //  - `drain()` clears the queue and returns while there is no recognizer or stream
+        //    (engine:499-505), and `open()` clears it again when it runs (engine:394), so audio
+        //    queued during the load is SHED, never fed to the eventual stream as pre-session audio;
+        //  - `commit()` freezes blank — `onFrozen(seq, "")` — on a null recognizer or stream
+        //    (engine:408-413), so the composer gets an empty prefix and whisper's own resolution
+        //    still passes through `Relay` untouched (tee:102);
+        //  - `close()` (engine:455-464) and `release()` (engine:467-470 → `releaseResident`
+        //    :482-495) post work that is a no-op on a cold engine (`stream?.let`, `recognizer?.let`);
+        //  - the typed transcript cannot be touched: the tee hands every chunk to `local` FIRST
+        //    (tee:47-50) and every commit to `local` first, and `Relay` forwards `onOpen`,
+        //    `onSegmentResolved`, `onError`, `onClosed` untouched (tee:99-106).
+        //
+        // So on the reported path (a cold whisper connect of several seconds) the previewer's ~1 s
+        // load lands during CONNECTING, `open()` runs behind it and finds the recognizer, and the
+        // strip fills from the first replayed chunk. On a warm-whisper session `engineReady` may
+        // precede the load by up to ~1 s: those chunks are shed (bounded by the queue) and words
+        // appear the moment the load lands — still live words in the first session. A load or
+        // canary that FAILS between here and `open()` leaves that one session with a blank strip
+        // (whisper's deltas are swallowed by `Relay`, tee:100), the identical shape to the accepted
+        // three-strike mid-session disable, and `markCorrupt` withdraws the pack for the next one.
+        //
+        // `isDisabled(packToWarm)` is read off a `@Volatile` set (engine:147, one writer:
+        // `disable` at :276) — a Fail for THIS pack, never another language's verdict (4.5.0 T2,
+        // defect 4 still holds: the term names the pack). A null `packToWarm` means the selection
+        // has no installed pack or the switch is off, and `localPreviewArms` refuses on those
+        // same terms. `isWarmFor` is still read for the card's retirement in `onOpen` (below) —
+        // a snapshot, which is all a retirement needs — and no longer for the arm.
+        //
+        // ONBOARDING DOES NOT NEED TO START THIS SERVICE for the first session to show words, and
+        // it must not be added "to be safe": the gate no longer depends on when the warm landed,
+        // only on its having been posted ahead of `open()` on the one executor. Nothing about
+        // WHICH pack warms or WHEN is changed here — `previewPackToWarm`, `previewResidency`,
+        // `warmOnPackInstalled`, the busy refusal and the release rules are exactly 4.5.1's.
+        val previewReady = packToWarm != null && preview != null && !preview.isDisabled(packToWarm)
         val previewArmed = localPreviewArms(
             sessionLanguage = previewLanguage,
             installedPackLanguages = installedPreviewLanguages,
@@ -4638,7 +4701,17 @@ class FloatingBubbleService : Service(),
                     // ring is draining into the tee and the previewer is composing. A session that
                     // arms and never opens — every session on a device with no speech model —
                     // writes nothing, so the announcement survives for the day a tier lands.
-                    if (previewArmed) app.preferencesManager.livePreviewArmedOnce = true
+                    //
+                    // (4.8.1) ...AND ONLY WHEN THE PREVIEWER IS ACTUALLY WARM AT THIS INSTANT. The
+                    // gate arms on the POSTED warm now (the wrap site above), so `previewArmed`
+                    // alone no longer means a word could have appeared: on the fresh-install path
+                    // this handler can run while the load is still on the engine's executor. The
+                    // flag's own claim is "the user has SEEN live words", so it takes the engine's
+                    // `isWarmFor` snapshot here as its second conjunct. A session that opens over a
+                    // still-loading previewer writes nothing and the next one that opens warm
+                    // writes it — a one-session delay of a cosmetic retirement, never a wrong claim.
+                    val previewWarmAtOpen = packToWarm != null && preview?.isWarmFor(packToWarm) == true
+                    if (previewArmed && previewWarmAtOpen) app.preferencesManager.livePreviewArmedOnce = true
                     amplitudeJob = serviceScope.launch {
                         audioRecorder.amplitude.collectLatest { amp ->
                             if (currentState != BubbleState.RECORDING) return@collectLatest

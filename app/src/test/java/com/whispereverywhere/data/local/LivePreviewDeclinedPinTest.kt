@@ -252,12 +252,26 @@ class LivePreviewDeclinedPinTest {
             "and it is NOT the declined flag: \"I have seen this\" is not \"I do not want this\"",
             0, liveLineCount(prefs, "KEY_LIVE_PREVIEW_DECLINED = \"live_preview_armed_once\""),
         )
-        // The write is guarded by the gate's own answer and never by a re-derivation of it...
+        // The write is guarded by the gate's own answer and never by a re-derivation of it — AND,
+        // since 4.8.1, by the engine's warmth at the instant the session opens: the gate arms on
+        // the POSTED warm now, so `previewArmed` alone no longer means a word could have appeared
+        // (on the fresh-install path onOpen can run while the load is still on the executor). The
+        // flag claims "the user has SEEN live words", so it takes `isWarmFor` as its second
+        // conjunct; a session that opens over a still-loading previewer writes nothing.
         assertEquals(
             1,
             liveLineCount(
                 service,
-                "if (previewArmed) app.preferencesManager.livePreviewArmedOnce = true",
+                "if (previewArmed && previewWarmAtOpen) app.preferencesManager.livePreviewArmedOnce = true",
+            ),
+        )
+        assertEquals(
+            "the second conjunct is the engine's own isWarmFor for the session's pack, not a " +
+                "re-derivation of readiness from the fields Main holds",
+            1,
+            liveLineCount(
+                service,
+                "val previewWarmAtOpen = packToWarm != null && preview?.isWarmFor(packToWarm) == true",
             ),
         )
         val gate = offsetOfLive(service, "val previewArmed = localPreviewArms(")
