@@ -267,8 +267,10 @@ Debug and release alike (the lines are app diag under `WE-DIAG`; numbers, codes 
 ```
 stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=811 canary=pass|fail|none|skipped canaryMs=212 outLen=23 load=ok|fail
 stream-timing: seq=N audio=<ms> decodes=<n> decodeMs=<n> p50us=<n> p99us=<n> rtf=<x.xxx> partials=<n> firstPartialMs=<ms> padMs=500 shed=0|1 retract=<n>
-stream-gate: lang=en|auto|<code> pack=1|0 cloud=0|1 batch=0|1 enabled=1|0 ready=1|0 -> preview=1|0
+stream-gate: lang=en|auto|<code> pack=1|0 cloud=0|1 batch=0|1 enabled=1|0 ready=1|0 warm_now=1|0 -> preview=1|0
 ```
+
+(`warm_now=` is 4.8.1's: `ready=` became "an engine exists and this pack is not disabled" — true while the load is still in flight — and `warm_now=` is the landed-warm snapshot the gate armed on until then, kept as a diagnostic. `ready=1 warm_now=0 -> preview=1` is the fresh-install first session. Every earlier term keeps its name and place.)
 
 `outLen` is a length, never the text (the GPU canary's own rule, `TranscriptionEngine.kt:370-374`). The funnel's `endpoint:` / `queue:` / `perceived:` lines (`service/EndpointDiag.kt`) are untouched; `queue:` keeps the depth the strip no longer paints (R2).
 

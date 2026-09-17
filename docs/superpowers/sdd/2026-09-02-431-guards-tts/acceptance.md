@@ -568,9 +568,11 @@ Z1. **Words appear while speaking.** Three configurations: Fold6 on `pro`; Fold6
     with English picked; Tab on `multi` with English picked. Dictate five ordinary sentences each.
     EXPECTED: lowercase, unpunctuated words on the strip roughly half a second behind your voice,
     the first word about 1.2-1.5 s after you start. FAIL: no words at all in a configuration whose
-    row says installed and whose switch is ON. Debug-build corroboration: `stream-gate: lang=en
-    pack=1 cloud=0 batch=0 enabled=1 ready=1 -> preview=1` once at session start
-    (`StreamDiag.kt:24-29`), and one `stream-timing: seq=N … padMs=500 shed=0 retract=0` per
+    row says installed and whose switch is ON. Debug-build corroboration, once at session start:
+    `stream-gate: lang=en pack=1 cloud=0 batch=0 enabled=1 ready=1 warm_now=1 -> preview=1`
+    (`StreamDiag.kt:40-46`; `warm_now=` is 4.8.1's — on these three walks the bubble has been up for
+    a while, so the load has landed and it reads `1`; a `0` here is AF6-fresh's row, not this one),
+    and one `stream-timing: seq=N … padMs=500 shed=0 retract=0` per
     sentence — any `retract>0` on clean speech or any `shed=1` is a FAIL you can only see there.
     `[ ] PASS  [ ] FAIL`
 Z2. **The typed result is 4.3.4's.** Read the same five sentences as TYPED text, not as strip text.
@@ -848,8 +850,8 @@ AF6. **Changing language in the app — REWRITTEN in 4.5.1, and it now expects t
     **AF6-fresh (Play):** the same walk without the card tap — the pack lands at onboarding's language
     pick (AF5). Same expectation, same FAIL.
     Walk both with the log open. The first `stream-gate:` line's timestamp against the `stream-open: …
-    loadMs= canary=` line is the window; **`warm_now=0` beside `ready=1 -> preview=1` on that gate line
-    is the proof the fix was EXERCISED** — the tap beat the load and the session armed anyway. A walk
+    loadMs= canary=` line is the window; **`ready=1 warm_now=0 -> preview=1` on that gate line is the
+    proof the fix was EXERCISED** — the tap beat the load and the session armed anyway. A walk
     that reads `warm_now=1` landed the tap after the load and proves nothing about this row: tap sooner.
     `[ ] PASS  [ ] FAIL` (sideload)   `[ ] PASS  [ ] FAIL` (Play)
     `[ ] PASS  [ ] FAIL`

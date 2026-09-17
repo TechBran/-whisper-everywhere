@@ -4504,7 +4504,15 @@ class FloatingBubbleService : Service(),
         // appear the moment the load lands — still live words in the first session. A load or
         // canary that FAILS between here and `open()` leaves that one session with a blank strip
         // (whisper's deltas are swallowed by `Relay`, tee:100), the identical shape to the accepted
-        // three-strike mid-session disable, and `markCorrupt` withdraws the pack for the next one.
+        // three-strike mid-session disable, and `isDisabled(packToWarm)` refuses it for the rest
+        // of the process: both failures reach `disable(pack)` (engine:335 for a load that throws,
+        // :383 for a canary Fail/NoClip), the one writer of the per-language set, and `onDisabled`
+        // publishes the verdict through `PreviewDisabled` (:3954). ONLY a load that THROWS also
+        // reaches `onLoadFailure` → `markCorrupt` (engine:337, :3945); a failed canary is not
+        // corruption — the bytes are valid, nothing is deleted, and the engine's own KDoc (:77-82)
+        // and `openAndCommitBehindAWarmThatFailsAreSafeAndFreezeBlank` pin exactly that. So a
+        // reader debugging a blank first session on a pack that failed its canary should look for
+        // `stream-open: … canary=fail … warm=0`, not for a marker delete.
         //
         // `isDisabled(packToWarm)` is read off a `@Volatile` set (engine:147, one writer:
         // `disable` at :276) — a Fail for THIS pack, never another language's verdict (4.5.0 T2,

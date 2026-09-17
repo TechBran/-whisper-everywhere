@@ -6,6 +6,7 @@ import com.whispereverywhere.transcription.stream.ManualExecutorService
 import com.whispereverywhere.transcription.stream.PreviewPhase
 import com.whispereverywhere.transcription.stream.ScriptedFactory
 import com.whispereverywhere.transcription.stream.ScriptedRecognizer
+import com.whispereverywhere.transcription.stream.StreamDiag
 import com.whispereverywhere.transcription.stream.StreamingPack
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import com.whispereverywhere.transcription.stream.StreamingPreviewEngine
@@ -1100,10 +1101,28 @@ class LocalPreviewGateTest {
             "and they walk the tap INSIDE the prewarm's window, which is the whole row",
             row.contains("toggle the bubble ON → tap the bubble **within 2 s**"),
         )
+        // The proof literal is pinned to the SHAPE gateLine emits, not to a hand-typed fragment:
+        // 4.8.1's first cut told the tester to look for `warm_now=0` "beside" `ready=1 -> preview=1`,
+        // a span that cannot occur on a line that carries `warm_now=` between those two terms, so
+        // a grep on it can never match and the row could never be recorded PASS (review, honesty).
+        val exercised = StreamDiag.gateLine("en", true, false, false, true, true, false, true)
+            .substringAfter("enabled=1 ")
+        assertEquals("ready=1 warm_now=0 -> preview=1", exercised)
         assertTrue(
-            "the proof is on the gate line: warm_now=0 beside preview=1 means the tap beat the " +
-                "load and the session armed anyway",
-            row.contains("`warm_now=0`"),
+            "the proof is on the gate line, quoted in the shape the line actually has: " +
+                "`$exercised` means the tap beat the load and the session armed anyway",
+            row.contains("`$exercised`"),
+        )
+        // ...and no live row on the sheet may quote the pre-4.8.1 span, on either side of the
+        // insertion, because that grep lands on nothing a 4.8.1 build prints.
+        val landed = StreamDiag.gateLine("en", true, false, false, true, true, true, true)
+        assertTrue(
+            "Z1's corroboration quotes the line 4.8.1 emits, with warm_now=1 for a bubble that has been up",
+            sheet.contains("`$landed`"),
+        )
+        assertFalse(
+            "no row quotes the pre-4.8.1 `ready=1 -> preview=1` span — it no longer occurs on any line",
+            sheet.contains("ready=1 -> preview=1"),
         )
         assertTrue(
             "the owner's device evidence is on the row — the pack, the service, the session",

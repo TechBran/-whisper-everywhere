@@ -35,7 +35,10 @@ object StreamDiag {
      * preview=1` says the tap beat the load and the session armed anyway (the fresh-install
      * first session, AF6-fresh); `warm_now=1` says the load had landed before the tap. Every
      * pre-4.8.1 term keeps its name and its place; the new one sits between the term and the
-     * outcome so a grep on either end of the line still lands.
+     * outcome so a grep on either end of the line still lands — a grep that SPANS the insertion
+     * (`ready=1 -> preview=1`) does not, which is why every sheet row that quoted that span (Z1,
+     * AF6-fresh) was rewritten and `LocalPreviewGateTest` pins the sheet to this function's
+     * actual output rather than to a hand-typed literal.
      */
     fun gateLine(
         lang: String?, packInstalled: Boolean, isCloudSession: Boolean, batchJobActive: Boolean,
