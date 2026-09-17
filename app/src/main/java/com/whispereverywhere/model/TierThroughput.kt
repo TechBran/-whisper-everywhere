@@ -211,15 +211,30 @@ sealed interface ThroughputVerdict {
 /**
  * The answer to *"may this release be promoted to production?"* — four states, in the order
  * [TierThroughputRecord.state] checks them. Two are defects and two are not.
+ *
+ * **DO NOT RENAME THIS TO `ThroughputPromotionState`.** It was called that for one commit and it
+ * broke a live gate: `StreamingPackClearanceTest.theClearanceStateReachesNothingTheAppRuns` scans
+ * every file under `app/src/main/java` for a live reference to the SUBSTRING `PromotionState`, to
+ * prove the language-clearance state reaches nothing the app runs — and
+ * `ThroughputPromotionState` contains it, so this file tripped a legal gate from across the
+ * codebase. Observed, not theorised: 2827 tests, one failure, at
+ * `StreamingPackClearanceTest.kt:845`.
+ *
+ * The collision was fixed HERE rather than by loosening that scan to a word boundary. A coarse
+ * needle guarding a store promotion is the safe direction for that test to be wrong in, and the
+ * cost of keeping it coarse is exactly this: one name in one new file. The four state names
+ * (`Promotable`, `Withheld`, `Overreached`, `Unrecorded`) deliberately match
+ * [com.whispereverywhere.transcription.stream.PromotionState]'s, because the two gates ARE the
+ * same shape and a reader should see that — it is only the umbrella type that had to differ.
  */
-sealed interface ThroughputPromotionState {
+sealed interface ThroughputGateState {
     /**
      * Every selectable rung is measured, kept up, AND authorised. **Unreachable for the whole life
      * of this branch**, which is the property that makes it worth reporting: it becomes reachable
      * only after a device session, and unreachable again the moment a rung joins the chooser
      * without one.
      */
-    data object Promotable : ThroughputPromotionState
+    data object Promotable : ThroughputGateState
 
     /**
      * **The normal state, and NOT a failure.** Production promotion is not authorised for the
@@ -229,7 +244,7 @@ sealed interface ThroughputPromotionState {
      *
      * @property missing the selectable rungs the switch does not authorise, in catalogue order.
      */
-    data class Withheld(val missing: List<String>) : ThroughputPromotionState
+    data class Withheld(val missing: List<String>) : ThroughputGateState
 
     /**
      * **A defect.** The switch authorises a rung whose verdict does not clear it — unmeasured, or
@@ -239,7 +254,7 @@ sealed interface ThroughputPromotionState {
      *
      * @property tiers the switch entries with no clearing verdict behind them, in switch order.
      */
-    data class Overreached(val tiers: List<String>) : ThroughputPromotionState
+    data class Overreached(val tiers: List<String>) : ThroughputGateState
 
     /**
      * **A worse defect, and it outranks the other three.** A rung the chooser offers has no
@@ -249,7 +264,7 @@ sealed interface ThroughputPromotionState {
      *
      * @property tiers the selectable rungs with no row, in catalogue order.
      */
-    data class Unrecorded(val tiers: List<String>) : ThroughputPromotionState
+    data class Unrecorded(val tiers: List<String>) : ThroughputGateState
 }
 
 /**
@@ -434,7 +449,7 @@ object TierThroughputRecord {
      */
     val RECORD: List<TierThroughput> = listOf(MULTI, SMALL_Q8, MEDIUM_Q5, MEDIUM_Q8, ULTRA, ULTRA_Q8, LARGE_V3)
 
-    /** The record for one rung, or null — which [state] reports as [ThroughputPromotionState.Unrecorded]. */
+    /** The record for one rung, or null — which [state] reports as [ThroughputGateState.Unrecorded]. */
     fun forTier(tierId: String): TierThroughput? = RECORD.firstOrNull { it.tierId == tierId }
 
     /**
@@ -442,7 +457,7 @@ object TierThroughputRecord {
      * [authorised] switch and the [record].
      *
      * Pure, total, and taking all three inputs as parameters rather than reading the committed ones
-     * — so the suite can exercise every state, including the [ThroughputPromotionState.Promotable]
+     * — so the suite can exercise every state, including the [ThroughputGateState.Promotable]
      * cell this branch's own values can never reach. A gate whose only tested value is "no" is not
      * a gate that has been tested.
      *
@@ -454,9 +469,9 @@ object TierThroughputRecord {
         authorised: Set<String>,
         tiers: List<String>,
         record: List<TierThroughput> = RECORD,
-    ): ThroughputPromotionState {
+    ): ThroughputGateState {
         val unrecorded = tiers.filter { tier -> record.none { it.tierId == tier } }
-        if (unrecorded.isNotEmpty()) return ThroughputPromotionState.Unrecorded(unrecorded)
+        if (unrecorded.isNotEmpty()) return ThroughputGateState.Unrecorded(unrecorded)
 
         val cleared = record
             .filter { it.verdict.clearsProduction }
@@ -464,11 +479,11 @@ object TierThroughputRecord {
             .toSet()
         // In the switch's own order, because the message names entries the reader has to go delete.
         val overreached = authorised.filter { it !in cleared || it !in tiers }
-        if (overreached.isNotEmpty()) return ThroughputPromotionState.Overreached(overreached)
+        if (overreached.isNotEmpty()) return ThroughputGateState.Overreached(overreached)
 
         // In the ladder's order, because the message is a census of what is still unmeasured.
         val missing = tiers.filterNot { it in authorised }
-        return if (missing.isEmpty()) ThroughputPromotionState.Promotable else ThroughputPromotionState.Withheld(missing)
+        return if (missing.isEmpty()) ThroughputGateState.Promotable else ThroughputGateState.Withheld(missing)
     }
 
     /**
@@ -489,5 +504,5 @@ object TierThroughputRecord {
      */
     fun stateOfLadder(
         tiers: List<String> = WhisperCatalog.pickable.map { it.id },
-    ): ThroughputPromotionState = state(PRODUCTION_PROMOTABLE, tiers, RECORD)
+    ): ThroughputGateState = state(PRODUCTION_PROMOTABLE, tiers, RECORD)
 }

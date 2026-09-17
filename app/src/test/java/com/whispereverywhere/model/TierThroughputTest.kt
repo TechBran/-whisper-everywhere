@@ -275,13 +275,13 @@ class TierThroughputTest {
         // somebody adds a rung to PRODUCTION_PROMOTABLE without measuring it — and it fails
         // saying so, rather than saying "expected setOf(multi)".
         when (val committed = TierThroughputRecord.stateOfLadder()) {
-            is ThroughputPromotionState.Overreached -> fail(
+            is ThroughputGateState.Overreached -> fail(
                 "PRODUCTION_PROMOTABLE names ${committed.tiers}, whose throughput verdict does " +
                     "not clear them. A rung with no recorded throughput verdict may not be " +
                     "production-promotable: either run §AN's long-dictation row and record the " +
                     "measurement, or take it out of the switch",
             )
-            is ThroughputPromotionState.Unrecorded -> fail(
+            is ThroughputGateState.Unrecorded -> fail(
                 "${committed.tiers} are in the chooser with no throughput row at all",
             )
             else -> Unit
@@ -289,7 +289,7 @@ class TierThroughputTest {
         // ...and then today's exact value, which is the normal, non-failing state of this branch.
         assertEquals(setOf("multi"), TierThroughputRecord.PRODUCTION_PROMOTABLE)
         assertEquals(
-            ThroughputPromotionState.Withheld(
+            ThroughputGateState.Withheld(
                 listOf("small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3"),
             ),
             TierThroughputRecord.stateOfLadder(),
@@ -310,7 +310,7 @@ class TierThroughputTest {
      */
     @Test fun authorising_a_rung_whose_throughput_is_unmeasured_is_a_red_suite() {
         assertEquals(
-            ThroughputPromotionState.Overreached(listOf("large-v3")),
+            ThroughputGateState.Overreached(listOf("large-v3")),
             TierThroughputRecord.state(
                 authorised = setOf("multi", "large-v3"),
                 tiers = ladder,
@@ -319,7 +319,7 @@ class TierThroughputTest {
         // A switch entry for a rung that is no longer offered: stale, and reported rather than
         // ignored. `pro` is retired, so it is not in the ladder — there is nothing to promote.
         assertEquals(
-            ThroughputPromotionState.Overreached(listOf("pro")),
+            ThroughputGateState.Overreached(listOf("pro")),
             TierThroughputRecord.state(
                 authorised = setOf("multi", "pro"),
                 tiers = ladder,
@@ -349,7 +349,7 @@ class TierThroughputTest {
             )
             assertEquals(
                 "a switch naming a rung that was measured and did not keep up must OVERREACH",
-                ThroughputPromotionState.Overreached(listOf("multi")),
+                ThroughputGateState.Overreached(listOf("multi")),
                 TierThroughputRecord.state(
                     authorised = setOf("multi"),
                     tiers = listOf("multi"),
@@ -361,12 +361,12 @@ class TierThroughputTest {
     }
 
     /**
-     * **Every state, including the [ThroughputPromotionState.Promotable] cell this branch's own
+     * **Every state, including the [ThroughputGateState.Promotable] cell this branch's own
      * values can never reach.** A gate whose only tested value is "no" is not a gate that has been
      * tested — the same reason `PackClearanceRecord.state` takes all three inputs as parameters.
      *
-     * The severity ORDER is asserted with them, and it matters: an [ThroughputPromotionState
-     * .Unrecorded] rung is reported ahead of a [ThroughputPromotionState.Withheld] one, so a rung
+     * The severity ORDER is asserted with them, and it matters: an [ThroughputGateState
+     * .Unrecorded] rung is reported ahead of a [ThroughputGateState.Withheld] one, so a rung
      * that slipped into the chooser with no row at all can never read as a reassuring "not yet
      * authorised".
      */
@@ -375,27 +375,27 @@ class TierThroughputTest {
         val one = listOf(TierThroughput("multi", cleared))
 
         assertEquals(
-            ThroughputPromotionState.Promotable,
+            ThroughputGateState.Promotable,
             TierThroughputRecord.state(setOf("multi"), listOf("multi"), one),
         )
         assertEquals(
-            ThroughputPromotionState.Withheld(listOf("multi")),
+            ThroughputGateState.Withheld(listOf("multi")),
             TierThroughputRecord.state(emptySet(), listOf("multi"), one),
         )
         assertEquals(
-            ThroughputPromotionState.Unrecorded(listOf("large-v3")),
+            ThroughputGateState.Unrecorded(listOf("large-v3")),
             TierThroughputRecord.state(setOf("multi"), listOf("multi", "large-v3"), one),
         )
         // SEVERITY: a rung with no row outranks an unauthorised one, even when the switch is empty
         // and Withheld would also be true.
         assertEquals(
             "an incomplete record must never read as a reassuring 'not yet authorised'",
-            ThroughputPromotionState.Unrecorded(listOf("large-v3")),
+            ThroughputGateState.Unrecorded(listOf("large-v3")),
             TierThroughputRecord.state(emptySet(), listOf("multi", "large-v3"), one),
         )
         // ...and it outranks an overreaching switch too.
         assertEquals(
-            ThroughputPromotionState.Unrecorded(listOf("large-v3")),
+            ThroughputGateState.Unrecorded(listOf("large-v3")),
             TierThroughputRecord.state(setOf("nope"), listOf("multi", "large-v3"), one),
         )
     }
@@ -421,7 +421,7 @@ class TierThroughputTest {
             "TierThroughput",
             "ThroughputVerdict",
             "ThroughputMeasurement",
-            "ThroughputPromotionState",
+            "ThroughputGateState",
             "PRODUCTION_PROMOTABLE",
             "KeepUp",
         )
