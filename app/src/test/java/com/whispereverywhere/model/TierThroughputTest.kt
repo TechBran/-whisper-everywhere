@@ -497,6 +497,101 @@ class TierThroughputTest {
         }
     }
 
+    // ------------------------------------- THE SHEET THE PROMOTION DECISION IS MADE ON
+
+    /**
+     * **A GATE IS ONLY A GATE IF THE PROMOTION DECISION READS IT.** The acceptance sheet is where a
+     * release decision actually gets made, so §AN has to name the record it consults — exactly what
+     * `StreamingPackClearanceTest` holds about §AL and `PRODUCTION_CLEARED`.
+     *
+     * The rest of what is asserted is the sheet's own honesty about the app, and each item is here
+     * because a stale sheet is worse than no sheet:
+     *
+     *  - **the three keep-up answers, verbatim from [KeepUp]'s own semantics.** The middle one is
+     *    the point: a sheet offering only pass/fail would collect "fine" for every rung that
+     *    recovered in a pause, which is the exact reading this gate exists to reject.
+     *  - **a row per selectable rung, identified by the app's OWN size badge** rather than by a
+     *    number typed into prose. Re-pin a rung and the sheet goes visibly stale instead of quietly
+     *    wrong — the same rationale the clearance test gives for pinning each pack's badge.
+     *  - **the two named comparisons**, without which the session is six downloads rather than an
+     *    experiment.
+     *  - **the standing caution**, because the one command that would answer this numerically is
+     *    the one that erases the models.
+     *
+     * The sheet is in the test task's `sourcePinnedInputs` (`app/build.gradle.kts`) already, on
+     * §AL's account, so this pin actually re-runs when the document is edited. Without that entry
+     * a pin over a document reports green over a document that has been edited out from under it.
+     */
+    @Test fun the_sheet_the_promotion_decision_is_made_on_names_this_gate() {
+        val sheet = repoFile("docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md")
+            .readText().replace("\r\n", "\n")
+        assertTrue(
+            "the acceptance sheet must name the record a promotion consults",
+            sheet.contains("TierThroughputRecord.PRODUCTION_PROMOTABLE"),
+        )
+        assertTrue("§AN must exist — the six-device session needs its own rows", sheet.contains("## AN —"))
+        val an = sheet.substringAfter("## AN —", "")
+        assertTrue("§AN is where the rung rows live and it is not in the sheet", an.isNotBlank())
+
+        // The three answers, and the middle one especially: a pass/fail sheet would collect "fine"
+        // for a rung that only drained while the owner was silent.
+        listOf("KEPT UP", "RECOVERED IN PAUSES", "NEVER CAUGHT UP").forEach {
+            assertTrue("§AN must offer the answer '$it' — all three of KeepUp's outcomes", an.contains(it))
+        }
+
+        // One row per selectable rung, found by the app's own size badge so a re-pin shows up.
+        WhisperCatalog.pickable.forEach { model ->
+            val badge = ModelTierCopy.forId(model.id)?.badges?.firstOrNull { it.endsWith(" MB") }
+            assertNotNull("'${model.id}' has no size badge to identify its §AN row by", badge)
+            assertTrue(
+                "§AN has no row for '${model.id}' (${badge}) — every rung the chooser offers needs " +
+                    "one, or the session leaves a selectable rung unmeasured and the gate can " +
+                    "never open",
+                an.contains(badge!!),
+            )
+            // ...and the floor it is paced at, ON THE SAME LINE as the badge that identifies the
+            // rung, because AN8's two arms do not share a floor and the owner has to compare
+            // wall-clock lag rather than duty.
+            //
+            // The same-line requirement is what makes this bind. There are only TWO distinct floor
+            // values on this ladder and both appear somewhere in §AN, so a bare
+            // `an.contains("8 000 ms")` would pass for every rung no matter which floor it was
+            // actually on — measured: with `small-q8` moved to multi's 6 s row, that weaker form
+            // stayed green while the cadence table and the sheet openly disagreed.
+            val floor = CommitCadencePolicy.minCommitIntervalMs(model.id, isCloudBatch = false)
+            val written = "${floor / 1000} 000 ms"
+            assertTrue(
+                "§AN must state '${model.id}'s commit floor ($written) beside its $badge badge: a " +
+                    "verdict is earned AT A FLOOR, this ladder does not share one, and the sheet " +
+                    "and CommitCadencePolicy now disagree about this rung",
+                an.lineSequence().any { it.contains(badge) && it.contains(written) },
+            )
+        }
+
+        // The two comparisons that carry the most information.
+        assertTrue("§AN must name the quantisation comparison (small Q5_1 vs Q8_0)", an.contains("THE QUANTISATION AXIS"))
+        assertTrue("§AN must name the medium comparison", an.contains("medium Q5_0 against medium Q8_0"))
+
+        // The numeric route exists and needs no new code; the command that would wipe the models
+        // must be named as forbidden in the same breath.
+        assertTrue("§AN must record that the bench already exists", an.contains("bench_whisper_rtf_across_slices"))
+        assertTrue("§AN must give the logcat tag", an.contains("WE-BENCH"))
+        assertTrue(
+            "§AN must carry the standing caution — connectedDebugAndroidTest uninstalls and " +
+                "wipes every downloaded model",
+            an.contains("connectedDebugAndroidTest"),
+        )
+        // The metric, and the one that would ship a bad tier.
+        assertTrue("§AN must require a LONG dictation, not a feel test", an.contains("five minutes"))
+        assertTrue("§AN must state the audio_ctx floor that makes cost per commit constant", an.contains("8.96 s"))
+    }
+
+    private fun repoFile(relative: String): File {
+        val file = File(repoRoot(), relative)
+        assertTrue("$relative does not exist under ${repoRoot()}", file.isFile)
+        return file
+    }
+
     private fun repoRoot(): File {
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
         while (dir != null) {

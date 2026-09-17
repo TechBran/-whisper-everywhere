@@ -1,5 +1,13 @@
 # 4.3.1 — device acceptance (owner session)
 
+**4.6 adds §AN — the CPU instrument ladder on six devices — and it arrives with its OWN promotion
+gate, which is NOT open.** Six unmeasured rungs join the model chooser deliberately so they can be
+measured; `TierThroughputRecord.PRODUCTION_PROMOTABLE` names `multi` alone and the gate reports
+`Withheld`, so **4.6 is an internal-track build until §AN's rows are run**, whatever §AL says about
+languages. Identity is untouched on the branch and the controller bumps it at merge, so this line
+carries no versionCode for 4.6 yet. **A promotion now would put a rung nobody has timed in front of
+customers, and the previewer would hide it** — read §AN0 before promoting, not after.
+
 Build under test: **4.5.2 / versionCode 94** — **the first build any language may be PROMOTED from: all seven are cleared for production on the owner’s decision of 2026-09-13, and the notices the licences ask for in return ship with it** (§AL0 is the promotion gate and it now requires BOTH the record and the notices; 93 = 4.5.1 went to the internal track with the first-tap fix and the bubble colours — §AF6 and §AM; (the first-tap fix and the bubble colours — **§AF6 REWRITTEN** is the friction row and **§AM** the colours; still INTERNAL ONLY, and still only **en** and **fr** are cleared for PRODUCTION — de, ru, id, ko and zh ride this build with their corpus clearance outstanding; 92 = 4.5.0 went to the internal track with the six languages — §AL; (SIX MORE LANGUAGES for live words — **§AL**, the rows to run first, and note that only **en** and **fr** are cleared for PRODUCTION: de, ru, id, ko and zh are on this build for internal testing with their corpus clearance outstanding; 91 = 4.4.1 went to the internal track with the acquisition model on one pack — §AF, whose rows carry over except AF2, REWRITTEN because 4.5.0 removes the metered card by owner ruling; (the previewer pack now follows the language you pick — **§AF**, the rows to run first; 90 = 4.4.0 went to the internal track with the word-for-word previewer, the four-pack bundle and the startup ring — §Z and §S, whose rows carry over untested unless marked; 89 = 4.3.4 went to the internal track with Gemini Live, live-by-default, the turbo card and the voice-archive fix — §J and §K, whose rows carry over untested unless marked) (supersedes 88 on the internal track — the owner confirmed Gemini Live working in real time on 88; 89 adds live-by-default, the turbo card copy, and the voice-archive fix — §K; Gemini Live — §J; the sherpa runtime bump — §J6; 87 = 4.3.3, the accessibility service becomes optional — §H; 86 was PROMOTED TO PRODUCTION 2026-09-04 after E11 passed; 86 was the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
 carries MORE than the branch this sheet was written for: three fixes found during the owner's own
 device testing (§F) and the 4.4 VAD hangover retune (§E) landed on top of it. Everything below
@@ -1073,3 +1081,311 @@ names — not on the clearance record any more.
 was run under:** *"Five of the six are outstanding today, so the honest state of this sheet is:
 internal track yes, production no."* A row that once gated a release is rewritten in place here, never
 deleted — the same rule as AF2.
+
+---
+
+## AN — the CPU instrument ladder, on six devices (4.6; identity untouched on the branch, the controller bumps it at merge)
+
+**What 4.6 adds.** Six more rungs in the model chooser: **small Q8_0 (264 MB)**, **medium Q5_0
+(539 MB)**, **medium Q8_0 (823 MB)**, **large-v3-turbo Q5_0 (574 MB, un-retired)**, **large-v3-turbo
+Q8_0 (874 MB)** and **large-v3 Q5_0 (1081 MB)**. All multilingual — the last English-only rung
+(`pro`, small.en) is retired by your ruling of 2026-09-13, and nobody already on it is disturbed.
+
+Your instruction, which is the whole shape of this build: *"I wanna see all the models there so I
+can just select between them and try each one."*
+
+**So every one of them is an INSTRUMENT, and none of them is advice.** They appear on every device
+with no RAM threshold hiding them — running a heavy model on a modest phone is the point, because
+finding where it breaks is the point. None is badged *"Recommended for your device"* at any RAM,
+none is the default (that stays **Multilingual small Q5_1, 190 MB**), and none is a migration
+target. **Nobody has timed any of them.** The research this build serves predicts that medium,
+turbo and large-v3 all fail on throughput and that the real lever is quantisation — and that
+prediction is scaled from ONE Fold6 number and ONE Tab number, with its medium band being three
+arithmetic derivations rather than a stopwatch. **This section is you replacing it with
+measurements.**
+
+### AN0 — THE PROMOTION GATE. Read this before promoting, not after
+
+**This is not a device row.** It is the reason this build must not follow 4.5.2's pattern.
+
+4.5.0 and 4.5.1 were internal-only and **4.5.2 was promoted the same day it was built**. Nothing
+about 4.6 looks different from the outside: the chooser just has more cards. But if 4.6 is promoted
+by habit, **a production user can pick a rung that cannot keep up** — and they will not be able to
+see that it cannot, for two reasons that compound:
+
+- **the previewer keeps painting words.** Since 4.4.0 the floating strip shows live words about
+  0.4 s behind your voice *whatever the finalizer is doing*. So a losing rung looks fine — words
+  keep appearing — until the typed text is a sentence behind the strip, then a paragraph.
+- **the one on-screen backlog signal is switched off exactly then.** The in-flight line
+  *"Transcribing… (N in queue)"* is **displaced whenever live words are on**
+  (`inFlightStripLabel` returns null on `sessionHasLocalPreview`), and R8 strips the `queue:`
+  diagnostic from every release build. On a production build with live words on, a rung that is
+  drowning shows **nothing at all** except late text.
+
+So: **a rung with no recorded throughput verdict may not be production-promotable.** The record is
+`TierThroughputRecord` in
+`app/src/main/java/com/whispereverywhere/model/TierThroughput.kt`, built in the same shape as the
+language clearance you already accepted, and the suite fails the build on a blank verdict, on a
+switch that outran its evidence, and on a new rung with no row at all.
+
+Before promoting to production, read **`TierThroughputRecord.PRODUCTION_PROMOTABLE`**. **It must
+name every rung in `WhisperCatalog.pickable`.** Today it names **`multi` alone** — the only rung in
+this app with a measured finalize time (F = 2.3 s, your own Fold6 session of 2026-08-20 on
+versionCode 77) — and the gate reports
+**`Withheld([small-q8, medium-q5, medium-q8, ultra, ultra-q8, large-v3])`**.
+
+**Withheld is NOT a failure and it is not a reason to hold the internal track.** Every one of those
+six rungs is in the bundle, in the chooser and downloadable on every device, and that is exactly
+what the build is for. What is withheld is a store promotion, which is a different act. The gate
+reaches nothing the app runs — a test proves that negative by reading the app's own sources, because
+the obvious implementation (filter the unmeasured rungs out of the chooser) would leave you unable
+to measure the very rungs you asked to see.
+
+**MEASURED is not CLEARED.** If a rung comes back at "never caught up", that is a perfectly good
+verdict and the rung still may not promote. The honest responses are to retire it or to keep the
+build internal — never to record it as a pass.
+
+`[ ] PRODUCTION_PROMOTABLE names every rung in the chooser — promotion may proceed`
+`[ ] it does not — INTERNAL TRACK ONLY (this is the expected state of 4.6)`
+
+### Before any AN row — three things that decide whether this session means anything
+
+**1. A TEN-SECOND TRIAL CANNOT ANSWER THIS, AND WILL SAY "FINE".** The app cuts an utterance,
+hands it to whisper, and pays a **constant** cost per commit: `audio_ctx` is clamped to
+`max(samples/320 + 64, 512)` and that 512 floor binds for **every chunk under 8.96 s**, which is
+every ordinary dictation chunk. So the ceiling is **commits per second**, not speed-versus-audio,
+and the queue grows if and only if finalize wall time exceeds the commit floor. **Speaking in short
+bursts buys nothing** — a one-second utterance costs what a nine-second one costs. Ten seconds is
+one commit. You need minutes.
+
+**Do not judge any rung by "real-time factor".** A rung can look 8× better on a one-second clip
+than on an eight-second clip while doing *identical* work, purely because the denominator changed.
+That number is how a bad tier ships.
+
+**2. TURN LIVE WORDS OFF FIRST, THEN ON.** Each rung gets **two runs**, and the order matters:
+
+- **live words OFF** (Home → the *"Show live words"* switch) — this is the run where
+  *"Transcribing… (N in queue)"* is visible. A depth climbing past 2 and staying there is the
+  objective signal, and it is the only one a release build gives you.
+- **live words ON** — the configuration most people actually run, +2 threads and +169 MB
+  concurrent, and the one where the strip hides the problem. Here you judge **the gap between the
+  words on the strip and the text that lands in the app**.
+
+**Nothing in this app has ever been measured with the previewer armed.** `multi`'s 2.3 s predates
+it by two months (versionCode 77 against the previewer's 90). So the ON runs are new information
+even for the rung that already has a verdict — including for `multi`, whose AN1 row is worth
+running for that reason alone.
+
+**3. THE COMMIT FLOOR IS NOT THE SAME ON EVERY RUNG**, and one pair is confounded by it:
+
+| rung | download | commit floor |
+|---|---|---|
+| Multilingual small **Q5_1** (the default) | 190 MB | **6 000 ms** |
+| small **Q8_0** | 264 MB | 8 000 ms |
+| medium **Q5_0** | 539 MB | 8 000 ms |
+| medium **Q8_0** | 823 MB | 8 000 ms |
+| turbo **Q5_0** (`ultra`) | 574 MB | 8 000 ms |
+| turbo **Q8_0** | 874 MB | 8 000 ms |
+| large-v3 **Q5_0** | 1081 MB | 8 000 ms |
+
+Every new rung sits on the conservative 8 s row because **8 s is the safe direction for a rung
+nobody has measured** — including `small-q8`, which is the default's own weights and does not look
+heavy. The consequence is named rather than hidden: **AN8's two arms run at different floors.**
+Compare **wall-clock lag**, never duty, and write the floor in the row. Moving `small-q8` onto the
+6 s row is a decision this measurement exists to justify; the suite fails the build if anyone makes
+it early.
+
+**Storage.** Holding all seven at once is **4.35 GB** (the six instruments alone are 4.16 GB, and
+the biggest single file is 1,081,140,203 bytes). Switching rungs does **not** delete anything —
+the chooser row says *"Change or **add** a model"*. So either budget the 4.35 GB, or between rungs
+use **Settings → Delete current model** (it names the exact figure it frees and clears your pick,
+so you come back through *"Download a model"*). **Settings → Model storage** shows what is on the
+device right now.
+
+### The procedure — one run per rung per previewer state, five minutes, two numbers
+
+Do it in a real target app (the one you actually dictate into), not a scratch pad.
+
+1. Pick the rung, let it download, and **restart the app** so nothing is warm from the last rung.
+2. Read something aloud **continuously for five minutes** — a news article, a page of a book.
+   Ordinary pace, ordinary sentence-length pauses. Do not stop to check the screen.
+3. **Number one — the gap, twice.** Roughly 30 s in, notice how long after you finish a sentence
+   it lands as typed text. At about five minutes, notice it again. *Growing is the failure.*
+4. **Number two — the drain, and this is the one that decides the row.** Stop talking completely
+   and **time how long text keeps arriving.** That is your backlog, in seconds, and it needs no
+   logcat and no cable. A rung that is keeping up stops within about one commit floor.
+
+Then mark the row:
+
+- **KEPT UP** — the five-minute gap matches the 30-second gap, and the drain is under ~2 floors
+  (≈12 s on the 6 s row, ≈16 s on the 8 s row).
+- **FELL BEHIND, RECOVERED IN PAUSES** — the gap grew while you were reading but collapsed
+  whenever you paused. **This is NOT a pass**, and it is the answer a short trial reports as one:
+  under the constant per-commit cost, a queue that only drains while you are silent is a queue that
+  grows whenever you are not. What that run measured is the length of your pauses.
+- **NEVER CAUGHT UP** — the drain kept going, or the gap was still growing at five minutes.
+
+### Per device — fill this once, then do the rung rows
+
+Six devices, six copies of this block. The first two are the ones the repo already has numbers
+for; the other four have never run whisper at any size.
+
+    device (model + chip) ______________________  RAM as the phone reports it ______
+    build/versionCode ______   live words: OFF run [ ]  ON run [ ]
+    storage free before starting ______
+
+    1. Fold6  — the anchor. multi F = 2.3 s here, 2026-08-20, vc77. Everything else is scaled FROM this device.
+    2. Tab    — the only other datapoint, and it is DERIVED: duty 0.48-0.54, never measured.
+    3. ______
+    4. ______
+    5. ______
+    6. ______
+
+### The rung rows
+
+Each row is the same two runs and the same two numbers. **Run AN1 first on every device** — it is
+the control, and a device whose *default* rung does not keep up tells you something more important
+than any instrument will.
+
+AN1. **Multilingual small Q5_1 — 190 MB, 6 000 ms floor. THE CONTROL.**
+    The only rung with a verdict on record (F = 2.3 s, Fold6, 2026-08-20). Expected: KEPT UP.
+    **If this row fails on a device, stop and say so** — it is the shipped default, that is a
+    production defect on its own, and nothing below it can be interpreted on that device.
+    `OFF: gap@30s ____ s  gap@5min ____ s  drain ____ s  max queue depth seen ____`
+    `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
+    `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP`
+
+AN2. **small Q8_0 — 264 MB, 8 000 ms floor.** Same weights as AN1, 40% larger, and the one rung
+    the quantisation argument actually turns on. **AN8 is this row's real purpose.**
+    `OFF: gap@30s ____ s  gap@5min ____ s  drain ____ s  max queue depth seen ____`
+    `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
+    `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP`
+
+AN3. **medium Q5_0 — 539 MB, 8 000 ms floor.** The multilingual medium this app has never had (its
+    only medium was medium.en, which spent the whole bill on the one language with the smallest
+    prize). The rung the research is most confident fails.
+    `OFF: gap@30s ____ s  gap@5min ____ s  drain ____ s  max queue depth seen ____`
+    `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
+    `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP`
+
+AN4. **medium Q8_0 — 823 MB, 8 000 ms floor.** The same medium at a different quantisation —
+    identical depth, dims and vocabulary off the files' own headers. **AN9 is this row's purpose.**
+    `OFF: gap@30s ____ s  gap@5min ____ s  drain ____ s  max queue depth seen ____`
+    `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
+    `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP`
+
+AN5. **turbo Q5_0 (`ultra`) — 574 MB, 8 000 ms floor.** Un-retired for this session. **Nobody has
+    selected it since 3.7, so nobody has ever run large-v3-turbo on the CPU under VAD chunking** —
+    this row is its first device minutes. Do not carry `npu-turbo`'s F = 1.89 s over: that is the
+    same model on the Hexagon and says nothing about the CPU.
+    `OFF: gap@30s ____ s  gap@5min ____ s  drain ____ s  max queue depth seen ____`
+    `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
+    `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP`
+
+AN6. **turbo Q8_0 — 874 MB, 8 000 ms floor.** The third quantisation twin. Worth running only if
+    AN5 was not hopeless on this device; skip it and say you skipped it otherwise.
+    `OFF: gap@30s ____ s  gap@5min ____ s  drain ____ s  max queue depth seen ____`
+    `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
+    `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP   [ ] SKIPPED`
+
+AN7. **large-v3 Q5_0 — 1081 MB, 8 000 ms floor.** AN5's encoder plus eight times its decoder: the
+    accuracy ceiling and the throughput floor. **Expect it to lose; record BY HOW MUCH.** The drain
+    number here is what tells you where the wall is on this device, and that is worth having even
+    though the rung will not ship.
+    `OFF: gap@30s ____ s  gap@5min ____ s  drain ____ s  max queue depth seen ____`
+    `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
+    `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP`
+
+### The two comparisons that carry the most information
+
+Six downloads on six devices is thirty-six runs. **These two pairs are where the answer is.** If
+time runs out, do these on two devices rather than everything on one.
+
+AN8. **small Q5_1 against small Q8_0, on the SAME device (AN1 vs AN2) — THE QUANTISATION AXIS, and
+    the cheapest decisive test in the session.** Same weights, same 12 encoder layers at 768 dims,
+    same vocabulary; only the arithmetic differs. `Q5_0`/`Q5_1` are the only two quantisations
+    **absent** from ggml's ARM i8mm repack path and the only two this app has ever shipped, while
+    the build already compiles `+i8mm`. **If the 264 MB rung is FASTER than the 190 MB one, the
+    quantisation finding is real** — and that would be worth more than any rung on this ladder.
+    **Mind the confound:** AN1 paces at 6 000 ms and AN2 at 8 000 ms, so compare the **gap** and the
+    **drain**, never queue depth or "duty".
+    `Q5_1 drain ____ s   Q8_0 drain ____ s   device ____________`
+    `[ ] Q8_0 is faster — the repack path is real  [ ] no difference  [ ] Q8_0 is slower`
+
+AN9. **medium Q5_0 against medium Q8_0 (AN3 vs AN4) — whether the repack path rescues a rung that
+    otherwise fails.** The cleaner of the two comparisons: both sit on the 8 000 ms floor, so there
+    is no floor confound at all. If AN3 loses and AN4 keeps up, the app has a multilingual medium it
+    can offer — and that is the single most valuable outcome this session can produce.
+    `Q5_0 drain ____ s   Q8_0 drain ____ s   device ____________`
+    `[ ] Q8_0 rescues it  [ ] both fail  [ ] both keep up  [ ] Q8_0 is worse`
+
+### AN10 — if you want F itself as a number (optional, and read the caution)
+
+**No new code is needed.** `WhisperBenchTest.bench_whisper_rtf_across_slices` already exists, already
+enumerates `WhisperCatalog.entries` (so it picks up all six new rungs with no edit), benches
+**whichever tiers are actually installed**, slices at **1 / 3 / 8 / 15 s**, and prints to logcat tag
+`WE-BENCH`:
+
+    BENCH stt tier=<id> slice=<N>s audioMs=<..> wallMs=<..> rtf=<..>
+
+**READ `wallMs`, NOT `rtf`.** `wallMs` is the per-commit cost — it *is* F. `rtf` is `wallMs/audioMs`,
+and since the 1 s, 3 s and 8 s slices all run at `audio_ctx` **512** (114, 214 and 464 needed frames,
+all floored) they do **identical** encoder work, so their `rtf` values differ by ~8× purely because
+the denominator changed. A roughly flat `wallMs` across those three slices is the floor working
+exactly as designed. The 15 s slice is the only one above the floor (814 frames, ~1.6× the encoder
+work), and it is the only one whose higher cost is real.
+
+**THE STANDING CAUTION, AND IT IS ABSOLUTE. Never run `:app:connectedDebugAndroidTest`, and never
+`:app:installDebug`.** Both uninstall first, and that erases app storage and with it every
+downloaded model on that device — which in this session is up to 4.35 GB and the most expensive
+mistake available.
+
+**And the `am instrument` route is NOT available on your phones as they stand — this is a finding,
+not a caveat.** The test's own docblock gives the route (`adb install -r` the debug APK and the
+androidTest APK, then `am instrument`) and correctly notes that `-r` preserves app data. But your
+devices carry the **Play** copy: it is signed with Google's app-signing key while anything built on
+this machine carries the upload key, and `adb install -r` across them is refused with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE` — observed on this device on 2026-09-02 and already written up
+at the top of this sheet. A release build is also not debuggable, which instrumentation requires. So
+reaching `am instrument` means putting a locally-built debug copy on the device, which means
+uninstalling the Play copy, which wipes the models. **This route was reasoned, not verified on a
+device, and it is therefore NOT recommended** — if you want F as a number, use a spare device you
+are willing to re-download everything on, and keep the six-device session on the AN1-AN9 rows, which
+need no cable at all.
+
+`[ ] not attempted (expected)   [ ] attempted on a spare device — F per rung recorded below`
+
+### Known limitations of §AN, stated rather than discovered later
+
+- **`multi`'s own verdict is thinner than it looks, and it is the only one in the record.** F = 2.3 s
+  is carried by `CommitCadencePolicy`'s table and two research documents that agree and name the
+  same session — but **the raw `WE-BENCH` lines were never pasted back into the repo** (the 3.6.0
+  plan's results table is still its template). It is also **one device**, the one the research calls
+  the fleet's upper bound, and the Tab's figures are derived from it rather than measured. Recorded
+  as accepted, not resolved.
+- **No number in this app has ever been measured with the previewer armed.** Every ON run in this
+  section is new information, and there is nothing to compare it against.
+- **The queue-depth column is only fillable on the OFF runs.** With live words on, the in-flight
+  label is displaced and the `queue:` diagnostic is stripped from release — so the ON rows rest
+  entirely on the gap and the drain. That is not a gap in the sheet; it is the app, and it is the
+  reason the OFF run exists.
+- **`small-q8` and `multi` run at different commit floors**, so AN8 is a wall-clock comparison and
+  cannot be a duty one. Equalising them is a decision that wants AN8's answer first.
+- **Accuracy is not in this section at all.** Every one of these rungs should be at least as
+  accurate as the default and the bigger ones markedly more so, but throughput is what decides
+  whether a rung may ship, and a rung that cannot keep up does not get to trade accuracy for it.
+  If a heavy rung's words are visibly better, say so as a separate note — it is the reason to want
+  one of these, and it is not this section's question.
+- **Thirty-six runs at five minutes each is three hours of reading aloud.** AN8 and AN9 on two
+  devices is about forty minutes and answers most of it. Do not let the full matrix be the reason
+  none of it happens.
+
+**Promote 4.6 to the INTERNAL TRACK when AN1 passes on the Fold6** — that is the control, and
+everything else in this section is measurement rather than acceptance. The six instruments cannot
+fail an internal-track gate: being unmeasured is what they are for.
+
+**Promote to PRODUCTION only when AN0 also passes** — that is,
+`TierThroughputRecord.PRODUCTION_PROMOTABLE` names every rung in the chooser. **Today it names
+`multi` alone and the gate reports `Withheld`**, so the honest state of this section is: **internal
+track yes, production no** — and unlike §AL, that is not a state a document can change. It takes
+the rows above.
