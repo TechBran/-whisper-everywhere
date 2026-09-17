@@ -120,7 +120,8 @@ import java.util.concurrent.atomic.AtomicLong
  * `stopRecording`, the path T1's residual already budgets at ~4 s composite (2 × `CAPTURE_JOIN_MS`,
  * since `audioRecorder.stop()` is followed by `stopPlaybackCapturer()`'s own 2000 ms fenced join)
  * with roughly 1 s of headroom under the 5 s input-dispatch window. What that wait actually is:
- * the probe's model is the bundled 885 KB `ggml-silero-v5.1.2.bin`, NOT a 190 MB whisper tier —
+ * the probe's model is the bundled 885 KB `ggml-silero-v5.1.2.bin`, NOT a whisper tier (264 MB
+ * and up on the 4.7 ladder) —
  * so the worst case is a small model load, analytically tens of milliseconds of file I/O plus a
  * ~2.6 MB allocation, not seconds. It is qualitatively far inside the ~1 s of headroom rather than
  * a second join-sized bill. That is an ANALYTIC bound, not a measurement: the S-task on-device

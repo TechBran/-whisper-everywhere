@@ -212,6 +212,9 @@ object ModelTierCopy {
         // restate a measured claim about weights it was not measured against; deleting it would
         // drop a true, owner-ruled claim. So the card still names the model the comparison was
         // made on, and the open item is a Fold6 session that times `small-q8` beside turbo.
+        // CONTROLLER RULING (4.7 review): the "ahead of the 190 MB Multilingual model" body is
+        // the measured comparison, and it stays VERBATIM until `small-q8` is timed beside turbo
+        // on the Fold6.
         //
         // **4.6 T2 — THE ACCURACY HALF WAS SCOPED; THE SPEED HALF IS UNTOUCHED.** The card read
         // "Best accuracy, fastest" / "The most accurate model this app ships", and 4.6 falsified
@@ -270,8 +273,8 @@ object ModelTierCopy {
      * review: never land a user on a tier that is worse for the language they actually speak.
      * With every offered rung multilingual there is no worse-for-your-language rung left to land
      * on, so the rule holds structurally rather than by a branch — and the English user's
-     * replacement is the same 190 MB of whisper-small weights with a multilingual vocab head, not
-     * a downgrade.
+     * replacement is the same whisper-small weights with a multilingual vocab head — since 4.7
+     * the 264 MB `small-q8`, those weights at Q8_0 — not a downgrade.
      *
      * The parameter stays, and so does the tag parsing in the callers' contract: this is still
      * "the steer FOR a language", the gated overload still reads the tag's answer, and the next

@@ -389,7 +389,7 @@ class MelExportContractTest {
         assertTrue(
             "the fork's include/whisper.h must declare whisper_init_from_file_mel_only. Without " +
                 "it the only way to compute a mel is whisper_init_from_file, which holds a full " +
-                "set of weights - 60-190 MB for the tiers this app ships - resident purely to " +
+                "set of weights - 60 MB for the retired eco, 264-874 MB on the 4.7 ladder - resident purely to " +
                 "use an 80x201 filterbank.",
             liveOffsets(forkHdr, "whisper_init_from_file_mel_only(").isNotEmpty()
         )
@@ -405,7 +405,7 @@ class MelExportContractTest {
         // THE ANTI-REINTRODUCTION ASSERTION, and the residency of the whole NPU tier rests on it.
         // Swapping this one call for whisper_init_from_file_with_params compiles, runs, returns a
         // handle that pcmToMel accepts, and produces a byte-identical mel - while silently putting
-        // ~190 MB of CPU weights beside the NPU's own ~376 MiB, on the exact path whose design
+        // a whole CPU tier (264 MB and up) beside the NPU's own ~376 MiB, on the exact path whose design
         // (I11) is that the two are never co-resident. Nothing downstream would report it; the
         // first symptom would be an LMK kill on a mid-range device.
         assertTrue(

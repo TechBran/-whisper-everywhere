@@ -11,7 +11,7 @@
 
   The security properties below therefore hold by OMISSION, deliberately:
     - secure_store.xml (Keystore-wrapped credentials) — not listed, never backed up
-    - domain="file"     (the 190 MB whisper model, the 325 MB Kokoro voice, and any future
+    - domain="file"     (the whisper model — 264-874 MB on the 4.7 ladder —, the 325 MB Kokoro voice, and any future
                          session-audio archive) — not listed, never backed up
     - domain="database" — not listed, never backed up
 

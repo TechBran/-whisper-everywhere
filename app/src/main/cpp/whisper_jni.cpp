@@ -564,11 +564,11 @@ static constexpr int   kNpuMelSamples = 480000;                                 
 
 // Loads ONLY the mel filterbank, for a context that will never do anything but compute mels.
 //
-// THE RESIDENCY IS THE ENTIRE POINT. `init` above holds a full set of weights - 60-190 MB for the
-// tiers this app ships - and the NPU path needs none of them: it runs its own encoder and decoder
+// THE RESIDENCY IS THE ENTIRE POINT. `init` above holds a full set of weights - 60 MB for the
+// retired eco, 264-874 MB on the 4.7 ladder - and the NPU path needs none of them: it runs its own encoder and decoder
 // on the HTP and wants whisper.cpp only for the spectrogram, so that its accuracy is the accuracy
-// the CPU and GPU tiers were measured at. Holding `multi` resident just to reach an 80x201 matrix
-// would put ~190 MB beside the NPU's own ~376 MiB on the one path whose design (I11) is to never
+// the CPU and GPU tiers were measured at. Holding a CPU tier resident just to reach an 80x201 matrix
+// would put 264 MB or more beside the NPU's own ~376 MiB on the one path whose design (I11) is to never
 // be co-resident with the CPU tiers. This reads ~64 KB from the head of the file instead.
 //
 // For an 80-bin tier the model file is only a filterbank donor, so ANY installed 80-bin tier's file

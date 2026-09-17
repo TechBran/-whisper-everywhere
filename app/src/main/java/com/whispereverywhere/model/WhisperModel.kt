@@ -304,10 +304,11 @@ object WhisperCatalog {
             // retired tier is hidden from the chooser and otherwise left completely alone:
             // [ModelMigration.decide] gates on `unsupported`, so its installed users are *"not
             // prompted, not migrated, and never asked to re-download"*. Someone dictating happily
-            // on small.en must not be told to fetch 190 MB they never asked for — and the
-            // replacement is the same 190 MB of whisper-small weights with a multilingual vocab
-            // head, so the migration card's implied promise ("this is better") would not even be
-            // true for an English-only user. They keep the tier, it keeps working, and
+            // on small.en must not be told to fetch a download they never asked for — and the
+            // replacement (since 4.7 the 264 MB `small-q8`) is the same whisper-small weights
+            // with a multilingual vocab head, at Q8_0, so the migration card's implied promise
+            // ("this is better") would not even be true for an English-only user. They keep the
+            // tier, it keeps working, and
             // `isCpuFallbackEligible` still admits it as an 80-bin donor.
             //
             // It is also why `sessionLanguageFor`'s ENGLISH-scope Auto pin STAYS
@@ -670,7 +671,8 @@ object WhisperCatalog {
      * ### 4.3 — one tier per device
      *
      * **When [ONE_TIER_ID] is in the set, the lineup IS that tier**, plus whatever the caller
-     * names in [alsoOfferedIds]. Everything else — the 190 MB CPU tiers, the 358 MB `npu` — is
+     * names in [alsoOfferedIds]. Everything else — the CPU tiers (since 4.7 `small-q8` 264 MB,
+     * `medium-q8` 823 MB and `ultra-q8` 874 MB), the 358 MB `npu` — is
      * not offered, because on this hardware the answer is not a menu. `npu` STAYS CATALOGUED
      * (the streaming arc needs it; hiding is not retiring) and its census/pack/import machinery
      * is untouched — see `WhisperCatalogHelpersTest`'s catalogued-but-unoffered pin.

@@ -385,9 +385,10 @@ class ModelTierCopyTest {
                     "what the model IS, which is the whole of what these cards are for",
                 body.removeSuffix(note).trim().length > 40,
             )
-            // The instrument's card states the measured shape of the risk in its own words too:
-            // it kept up with no margin on a flagship, and slower devices should expect to fall
-            // behind. Both sentences are in docs/measurements/2026-09-17-tab-cpu-ladder.md.
+            // The instrument's card states the measured shape of the risk in its own words too.
+            // "Keeps up on this flagship with no margin" is the doc's finding — that sentence is in
+            // docs/measurements/2026-09-17-tab-cpu-ladder.md. "Slower devices should expect to
+            // fall behind" is the CARD's own inference from 0.99, not a sentence the doc contains.
             assertTrue("'${it.id}' must say it kept up with no margin", body.contains("no margin"))
             assertTrue("'${it.id}' must say it is not recommended", body.contains("not recommended"))
         }

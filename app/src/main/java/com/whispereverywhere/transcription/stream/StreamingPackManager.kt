@@ -250,7 +250,7 @@ class StreamingPackManager(private val context: Context) {
      * The NON-PLAY fallback: download + verify + atomically install, the `TtsModelManager` shape
      * (tts/TtsModelManager.kt:52-136) — free-space gate before the network, stale DownloadManager
      * rows removed, DownloadManager for the transport (it already follows HF `resolve/<sha>/`
-     * redirects for the 190 MB whisper files), then the same pure verify + install. Four
+     * redirects for the whisper model files), then the same pure verify + install. Four
      * sequential requests, one per pinned file, into an external staging dir; progress is the
      * cumulative byte count over the pack's total. Main-safe. Throws [StreamingPackException].
      */

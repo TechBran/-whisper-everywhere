@@ -32,14 +32,14 @@ import java.util.Locale
  * release(ctx)             nativeRelease(armedEpoch) + WhisperNative.free
  * ```
  *
- * ### The 64 KB that must never become 190 MB
+ * ### The 64 KB that must never become a whole CPU tier
  *
  * The spectrogram is whisper.cpp's, because the spec allows exactly one mel in this app and a
  * second implementation would be free to drift from the accuracy the CPU and GPU tiers were
  * measured at. The filterbank is model data, so *some* whisper context is structurally required —
  * and there are two ways to get one. [WhisperNative.initMelOnly] reads the contiguous
  * magic -> hparams -> filterbank prefix and stops: **64,320 bytes of coefficients**, no weights, no
- * vocab, no ggml context, no backend. The full loader would hold 60-190 MB resident beside the
+ * vocab, no ggml context, no backend. The full loader would hold 60-874 MB resident beside the
  * NPU's own ~376 MiB, produce a **byte-identical** mel, and surface first as an LMK kill on a
  * mid-range device. Nothing downstream can tell the two apart, which is why the choice is pinned in
  * source by `NpuNativeContractTest` rather than merely explained here.
@@ -69,7 +69,8 @@ import java.util.Locale
  * ### The fallback is loud, and it releases first
  *
  * Any stage that declines ends the same way: [releaseNpuResources] runs FIRST, then the CPU tier is
- * loaded. Loading a 190 MB whisper model while 376 MiB of NPU contexts are still held is a ~570 MB
+ * loaded. Loading a whisper CPU tier (264 MB for the 4.7 default, up to 874 MB) while 376 MiB of
+ * NPU contexts are still held is a ~660 MB+
  * transient on the one path that exists to be safe — and the ordering is an invariant, not a
  * preference, so it is pinned as one. One `npu: unavailable stage=… detail=…` line names the stage,
  * Q8's card says so, and the session runs on the CPU model. A fallback that quietly ran on the CPU
@@ -192,7 +193,7 @@ class NpuWhisperBackend(
      * half-updated while another thread routes on it; `@Volatile` gives publication, so the pair a
      * reader sees is the pair a writer wrote. Neither alone is enough and neither is redundant —
      * dropping the gate lets two threads both observe `null` and both fall back (leaking a whole
-     * 60-190 MB whisper context), and dropping `@Volatile` lets a reader see a non-null backend
+     * 60-874 MB whisper context), and dropping `@Volatile` lets a reader see a non-null backend
      * beside a stale `0L` handle and silently lose a segment on `transcribe(0L, …)`.
      *
      * **Two bounded exemptions, both passive (4.1 L7).** [detectsPerUtterance] reads the guard
@@ -356,7 +357,7 @@ class NpuWhisperBackend(
                 )
             }
 
-            // (3) 64 KB, not 190 MB. The full loader is byte-identical downstream and is the one
+            // (3) 64 KB, not a whole CPU tier. The full loader is byte-identical downstream and is the one
             // mistake nothing but a source pin can catch — see the class KDoc. ONE loader for both
             // arms: a second one would be a second mel path, which is the thing the spec forbids
             // outright.
@@ -514,7 +515,7 @@ class NpuWhisperBackend(
      * state, so two segments on this one handle would race each other; the QNN session is a single
      * process-global behind its own mutex and must not see an encode and a decode interleaved; and
      * the routing decision itself is shared mutable state, so reading it outside the hold is how
-     * two threads both decide to fall back and one 60-190 MB whisper context is leaked. The lock is
+     * two threads both decide to fall back and one 60-874 MB whisper context is leaked. The lock is
      * reentrant and the delegate takes it again, which costs nothing.
      */
     override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
@@ -908,8 +909,9 @@ class NpuWhisperBackend(
     /**
      * A stage declined: **release the NPU FIRST, then bring up the CPU tier** (I11).
      *
-     * The ordering is the whole point of this function existing at all. Loading a 190 MB whisper
-     * model while 376 MiB of NPU contexts and a sustained power vote are still held is a ~570 MB+
+     * The ordering is the whole point of this function existing at all. Loading a whisper CPU
+     * tier (264 MB for the 4.7 default, up to 874 MB) while 376 MiB of NPU contexts and a
+     * sustained power vote are still held is a ~660 MB+
      * transient on the exact path that exists to be safe, and it would be an LMK kill on the
      * devices most likely to reach it. Two statements, one order, pinned as an ORDER invariant by
      * `NpuNativeContractTest` — presence alone would be satisfied by swapping them.
@@ -917,7 +919,7 @@ class NpuWhisperBackend(
      * **AT MOST ONCE per session, and the guard is the first statement.** A second entry is a no-op
      * that returns the live fallback rather than a second `WhisperNativeBackend.load` — which is a
      * decision, so here is the reasoning. Without the guard, a second entry overwrites [fallbackCtx]
-     * with a fresh handle and the previous whisper context — a whole CPU tier, 60-190 MB — is
+     * with a fresh handle and the previous whisper context — a whole CPU tier, 60-874 MB — is
      * leaked for the life of the process, because `releaseEverything` only ever frees the current
      * one. Release-before-overwrite would close the leak but is the wrong repair: the first fallback
      * is already serving this session, so replacing it drops a live handle mid-session and emits a

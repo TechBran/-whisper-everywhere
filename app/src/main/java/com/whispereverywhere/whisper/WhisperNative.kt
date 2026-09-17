@@ -254,11 +254,11 @@ object WhisperNative {
      * nothing but compute mels (4.0 Task Q2b). Returns 0L on failure.
      *
      * **Use this, not [init], for the NPU tier's mel.** [init] holds a full set of weights resident
-     * — 60-190 MB for the tiers this app ships — and the NPU path needs none of them: it runs its
+     * — 60 MB for the retired eco, 264-874 MB on the 4.7 ladder — and the NPU path needs none of them: it runs its
      * own encoder and decoder on the HTP and wants whisper.cpp only for the spectrogram, so that
      * its accuracy is the accuracy the CPU and GPU tiers were measured at. This reads roughly
      * **64 KB** from the head of the file (magic, hparams, filterbank) and stops before the vocab
-     * and before a single tensor. That is the difference between ~190 MB and ~64 KB sitting beside
+     * and before a single tensor. That is the difference between a whole CPU tier (264 MB and up) and ~64 KB sitting beside
      * the NPU's own ~376 MiB, on the one path whose design is to never be co-resident with the CPU
      * tiers.
      *
@@ -305,7 +305,7 @@ object WhisperNative {
      *
      * @param ctxPtr a handle from **[initMelOnly]**. The mel filterbank is model data
      *        (`ctx->model.filters`), so *some* whisper context is structurally required — but
-     *        **[init] is the wrong one here.** It loads the full model, silently holding 60-190 MB
+     *        **[init] is the wrong one here.** It loads the full model, silently holding 60-874 MB
      *        of weights resident beside the NPU's own ~376 MiB purely to reach a 64 KB filterbank;
      *        the mel it produces is byte-identical, so nothing downstream would report the
      *        mistake, and it would surface first as an LMK kill on a mid-range device.

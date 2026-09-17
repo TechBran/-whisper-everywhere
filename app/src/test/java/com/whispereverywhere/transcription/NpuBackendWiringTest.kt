@@ -33,8 +33,8 @@ import java.io.File
  *    this file shipped with for three minor versions; it compiles, because `backend` has a default,
  *    and the entire npu tier becomes unreachable with no symptom anywhere but a device.
  *  - *The rebuild inverted.* Constructing the replacement BEFORE `shutdown()`ing the stale engine
- *    is compile-clean, passes every presence check, and puts a 60-190 MB `WhisperNative.init` in
- *    flight beside an NPU teardown that has not run — the ~570 MB transient I11 exists to forbid,
+ *    is compile-clean, passes every presence check, and puts a 60-874 MB `WhisperNative.init` in
+ *    flight beside an NPU teardown that has not run — the ~660 MB+ transient I11 exists to forbid,
  *    arriving through the service instead of through the backend. This is the NINTH
  *    presence-vs-ORDER pin on this branch and the reasoning has not changed once.
  *  - *The offer gate read inline, on Main.* `offeredNpuTierIds = app.offeredNpuTierIds()` inside
@@ -708,8 +708,8 @@ class NpuBackendWiringTest {
      * `shutdown()` queues the stale engine's `backend.release`, and for `NpuWhisperBackend` that
      * release frees the NPU's ~376 MiB FIRST (pinned inside that class by `NpuNativeContractTest`).
      * Constructing the replacement before that call is issued would let the new engine's
-     * `WhisperNative.init` — 60-190 MB — be in flight beside an NPU teardown that has not started:
-     * the same ~570 MB transient the backend's own fallback path is ordered to avoid, rebuilt
+     * `WhisperNative.init` — 60-874 MB — be in flight beside an NPU teardown that has not started:
+     * the same ~660 MB+ transient the backend's own fallback path is ordered to avoid, rebuilt
      * around the outside of it. Every presence count is satisfied by the swap; only the offsets
      * are not.
      */

@@ -16,10 +16,11 @@ class ModelMigrationTest {
     ) = ModelMigration.decide(selectedId, selectedInstalled, targetInstalled, online)
 
     @Test fun a_current_tier_needs_no_migration() {
-        assertEquals(ModelMigration.Action.None, decide("pro"))
-        assertEquals(ModelMigration.Action.None, decide("multi"))
+        // Only CURRENT tiers here. `pro` (retired 4.6) and `multi` (retired 4.7) are asserted in
+        // the retired-tier tests below, where their `None` is the point rather than a given.
         assertEquals(ModelMigration.Action.None, decide("small-q8"))
         assertEquals(ModelMigration.Action.None, decide("medium-q8"))
+        assertEquals(ModelMigration.Action.None, decide("ultra-q8"))
     }
 
     /**
@@ -33,6 +34,7 @@ class ModelMigrationTest {
     @Test fun a_user_on_the_retired_190_mb_default_is_left_completely_alone() {
         assertTrue(WhisperCatalog.byId("multi")!!.retired)
         assertFalse(WhisperCatalog.byId("multi")!!.unsupported)
+        assertEquals(ModelMigration.Action.None, decide("multi"))
         listOf(true, false).forEach { online ->
             listOf(true, false).forEach { targetInstalled ->
                 listOf(true, false).forEach { selectedInstalled ->
@@ -71,6 +73,7 @@ class ModelMigrationTest {
         // re-download 190 MB nobody requested — for a model whose only difference from theirs is
         // a multilingual vocab head, which makes the card's implied "this is better" false as
         // well as unwanted.
+        assertEquals(ModelMigration.Action.None, decide("pro"))
         listOf(true, false).forEach { online ->
             listOf(true, false).forEach { targetInstalled ->
                 listOf(true, false).forEach { selectedInstalled ->

@@ -261,8 +261,8 @@ class NpuNativeContractTest {
      *  2. **teardown BEFORE the CPU tier is loaded.** Presence is not the invariant here; ORDER is —
      *     the third time this branch has learned that (Q3's deleted guard call, Q4's swapped call
      *     site, Q4's hoisted flag write). Both statements are present either way round; the wrong
-     *     order loads a 190 MB whisper model while 376 MiB of NPU contexts and a sustained power
-     *     vote are still held, a ~570 MB+ transient on the one path that exists to be safe.
+     *     order loads a whisper CPU tier (264 MB and up) while 376 MiB of NPU contexts and a
+     *     sustained power vote are still held, a ~660 MB+ transient on the one path that exists to be safe.
      *  3. **the SoC gate before the probe.** Also order. `nativeProbe` dlopens two Qualcomm
      *     backends and answers "is the HTP stack here", which a 7-series Snapdragon also answers
      *     yes to; only `NpuGate` can tell one Hexagon from another. Swapping the operands of the
@@ -313,8 +313,8 @@ class NpuNativeContractTest {
         assertTrue(
             "releaseNpuResources() (${teardown.first()}) must run BEFORE WhisperNativeBackend.load " +
                 "(${cpuLoad.first()}). Swapping two adjacent statements compiles, keeps both " +
-                "present, and puts a 190 MB whisper model beside 376 MiB of still-held NPU " +
-                "contexts — ~570 MB+ transient, on the exact path whose purpose is to be safe.",
+                "present, and puts a whisper CPU tier (264 MB and up) beside 376 MiB of still-held NPU " +
+                "contexts — ~660 MB+ transient, on the exact path whose purpose is to be safe.",
             teardown.first() < cpuLoad.first()
         )
         val release = kotlinMemberBody(backend, "private fun releaseEverything() {")

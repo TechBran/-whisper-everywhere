@@ -113,7 +113,8 @@ import org.junit.Test
  * still re-arms GpuPolicy's canary latches (below), unchanged.
  *
  * **versionCode 96 = 4.7.0 — the MINOR moves, because the ladder changes from instruments to a
- * ruling.** 95 went to the internal track and a sideloaded tablet as 4.6.0 and is spent there. On
+ * ruling.** 95 was never uploaded to any Play track: it was SIDELOADED to the Tab S10+ over 94 on
+ * 2026-09-16 as 4.6.0 (`adb install -r`), and is spent there. On
  * 2026-09-17 five of its rungs were timed on the owner's Tab S10+
  * (`docs/measurements/2026-09-17-tab-cpu-ladder.md`) and the owner ruled the same day: Q8 for
  * everything, every Q5 rung off the table. 96 is what a user sees change: the chooser is three Q8
