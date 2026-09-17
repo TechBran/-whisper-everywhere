@@ -245,10 +245,15 @@ internal fun sessionLanguageFor(
  * RULING ASSUMED (R3): [userEnabled] defaults true in PreferencesManager.
  *
  * Cloud sessions (batch or live) keep today's strip; a running batch file job vetoes (two CPU
- * consumers beside whisper's bursts is the research's §3.9 refusal); [previewReady] is the
- * resident recognizer's `isWarmFor(thisPack)` — false while it loads, false when the resident
- * recognizer is a DIFFERENT language's, and false for the rest of the process after this pack's
- * canary fails (4.5.0 T2, defect 4: another pack's failed canary is not this one's verdict).
+ * consumers beside whisper's bursts is the research's §3.9 refusal); [previewReady] is, since
+ * 4.8.1, *an engine exists and THIS pack's verdict is not against it* (`!isDisabled(thisPack)`):
+ * the wrap site has just posted the warm for this pack on the engine's single FIFO executor,
+ * ahead of the session's `open()`, so a load still IN FLIGHT arms and the strip fills the moment
+ * it lands. False only with no engine at all, or for the rest of the process after this pack's
+ * own load, canary or three-strike verdict (4.5.0 T2, defect 4: another pack's failed canary is
+ * not this one's verdict). Until 4.8.1 it was the landed-warm snapshot `isWarmFor(thisPack)` —
+ * false while the load ran — which lost every fresh install's FIRST session; the snapshot is a
+ * diagnostic now (`warm_now=` on the gate line).
  *
  * ### 4.4.1's one change to this predicate: the English literal is gone
  *
@@ -445,8 +450,12 @@ internal enum class PreviewResidencyEvent {
     PACK_DELETED,
 
     /**
-     * A session started. The one member that deliberately acts DURING a session, because it arms
-     * the session AFTER this one: `warm()` is asynchronous and the gate reads `isWarmFor()` now.
+     * A session started. The one member that deliberately acts DURING a session — and, since
+     * 4.8.1, the post that arms THIS session when nothing was resident: the gate reads
+     * `!isDisabled(pack)` on the engine this member's warm was posted to, and the engine's single
+     * FIFO executor runs that warm before the tee's `open()`. Until 4.8.1 it armed only the
+     * session AFTER this one — `warm()` is asynchronous and the gate read `isWarmFor()` in the
+     * same breath — which is how every fresh install lost its first session's live words.
      */
     SESSION_START,
 
@@ -456,11 +465,13 @@ internal enum class PreviewResidencyEvent {
      *
      * The refusals are right to decline: a second 802-860 ms / ~169 MB load must not land under
      * the recognizer `PreviewTeeEngine` has borrowed. What was missing is that nothing re-asked
-     * when the session ended, and **the session wrap does not cover it**: that warm sits at session
-     * START and arms the session AFTER, because `warm()` is asynchronous and the gate reads
-     * `isWarmFor()` in the same breath. So an install landing mid-session cost that session *and*
-     * the next one, and session three was the first with live words — the owner's complaint again,
-     * one gesture over.
+     * when the session ended, and **the session wrap did not cover it** when this member was
+     * added: that warm sat at session START and armed the session AFTER, because the gate read
+     * `isWarmFor()` in the same breath as the post. So an install landing mid-session cost that
+     * session *and* the next one, and session three was the first with live words — the owner's
+     * complaint again, one gesture over. (4.8.1 arms session two on the POSTED warm even without
+     * this member; it keeps its place by landing the load BETWEEN the sessions, so session two's
+     * words start at its first chunk rather than a beat after.)
      *
      * The site is the single writer of `currentState`, and deliberately not `teardownRealtime()`:
      * teardown runs BEFORE the state moves, so a re-ask there would be refused by its own
@@ -642,9 +653,10 @@ internal fun previewSessionEnded(
  * > friction point for users. People are going to think that it doesn't work."*
  *
  * `warmStreamingPreview` had exactly two callers — the boot prewarm and the wrap site — and the
- * wrap site's own KDoc says it *"arms NEXT session, not this one, because warm() is asynchronous
- * and the gate reads isWarmFor() now"*. So an install that completed mid-process warmed nothing
- * until a session had already started and ended: session one armed nothing, session two worked.
+ * wrap site's own KDoc said, until 4.8.1, that it *"arms NEXT session, not this one"* (the gate
+ * read `isWarmFor()` in the same breath as the post). So an install that completed mid-process
+ * warmed nothing until a session had already started and ended: session one armed nothing,
+ * session two worked.
  * The 4.5.0 acceptance sheet recorded that miss as EXPECTED (AF6), which was the wrong call — a
  * user who picks a language, watches 73-128 MB arrive and then sees no words concludes the feature
  * is broken, and nothing in the design requires it. This function is the third trigger.
@@ -1548,14 +1560,17 @@ class FloatingBubbleService : Service(),
         // > next transcribe is already on? People are going to think that it doesn't work."*
         //
         // He is right. The two triggers above are a boot and a session START, and the wrap site's
-        // own KDoc says it "arms NEXT session, not this one, because warm() is asynchronous and the
-        // gate reads isWarmFor() now" — so an install that completed mid-process warmed nothing
-        // until a session had already been and gone. 4.5.0's acceptance sheet recorded that miss as
-        // expected behaviour (AF6); this collector and that row's rewrite retire it together.
+        // own KDoc said, until 4.8.1, that it "arms NEXT session, not this one" (the gate read
+        // isWarmFor() in the same breath as the post) — so an install that completed mid-process
+        // warmed nothing until a session had already been and gone. 4.5.0's acceptance sheet
+        // recorded that miss as expected behaviour (AF6); this collector and that row's rewrite
+        // retire it together. (4.8.1: the wrap site now arms on the POSTED warm, so a session
+        // that beats this collector's load still shows words once it lands; this collector's job
+        // is to land it BEFORE the tap, so the words start at the first chunk.)
         //
         // NOT a service restart, which the owner offered as the other option: it would tear down
-        // the overlay he is looking at, and warming is sufficient — the load is 802-860 ms and the
-        // gate reads it at the next tap.
+        // the overlay he is looking at, and warming is sufficient — the load is 802-860 ms and
+        // lands before the next tap. A restart would only re-open the boot prewarm's window.
         //
         // ONE MORE COLLECTOR OF THE SAME SHAPE as the release-on-selection-change collector above,
         // and it decides nothing of its own: `warmOnPackInstalled` answers whether to warm, and
@@ -1584,6 +1599,12 @@ class FloatingBubbleService : Service(),
                 // 802-860 ms load and its canary DURING that startup and call it an install event.
                 // The value already in place is the prewarm's; this collector is for what CHANGES
                 // while the service is up, which is the only case AF6 was ever about.
+                //
+                // (4.8.1) On a FRESH INSTALL the replayed record is exactly this shape — the pack
+                // landed (card tap or Play's silent fetch) before any service existed — and the
+                // prewarm's load can still be in flight when the user's first tap arrives. That
+                // tap used to lose the whole session; the wrap site arms on the POSTED warm now,
+                // so this drop stays and onboarding does not need to start the service either.
                 .drop(1)
                 .collect {
                     // (4.5.1 pass 2, ITEM 3 — review r1's N1) THE SELECTION IS READ INSIDE THE HOP,
@@ -3870,10 +3891,17 @@ class FloatingBubbleService : Service(),
      * the new one, a RELEASED engine (onTrimMemory) reloads on the next call — spec §4.1 step 10
      * — and a pack whose verdict went against it never reloads in this process, while every
      * OTHER language still can (§7.2; the verdict survives release() and is now per-language).
-     * Called from the prewarm coroutine at service start and again at the wrap site; the latter
-     * arms NEXT session, not this one, because warm() is asynchronous and the gate reads
-     * isWarmFor() now — a session started under a second after the service came up is exactly
-     * today's session, by design.
+     * Called from the prewarm coroutine at service start, from the one body the event-shaped
+     * residency members run, from the install collector, and at the wrap site.
+     *
+     * **(4.8.1) THE WRAP SITE'S POST ARMS THIS SESSION.** The gate reads `!isDisabled(pack)` on
+     * the engine this returns, and the engine's single FIFO executor runs the warm posted here
+     * before the tee's `open()` — so a session started under a second after the service came up
+     * shows words the moment the load lands instead of being written off at the tap. Until 4.8.1
+     * the gate read `isWarmFor()` in the same breath as this post and that session was lost "by
+     * design" — the fresh-install defect (the owner, 2026-09-17). The other three callers still
+     * matter for the same reason they always did: a load that lands BEFORE the tap puts words on
+     * the first chunk, where one that lands during CONNECTING puts them a beat later.
      *
      * **(4.4.1, CHANGE 5) WHICH pack is the caller's decision, and [previewPackToWarm] is the one
      * that makes it** — the same lookup the gate takes, so this never loads a model the gate will
@@ -3928,7 +3956,8 @@ class FloatingBubbleService : Service(),
             },
             // (4.5.1 Task 1) THE THIRD HAND-OVER, and the same discipline: what is RESIDENT AND
             // USABLE now, named by the engine rather than by this class. `isWarmFor(pack)` is the
-            // answer the session gate itself reads and it had no reader outside this service
+            // answer the session gate read until 4.8.1 (the card's retirement and the `warm_now=`
+            // diagnostic still do) and it had no reader outside this service
             // either, so the strip above the language selector could only promise words off *the
             // files landed* — the owner's *"having to transcribe a second time to get the live to
             // work"*. Published here, read there, and the READY receipt is a term of it.
@@ -4365,8 +4394,9 @@ class FloatingBubbleService : Service(),
         // 4.4.0: THE ONE WRAP SITE (spec §4.1 step 2, §5). After the language resolved, before
         // connect: the gate reads the SELECTED language (4.4.1, below), the pack, the session kind
         // (cloudWrapper != null IS the right predicate here — cloud batch and live keep today's
-        // strip), a running batch job, the switch (R3) and the resident previewer's readiness
-        // (false while loading; false forever after a failed canary — R1). When it arms, the
+        // strip), a running batch job, the switch (R3) and the previewer's readiness — since
+        // 4.8.1 "an engine exists and this pack is not disabled", so a load still in flight ARMS
+        // (false forever after a failed canary — R1). When it arms, the
         // session engine becomes the tee and transcriptionEngine is RE-POINTED at it, so the
         // capture callback, the commit funnel and the stop path all drive the tee. The strip
         // rules read sessionHasLocalPreview (Task 1's second input) — assigned the gate's answer,
@@ -4480,8 +4510,9 @@ class FloatingBubbleService : Service(),
         // `disable` at :276) — a Fail for THIS pack, never another language's verdict (4.5.0 T2,
         // defect 4 still holds: the term names the pack). A null `packToWarm` means the selection
         // has no installed pack or the switch is off, and `localPreviewArms` refuses on those
-        // same terms. `isWarmFor` is still read for the card's retirement in `onOpen` (below) —
-        // a snapshot, which is all a retirement needs — and no longer for the arm.
+        // same terms. `isWarmFor` is still read at this site for the `warm_now=` DIAGNOSTIC on
+        // the gate line and in `onOpen` for the card's retirement — snapshots, which is all a log
+        // line and a retirement need — and no longer for the arm.
         //
         // ONBOARDING DOES NOT NEED TO START THIS SERVICE for the first session to show words, and
         // it must not be added "to be safe": the gate no longer depends on when the warm landed,
@@ -4489,6 +4520,12 @@ class FloatingBubbleService : Service(),
         // WHICH pack warms or WHEN is changed here — `previewPackToWarm`, `previewResidency`,
         // `warmOnPackInstalled`, the busy refusal and the release rules are exactly 4.5.1's.
         val previewReady = packToWarm != null && preview != null && !preview.isDisabled(packToWarm)
+        // DIAGNOSTICS ONLY (4.8.1): had the load landed at the tap? This is the answer the gate
+        // used to arm on, kept as the `warm_now=` term of the gate line so the "why no words?"
+        // grep still says whether the engine was warm at the instant asked — and so that
+        // `warm_now=0 -> preview=1` is the proof, on a device walk (AF6-fresh), that the fix was
+        // exercised rather than missed. Nothing reads it but the log line.
+        val previewWarmNow = packToWarm != null && preview?.isWarmFor(packToWarm) == true
         val previewArmed = localPreviewArms(
             sessionLanguage = previewLanguage,
             installedPackLanguages = installedPreviewLanguages,
@@ -4510,7 +4547,7 @@ class FloatingBubbleService : Service(),
             "WE-DIAG",
             com.whispereverywhere.transcription.stream.StreamDiag.gateLine(
                 previewLanguage, packInstalled, cloudWrapper != null, BatchJobController.active != null,
-                userEnabled, previewReady, previewArmed,
+                userEnabled, previewReady, previewWarmNow, previewArmed,
             ),
         )
         sessionHasLocalPreview = previewArmed

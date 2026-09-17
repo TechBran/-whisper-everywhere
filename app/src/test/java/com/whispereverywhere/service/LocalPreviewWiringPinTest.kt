@@ -1107,9 +1107,24 @@ class LocalPreviewWiringPinTest {
             0, count(text, "previewReady = packToWarm != null && preview?.isWarmFor"),
         )
         assertEquals(
-            "isWarmFor is read in startRecording for exactly one purpose now — the card's " +
-                "retirement in onOpen — and never for the arm",
-            1, count(startRecording, "isWarmFor("),
+            "isWarmFor is read in startRecording for exactly two purposes now — the `warm_now=` " +
+                "diagnostic on the gate line and the card's retirement in onOpen — and never for " +
+                "the arm",
+            2, count(startRecording, "isWarmFor("),
+        )
+        val warmNow = indexOfOrFail(
+            startRecording,
+            "        val previewWarmNow = packToWarm != null && preview?.isWarmFor(packToWarm) == true\n",
+        )
+        assertTrue("the diagnostic is taken beside the term, after it", ready < warmNow)
+        assertEquals(
+            "and it goes to the log line only, as the term between ready= and the outcome",
+            1, count(startRecording, "                userEnabled, previewReady, previewWarmNow, previewArmed,\n"),
+        )
+        assertEquals("nothing else reads it", 2, count(startRecording, "previewWarmNow"))
+        assertEquals(
+            "the sentence that named the defect as a design is gone from this file",
+            0, count(text, "because warm() is asynchronous and the gate reads"),
         )
         // THE ORDER THE TERM RESTS ON: warm posted, term read, tee built, connect (which posts open).
         val warm = indexOfOrFail(startRecording, "warmStreamingPreview(residency.pack)")

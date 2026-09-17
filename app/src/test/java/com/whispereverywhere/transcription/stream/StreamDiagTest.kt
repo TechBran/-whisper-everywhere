@@ -1,6 +1,7 @@
 package com.whispereverywhere.transcription.stream
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The three greppable lines, byte-exact (SegmentTimingTest's discipline). Numbers and codes only — never text. */
@@ -43,13 +44,35 @@ class StreamDiagTest {
 
     @Test fun gateLineMatchesTheGreppableFormatExactly() {
         assertEquals(
-            "stream-gate: lang=en pack=1 cloud=0 batch=0 enabled=1 ready=1 -> preview=1",
-            StreamDiag.gateLine("en", true, false, false, true, true, true),
+            "stream-gate: lang=en pack=1 cloud=0 batch=0 enabled=1 ready=1 warm_now=1 -> preview=1",
+            StreamDiag.gateLine("en", true, false, false, true, true, true, true),
         )
         assertEquals(
-            "stream-gate: lang=auto pack=1 cloud=0 batch=0 enabled=1 ready=1 -> preview=0",
-            StreamDiag.gateLine(null, true, false, false, true, true, false),
+            "stream-gate: lang=auto pack=1 cloud=0 batch=0 enabled=1 ready=1 warm_now=1 -> preview=0",
+            StreamDiag.gateLine(null, true, false, false, true, true, true, false),
         )
+    }
+
+    @Test fun theGateLineSaysWhetherTheLoadHadLandedAtTheTap_separatelyFromWhetherTheSessionArmed() {
+        // (4.8.1) `ready=` is the gate's TERM — an engine exists and the pack is not disabled,
+        // true while the load is still in flight — and `warm_now=` is the landed-warm snapshot the
+        // gate used to arm on. The fresh-install first session reads `ready=1 warm_now=0 ->
+        // preview=1`: the tap beat the load and the session armed anyway, which is the one line a
+        // device walk of AF6-fresh needs to prove the fix was exercised rather than missed.
+        assertEquals(
+            "stream-gate: lang=en pack=1 cloud=0 batch=0 enabled=1 ready=1 warm_now=0 -> preview=1",
+            StreamDiag.gateLine("en", true, false, false, true, true, false, true),
+        )
+        // A verdict against the pack: the term is 0, the snapshot is 0, nothing arms.
+        assertEquals(
+            "stream-gate: lang=en pack=1 cloud=0 batch=0 enabled=1 ready=0 warm_now=0 -> preview=0",
+            StreamDiag.gateLine("en", true, false, false, true, false, false, false),
+        )
+        // Every pre-4.8.1 term keeps its name and its order; the new term sits between the
+        // readiness term and the outcome, so a grep anchored on either end still lands.
+        val line = StreamDiag.gateLine("en", true, true, true, false, true, true, false)
+        assertTrue(line.startsWith("stream-gate: lang=en pack=1 cloud=1 batch=1 enabled=0 ready=1 "))
+        assertTrue(line.endsWith(" warm_now=1 -> preview=0"))
     }
 
     @Test fun rtfIsZeroSafe() {

@@ -782,11 +782,15 @@ AF6. **Changing language in the app — REWRITTEN in 4.5.1, and it now expects t
     **Do this row with the bubble RUNNING**, because that sentence is about the engine and the bubble
     service is the only thing that owns one. With the bubble not running there is no engine in the
     process to ask, and the strip deliberately keeps 4.5.0's receipt as soon as the files land — in that
-    state it is a promise about the language being ready to SELECT, which is true, and the next bubble
-    start arms it through the prewarm (fix round 1, review r1's B1: reading *"nobody was asked"* as
-    *"not warm"* made the whole strip disappear the moment a download finished). So: bubble running →
+    state it is a promise about the language being ready to SELECT, which is true,
+    ~~and the next bubble start arms it through the prewarm~~ (fix round 1, review r1's B1: reading
+    *"nobody was asked"* as *"not warm"* made the whole strip disappear the moment a download
+    finished). So: bubble running →
     the receipt waits ~1 s for the warm; bubble not running → the receipt is immediate. Neither is this
-    row failing.
+    row failing — **but the struck clause is RETIRED BY 4.8.1 as an EXCUSE**: it handed the
+    bubble-not-running case to "the next bubble start" and never said which SESSION after that start
+    would show words. On a fresh install that is every user's first session, and it missed. See the
+    fresh-install rows below.
     FAIL: the first session after the install shows no words and the second does. That is 4.5.0's
     behaviour surviving.
     ~~NOTE two shapes that are **not** this row failing, both deliberate: an install that completes
@@ -822,6 +826,32 @@ AF6. **Changing language in the app — REWRITTEN in 4.5.1, and it now expects t
     from Settings — the app's memory should drop by roughly 169 MB on top of the 73 MB of files, because
     the recognizer opened from those files is handed back too. Before pass 2 fix round 1 only the files
     went and the 169 MB stayed until the app was backgrounded.
+    **4.8.1 — THE FRESH-INSTALL ORDER, the row this sheet never had.** Every walk above is scoped to
+    *"the bubble RUNNING"*, and the bubble-not-running case was handed to the struck clause. That case
+    is the fresh install — pack lands → bubble toggled → tap — on BOTH routes, and it is where the owner
+    met the miss on 2026-09-17 on a fresh sideloaded 4.8.0/97: *"after onboarding is completed I have to
+    tap to download the model … I still have to do one dictation before the preview model actually takes
+    effect."* His own re-run logcat is the mechanism: pack INSTALLED at **16:33:26**, bubble service
+    started at **16:33:43**, the previewer library loaded at 16:33:44.9, session 1 at **16:33:51** — 8 s
+    after the toggle, live words present. His failed first run was a tap inside the ~2.5-3.5 s after the
+    toggle, while the boot prewarm's load was still on the previewer's executor: onboarding never starts
+    the bubble service, the install collector drops the replayed record by design, and the wrap site
+    read `isWarmFor()` in the same Main pass that had posted the load — so the whole session ran without
+    live words, and the second worked because the load had landed in between. 4.8.1 arms the session on
+    the POSTED warm (the engine's single FIFO executor runs it before the session's `open()`), so the
+    strip fills the moment the load lands; onboarding still does not start the service, and nothing
+    about which pack warms or when has moved.
+    **AF6-fresh (sideload):** wipe data → onboarding → Home → tap the card → wait for INSTALLED →
+    toggle the bubble ON → tap the bubble **within 2 s** → speak. EXPECTED: live words in this FIRST
+    session (they may start a beat after the first syllable — the load lands during whisper's own cold
+    connect). FAIL: blank strip in session 1, words in session 2.
+    **AF6-fresh (Play):** the same walk without the card tap — the pack lands at onboarding's language
+    pick (AF5). Same expectation, same FAIL.
+    Walk both with the log open. The first `stream-gate:` line's timestamp against the `stream-open: …
+    loadMs= canary=` line is the window; **`warm_now=0` beside `ready=1 -> preview=1` on that gate line
+    is the proof the fix was EXERCISED** — the tap beat the load and the session armed anyway. A walk
+    that reads `warm_now=1` landed the tap after the load and proves nothing about this row: tap sooner.
+    `[ ] PASS  [ ] FAIL` (sideload)   `[ ] PASS  [ ] FAIL` (Play)
     `[ ] PASS  [ ] FAIL`
 AF7. **Auto is honest.** On Auto: nothing downloads, no card nags you, and the Settings rows say live
     words need a picked language. Your transcript still arrives per utterance exactly as before.

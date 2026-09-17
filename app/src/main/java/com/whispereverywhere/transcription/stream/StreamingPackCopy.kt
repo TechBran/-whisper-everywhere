@@ -1055,7 +1055,7 @@ object StreamingPackCopy {
      * > *"What can we do about having to transcribe a second time to get the live to work? … People
      * > are going to think that it doesn't work."*
      *
-     * The receipt said READY on *the files landed*, while the engine was cold and the gate reads
+     * The receipt said READY on *the files landed*, while the engine was cold and the gate read
      * `isWarmFor()` — so the promise was about a session TWO taps away. [warmth] closes it,
      * and the sentence is now true of the very next tap. It is only honest to assert because the
      * other half of this task made it reachable: the install's completion now warms the pack

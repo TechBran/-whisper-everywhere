@@ -148,7 +148,8 @@ class PreviewWarmTest {
         // arrival: the marker landed, the bytes are verified, `state()` answers `Installed`. In
         // 4.5.0 that alone printed *"English is ready: words appear on the bubble whenever you pick
         // it"*, and the very next tap showed nothing, because the engine was still cold and the
-        // gate reads `isWarmFor()` now.
+        // gate read `isWarmFor()` in the same breath (4.8.1 arms on the posted warm instead; the
+        // receipt here is still the engine's landed answer, which is the honest one to print).
         val installed = PreviewWork(
             language = "en",
             route = PreviewRoute.PLAY_FETCH,

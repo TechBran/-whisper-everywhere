@@ -1085,6 +1085,36 @@ class LocalPreviewGateTest {
             row.contains("Do this row with the bubble RUNNING") &&
                 row.contains("ready to SELECT"),
         )
+        // (4.8.1) THE FRESH-INSTALL ORDER — the row this sheet never had. Every walk above is
+        // scoped to "the bubble RUNNING", and the bubble-not-running case was handed to "the next
+        // bubble start arms it through the prewarm" and declared not a failure. That is the
+        // fresh-install path (pack lands → bubble toggled → tap), on BOTH routes, and it is exactly
+        // where the owner met the miss on 2026-09-17. The row carries his own logcat and the
+        // `warm_now=0` proof that the fix was exercised.
+        assertTrue(
+            "the fresh-install rows exist, one per route",
+            row.contains("4.8.1 — THE FRESH-INSTALL ORDER") &&
+                row.contains("AF6-fresh (sideload)") && row.contains("AF6-fresh (Play)"),
+        )
+        assertTrue(
+            "and they walk the tap INSIDE the prewarm's window, which is the whole row",
+            row.contains("toggle the bubble ON → tap the bubble **within 2 s**"),
+        )
+        assertTrue(
+            "the proof is on the gate line: warm_now=0 beside preview=1 means the tap beat the " +
+                "load and the session armed anyway",
+            row.contains("`warm_now=0`"),
+        )
+        assertTrue(
+            "the owner's device evidence is on the row — the pack, the service, the session",
+            row.contains("16:33:26") && row.contains("16:33:43") && row.contains("16:33:51"),
+        )
+        assertTrue(
+            "and the old expected-miss wording is struck through and named as retired, for AF2's " +
+                "reason: a tester who read it would accept the miss this build closes",
+            row.contains("~~and the next bubble start arms it through the prewarm") &&
+                row.contains("RETIRED BY 4.8.1"),
+        )
     }
 
     // ------------------------------------------------------------------ R3, the switch's default

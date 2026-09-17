@@ -1153,8 +1153,9 @@ class StreamingPackCopyTest {
         // > People are going to think that it doesn't work."*
         //
         // 4.5.0 printed this receipt on *the files landed*, while the engine was still cold and the
-        // session gate reads `isWarmFor()` — so *"words appear whenever you pick it"* was a promise
-        // about a session TWO taps away. Now it means the next tap.
+        // session gate read `isWarmFor()` in the same breath — so *"words appear whenever you pick
+        // it"* was a promise about a session TWO taps away. Now it means the next tap (and since
+        // 4.8.1 the gate arms on the posted warm, so even a tap that beats the load shows words).
         assertNull(
             "nothing is loaded: the bytes are on disk and the recognizer is not, which is the " +
                 "state the 4.5.0 sheet's AF6 told the owner to expect",
