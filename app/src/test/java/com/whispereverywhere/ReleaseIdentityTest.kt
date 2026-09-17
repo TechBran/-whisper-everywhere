@@ -112,6 +112,19 @@ import org.junit.Test
  * hides a finalizer that falls behind, so a rung must earn production with a number. Every bump
  * still re-arms GpuPolicy's canary latches (below), unchanged.
  *
+ * **versionCode 96 = 4.7.0 — the MINOR moves, because the ladder changes from instruments to a
+ * ruling.** 95 went to the internal track and a sideloaded tablet as 4.6.0 and is spent there. On
+ * 2026-09-17 five of its rungs were timed on the owner's Tab S10+
+ * (`docs/measurements/2026-09-17-tab-cpu-ladder.md`) and the owner ruled the same day: Q8 for
+ * everything, every Q5 rung off the table. 96 is what a user sees change: the chooser is three Q8
+ * rungs, the default moves from the 190 MB Q5_1 small to the 264 MB Q8_0 small (the same weights,
+ * 2.2x faster per commit on that tablet), medium Q8_0 is recommended above a provisional RAM
+ * threshold, and large-v3-turbo Q8_0 stays an instrument — it kept up with no margin. **It is
+ * still NOT production-promotable**: `TierThroughputRecord.PRODUCTION_PROMOTABLE` is EMPTY, on the
+ * owner's word that the accuracy pass on small and medium comes first, so 96 goes to the internal
+ * track and the sideloaded tablet only. Every bump still re-arms GpuPolicy's canary latches
+ * (below), unchanged.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -132,15 +145,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_6_0_at_version_code_95() {
+    fun release_identity_is_4_7_0_at_version_code_96() {
         assertEquals(
-            "versionName must be 4.6.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.6.0",
+            "versionName must be 4.7.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.7.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 95 for this release (app/build.gradle.kts defaultConfig)",
-            95,
+            "versionCode must be 96 for this release (app/build.gradle.kts defaultConfig)",
+            96,
             BuildConfig.VERSION_CODE,
         )
     }
