@@ -104,6 +104,14 @@ import org.junit.Test
  * its attribution shipping**, which a test now holds: drop `KsponSpeech` or `aihub.or.kr` from the
  * notices and the suite goes red. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 95 = 4.6.0 — the MINOR moves, because the chooser changes shape.** 94 went to
+ * production as 4.5.2. 95 retires the last English-only rung, moves the default to the multilingual
+ * small model, and adds six INSTRUMENT rungs the owner will measure on six devices. **It is NOT
+ * production-promotable as built**: `TierThroughput` withholds promotion while any selectable rung
+ * carries no measured verdict, and every instrument does. That gate is the point — the previewer
+ * hides a finalizer that falls behind, so a rung must earn production with a number. Every bump
+ * still re-arms GpuPolicy's canary latches (below), unchanged.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -124,15 +132,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_5_2_at_version_code_94() {
+    fun release_identity_is_4_6_0_at_version_code_95() {
         assertEquals(
-            "versionName must be 4.5.2 for this release (app/build.gradle.kts defaultConfig)",
-            "4.5.2",
+            "versionName must be 4.6.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.6.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 94 for this release (app/build.gradle.kts defaultConfig)",
-            94,
+            "versionCode must be 95 for this release (app/build.gradle.kts defaultConfig)",
+            95,
             BuildConfig.VERSION_CODE,
         )
     }
