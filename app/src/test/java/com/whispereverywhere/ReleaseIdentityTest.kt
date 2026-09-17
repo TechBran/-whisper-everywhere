@@ -165,9 +165,15 @@ import org.junit.Test
  * ladder is AUTHORISED for production — `TierThroughputRecord.PRODUCTION_PROMOTABLE` names all
  * three, `ultra-q8` clearing on his ruling recorded beside its unchanged KEPT_UP_WITHOUT_MARGIN row,
  * so the gate reports `Promotable` for the first time since it was built. 4.8.1's first-session fix
- * rides along, and the tee now falls back to whisper's own deltas when the previewer cannot open, so
- * a session over a failed load is never blank for its whole length. Every bump still re-arms
- * GpuPolicy's canary latches (below) — and this is not a bump, so nothing re-arms.
+ * rides along, and a session armed over a previewer that cannot open is no longer blank for its
+ * whole length: the tee reports it, and the service returns that session to the ordinary in-flight
+ * label (on CPU and NPU alike — the NPU tier has no whisper deltas to fall back on). And the
+ * canary latches: GpuPolicy keys its crash sentinels and validated flags on
+ * `BuildConfig.VERSION_CODE` (GpuPolicy.kt:101, :275) and re-trials once on any code it has not
+ * seen, so what matters is not whether 98 is "a bump" relative to the never-shipped 4.8.1/98 (it is
+ * not — nothing changes there) but that 98 has never been INSTALLED anywhere: every device that
+ * receives it — the tablet on 97, production on 86 — sees a new code and re-arms on first launch,
+ * exactly as on every bump (below).
  *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real

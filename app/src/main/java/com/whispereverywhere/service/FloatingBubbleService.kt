@@ -1109,10 +1109,13 @@ class FloatingBubbleService : Service(),
     // inject). Batch/on-device sessions leave it false, so their behavior is byte-unchanged.
     @Volatile private var sessionIsLive = false
 
-    // 4.4.0 P0: frozen per session at the one wrap site in startRecording (Task 7 of the
+    // 4.4.0 P0: set per session at the one wrap site in startRecording (Task 7 of the
     // streaming-previewer plan sets it; this commit only declares and resets it). True only when a
-    // PreviewTeeEngine is this session's engine. Read by onDelta, the render and delivery through
-    // the four pure rules above — never directly.
+    // PreviewTeeEngine is this session's engine AND its previewer could open: (4.9) the tee's
+    // onUnavailable hook (`onPreviewUnavailable`) clears it mid-session when the previewer
+    // reports at open that it has nothing to serve the session with, so the strip falls back to
+    // the in-flight label instead of staying blank. Read by onDelta, the render and delivery
+    // through the four pure rules above — never directly.
     @Volatile private var sessionHasLocalPreview = false
 
     // The live WS transport + reconnect executor, held for the service's life for the SAME reason
@@ -4503,14 +4506,26 @@ class FloatingBubbleService : Service(),
         // precede the load by up to ~1 s: those chunks are shed (bounded by the queue) and words
         // appear the moment the load lands — still live words in the first session. A load or
         // canary that FAILS between here and `open()` no longer costs that session its strip
-        // (4.9 — the trade the concurrency reviewer put on record at 4.8.1 is CLOSED): `open()`
-        // finds no recognizer and hands the tee `onUnavailable` (engine:412-415), the tee's
-        // `Relay` switches to PASS-THROUGH and forwards whisper's own `onDelta` for the rest of
-        // the session (tee:137-140) — the ordinary pre-4.8.1 in-flight strip — one-way, never
-        // back to swallowing mid-session, with the composer silenced so the two never paint one
-        // strip (`PreviewTeeEngineTest`, both over a fake and over the real engine's FIFO). The
-        // accepted three-strike MID-session disable keeps its blank: it fires after `open()`, and
-        // the tee is not told. `isDisabled(packToWarm)` still refuses the pack for the rest
+        // (4.9 — the trade the concurrency reviewer put on record at 4.8.1 is CLOSED, on BOTH
+        // tiers): `open()` finds no recognizer and hands the tee `onUnavailable` (engine:412-415);
+        // the tee switches its `Relay` to pass-through AND calls `onPreviewUnavailable` (below)
+        // with itself, which — for the session that still owns it — clears
+        // `sessionHasLocalPreview`. THAT is the mechanism, and the reason is in the strip rules:
+        // while the flag stands, `renderInFlightStrip` returns before painting and `onDelta`
+        // drops every delta at the 3.7 G gate, so whisper's forwarded deltas alone would change
+        // nothing on screen; and on the NPU tier there ARE no deltas to forward
+        // (`NpuWhisperBackend.transcribeStreaming`'s live arm is a plain transcribe), so the
+        // whole 8 Gen 3-class fleet would have kept the blank. With the flag cleared the session
+        // is the ordinary non-preview local session: the "Transcribing… (N in queue)" label
+        // paints from the next commit, whisper's deltas are dropped exactly as they are for any
+        // local session since 3.7 G — the pre-4.8.1 strip, on CPU and NPU alike. The tee's
+        // pass-through stays as the honest engine contract (`PreviewTeeEngineTest`, both over a
+        // fake and over the real engine's FIFO) and is not what this service renders. The flip
+        // does not repaint on its own (a fifth `renderInFlightStrip` caller is a census decision
+        // this round declined): a segment committed before the report lands keeps its blank until
+        // its resolution, which repaints through delivery. The accepted three-strike MID-session
+        // disable keeps its blank: it fires after `open()`, and the tee is not told.
+        // `isDisabled(packToWarm)` still refuses the pack for the rest
         // of the process: both failures reach `disable(pack)` (engine:350 for a load that throws,
         // :398 for a canary Fail/NoClip), the one writer of the per-language set, and `onDisabled`
         // publishes the verdict through `PreviewDisabled` (:3954). ONLY a load that THROWS also
@@ -4583,7 +4598,7 @@ class FloatingBubbleService : Service(),
         // `engineReady`), so "armed AND opened" is the earliest moment a word can have appeared,
         // which is the claim the flag makes.
         val engine: TranscriptionEngine = if (previewArmed) {
-            com.whispereverywhere.transcription.stream.PreviewTeeEngine(requireNotNull(preview), baseEngine)
+            com.whispereverywhere.transcription.stream.PreviewTeeEngine(requireNotNull(preview), baseEngine, onUnavailable = ::onPreviewUnavailable)
                 .also { transcriptionEngine = it }
         } else {
             baseEngine
@@ -5443,6 +5458,32 @@ class FloatingBubbleService : Service(),
         // for a commit that cut nothing, which cannot have changed the depth.
         if (commitAdvancesQueueDepth(seq)) serviceScope.launch(Dispatchers.Main) { renderInFlightStrip() }
         return seq
+    }
+
+    /**
+     * (4.9) THE PREVIEWER COULD NOT OPEN FOR THIS SESSION — the tee's `onUnavailable` hook, and
+     * the ONE place `sessionHasLocalPreview` is cleared mid-session. Runs on the previewer's
+     * executor, once per session that reports it, the moment the tee has switched to
+     * pass-through.
+     *
+     * Why the flag and not the tee's forwarded deltas: every strip rule keys on this flag, and
+     * while it stands the session is rendered as a local-preview one — `renderInFlightStrip`
+     * returns before painting the label and `onDelta` drops whisper's deltas at the 3.7 G gate —
+     * so a tee that forwards whisper's deltas changes nothing on screen; and on the NPU tier
+     * whisper emits no deltas at all. Clearing the flag makes the session the ordinary
+     * non-preview local session (the "Transcribing… (N in queue)" label, deltas dropped), which
+     * is what this session showed before 4.8.1, on CPU and NPU alike.
+     *
+     * The identity check is load-bearing: `open()` is a task posted on the previewer's FIFO, so
+     * a session that was armed and stopped before its `open` ran reports AFTER the next session
+     * has already written its own gate answer at the wrap site. `transcriptionEngine` is
+     * re-pointed at each session's tee at that same site, before `connect` posts `open`, so a
+     * report from any tee but the current one is a stale session's and must not touch the flag.
+     */
+    private fun onPreviewUnavailable(tee: com.whispereverywhere.transcription.stream.PreviewTeeEngine) {
+        if (transcriptionEngine !== tee) return
+        sessionHasLocalPreview = false
+        android.util.Log.i("WE-DIAG", "stream-unavailable: previewer could not open -> in-flight label owns the strip for this session")
     }
 
     /**

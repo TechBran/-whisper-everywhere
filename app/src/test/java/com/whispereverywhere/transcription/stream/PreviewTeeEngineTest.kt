@@ -19,8 +19,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * as today; the previewer only paints. Pinned here: the sendAudio order (local FIRST — the
  * CapSeamPinTest order), the freeze under LOCAL's seq, the swallowed local deltas, the
  * pass-through of resolutions BEFORE the recomposed delta, the lifecycle delegation, and (4.9)
- * the fallback to whisper's own deltas when the previewer reports it cannot open — from that
- * moment on, one-way, and never both sources on one strip.
+ * what happens when the previewer reports it cannot open: the owner is TOLD through the tee's
+ * `onUnavailable` hook, once, with the tee (the signal the service clears its session flag on —
+ * the part that closes the blank on the NPU tier, where whisper has no deltas), and whisper's
+ * own deltas pass through from that moment on, one-way, never both sources on one strip.
  */
 class PreviewTeeEngineTest {
 
@@ -110,7 +112,9 @@ class PreviewTeeEngineTest {
     private val local = FakeLocal()
     private val preview = FakePreview()
     private val owner = Owner()
-    private val tee = PreviewTeeEngine(preview, local)
+    /** (4.9) Every `onUnavailable` report this test's tee made, in order — one per failed session. */
+    private val unavailable = mutableListOf<PreviewTeeEngine>()
+    private val tee = PreviewTeeEngine(preview, local, onUnavailable = { unavailable += it })
     private val pcm = byteArrayOf(1, 0, 2, 0)
 
     private fun connected(): PreviewTeeEngine { tee.connect("en", owner); return tee }
@@ -173,22 +177,33 @@ class PreviewTeeEngineTest {
         assertEquals(listOf("hello"), owner.deltas)
         local.delta(" Hello there")
         assertEquals(listOf("hello"), owner.deltas)
+        assertTrue("and the owner was never told the previewer is unavailable", unavailable.isEmpty())
+        assertFalse(tee.previewUnavailable)
     }
 
     /**
      * (4.9) THE TEE OVER A PREVIEWER THAT CANNOT OPEN — the trade 4.8.1 recorded, closed. The
      * previewer reports at `open` that it has nothing to serve this session with (the real
      * engine's `open()` finding no recognizer after a warm that threw or a canary that failed);
-     * from that moment whisper's own deltas go through to the owner and the composer is silent —
-     * never both. A freeze and a resolution still pass through `local`'s seq exactly as before,
-     * and neither paints: the strip is whisper's alone. One-way within the session; a new session
-     * over a previewer that CAN open starts swallowing again.
+     * from that moment the OWNER IS TOLD — `onUnavailable` fires once, with this tee, after the
+     * switch is already made — whisper's own deltas go through to the owner and the composer is
+     * silent — never both. A freeze and a resolution still pass through `local`'s seq exactly as
+     * before, and neither paints: the strip is whisper's alone. One-way within the session; a new
+     * session over a previewer that CAN open starts swallowing again and reports nothing.
+     *
+     * The hook is the load-bearing half for the service: its strip rules key on a per-session
+     * flag, not on which engine emits deltas, and on the NPU tier `local` emits none at all — so
+     * the forwarded deltas alone would leave that fleet's strip blank. The service clears the flag
+     * on this hook (FloatingBubbleService `onPreviewUnavailable`, pinned in
+     * LocalPreviewWiringPinTest).
      */
     @Test fun aTeeOverAPreviewerThatCannotOpenForwardsWhispersDeltasFromThenOnAndNeverBoth() {
         preview.unavailableAtOpen = true
         connected()
         assertEquals(listOf("preview.open", "local.connect"), order)
         assertEquals("local connected and the owner heard onOpen, untouched", 1, owner.opened)
+        assertEquals("the owner was told ONCE, with this tee", listOf(tee), unavailable)
+        assertTrue("and the switch was already made when it was told", tee.previewUnavailable)
         // Whisper's in-flight strip — the pre-4.8.1 shape — reaches the owner.
         local.delta(" Hello")
         local.delta(" Hello there")
@@ -217,10 +232,18 @@ class PreviewTeeEngineTest {
         preview.unavailableAtOpen = false
         val second = Owner()
         tee.connect("en", second)
+        assertFalse("the switch is per session", tee.previewUnavailable)
         local.delta(" Second")
         assertTrue("swallowed again — the switch is per session", second.deltas.isEmpty())
         preview.partial("second")
         assertEquals(listOf("second"), second.deltas)
+        assertEquals("no second report: the previewer opened this time", listOf(tee), unavailable)
+
+        // And a THIRD session over a previewer that fails again reports again — once per session.
+        tee.close()
+        preview.unavailableAtOpen = true
+        tee.connect("en", Owner())
+        assertEquals(listOf(tee, tee), unavailable)
     }
 
     /**
@@ -240,16 +263,20 @@ class PreviewTeeEngineTest {
         )
         previewer.warm(File("unused"), StreamingPackCatalog.EN)      // posted — the wrap site's shape
         assertFalse("no verdict yet: the 4.8.1 gate arms over this load", previewer.isDisabled(StreamingPackCatalog.EN))
-        val cold = PreviewTeeEngine(previewer, local)
+        val told = mutableListOf<PreviewTeeEngine>()
+        val cold = PreviewTeeEngine(previewer, local, onUnavailable = { told += it })
         cold.connect("en", owner)                                    // open() posts BEHIND the warm
         assertEquals(1, owner.opened)
         repeat(5) { now += 32; cold.sendAudio(ByteArray(1024)) }
         local.delta(" Early")                                        // before the load lands: swallowed, as on a warm session
         assertTrue(owner.deltas.isEmpty())
+        assertTrue("nothing reported while the load is merely in flight", told.isEmpty())
 
         exec.runAll()                                                // the load THROWS, then open finds no recognizer
         assertTrue("the pack is off for the process", previewer.isDisabled(StreamingPackCatalog.EN))
         assertTrue("nothing painted by the failure itself", owner.deltas.isEmpty())
+        assertEquals("the owner was told once, with the tee, on the FIFO after the failure", listOf(cold), told)
+        assertTrue(cold.previewUnavailable)
         local.delta(" Hello")                                        // whisper's in-flight strip, from here on
         assertEquals(listOf(" Hello"), owner.deltas)
         repeat(5) { now += 32; cold.sendAudio(ByteArray(1024)); exec.runAll() }

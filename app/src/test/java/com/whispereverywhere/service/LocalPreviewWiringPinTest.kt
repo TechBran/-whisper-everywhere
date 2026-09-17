@@ -146,7 +146,7 @@ class LocalPreviewWiringPinTest {
         val lang = indexOfOrFail(startRecording, "        val lang = sessionLanguageFor(\n")
         val gate = indexOfOrFail(startRecording, "        val previewArmed = localPreviewArms(\n")
         val flag = indexOfOrFail(startRecording, "        sessionHasLocalPreview = previewArmed\n")
-        val wrap = indexOfOrFail(startRecording, "PreviewTeeEngine(requireNotNull(preview), baseEngine)")
+        val wrap = indexOfOrFail(startRecording, "PreviewTeeEngine(requireNotNull(preview), baseEngine, onUnavailable = ::onPreviewUnavailable)")
         val repoint = indexOfOrFail(startRecording, ".also { transcriptionEngine = it }")
         val connect = indexOfOrFail(startRecording, "        engine.connect(lang, object : TranscriptionEngine.Listener {")
         assertTrue("whisper's language resolves above the gate", lang < gate)
@@ -154,7 +154,7 @@ class LocalPreviewWiringPinTest {
         assertTrue("the tee is built after the flag", flag < wrap)
         assertTrue("and transcriptionEngine is re-pointed at it, so the capture callback, the funnel and the stop path all see the tee", wrap < repoint)
         assertTrue("connect runs on the wrapped engine", repoint < connect)
-        assertEquals("ONE wrap site", 1, count(text, "PreviewTeeEngine(requireNotNull(preview), baseEngine)"))
+        assertEquals("ONE wrap site", 1, count(text, "PreviewTeeEngine(requireNotNull(preview), baseEngine, onUnavailable = ::onPreviewUnavailable)"))
         assertEquals("ONE gate call", 1, count(text, "= localPreviewArms(\n"))
         assertEquals("the base engine is resolved exactly as before, under a new name", 1, count(text, "val baseEngine: TranscriptionEngine = resolveTranscriptionEngine()"))
     }
@@ -236,7 +236,41 @@ class LocalPreviewWiringPinTest {
     fun theFlagIsAssignedTheGatesAnswerAndNeverAConstant() {
         assertEquals(1, count(text, "sessionHasLocalPreview = previewArmed"))
         assertEquals("never a literal true", 0, count(text, "sessionHasLocalPreview = true"))
-        assertEquals("the one reset (Task 1's), 8-space indented — the declaration's `= false` is not this", 1, count(text, "        sessionHasLocalPreview = false\n"))
+        assertEquals(
+            "TWO 8-space-indented clears — Task 1's per-session reset and (4.9) the mid-session " +
+                "clear in onPreviewUnavailable; the declaration's `= false` is neither",
+            2, count(text, "        sessionHasLocalPreview = false\n"),
+        )
+    }
+
+    /**
+     * (4.9) THE PREVIEWER-UNAVAILABLE HOOK IS WIRED, AND IT CLEARS THE FLAG FOR THE CURRENT
+     * SESSION ONLY. The tee's pass-through alone closes nothing on screen: every strip rule keys on
+     * `sessionHasLocalPreview`, so while it stands the render returns before the label and onDelta
+     * drops whisper's deltas — and on the NPU tier whisper emits none. The wrap site hands the tee
+     * `::onPreviewUnavailable`; the hook checks the tee is the engine this session holds (a stale
+     * session's posted `open` can report after the next session armed) and then clears the flag.
+     * Nothing else in the file may clear it mid-session.
+     */
+    @Test
+    fun thePreviewUnavailableHookClearsTheFlagForTheCurrentSessionOnly() {
+        assertEquals("ONE wrap site, and it passes the hook", 1, count(text, "onUnavailable = ::onPreviewUnavailable"))
+        val hook = body(
+            "    private fun onPreviewUnavailable(tee: com.whispereverywhere.transcription.stream.PreviewTeeEngine) {",
+            "\n    }\n",
+        )
+        val guard = indexOfOrFail(hook, "        if (transcriptionEngine !== tee) return\n")
+        val clear = indexOfOrFail(hook, "        sessionHasLocalPreview = false\n")
+        assertTrue("the identity guard comes before the clear", guard < clear)
+        assertEquals(
+            "the hook holds ONE clear; the other 8-space one is resolveTranscriptionEngine's reset",
+            1, count(hook, "        sessionHasLocalPreview = false\n"),
+        )
+        assertEquals("and it is a clear, never a set", 0, count(hook, "sessionHasLocalPreview = true"))
+        // The pass-through in the tee is NOT what this service renders: whisper's deltas are still
+        // dropped at onDelta's 3.7 G gate once the flag is down, which is the pre-4.8.1 shape. The
+        // hook logs so the "why plain strip?" grep has a line to find.
+        assertTrue(hook.contains("stream-unavailable:"))
     }
 
     @Test
@@ -1129,7 +1163,7 @@ class LocalPreviewWiringPinTest {
         // THE ORDER THE TERM RESTS ON: warm posted, term read, tee built, connect (which posts open).
         val warm = indexOfOrFail(startRecording, "warmStreamingPreview(residency.pack)")
         val gate = indexOfOrFail(startRecording, "        val previewArmed = localPreviewArms(\n")
-        val wrap = indexOfOrFail(startRecording, "PreviewTeeEngine(requireNotNull(preview), baseEngine)")
+        val wrap = indexOfOrFail(startRecording, "PreviewTeeEngine(requireNotNull(preview), baseEngine, onUnavailable = ::onPreviewUnavailable)")
         val connect = indexOfOrFail(startRecording, "        engine.connect(lang, object : TranscriptionEngine.Listener {")
         assertTrue("the warm for THIS pack is posted before the term is read", warm < ready)
         assertTrue("the term feeds the gate", ready < gate)

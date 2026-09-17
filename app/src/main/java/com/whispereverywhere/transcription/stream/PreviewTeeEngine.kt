@@ -21,17 +21,31 @@ import com.whispereverywhere.transcription.TranscriptionEngine
  *    LocalWhisperEngine.kt:600 would blank the strip under the previewer's words). After a
  *    resolution is forwarded, the composer drops that seq's frozen prefix and the shrunken strip
  *    is emitted — resolution first, so delivery timing is byte-identical to today.
- *  - **(4.9) PASS-THROUGH when the previewer cannot open.** 4.8.1 arms the session on the POSTED
- *    warm, so this tee can be connected over a load that then throws or a canary that fails; the
- *    concurrency reviewer put on record that such a session showed NOTHING on the strip for its
- *    whole length — the Relay swallowed whisper's deltas and no partial ever came. Closed: the
- *    previewer's `open` reports it cannot open (`LocalPreview.open`'s `onUnavailable` — the
- *    engine calls it when `open()` finds no recognizer, which is exactly the state a failed load
- *    or canary leaves behind on its FIFO), the Relay switches to pass-through and forwards
- *    whisper's `onDelta` for the rest of the session — the ordinary pre-4.8.1 in-flight strip —
- *    and the composer is silenced, so the two never paint the same strip. ONE-WAY within a
- *    session: nothing switches it back to swallowing mid-session; [connect] resets it for the
- *    next session, which opens on its own merits.
+ *  - **(4.9) THE PREVIEWER CANNOT OPEN: the owner is TOLD, and the Relay passes through.**
+ *    4.8.1 arms the session on the POSTED warm, so this tee can be connected over a load that
+ *    then throws or a canary that fails; the concurrency reviewer put on record that such a
+ *    session showed NOTHING on the strip for its whole length — the Relay swallowed whisper's
+ *    deltas and no partial ever came. The signal is the previewer's `open` reporting it cannot
+ *    open (`LocalPreview.open`'s `onUnavailable` — the engine calls it when `open()` finds no
+ *    recognizer, which is exactly the state a failed load or canary leaves behind on its FIFO).
+ *    Two things happen, in this order, on the previewer's executor:
+ *      1. the Relay switches to PASS-THROUGH — whisper's `onDelta` reaches the owner for the
+ *         rest of the session and the composer is silenced, so the two never paint one strip.
+ *         ONE-WAY within a session: nothing switches it back mid-session; [connect] resets it
+ *         for the next session, which opens on its own merits.
+ *      2. [onUnavailable] is invoked with this tee, so the OWNER can stop treating the session
+ *         as one with a local preview. This hook is what closes the blank, not the
+ *         pass-through: the service's strip rules (`deltaOwnsPreviewStrip`,
+ *         `inFlightStripLabel`) key on a per-session flag set at the wrap site, and while it
+ *         says "local preview" the service paints no in-flight label and drops every delta on
+ *         the floor anyway (FloatingBubbleService `onDelta`, the 3.7 G gate) — and on the NPU
+ *         tier `local` emits NO deltas at all (`NpuWhisperBackend.transcribeStreaming`'s live
+ *         arm is a plain transcribe), so pass-through alone would leave that whole fleet
+ *         exactly as blank as before. The service answers the hook by clearing the flag, which
+ *         restores the ordinary non-preview session: the "Transcribing… (N in queue)" label,
+ *         whisper's deltas dropped, on CPU and NPU alike — the pre-4.8.1 strip. The
+ *         pass-through remains the honest ENGINE contract (an owner that does render deltas
+ *         sees what `local` alone would have shown) and is not what the service renders.
  *  - the composer is the ONE `onDelta` source (outside pass-through); its three writers (preview
  *    executor: partial, freeze; local executor: resolve) are serialised under [composerLock] —
  *    and so is the DELIVERY, which is the part that makes the strip's order match the composer's.
@@ -44,6 +58,15 @@ class PreviewTeeEngine(
     private val preview: LocalPreview,
     private val local: TranscriptionEngine,
     private val composer: PreviewComposer = PreviewComposer(),
+    /**
+     * (4.9) Invoked ONCE per session, with this tee, on the previewer's executor, the moment the
+     * previewer reports it cannot open for the session — AFTER [passThrough] is set, so an owner
+     * that reads the tee back sees the switch already made. Never invoked for a session whose
+     * previewer opened. The owner should compare the argument with the engine it currently holds:
+     * `open()` is a posted task, so a stale session's report can land after the next session has
+     * been armed.
+     */
+    private val onUnavailable: (PreviewTeeEngine) -> Unit = {},
 ) : TranscriptionEngine {
 
     @Volatile private var listener: TranscriptionEngine.Listener? = null
@@ -57,13 +80,19 @@ class PreviewTeeEngine(
      */
     @Volatile private var passThrough = false
 
+    /** (4.9) True from the previewer's "cannot open" report until the next [connect]. */
+    val previewUnavailable: Boolean get() = passThrough
+
     override fun connect(language: String?, listener: TranscriptionEngine.Listener) {
         this.listener = listener
         passThrough = false
         synchronized(composerLock) { composer.reset() }
         preview.open(
             onPartial = { partial -> emit { composer.onPartial(partial) } },
-            onUnavailable = { passThrough = true },
+            onUnavailable = {
+                passThrough = true
+                onUnavailable(this)
+            },
         )
         local.connect(language, Relay(listener))
     }

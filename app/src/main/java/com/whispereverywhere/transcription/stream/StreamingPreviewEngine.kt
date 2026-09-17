@@ -20,7 +20,10 @@ import java.util.concurrent.LinkedBlockingQueue
  * what a failed warm leaves behind, and what `isDisabled(pack)` flipping true before or at open
  * looks like from inside `open()` — and never when the load simply has not landed yet, because
  * on the single FIFO the warm has ALWAYS run by the time `open` does. The tee answers by
- * forwarding whisper's own deltas for the rest of the session. The one-argument overload is the
+ * switching its Relay to pass-through AND telling its owner (`PreviewTeeEngine`'s
+ * `onUnavailable` hook); the owner is what closes the blank — the service clears the session's
+ * local-preview flag, which returns the strip to the ordinary in-flight label on CPU and NPU
+ * alike (the NPU tier has no whisper deltas to forward). The one-argument overload is the
  * pre-4.9 call, kept for callers that do not want the signal.
  */
 interface LocalPreview {
@@ -272,10 +275,11 @@ class StreamingPreviewEngine(
      * transcript is `local`'s alone by the tee's construction. A verdict that lands BETWEEN this
      * read and [open] (a canary Fail on the first load of a corrupt pack, or a load that throws)
      * used to leave that one session with a blank strip; since 4.9 [open] finds no recognizer,
-     * reports it through `LocalPreview.open`'s `onUnavailable`, and the tee falls back to
-     * whisper's own in-flight deltas for the rest of that session — the pre-4.8.1 strip, never a
-     * throw. (The three-strike MID-session disable keeps its accepted blank: it happens after
-     * [open], and the tee is not told.)
+     * reports it through `LocalPreview.open`'s `onUnavailable`, the tee passes whisper's deltas
+     * through and tells its owner, and the service returns that session to the ordinary
+     * in-flight label — the pre-4.8.1 strip, on CPU and NPU alike, never a throw. (The
+     * three-strike MID-session disable keeps its accepted blank: it happens after [open], and
+     * the tee is not told.)
      */
     fun isDisabled(pack: StreamingPack): Boolean = pack.language in disabledLangs
 
@@ -404,7 +408,8 @@ class StreamingPreviewEngine(
      * Posts the session's stream creation behind whatever is on the FIFO — the warm, if one was
      * posted ahead of it. (4.9) A null [recognizer] when the task runs is a previewer that cannot
      * serve this session — the warm threw, or the canary failed, or nothing was ever warmed — and
-     * [onUnavailable] says so, once, on this executor; the tee switches to whisper's deltas.
+     * [onUnavailable] says so, once, on this executor; the tee switches to pass-through and tells
+     * its owner, which returns the session to the ordinary in-flight strip.
      */
     override fun open(onPartial: (String) -> Unit, onUnavailable: () -> Unit) {
         this.onPartial = onPartial
