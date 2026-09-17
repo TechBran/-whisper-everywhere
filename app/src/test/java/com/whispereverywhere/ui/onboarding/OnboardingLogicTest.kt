@@ -903,6 +903,57 @@ class OnboardingLogicTest {
         assertTrue("medium-q8" in over && "ultra-q8" in over)
     }
 
+    // ---------------------------------------------------------------- steerFirst (the picker's lift)
+
+    @Test fun steer_first_lifts_the_steered_card_and_keeps_every_other_card_in_place() {
+        // The Settings picker's case: the full ladder, steered at medium over the gate. The
+        // ordering rule's head is small (the language/gate steer); the RAM rule's answer must
+        // lead, or the chip sits on the second card while the first wears nothing.
+        assertEquals(listOf("small-q8", "medium-q8", "ultra-q8"), cpuLineup)
+        val steer = OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, 12_000_000_000L)
+        assertEquals("medium-q8", steer)
+        assertEquals(listOf("medium-q8", "small-q8", "ultra-q8"), OnboardingLogic.steerFirst(cpuLineup, steer))
+        // Under the gate the steer is already the head: a no-op, byte for byte.
+        val under = OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, 3_700_000_000L)
+        assertEquals("small-q8", under)
+        assertEquals(cpuLineup, OnboardingLogic.steerFirst(cpuLineup, under))
+        // The last card lifted: the two it passed keep their relative order (stable).
+        assertEquals(listOf("ultra-q8", "small-q8", "medium-q8"), OnboardingLogic.steerFirst(cpuLineup, "ultra-q8"))
+    }
+
+    @Test fun steer_first_is_a_permutation_and_a_steer_off_the_lineup_changes_nothing() {
+        for (steer in cpuLineup + listOf("npu-turbo", "npu", "large-v3", "")) {
+            val out = OnboardingLogic.steerFirst(cpuLineup, steer)
+            assertEquals("same cards (steer=$steer)", cpuLineup.sorted(), out.sorted())
+            if (steer in cpuLineup) assertEquals("steer leads (steer=$steer)", steer, out.first())
+            else assertEquals("unknown steer is a no-op (steer=$steer)", cpuLineup, out)
+            assertEquals("the rest keep their order (steer=$steer)", cpuLineup.filter { it != steer }, out.filter { it != steer })
+        }
+        assertEquals(emptyList<String>(), OnboardingLogic.steerFirst(emptyList(), "medium-q8"))
+    }
+
+    @Test fun on_both_surfaces_the_same_device_is_steered_to_the_same_card_and_it_leads() {
+        // The whole point of the round: the flow (RAM-cut lineup) and the picker (full lineup,
+        // lifted) name ONE card per device, and it heads both lists. Walked over the RAM
+        // classes and every gate answer the two surfaces can be handed.
+        val rams = listOf(0L, 3_700_000_000L, gate - 1, gate, 5_600_000_000L, 12_000_000_000L)
+        val gates = listOf(emptySet(), setOf("npu"), setOf("npu-turbo"), setOf("npu", "npu-turbo"))
+        for (ram in rams) for (offered in gates) {
+            val ordered = ModelTierCopy.orderedForLanguageTagFor("en-US", offered)
+            val cpu = ModelTierCopy.steerIdForLanguageTagFor("en-US", offered)
+            // The flow: cut, then steer over the cut.
+            val flowLineup = OnboardingLogic.firstRunLineup(ordered, ram, emptySet())
+            val flowSteer = OnboardingLogic.firstRunSteer(flowLineup, cpu, ram)
+            // The picker: steer over the full list, then lift.
+            val pickerSteer = OnboardingLogic.firstRunSteer(ordered, cpu, ram)
+            val pickerLineup = OnboardingLogic.steerFirst(ordered, pickerSteer)
+            assertEquals("one steer per device (ram=$ram, offered=$offered)", flowSteer, pickerSteer)
+            assertEquals("the picker leads with it (ram=$ram, offered=$offered)", pickerSteer, pickerLineup.first())
+            assertEquals("the picker keeps the whole lineup (ram=$ram, offered=$offered)", ordered.sorted(), pickerLineup.sorted())
+            assertTrue("the flow shows it (ram=$ram, offered=$offered)", flowSteer in flowLineup)
+        }
+    }
+
     @Test fun the_gate_never_adds_a_card_and_never_reorders_one() {
         // A permutation-preserving FILTER, nothing more: whatever comes out was in, in the same
         // relative order. Walked over every RAM class and every installed subset of the ladder.

@@ -270,7 +270,7 @@ object ModelTierCopy {
      * offered; the owner's ruling of 2026-09-13 retires it (*"we should really only be showing
      * only multi language models, period"*). A steer at a retired tier is not a steer — it is a
      * card the chooser does not render, so `orderedForLanguageTagFor` would lift nothing to the
-     * front and [STEER_BADGE] would appear on no card at all for every English user.
+     * front and the steer chip would appear on no card at all for every English user.
      *
      * **The 3.7 rule this replaces is SATISFIED, not abandoned.** Its point was the Bengali
      * review: never land a user on a tier that is worse for the language they actually speak.
@@ -358,7 +358,10 @@ object ModelTierCopy {
      * Every offered tier id with the [steerIdForLanguageTag] one FIRST (3.7, Workstream H). Both
      * chooser surfaces render this list, so the steer is one rule rather than two. It is a
      * permutation of [WhisperCatalog.pickable] by construction — a tier this object has never
-     * heard of still reaches the user, just not at the top.
+     * heard of still reaches the user, just not at the top. (Since 4.8.0 both surfaces then pass
+     * the steer through `OnboardingLogic.firstRunSteer` — the RAM rule — and the Settings picker
+     * re-lifts that answer with `OnboardingLogic.steerFirst`; the language/gate head this list
+     * leads with is the pre-RAM answer, which the flow's cut and the picker's lift both honour.)
      *
      * The ungated contract, unchanged: this is [orderedForLanguageTagFor] with the gate answered
      * with the empty set, which is the answer for every device that cannot run a gated tier.
@@ -431,22 +434,26 @@ object ModelTierCopy {
     }
 
     /**
-     * The chip marking the steered card. Names the REASON — "Default" alone never explained why
-     * this card and not the other one, and for a non-English user the catalog default and the
-     * right answer are different tiers.
-     */
-    const val STEER_BADGE = "Best match for your language"
-
-    /**
-     * The chip marking the steered card on the FIRST-RUN flow (4.8.0), where [STEER_BADGE] would
-     * name a reason that is not the reason. Since the owner's 2026-09-17 device rule the flow's
-     * steer is `OnboardingLogic.firstRunSteer`, and on no branch of it is language why the card
-     * is steered: over the 4.5 GB gate it is `medium-q8` by RAM and throughput margin, under it
-     * `small-q8` by RAM, and on an NPU-capable device the chip. The card already carries the
-     * reason where there is one to read — the RAM chip ("Recommended for your device"), the
-     * body's RAM sentence, the NPU tier's own copy — so this chip says only what is true on
-     * every branch: this is the app's pick, and the user still taps. The Settings picker keeps
-     * [STEER_BADGE]: its steer is still `steerIdForLanguageTagFor`, unfiltered by the RAM rule.
+     * The chip marking the steered card — on BOTH chooser surfaces, since the round after 4.8.0.
+     *
+     * Introduced for the first-run flow (4.8.0), hence the name: it names the first-run steer
+     * RULE (`OnboardingLogic.firstRunSteer`), which both surfaces now steer by, and on no branch
+     * of that rule is language why the card is steered: over the 4.5 GB gate it is `medium-q8`
+     * by RAM and throughput margin, under it `small-q8` by RAM, and on an NPU-capable device the
+     * chip. The card already carries the reason where there is one to read — the RAM chip
+     * ("Recommended for your device"), the body's RAM sentence, the NPU tier's own copy — so this
+     * chip says only what is true on every branch: this is the app's pick, and the user still
+     * taps.
+     *
+     * **The retired chip, "Best match for your language" (3.7 `STEER_BADGE`), is deleted, not
+     * kept.** It named a reason — "Default" alone never explained why this card and not the other
+     * one, and for a non-English user the catalog default and the right answer were different
+     * tiers — and the reason stopped being true at 4.6, when the last English-only rung retired
+     * and the CPU steer became one answer for every locale. The Settings picker rendered it
+     * until the same round that made its steer the RAM rule's; nothing read it after that, and
+     * a constant whose text no surface may truthfully show is a lie waiting for a reader. Both
+     * surfaces are pinned (ChooserSteerWiringPinTest) to render this constant and never that
+     * text.
      */
     const val FIRST_RUN_STEER_BADGE = "Our pick"
 }

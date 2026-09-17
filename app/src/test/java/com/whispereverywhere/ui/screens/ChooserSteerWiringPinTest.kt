@@ -33,8 +33,9 @@ import org.junit.Test
  *    WhisperCatalog.DEFAULT_MODEL_ID` restores exactly the Bengali-review defect: `DEFAULT_MODEL_ID`
  *    is `"pro"`, English-only, for everyone on earth.
  *  - *The parameter renamed back to `isDefault`.* It no longer means "default" — it means "steered",
- *    and after this task it drives `STEER_BADGE`. A name that contradicts its value outlives every
- *    comment, so the truthful name is pinned rather than merely commented (H3 review, m2b).
+ *    and after this task it drives the steer chip (`FIRST_RUN_STEER_BADGE` since the round after
+ *    4.8.0). A name that contradicts its value outlives every comment, so the truthful name is
+ *    pinned rather than merely commented (H3 review, m2b).
  *  - *The device locale dropped.* Both surfaces must pass a full `Locale.toLanguageTag()`; H3's
  *    battery row (a) measured that a bare language code hides separator/case bugs.
  *
@@ -607,22 +608,29 @@ class ChooserSteerWiringPinTest {
     }
 
     /**
-     * 4.8.0 — **THE FIRST-RUN RAM GATE IS WIRED ON THE FLOW AND NOT ON THE PICKER.** Owner ruling
-     * 2026-09-17: under 4.5 GB a fresh install is pushed to the smallest Q8 rung; over it the
-     * choice is medium and turbo; an NPU-capable device is untouched. `OnboardingLogicTest`
-     * executes the rule. What it cannot see is whether the guided flow asks it — on BOTH the
-     * lineup and the steer, with the SAME RAM read — and whether the Settings picker was
-     * accidentally given the same cut, which would take small Q8 away from a big-phone user who
-     * wants it (the rule is about first-run choice).
+     * 4.8.0 — **THE FIRST-RUN RAM GATE CUTS THE FLOW'S LINEUP AND NEVER THE PICKER'S; THE STEER
+     * IS ONE RULE ON BOTH.** Owner ruling 2026-09-17: under 4.5 GB a fresh install is pushed to
+     * the smallest Q8 rung; over it the choice is medium and turbo; an NPU-capable device is
+     * untouched. `OnboardingLogicTest` executes the rule. What it cannot see is whether the guided
+     * flow asks it — on BOTH the lineup and the steer, with the SAME RAM read — and whether the
+     * Settings picker was accidentally given the same cut, which would take small Q8 away from a
+     * big-phone user who wants it (the rule is about first-run choice).
+     *
+     * **The round after 4.8.0: the picker STEERS by the same rule.** It used to steer `small-q8`
+     * for every CPU device through `steerIdForLanguageTagFor` alone, so a 6 GB phone read two
+     * different "picks" on two surfaces. Now the picker's steer is `firstRunSteer` over its full
+     * lineup, with its own one RAM read in the flow's shape, and `steerFirst` lifts the answer so
+     * the chip and the lead card agree. The lineup cut stays on the flow alone.
      *
      * **The mutations this closes:** the rule applied to the lineup but not the steer (a badge on
      * a card the gate hid — the Bengali-review shape one axis over); the RAM read a second time
      * for one of the two (two answers to one question); the read on Main (`getMemoryInfo` is a
-     * binder call; `produceState`'s block runs in the composition's context); and the picker
-     * filtered.
+     * binder call; `produceState`'s block runs in the composition's context); the picker's
+     * lineup filtered; the picker's steer reverted to the language/gate one (two picks again);
+     * and the picker's steer computed but not lifted (a chip on the second card).
      */
     @Test
-    fun theFirstRunRamGateIsAppliedOnTheFlowToBothTheLineupAndTheSteer_andNotOnThePicker() {
+    fun theFirstRunRamGateCutsTheFlowsLineupOnly_andBothSurfacesSteerByTheOneRule() {
         // ONE RAM read, off Main, from the manager — the same source the RAM badge on the card
         // reads (isRecommendedForDevice), so the badge and the lineup cannot disagree about the
         // device. Unkeyed on purpose: RAM is not a fact an install can change.
@@ -669,21 +677,61 @@ class ChooserSteerWiringPinTest {
         )
         assertEquals("the lineup rule is called exactly once on the flow", 1, liveLineCount(flow, "OnboardingLogic.firstRunLineup("))
         assertEquals("the steer rule is called exactly once on the flow", 1, liveLineCount(flow, "OnboardingLogic.firstRunSteer("))
-        // THE PICKER IS NOT FILTERED. All three Q8 rungs stay selectable from Settings; the
-        // owner's rule is about what a fresh install is offered, not what a user may choose.
+        // THE PICKER'S LINEUP IS NOT FILTERED. All three Q8 rungs stay selectable from Settings;
+        // the owner's rule is about what a fresh install is offered, not what a user may choose.
         assertEquals("the picker never applies the first-run lineup rule", 0, liveLineCount(picker, "firstRunLineup"))
-        assertEquals("the picker never applies the first-run steer rule", 0, liveLineCount(picker, "firstRunSteer"))
-        assertEquals("the picker never reads the RAM for a lineup decision", 0, liveLineCount(picker, "deviceTotalRamBytes"))
         assertEquals("and says why, where the lineup is built", 1, count(picker, "deliberately NOT filtered by the first-run RAM rule"))
+        // THE PICKER'S STEER IS THE SAME RULE, over the same one RAM read in the flow's shape.
+        assertEquals(
+            "the picker reads the device RAM once, off Main, from the manager",
+            1,
+            count(
+                picker,
+                block(
+                    "    val totalRamBytes by produceState(initialValue = 0L) {",
+                    "        value = withContext(Dispatchers.IO) { manager.deviceTotalRamBytes() }",
+                    "    }",
+                ),
+            ),
+        )
+        assertEquals("and reads it nowhere else on the picker", 1, liveLineCount(picker, "deviceTotalRamBytes()"))
+        assertEquals(
+            "the picker's steer is the language/gate steer run through the SAME first-run rule, " +
+                "over its full ordered lineup",
+            1,
+            count(
+                picker,
+                block(
+                    "    val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)",
+                    "        .let { OnboardingLogic.firstRunSteer(ordered, it, totalRamBytes) }",
+                ),
+            ),
+        )
+        assertEquals("the steer rule is called exactly once on the picker", 1, liveLineCount(picker, "OnboardingLogic.firstRunSteer("))
+        // AND LIFTED: the ordering rule's head is the language/gate steer (small on every CPU
+        // device); the RAM rule's answer must lead, or the chip sits on the second card.
+        assertEquals(
+            "the picker renders the ordered lineup with the steered card lifted to the top",
+            1,
+            count(
+                picker,
+                block(
+                    "    val models = OnboardingLogic.steerFirst(ordered, steerId)",
+                    "        .mapNotNull { WhisperCatalog.byId(it) }",
+                ),
+            ),
+        )
+        assertEquals("the flow needs no lift: its cut leaves the steer at the head (OnboardingLogicTest)", 0, liveLineCount(flow, "steerFirst"))
     }
 
     @Test
     fun theSteerBadgeLeadsTheChipsOnTheSteeredCardOnly() {
-        // 4.8.0: the FIRST-RUN chip, not STEER_BADGE. The flow's steer is the RAM rule's answer
-        // (medium over the gate, small under it) or the chip's on a capable device — language
-        // is the reason on no branch, and "Best match for your language" on the medium card
-        // told a 6 GB phone something that was not why. The picker keeps STEER_BADGE (below):
-        // its steer is still the unfiltered language/gate steer.
+        // 4.8.0: the reason-neutral chip. The flow's steer is the RAM rule's answer (medium
+        // over the gate, small under it) or the chip's on a capable device — language is the
+        // reason on no branch, and "Best match for your language" on the medium card told a
+        // 6 GB phone something that was not why. Since the round after 4.8.0 the picker steers
+        // by the same rule and wears the same chip; the old constant is deleted, so both
+        // zero-counts below are over the TEXT as well as the name.
         assertEquals(
             "FIRST_RUN_STEER_BADGE is prepended to the tier's own chips, gated on `steered`",
             1,
@@ -693,11 +741,19 @@ class ChooserSteerWiringPinTest {
                     "else c.badges",
             ),
         )
-        assertEquals(
-            "the flow never renders STEER_BADGE — a reason that is not the reason",
-            0,
-            liveLineCount(flow, "ModelTierCopy.STEER_BADGE"),
-        )
+        listOf("the flow" to flow, "the picker" to picker).forEach { (surface, src) ->
+            assertEquals(
+                "$surface never renders the retired STEER_BADGE — a reason that is not the reason",
+                0,
+                liveLineCount(src, "ModelTierCopy.STEER_BADGE"),
+            )
+            assertEquals(
+                "$surface never renders the retired text either — the constant is gone, a literal " +
+                    "would be the same lie under a different spelling",
+                0,
+                liveLineCount(src, "Best match for your language"),
+            )
+        }
         assertEquals("the chip row renders that list", 1, count(flow, "chips.forEach { badge ->"))
         assertEquals(
             "the chip row no longer bypasses the steer by rendering c.badges directly",
@@ -708,14 +764,26 @@ class ChooserSteerWiringPinTest {
 
     @Test
     fun theSettingsPickerOffersTheSameOrderedListFromTheSameRule() {
+        // RE-SPELL (the round after 4.8.0): the ordering call is bound to a name, `ordered`, so
+        // the steer rule and the lift read ONE list — the cards are that list with the steered
+        // card lifted, resolved through the catalog. The claim is unchanged: never raw catalog
+        // order.
         assertEquals(
-            "the Settings picker's model list comes from orderedForLanguageTagFor",
+            "the Settings picker's lineup comes from orderedForLanguageTagFor, under one name",
+            1,
+            count(
+                picker,
+                "    val ordered = ModelTierCopy.orderedForLanguageTagFor(languageTag, " +
+                    "npuTierIds, installedIds)",
+            ),
+        )
+        assertEquals(
+            "and the cards are that list, steer lifted, resolved through the catalog",
             1,
             count(
                 picker,
                 block(
-                    "    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, " +
-                        "npuTierIds, installedIds)",
+                    "    val models = OnboardingLogic.steerFirst(ordered, steerId)",
                     "        .mapNotNull { WhisperCatalog.byId(it) }",
                 ),
             ),
@@ -876,9 +944,9 @@ class ChooserSteerWiringPinTest {
             )
         }
         assertEquals(
-            "the highlighted card's chip names the reason, from the single pinned constant",
+            "the highlighted card's chip is the ONE reason-neutral constant both surfaces wear",
             1,
-            count(picker, "TierBadge(text = ModelTierCopy.STEER_BADGE, color = Primary)"),
+            count(picker, "TierBadge(text = ModelTierCopy.FIRST_RUN_STEER_BADGE, color = Primary)"),
         )
         assertTrue(
             "the bare \"Default\" chip is gone: it never explained why this card, and for a " +

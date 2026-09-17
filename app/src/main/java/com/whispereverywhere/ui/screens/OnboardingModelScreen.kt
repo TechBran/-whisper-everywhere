@@ -119,14 +119,31 @@ fun OnboardingModelScreen(
     }
 
     // 4.8.0: this picker is deliberately NOT filtered by the first-run RAM rule the guided flow
-    // applies (`OnboardingLogic.firstRunLineup` / `firstRunSteer`). The owner's ruling of
-    // 2026-09-17 is about FIRST-RUN choice — what a fresh install is pushed to or offered —
-    // and all three Q8 rungs stay selectable here: a user who wants small Q8 on a big phone can
-    // still pick it, and a user under the gate who wants medium can still read "High-end
-    // devices only" on its card and choose it anyway. ChooserSteerWiringPinTest holds that the
-    // rule is called on the flow and not here.
+    // applies (`OnboardingLogic.firstRunLineup`). The owner's ruling of 2026-09-17 is about
+    // FIRST-RUN choice — what a fresh install is pushed to or offered — and all three Q8 rungs
+    // stay selectable here: a user who wants small Q8 on a big phone can still pick it, and a
+    // user under the gate who wants medium can still read "High-end devices only" on its card
+    // and choose it anyway. ChooserSteerWiringPinTest holds that the lineup rule is called on
+    // the flow and not here.
+    //
+    // The STEER is another matter (the round after 4.8.0): it is the SAME rule as the flow's —
+    // `OnboardingLogic.firstRunSteer`, medium over the 4.5 GB gate, small under it, the chip's
+    // tier on a capable device — so both surfaces point at the same card on the same device.
+    // Before this the picker steered `small-q8` for every CPU device and chipped it "Best match
+    // for your language", a reason that had been false since 4.6 made the CPU steer uniform for
+    // every locale; a 6 GB phone read two different picks on two surfaces. The RAM read is the
+    // flow's own shape: once, off Main (`getMemoryInfo` is a binder call), unkeyed because RAM
+    // is not a fact an install can change, and the initial 0 is the fail-safe side of the gate
+    // (small — the rung every device can run) until the read lands. The steered card is then
+    // lifted to the top (`steerFirst`) so the badge and the lead card agree here as they do on
+    // the flow; the full, unfiltered lineup is otherwise the ordering rule's, untouched.
+    val totalRamBytes by produceState(initialValue = 0L) {
+        value = withContext(Dispatchers.IO) { manager.deviceTotalRamBytes() }
+    }
+    val ordered = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, installedIds)
     val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
-    val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, installedIds)
+        .let { OnboardingLogic.firstRunSteer(ordered, it, totalRamBytes) }
+    val models = OnboardingLogic.steerFirst(ordered, steerId)
         .mapNotNull { WhisperCatalog.byId(it) }
 
     // 4.3: is there anything for a declining NPU tier to fall back INTO? The pure mirror of the
@@ -751,7 +768,10 @@ private fun ModelTierCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (isSteered) {
-                    TierBadge(text = ModelTierCopy.STEER_BADGE, color = Primary)
+                    // The same reason-neutral chip the guided flow wears (4.8.0's) — this card is
+                    // the app's pick by the first-run rule (RAM, throughput margin, or the AI
+                    // chip), and language is the reason on no branch of it.
+                    TierBadge(text = ModelTierCopy.FIRST_RUN_STEER_BADGE, color = Primary)
                 }
                 if (recommended) {
                     TierBadge(text = "Recommended for your device", color = Success)

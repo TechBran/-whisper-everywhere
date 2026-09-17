@@ -378,11 +378,34 @@ object OnboardingLogic {
      * The npu-class test is on the LINEUP, not on the steer string, so a lineup that carries
      * `npu` (offered without turbo, where the CPU steer already became `npu`) keeps that answer
      * whatever the RAM says.
+     *
+     * **BOTH chooser surfaces steer by this rule** (post-4.8.0, 2026-09-17): the guided flow over
+     * its RAM-cut lineup, and the Settings picker over its full ladder — the picker never applies
+     * [firstRunLineup], but a picker that steered `small-q8` for every CPU device while the flow
+     * steered `medium-q8` showed a 6 GB phone two different "picks" on two surfaces, chipped with
+     * a language reason that has not been the reason since 4.6. One rule, one card, one chip
+     * (`ModelTierCopy.FIRST_RUN_STEER_BADGE`); the picker lifts the answer to the top with
+     * [steerFirst].
      */
     fun firstRunSteer(lineup: List<String>, cpuSteer: String, totalRamBytes: Long): String {
         if (com.whispereverywhere.model.WhisperCatalog.ONE_TIER_ID in lineup || "npu" in lineup) return cpuSteer
         return if (totalRamBytes >= FIRST_RUN_RAM_GATE_BYTES) FIRST_RUN_STEER_ABOVE_GATE_ID else SMALLEST_TIER_ID
     }
+
+    /**
+     * The steered card FIRST, everything else in the order given — the Settings picker's half of
+     * "one steer, one badge" (post-4.8.0, 2026-09-17).
+     *
+     * `ModelTierCopy.orderedForLanguageTagFor` already leads with ITS steer, the language/gate
+     * one, and on the guided flow the RAM cut leaves [FIRST_RUN_STEER_ABOVE_GATE_ID] at the head
+     * of a fresh install's lineup by catalog order. The Settings picker keeps the whole ladder, so
+     * its head stayed `small-q8` while its steer became medium over the gate — a badge on the
+     * second card while the first wears nothing is the Bengali-review shape one axis over, so the
+     * picker lifts its steer explicitly. Stable, so every other card keeps the order it had; a
+     * steer that is not in the lineup changes nothing; nothing is added or dropped.
+     */
+    fun steerFirst(lineup: List<String>, steerId: String): List<String> =
+        lineup.sortedBy { if (it == steerId) 0 else 1 }
 
     /**
      * The tier pick, revalidated against the lineup actually on screen (4.3 fix round, I-3).

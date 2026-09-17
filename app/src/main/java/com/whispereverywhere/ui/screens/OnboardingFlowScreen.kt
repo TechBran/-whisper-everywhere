@@ -892,7 +892,8 @@ private fun EnginesStep(
         // `firstRunSteer`, applied to the ordered lineup and the steer so the guard, the cards
         // and the badge all see the SAME filtered list. An NPU-capable device is untouched by
         // both (the 4.3 one-tier rule already made it turbo alone). The Settings picker
-        // deliberately does NOT apply this rule; see the comment at its lineup. Unkeyed on
+        // applies only the STEER half (the same `firstRunSteer`, so both surfaces point at one
+        // card on one device) and never the lineup cut; see the comment at its lineup. Unkeyed on
         // purpose — RAM is not a fact an install can change, unlike the two gate producers —
         // and the initial value is 0, the fail-SAFE side of the gate: until the read lands the
         // chooser shows the rung every device can run, and the revalidation guard below drops a
@@ -1073,9 +1074,10 @@ private fun TierChoiceCard(
             copy?.let { c ->
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // 4.8.0: the first-run chip, not STEER_BADGE — the flow's steer is the
-                    // RAM rule's answer (or the chip's), never the language's, and the chip
-                    // must not name a reason that is not the reason (ModelTierCopy's KDoc).
+                    // 4.8.0: the reason-neutral chip — the flow's steer is the RAM rule's
+                    // answer (or the chip's), never the language's, and the chip must not name
+                    // a reason that is not the reason (ModelTierCopy's KDoc; the old "Best match
+                    // for your language" is deleted, and the picker wears this same chip).
                     val chips = if (steered) listOf(ModelTierCopy.FIRST_RUN_STEER_BADGE) + c.badges else c.badges
                     chips.forEach { badge ->
                         Surface(

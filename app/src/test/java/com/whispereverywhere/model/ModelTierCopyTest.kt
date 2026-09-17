@@ -2,7 +2,6 @@ package com.whispereverywhere.model
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -535,8 +534,7 @@ class ModelTierCopyTest {
      * 4.6 — was `english_locales_are_steered_to_pro`. The English branch is GONE because the tier
      * it pointed at is retired (owner ruling 2026-09-13: multilingual rungs only), and a steer at
      * a retired tier is not a steer — the chooser does not render that card, so nothing would be
-     * lifted to the front and [ModelTierCopy.STEER_BADGE] would sit on no card at all for every
-     * English user.
+     * lifted to the front and the steer chip would sit on no card at all for every English user.
      *
      * **The 3.7 rule is satisfied, not abandoned.** Its point was the Bengali review: never land a
      * user on a tier that is worse for the language they speak. With every offered rung
@@ -592,21 +590,15 @@ class ModelTierCopyTest {
         }
     }
 
-    @Test fun the_steer_badge_is_pinned_exactly_and_claims_nothing_about_speed() {
-        assertEquals("Best match for your language", ModelTierCopy.STEER_BADGE)
-        listOf("faster", "fastest", "quicker", "instant").forEach {
-            assertFalse(ModelTierCopy.STEER_BADGE.lowercase().contains(it))
-        }
-    }
-
-    @Test fun the_first_run_steer_badge_names_no_reason_because_language_is_not_one() {
+    @Test fun the_steer_badge_names_no_reason_because_language_is_not_one() {
         // 4.8.0: the guided flow's steer is OnboardingLogic.firstRunSteer — medium over the RAM
-        // gate, small under it, the chip's tier on a capable device. Language decides none of
-        // those, so the flow's chip must not say "language"; and it must not say "device" either,
+        // gate, small under it, the chip's tier on a capable device — and since the round after,
+        // so is the Settings picker's. Language decides none of those, so the ONE chip must not
+        // say "language" (the retired "Best match for your language" is deleted, not kept: no
+        // surface could truthfully show it since 4.6); and it must not say "device" either,
         // because the green RAM chip ("Recommended for your device") already does, with a
         // reason the user can check. Reason-neutral, and distinct from both.
         assertEquals("Our pick", ModelTierCopy.FIRST_RUN_STEER_BADGE)
-        assertNotEquals(ModelTierCopy.STEER_BADGE, ModelTierCopy.FIRST_RUN_STEER_BADGE)
         listOf("language", "device", "faster", "fastest", "quicker", "instant", "recommended").forEach {
             assertFalse(
                 "the first-run chip claims <<$it>>",
@@ -715,7 +707,7 @@ class ModelTierCopyTest {
     @Test fun the_lineup_is_a_permutation_of_this_devices_pickable_set_and_the_steer_leads_it() {
         // ORDER, not presence — the rule this branch has now paid for four times. Both chooser
         // surfaces make TWO calls: one for the cards, one for the badge and the highlight. If the
-        // two ever disagree, the lineup leads with one card while "Best match for your language"
+        // two ever disagree, the lineup leads with one card while the steer chip ("Our pick")
         // sits on another: every element present, every element in the wrong relationship to the
         // others, and nothing in the type system to notice. Every reachable gate answer is
         // driven: none, either tier alone, both.
