@@ -30,12 +30,25 @@
             android:layout_height="wrap_content">
 
             <!-- Read-only text for finalized transcription chunks. Width + max height are
-                 RUNTIME-OWNED (applyPreviewSize); 280dp is only the pre-first-apply default. -->
+                 RUNTIME-OWNED (applyPreviewSize); 280dp is only the pre-first-apply default.
+
+                 The scrollbar is PERSISTENT and VISIBLE (owner ruling 2026-09-17, the 96 tablet
+                 session: "that scrolling bar is very useful so people know that they can
+                 actually scroll previously"). With the framework default the bar fades to
+                 nothing at rest, so earlier builds looked as though the window did not scroll
+                 at all. fadeScrollbars off, 4dp wide, and a drawn thumb on a faint track so it
+                 reads as a bar on the dark panel. Android still draws it only when the text
+                 exceeds the view, which is right. Pinned by BubbleScrollbarPinTest. -->
             <TextView
                 android:id="@+id/transcription_edit_text"
                 android:layout_width="280dp"
                 android:layout_height="wrap_content"
                 android:scrollbars="vertical"
+                android:fadeScrollbars="false"
+                android:scrollbarSize="4dp"
+                android:scrollbarStyle="insideOverlay"
+                android:scrollbarThumbVertical="@drawable/bubble_scrollbar_thumb"
+                android:scrollbarTrackVertical="@drawable/bubble_scrollbar_track"
                 android:textColor="#FFFFFF"
                 android:textSize="14sp"
                 android:minHeight="20dp"
@@ -69,6 +82,11 @@
           the accessibility layer has no composing-text API, so writing live text into an app's
           field would mean rewriting the whole field several times a second, which is the exact
           corruption class Release A's ordering exists to prevent (spec 5.6a/5.6b).
+
+          The scrollbar is the SAME persistent, drawn bar the committed text carries above
+          (owner ruling 2026-09-17): the 4.4 previewer panel already kept it from fading, at 2dp
+          and the framework's faint default thumb, which was "barely visible". 4dp, the shared
+          thumb and track. Pinned by BubbleScrollbarPinTest.
         -->
         <TextView
             android:id="@+id/transcription_delta_text"
@@ -78,7 +96,10 @@
             android:maxLines="5"
             android:scrollbars="vertical"
             android:fadeScrollbars="false"
-            android:scrollbarSize="2dp"
+            android:scrollbarSize="4dp"
+            android:scrollbarStyle="insideOverlay"
+            android:scrollbarThumbVertical="@drawable/bubble_scrollbar_thumb"
+            android:scrollbarTrackVertical="@drawable/bubble_scrollbar_track"
             android:lineSpacingExtra="2dp"
             android:textColor="#E6FFFFFF"
             android:textSize="14sp"
