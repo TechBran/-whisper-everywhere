@@ -1181,7 +1181,7 @@ running for that reason alone.
 | rung | download | commit floor |
 |---|---|---|
 | Multilingual small **Q5_1** (the default) | 190 MB | **6 000 ms** |
-| small **Q8_0** | 264 MB | 8 000 ms |
+| small **Q8_0** | 264 MB | 8 000 ms on 95, where it was measured; **6 000 ms** since 4.7.0 |
 | medium **Q5_0** | 539 MB | 8 000 ms |
 | medium **Q8_0** | 823 MB | 8 000 ms |
 | turbo **Q5_0** (`ultra`) | 574 MB | 8 000 ms |
@@ -1193,7 +1193,9 @@ nobody has measured** — including `small-q8`, which is the default's own weigh
 heavy. The consequence is named rather than hidden: **AN8's two arms run at different floors.**
 Compare **wall-clock lag**, never duty, and write the floor in the row. Moving `small-q8` onto the
 6 s row is a decision this measurement exists to justify; the suite fails the build if anyone makes
-it early.
+it early. **Made in 4.7.0**, on the 2026-09-17 Tab S10+ session
+(`docs/measurements/2026-09-17-tab-cpu-ladder.md`: worst commit 1,993 ms = 0.33 of 6 000 ms) — the
+table row above and AN2 now carry both floors.
 
 **Storage.** Holding all seven at once is **4.35 GB** (the six instruments alone are 4.16 GB, and
 the biggest single file is 1,081,140,203 bytes). Switching rungs does **not** delete anything —
@@ -1255,7 +1257,8 @@ AN1. **Multilingual small Q5_1 — 190 MB, 6 000 ms floor. THE CONTROL.**
     `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
     `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP`
 
-AN2. **small Q8_0 — 264 MB, 8 000 ms floor.** Same weights as AN1, 40% larger, and the one rung
+AN2. **small Q8_0 — 264 MB, 8 000 ms floor on 95 (where it was measured), 6 000 ms since 4.7.0.**
+    Same weights as AN1, 40% larger, and the one rung
     the quantisation argument actually turns on. **AN8 is this row's real purpose.**
     `OFF: gap@30s ____ s  gap@5min ____ s  drain ____ s  max queue depth seen ____`
     `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
@@ -1307,8 +1310,8 @@ AN8. **small Q5_1 against small Q8_0, on the SAME device (AN1 vs AN2) — THE QU
     **absent** from ggml's ARM i8mm repack path and the only two this app has ever shipped, while
     the build already compiles `+i8mm`. **If the 264 MB rung is FASTER than the 190 MB one, the
     quantisation finding is real** — and that would be worth more than any rung on this ladder.
-    **Mind the confound:** AN1 paces at 6 000 ms and AN2 at 8 000 ms, so compare the **gap** and the
-    **drain**, never queue depth or "duty".
+    **Mind the confound:** AN1 paces at 6 000 ms and AN2 at 8 000 ms (as run on 95; equalised at
+    6 000 ms in 4.7.0), so compare the **gap** and the **drain**, never queue depth or "duty".
     `Q5_1 drain ____ s   Q8_0 drain ____ s   device ____________`
     `[ ] Q8_0 is faster — the repack path is real  [ ] no difference  [ ] Q8_0 is slower`
 
@@ -1369,8 +1372,9 @@ need no cable at all.
   label is displaced and the `queue:` diagnostic is stripped from release — so the ON rows rest
   entirely on the gap and the drain. That is not a gap in the sheet; it is the app, and it is the
   reason the OFF run exists.
-- **`small-q8` and `multi` run at different commit floors**, so AN8 is a wall-clock comparison and
-  cannot be a duty one. Equalising them is a decision that wants AN8's answer first.
+- **`small-q8` and `multi` ran at different commit floors on 95**, so AN8 is a wall-clock comparison
+  and cannot be a duty one. Equalising them is a decision that wants AN8's answer first — and 4.7.0
+  made it on that answer (`small-q8` to 6 000 ms).
 - **Accuracy is not in this section at all.** Every one of these rungs should be at least as
   accurate as the default and the bigger ones markedly more so, but throughput is what decides
   whether a rung may ship, and a rung that cannot keep up does not get to trade accuracy for it.

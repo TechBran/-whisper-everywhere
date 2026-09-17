@@ -51,15 +51,17 @@ import com.whispereverywhere.audio.Endpointer
  *   with its evidence, and `TierThroughputTest.an_unmeasured_rung_is_paced_at_the_conservative_large_floor`
  *   holds the two together — an unmeasured rung may not be paced faster than this row. The rule
  *   above already demanded F be MEASURED; that record is what finally lets it fail a build.
- * - **4.7 (2026-09-17): four of them ARE measured now**, on the Tab S10+ at this table's own
- *   floors (`docs/measurements/2026-09-17-tab-cpu-ladder.md`): `small-q8` F = 1.22 s median,
+ * - **4.7 (2026-09-17): four of them ARE measured now**, on the Tab S10+ on versionCode 95
+ *   (`docs/measurements/2026-09-17-tab-cpu-ladder.md`): `small-q8` F = 1.22 s median,
  *   `medium-q8` 1.34 s, `ultra-q8` 4.85 s (worst 7.93 s — 0.99 of this row, no margin),
  *   `medium-q5` 9.29 s (OVER this row: never caught up, and retired with every other Q5 rung by
- *   the owner's ruling). **The rows did not move.** `small-q8` still takes the LARGE row via
- *   `else` even though its F would clear the MULTI row's 0.70 rule with room (1.22/6 + 0.04 =
- *   0.24): re-pacing a rung is a cadence DECISION, made here with the arithmetic stated, and the
- *   measurement that would justify it is one device and one talk. The record pins each verdict to
- *   the floor it was measured at, so moving `small-q8` to 6 000 means re-earning it there.
+ *   the owner's ruling). **ONE row moved in 4.7.0, and only one.** `small-q8` — the same
+ *   whisper-small weights as `multi`, and the 4.7 DEFAULT — takes the MULTI row (6 000 ms) on
+ *   that evidence: on 95 it paced on this LARGE row via `else`, where its worst commit (1.99 s)
+ *   was 0.25 of the floor; at 6 000 the worst is 0.33 of the floor and F/floor + m is ~0.24
+ *   (1.22/6 + 0.04) against the 0.70 rule. The arithmetic and the reason are on
+ *   [MIN_COMMIT_INTERVAL_MULTI_MS]. `medium-q8` and `ultra-q8` STAY on this row: medium's floor
+ *   is a separate ruling the owner has not made, and ultra kept up with no margin here.
  *   `multi` keeps its 6 000 row: it is retired, not uninstalled, and its users are still paced.
  * - cloud batch: every commit is one HTTP POST (Semaphore(3) in flight, shed at 24). Same
  *   reasoning that made the 4 s first cap LOCAL-only.
@@ -146,7 +148,22 @@ object CommitCadencePolicy {
      */
     const val MIN_COMMIT_INTERVAL_TURBO_SLOW_MS = 3_200L
 
-    /** multi: derived from F = 2.3 s at a 0.70 duty ceiling. */
+    /**
+     * multi (and pro): derived from F = 2.3 s at a 0.70 duty ceiling.
+     *
+     * **small-q8 joined this row in 4.7.0 — a controller ruling on the reviewers' finding.** It is
+     * the same whisper-small weights as multi, stored at Q8_0, and it is the 4.7 DEFAULT. Measured
+     * on the Tab S10+ (`docs/measurements/2026-09-17-tab-cpu-ladder.md`): F = 1.217 s median,
+     * 1.993 s worst. At this 6 000 ms floor its worst commit is 0.33 of the floor and
+     * `F/floor + m` is ~0.24 (1.217/6 + 0.04) against the 0.70 rule — cleared with room. On
+     * versionCode 95, the build it was measured on, it paced on the 8 000 ms LARGE row via `else`
+     * (where 4.6 put every instrument), and its worst commit was 0.25 of that floor; leaving it
+     * there would have handed every fresh install a slower minimum cadence than the 4.3.x default
+     * (`multi`, this row) on a model 2.2x faster per commit. `TierThroughputRecord.SMALL_Q8`
+     * carries this floor and `TierThroughputTest` holds it equal to this table. medium-q8 and
+     * ultra-q8 are NOT on this row: medium's floor is a separate ruling the owner has not made,
+     * and ultra kept up with no margin at 8 000.
+     */
     const val MIN_COMMIT_INTERVAL_MULTI_MS = 6_000L
 
     /**
@@ -261,7 +278,16 @@ object CommitCadencePolicy {
             // accessor, a second row and a test matrix to distinguish a case the product does not
             // have. `pro` IS `multi` for cost purposes, and the two share this row for the reason
             // the byte counts above give.
-            "pro", "multi" -> MIN_COMMIT_INTERVAL_MULTI_MS
+            //
+            // `small-q8` JOINED this row in 4.7.0 (controller ruling on the reviewers' finding).
+            // It is the same whisper-small weights as `multi` at Q8_0 and the 4.7 DEFAULT;
+            // measured F = 1.217 s median / 1.993 s worst on the Tab S10+ (the 2026-09-17 doc),
+            // so at 6 000 its worst commit is 0.33 of the floor and F/floor + m is ~0.24 against
+            // the 0.70 rule. On versionCode 95 it paced on the LARGE row via `else`, and leaving
+            // it there would hand every fresh install a slower minimum cadence than the 4.3.x
+            // default on a 2.2x faster model. `medium-q8` and `ultra-q8` stay on the LARGE row —
+            // medium's floor is a separate ruling the owner has not made.
+            "pro", "multi", "small-q8" -> MIN_COMMIT_INTERVAL_MULTI_MS
             "extreme", "ultra" -> MIN_COMMIT_INTERVAL_LARGE_MS
             else -> MIN_COMMIT_INTERVAL_LARGE_MS
         }

@@ -185,10 +185,18 @@ class CommitCadencePolicyTest {
         //    owner must compare wall-clock lag, not duty, and the sheet must carry the floor per
         //    rung. Moving `small-q8` onto the 6 s MULTI row is a cadence decision that wants the
         //    measurement first, which is the whole shape of this branch.
+        //
+        // 4.7.0: the measurement happened (Tab S10+, 2026-09-17) and `small-q8` MOVED to the
+        // 6 s MULTI row — the controller's ruling on the reviewers' finding, with the arithmetic
+        // on MIN_COMMIT_INTERVAL_MULTI_MS: same whisper-small weights as `multi`, the 4.7
+        // default, worst commit 1,993 ms = 0.33 of 6 000, F/floor + m ~0.24. `medium-q8` and
+        // `ultra-q8` stay on the LARGE row (medium's floor is a separate ruling the owner has
+        // not made); the retired Q5 rungs stay where they were. Pinned per rung in
+        // theQ8LadderIsPacedOnTheRowsItWasRuledOnto.
         val expected = mapOf(
             "eco" to 1_200L, "base" to 1_200L, "pro" to 6_000L,
             "multi" to 6_000L, "extreme" to 8_000L, "ultra" to 8_000L,
-            "small-q8" to 8_000L, "medium-q5" to 8_000L, "medium-q8" to 8_000L,
+            "small-q8" to 6_000L, "medium-q5" to 8_000L, "medium-q8" to 8_000L,
             "ultra-q8" to 8_000L, "large-v3" to 8_000L,
             "npu" to 1_200L, "npu-turbo" to 2_000L,
         )
@@ -200,6 +208,27 @@ class CommitCadencePolicyTest {
         for ((id, interval) in expected) {
             assertEquals(id, interval, CommitCadencePolicy.minCommitIntervalMs(id, isCloudBatch = false))
         }
+    }
+
+    @Test
+    fun theQ8LadderIsPacedOnTheRowsItWasRuledOnto() {
+        // 4.7.0 — the controller's ruling on the reviewers' finding. `small-q8` is the same
+        // whisper-small weights as `multi` at Q8_0 and the 4.7 DEFAULT; on the Tab S10+ it
+        // measured F = 1.217 s median / 1.993 s worst (docs/measurements/2026-09-17-tab-cpu-
+        // ladder.md), so at 6 000 its worst commit is 0.33 of the floor and F/floor + m is ~0.24
+        // against the 0.70 rule. On versionCode 95 it paced at 8 000 via `else`, which would have
+        // handed every fresh install a slower minimum cadence than the 4.3.x default (`multi`,
+        // 6 000) on a model 2.2x faster per commit. `medium-q8` and `ultra-q8` STAY on the LARGE
+        // row: medium's floor is a separate ruling the owner has not made, and ultra kept up
+        // with no margin at 8 000.
+        assertEquals(6_000L, CommitCadencePolicy.minCommitIntervalMs("small-q8", isCloudBatch = false))
+        assertEquals(8_000L, CommitCadencePolicy.minCommitIntervalMs("medium-q8", isCloudBatch = false))
+        assertEquals(8_000L, CommitCadencePolicy.minCommitIntervalMs("ultra-q8", isCloudBatch = false))
+        assertEquals(
+            "small-q8 takes multi's row because it IS multi's weights at Q8_0 — not its own new number",
+            CommitCadencePolicy.minCommitIntervalMs("multi", isCloudBatch = false),
+            CommitCadencePolicy.minCommitIntervalMs("small-q8", isCloudBatch = false),
+        )
     }
 
     @Test
@@ -499,10 +528,10 @@ class CommitCadencePolicyTest {
             "pro" to 6_000L, "multi" to 6_000L,
             "extreme" to 8_000L, "ultra" to 8_000L,
             // 4.6: each new rung's SLOW floor is its fast floor, which is what "the governor is
-            // inert by construction on every row but npu-turbo" means — all five are on the LARGE
-            // row already (see everyCatalogTierIsNamedExplicitly for that decision), so depth 2
-            // has nothing left to buy back.
-            "small-q8" to 8_000L, "medium-q5" to 8_000L, "medium-q8" to 8_000L,
+            // inert by construction on every row but npu-turbo" means — those rows are duty-
+            // derived already, so depth 2 has nothing left to buy back. 4.7.0 moved `small-q8` to
+            // the MULTI row (see everyCatalogTierIsNamedExplicitly); its slow floor moved with it.
+            "small-q8" to 6_000L, "medium-q5" to 8_000L, "medium-q8" to 8_000L,
             "ultra-q8" to 8_000L, "large-v3" to 8_000L,
         )
         assertEquals(

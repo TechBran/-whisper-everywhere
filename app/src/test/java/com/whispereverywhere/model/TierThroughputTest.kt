@@ -173,8 +173,11 @@ class TierThroughputTest {
      *
      * **A SUBAGENT MUST NOT EDIT THIS TEST TO MAKE A ROW CLEAR.** The three numbers that decide
      * these verdicts are in a committed document with primary logcat lines; the pin below reads
-     * them back. A rung clears when its worst commit is under 0.90 of its floor on the measured
-     * device, and `ultra-q8`'s was 7,930 against 8,000.
+     * them back. The 0.90 line — a rung's outcome is KEPT_UP_WITHOUT_MARGIN once its worst commit
+     * reaches 0.90 of its floor on the measured device — is a hand-applied convention used when
+     * each row's outcome was assigned, NOT a gate the code enforces: `ThroughputMeasurement` has
+     * no worst-commit field, so nothing computes it. `ultra-q8`'s worst was 7,930 against 8,000
+     * and its outcome was assigned on that.
      */
     @Test fun the_instrument_set_is_the_pickable_rungs_whose_verdict_does_not_clear() {
         val measured = TierThroughputRecord.RECORD
@@ -280,7 +283,10 @@ class TierThroughputTest {
             val window: String,
         )
         listOf(
-            Expected("small-q8", 1_217L, "1,993", 8_000L, KeepUp.KEPT_UP, "07:15"),
+            // small-q8's floor is the one it is paced on SINCE 4.7.0 (the MULTI row), which is
+            // also the floor the doc's table computes its duty against; on versionCode 95 it
+            // paced at 8 000 — its `because` carries both readings.
+            Expected("small-q8", 1_217L, "1,993", 6_000L, KeepUp.KEPT_UP, "07:15"),
             Expected("medium-q8", 1_341L, "2,508", 8_000L, KeepUp.KEPT_UP, "07:04"),
             Expected("ultra-q8", 4_849L, "7,930", 8_000L, KeepUp.KEPT_UP_WITHOUT_MARGIN, "06:54"),
             Expected("medium-q5", 9_294L, "11,782", 8_000L, KeepUp.NEVER_CAUGHT_UP, "08:30"),
@@ -329,8 +335,9 @@ class TierThroughputTest {
      * `CommitCadencePolicy`: *"a tier keeps a floor only while its full-segment F is MEASURED and
      * `F/floor + m <= 0.70` at saturation."* So the floor is recorded in the measurement and held
      * equal to the app's own table: **re-pace a measured rung and its verdict must be re-earned,
-     * not inherited.** This is the test that makes moving `small-q8` onto the 6 000 ms row a
-     * decision that re-opens its row, rather than a one-line edit.
+     * not inherited.** 4.7.0 made exactly that move for `small-q8` — onto the 6 000 ms MULTI row,
+     * by controller ruling — and this test is why its row was re-read at 6 000 (worst 1,993 ms =
+     * 0.33 of the floor, F/floor + m ~0.24) rather than carried over from the 8 000 reading.
      */
     @Test fun every_measurement_is_pinned_to_the_commit_floor_it_was_measured_at() {
         TierThroughputRecord.RECORD.forEach { row ->
@@ -345,12 +352,16 @@ class TierThroughputTest {
                 )
             }
         }
-        // The one row where the doc and the table read different floors, stated so nobody
-        // rediscovers it: the doc reads `small-q8` against the 6 000 ms small-rung floor, the app
-        // paces it at 8 000. Its row carries the app's floor and says so.
+        // The one row whose sample was taken while the app paced a DIFFERENT floor, stated so
+        // nobody rediscovers it: on versionCode 95 `small-q8` paced at 8 000 (worst 0.25); the doc's
+        // table reads it against 6 000, and since 4.7.0 the app paces it there too. Its row carries
+        // the floor it is paced at now and gives both readings.
         val small = TierThroughputRecord.forTier("small-q8")!!.verdict as ThroughputVerdict.Measured
-        assertEquals(8_000L, small.measurement.commitFloorMs)
-        assertTrue("small-q8's reading must give the 6 000 ms reading too", small.because.contains("6 000"))
+        assertEquals(6_000L, small.measurement.commitFloorMs)
+        assertEquals(CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS, small.measurement.commitFloorMs)
+        assertTrue("small-q8's reading must give the 6 000 ms reading", small.because.contains("6 000"))
+        assertTrue("small-q8's reading must record the 8 000 ms floor it was measured under", small.because.contains("8 000"))
+        assertTrue("small-q8's reading must name the build that paced it at 8 000", small.because.contains("versionCode 95"))
     }
 
     /**

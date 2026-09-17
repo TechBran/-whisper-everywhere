@@ -129,6 +129,12 @@ enum class KeepUp {
      * simply not there. Recorded on 2026-09-17 for `ultra-q8` (worst 7,930 ms against 8,000 on a
      * Dimensity 9300+). The honest responses are the same as for the value below: keep the rung
      * an instrument, or retire it. Never promote it on this.
+     *
+     * **The 0.90 line is a hand-applied convention, not a gate this code enforces.** It was
+     * applied by the person assigning each row's outcome from the measurement doc;
+     * [ThroughputMeasurement] has no worst-commit field, so nothing in this file can compute the
+     * ratio or refuse an outcome on it. The test that reads the doc's numbers back is where the
+     * convention is checked, by hand, against the committed rows.
      */
     KEPT_UP_WITHOUT_MARGIN,
 
@@ -179,7 +185,9 @@ data class ThroughputMeasurement(
      *
      * The one measured row of 4.6 predated the previewer by two months, so this field was added
      * for the axis the device session would have to record. **Every 2026-09-17 row was taken with
-     * it armed**, which is the configuration most sessions run in and the harder one.
+     * it armed**, which is the configuration an English session with live words on runs in (the
+     * previewer is the English streaming previewer; non-English sessions never arm it) and the
+     * harder one.
      */
     val previewerArmed: Boolean,
     /** What the typed text did. See [KeepUp] — and note that the two middle values do not clear. */
@@ -404,7 +412,8 @@ object TierThroughputRecord {
      * **`small-q8` — the decisive one, decided.** The same whisper-small weights as [MULTI], 40%
      * larger, ON the ARM i8mm repack path that `Q5_1` is absent from. It was FASTER — 2.2x per
      * commit on one device in one session — and that is the most valuable result the session
-     * produced. THE DEFAULT and the floor for every device since 4.7.
+     * produced. THE DEFAULT and the floor for every device since 4.7. Paced on the 6 000 ms MULTI
+     * row since 4.7.0 (on versionCode 95, where it was measured, it paced at 8 000 — see `because`).
      */
     val SMALL_Q8 = TierThroughput(
         tierId = "small-q8",
@@ -413,9 +422,11 @@ object TierThroughputRecord {
                 device = "Galaxy Tab S10+ (SM-X828U, Dimensity 9300+)",
                 // Median wallMs 1,217 over n=12 chunks.
                 finalizeSeconds = 1.217,
-                // The row this rung is paced on in CommitCadencePolicy — the LARGE row via
-                // `else`, where 4.6 put every instrument. See `because` for the 6 000 reading.
-                commitFloorMs = 8_000L,
+                // The row this rung is paced on in CommitCadencePolicy since 4.7.0 — the MULTI
+                // row, the same 6 000 ms as the Q5_1 twin whose weights these are. On versionCode
+                // 95, the build the sample was taken on, it paced at 8 000 (the LARGE row via
+                // `else`, where 4.6 put every instrument); `because` gives both readings.
+                commitFloorMs = 6_000L,
                 previewerArmed = true,
                 outcome = KeepUp.KEPT_UP,
                 measuredOn = "2026-09-17",
@@ -427,14 +438,19 @@ object TierThroughputRecord {
                     "consent; threads=4; English previewer ARMED",
             ),
             because = "n=12 chunks: median wallMs 1,217, mean 1,324, worst 1,993, ctx=512 median " +
-                "1,116. THE DUTY ARITHMETIC: the app paces this rung at 8 000 ms (the LARGE row, " +
-                "where 4.6 placed it unmeasured), so the worst commit is 0.25 of the floor and " +
-                "F/floor + m is ~0.19 against the 0.70 rule; the measurement doc reads it " +
-                "against the 6 000 ms small-rung floor instead, which gives 0.33 worst-case and " +
-                "~0.24 duty — it clears with margin at EITHER floor, and moving it onto the " +
-                "6 000 row is a cadence decision this record does not make. Against `multi` in " +
-                "the same session (2,618 ms) it is 2.2x faster per commit for the same weights " +
-                "and +74 MB. The typed text stayed with the voice throughout: KEPT_UP. CAVEATS, " +
+                "1,116. THE DUTY ARITHMETIC, at the 6 000 ms MULTI row this rung is paced on " +
+                "since 4.7.0: the worst commit is 0.33 of the floor and F/floor + m is ~0.24 " +
+                "(1.217/6 + 0.04) against the 0.70 rule — cleared with room, and 6 000 is the " +
+                "floor the measurement doc's table computes this rung's duty against. ON THE " +
+                "BUILD IT WAS MEASURED ON (versionCode 95) the app paced it at 8 000 ms — the " +
+                "LARGE row via `else`, where 4.6 placed every instrument — and the worst commit " +
+                "was 0.25 of that floor (~0.19 duty). The move to 6 000 is a cadence RULING made " +
+                "on this evidence (the controller's, on the reviewers' finding; the arithmetic " +
+                "is on CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS), so this row carries " +
+                "the floor the rung is paced at now and TierThroughputTest holds it equal to " +
+                "the policy table. Against `multi` in the same session (2,618 ms) it is 2.2x " +
+                "faster per commit for the same weights and +74 MB. The typed text stayed with " +
+                "the voice throughout: KEPT_UP. CAVEATS, " +
                 "accepted not resolved: ONE device, a 12 GB Dimensity 9300+ flagship; ONE talk, " +
                 "one speaker, minutes long; the previewer was ARMED throughout (2 threads, " +
                 "+169 MB), which is the harder configuration; the smallest sample of the five " +
