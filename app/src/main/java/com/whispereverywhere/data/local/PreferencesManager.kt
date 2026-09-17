@@ -46,12 +46,19 @@ class PreferencesManager(private val context: Context) {
      * be a change forced on EXISTING ones: a user who never touched the toggle has been living in
      * always-on since they installed, and finding the bubble gone after an update — replaced by
      * one that only appears near a text field — is a behaviour change nobody asked for, on the
-     * one control the whole app hangs off. So an existing install with NO stored value has the
-     * value it was living under written down once, before the flow below is created, and reads
-     * exactly what it read before. The decision is [bubbleAlwaysOnBackfill], pure and tested;
-     * this is only the read and the write. Runs before `_bubbleAlwaysOn`'s initialiser by
-     * declaration order (Kotlin runs `init` blocks and property initialisers top to bottom), which
-     * is what makes the write visible to the flow's first read.
+     * one control the whole app hangs off. So an install with NO stored value has the value it
+     * is to live under written down once, before the flow below is created — `true` for an
+     * existing install, which then reads exactly what it read before; `false` for a fresh one —
+     * and every later construction finds a stored value and does nothing. The FRESH write is
+     * not decoration: this class is built once per process, a fresh install finishes onboarding
+     * inside that process, and nothing on the onboarding path writes this key, so a fresh
+     * install left unwritten would be indistinguishable from an existing one at its NEXT
+     * process start (onboarding completed, no stored value) and would be flipped to always-on —
+     * the owner's ruling honoured for exactly one process lifetime (4.8.0 review, findings 6-8).
+     * The decision is [bubbleAlwaysOnBackfill], pure and tested; this is only the read and the
+     * write. Runs before `_bubbleAlwaysOn`'s initialiser by declaration order (Kotlin runs `init`
+     * blocks and property initialisers top to bottom), which is what makes the write visible to
+     * the flow's first read.
      */
     private fun backfillBubbleAlwaysOn() {
         val write = bubbleAlwaysOnBackfill(
@@ -156,9 +163,12 @@ class PreferencesManager(private val context: Context) {
     // Bubble display mode: true = always on screen at the user's chosen spot; false = auto
     // pop-up near focused text fields / during media, hidden otherwise. OFF by default since
     // 4.8.0 (owner ruling 2026-09-17) for NEW installs only — `backfillBubbleAlwaysOn` in `init`
-    // has already written `true` for an existing install that never touched the toggle, so
-    // this read never changes anyone's mode on upgrade. Without the accessibility service the
-    // bubble is always-on regardless of this value (FloatingBubbleService.alwaysOnMode, 4.3.3 N1).
+    // has already written the answer for an install with no stored value (`true` for an existing
+    // install that never touched the toggle, `false` for a fresh one), so this read never changes
+    // anyone's mode on upgrade; the constant here is the fresh write's own value, so the read's
+    // fallback agrees with the store whichever of the two a construction reaches first. Without
+    // the accessibility service the bubble is always-on regardless of this value
+    // (FloatingBubbleService.alwaysOnMode, 4.3.3 N1).
     private val _bubbleAlwaysOn =
         MutableStateFlow(prefs.getBoolean(KEY_BUBBLE_ALWAYS_ON, BUBBLE_ALWAYS_ON_DEFAULT))
     val bubbleAlwaysOn: StateFlow<Boolean> = _bubbleAlwaysOn.asStateFlow()
@@ -693,7 +703,8 @@ class PreferencesManager(private val context: Context) {
          * "Keep bubble always on screen" for a FRESH install: off (4.8.0, owner ruling
          * 2026-09-17). Was `true` from the setting's birth through 4.7.0. The flip reaches only
          * installs that have never stored the key AND never finished onboarding — see
-         * [bubbleAlwaysOnBackfill] for why an upgrade keeps what it had.
+         * [bubbleAlwaysOnBackfill] for why an upgrade keeps what it had, and why a fresh install
+         * has this value WRITTEN rather than merely read.
          */
         const val BUBBLE_ALWAYS_ON_DEFAULT: Boolean = false
 
@@ -706,19 +717,37 @@ class PreferencesManager(private val context: Context) {
          *    the toggle. It has been living in always-on (the pre-4.8 default), so `true` is
          *    persisted — the default is a promise to new users, and an existing user must not
          *    find the bubble gone after an update.
-         *  - No stored value and onboarding NOT completed: a fresh install. Nothing is written;
-         *    the read falls through to [BUBBLE_ALWAYS_ON_DEFAULT], which is the new promise.
+         *  - No stored value and onboarding NOT completed: a fresh install. The new default is
+         *    persisted, so the install carries a stored value from its first construction on.
+         *
+         * **Why the fresh install is written and not left to the read's fallback** (4.8.0 review,
+         * findings 6-8). `PreferencesManager` is built once per process. A fresh install's first
+         * construction sees no stored value and onboarding not completed; the user then finishes
+         * onboarding in that same process, which sets `onboarding_completed` and touches nothing
+         * else here (the only other writer of this key is the Settings toggle). Its SECOND
+         * construction — the next process start, which Android brings about routinely — would
+         * then see no stored value and onboarding completed: the second bullet, byte for byte,
+         * and the new user would be flipped to always-on for good with the toggle showing ON as
+         * if they had chosen it. Writing the default down at the first construction is what lets
+         * the second one tell the two apart. Nothing reads the key's presence except this rule,
+         * so a stored `false` has no user-visible meaning beyond its value.
          *
          * Onboarding completion is the existing-install signal because it is the one flag every
-         * pre-4.8 install that reached a bubble has set, and no fresh install has. A fresh install
-         * that is interrupted mid-onboarding and later resumed is still fresh on both counts —
-         * no stored value, onboarding not completed — and gets the new default, which is right.
+         * pre-4.8 install that reached a bubble has set, and no fresh install has AT ITS FIRST
+         * CONSTRUCTION — which, with the write above, is the only construction that asks. A fresh
+         * install that is interrupted mid-onboarding and later resumed already holds its `false`
+         * and gets the new default, which is right.
          *
-         * Tested in `PreferencesBubbleAlwaysOnTest` over all four inputs; the wiring (that `init`
-         * asks this before the flow is built) is pinned there as source.
+         * Tested in `PreferencesBubbleAlwaysOnTest` over all four inputs AND over the
+         * two-construction sequence (fresh → onboarding completes → built again → still off);
+         * the wiring (that `init` asks this before the flow is built) is pinned there as source.
          */
         fun bubbleAlwaysOnBackfill(hasStoredValue: Boolean, onboardingCompleted: Boolean): Boolean? =
-            if (!hasStoredValue && onboardingCompleted) true else null
+            when {
+                hasStoredValue -> null
+                onboardingCompleted -> true
+                else -> BUBBLE_ALWAYS_ON_DEFAULT
+            }
 
         private const val KEY_API_KEY = "openai_api_key"
         private const val KEY_LEGACY_PURGED = "legacy_credential_stores_purged_v1"

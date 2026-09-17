@@ -17,20 +17,25 @@ import org.junit.Test
  * user who never opened the toggle has been living in always-on since the setting was born, and
  * an update that silently moved them to pop-up would take the bubble off their screen. So the
  * rule is pure ([PreferencesManager.bubbleAlwaysOnBackfill]) and walked over all four inputs
- * here, the `PreferencesBubbleColoursTest` way — `SharedPreferences` is a framework class, so
- * the store is a map and the wiring (that `init` asks the rule BEFORE the flow is built) is
- * pinned as source.
+ * here AND over the two-construction sequence a fresh install actually lives through (built,
+ * onboarding completed, built again — the case the first cut of this test never drove, and the
+ * one that decides whether the new default survives a process restart), the
+ * `PreferencesBubbleColoursTest` way — `SharedPreferences` is a framework class, so the store is
+ * a map and the wiring (that `init` asks the rule BEFORE the flow is built) is pinned as source.
  */
 class PreferencesBubbleAlwaysOnTest {
 
     // ------------------------------------------------------------------ the rule
 
     @Test
-    fun aFreshInstallGetsTheNewDefault_off() {
+    fun aFreshInstallGetsTheNewDefault_off_andHasItWrittenDown() {
         assertFalse("the 4.8 default is OFF", PreferencesManager.BUBBLE_ALWAYS_ON_DEFAULT)
-        // No stored value, onboarding not completed: nothing is written, the read falls through
-        // to the default, and the new user gets the pop-up bubble the owner ruled for.
-        assertNull(
+        // No stored value, onboarding not completed: the DEFAULT is written, so the new user
+        // gets the pop-up bubble the owner ruled for — and keeps it past the next process start
+        // (see the two-construction test below for why the write, and not a bare read, is
+        // what keeps the promise).
+        assertEquals(
+            PreferencesManager.BUBBLE_ALWAYS_ON_DEFAULT,
             PreferencesManager.bubbleAlwaysOnBackfill(hasStoredValue = false, onboardingCompleted = false),
         )
     }
@@ -66,10 +71,14 @@ class PreferencesBubbleAlwaysOnTest {
             )?.let { store["bubble_always_on"] = it }
             return store["bubble_always_on"] ?: PreferencesManager.BUBBLE_ALWAYS_ON_DEFAULT
         }
-        // Fresh install: off, and NOTHING written (a written `false` would look like a choice).
+        // Fresh install: off, and WRITTEN — see the two-construction test below for why a bare
+        // read is not enough. (The first cut of this test asserted the opposite, "a written
+        // `false` would look like a choice"; nothing reads the key's presence but the rule, so
+        // the stored value has no meaning beyond its value, and the unwritten fresh install was
+        // exactly the defect.)
         val fresh = mutableMapOf<String, Boolean>()
         assertFalse(read(fresh))
-        assertFalse("a fresh install must not have a value written for it", fresh.containsKey("bubble_always_on"))
+        assertEquals("a fresh install has the default written for it", false, fresh["bubble_always_on"])
         // Existing install, toggle untouched: still on, and now written so a second construction
         // — every app start from here on — reads the same answer without re-deciding.
         val existing = mutableMapOf("onboarding_completed" to true)
@@ -82,6 +91,40 @@ class PreferencesBubbleAlwaysOnTest {
         // Existing install that chose ON explicitly: still on.
         val choseOn = mutableMapOf("onboarding_completed" to true, "bubble_always_on" to true)
         assertTrue(read(choseOn))
+    }
+
+    @Test
+    fun aFreshInstallIsStillOffAtItsSecondConstruction_afterOnboardingCompletedInBetween() {
+        // THE SEQUENCE THAT MATTERS (4.8.0 review, findings 6-8). The manager is built once per
+        // process; a fresh install finishes onboarding inside that process; nothing on the
+        // onboarding path writes the always-on key; Android restarts the process routinely. So
+        // the second construction sees `onboarding_completed = true` — and if the first had
+        // written nothing, that store is byte for byte the "existing install, toggle untouched"
+        // case above, and the new user is flipped to always-on for good, the toggle showing ON
+        // as if they chose it. The owner's ruling would have held for one process lifetime.
+        fun construct(store: MutableMap<String, Boolean>): Boolean {
+            PreferencesManager.bubbleAlwaysOnBackfill(
+                hasStoredValue = store.containsKey("bubble_always_on"),
+                onboardingCompleted = store["onboarding_completed"] ?: false,
+            )?.let { store["bubble_always_on"] = it }
+            return store["bubble_always_on"] ?: PreferencesManager.BUBBLE_ALWAYS_ON_DEFAULT
+        }
+        val store = mutableMapOf<String, Boolean>()
+        // Process 1: fresh install, first construction.
+        assertFalse(construct(store))
+        // ... the user completes onboarding (MainActivity / the onboarding view models set the
+        // flag; none of them touch the always-on key).
+        store["onboarding_completed"] = true
+        assertFalse("onboarding completion must not have written the always-on key", store["bubble_always_on"] ?: false)
+        // Process 2: the next app start.
+        assertFalse("a new user must still have the pop-up bubble after a restart", construct(store))
+        // Process 3, and every one after: the same.
+        assertFalse(construct(store))
+        assertEquals(false, store["bubble_always_on"])
+        // And the write is not a choice the user is later prevented from making: the toggle's
+        // setter overwrites it, and a stored value is then left alone in either direction.
+        store["bubble_always_on"] = true
+        assertTrue(construct(store))
     }
 
     // ------------------------------------------------------------------ the source pin
