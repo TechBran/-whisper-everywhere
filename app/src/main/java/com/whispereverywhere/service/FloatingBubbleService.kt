@@ -4469,53 +4469,60 @@ class FloatingBubbleService : Service(),
         // `PreviewTeeEngine.kt` (tee) at the lines cited:
         //
         //  - a warm for THIS pack has been posted on the engine's ONE single-thread FIFO executor
-        //    (engine:113-115, `Executors.newSingleThreadExecutor`) — `warmStreamingPreview` two
-        //    statements above posts it (`engine.warm(dir, pack)`; engine:318-386, the load and
-        //    the canary inside one task, `warm = true` at :374), or refuses at the door only when
-        //    the pack is already disabled (engine:319), or is the idempotent no-op when the pack
-        //    is already resident (engine:324); SESSION_START's residency is `Warm(pack)` whenever
+        //    (engine:125-127, `Executors.newSingleThreadExecutor`) — `warmStreamingPreview` two
+        //    statements above posts it (`engine.warm(dir, pack)`; engine:333-400, the load and
+        //    the canary inside one task, `warm = true` at :389), or refuses at the door only when
+        //    the pack is already disabled (engine:334), or is the idempotent no-op when the pack
+        //    is already resident (engine:339); SESSION_START's residency is `Warm(pack)` whenever
         //    `packToWarm` is non-null (`previewResidency`, the ESTABLISHING group), so `preview`
         //    here is exactly `warmStreamingPreview`'s return — null only when the pack's dir is
         //    gone (`installedDir(pack) ?: return null`), which the `preview != null` term catches;
-        //  - the tee's `connect` calls `preview.open(...)` (tee:42) BEFORE `local.connect`
-        //    (tee:43), and `open()` POSTS its stream creation (engine:388-399), so on the FIFO it
+        //  - the tee's `connect` calls `preview.open(...)` (tee:64-67) BEFORE `local.connect`
+        //    (tee:68), and `open()` POSTS its stream creation (engine:409-422), so on the FIFO it
         //    runs strictly AFTER the warm posted above and returns on a null recognizer
-        //    (engine:391) — a stream exists the moment the load has landed and never before;
+        //    (engine:412-415) — a stream exists the moment the load has landed and never before;
         //  - `sendAudio()` on the capture thread is a ring write and a non-blocking `queue.offer`
-        //    (engine:402-406) into a `QUEUE_CAPACITY = 128`-chunk queue (engine:182,
+        //    (engine:426-430) into a `QUEUE_CAPACITY = 128`-chunk queue (engine:194,
         //    `StreamingPreviewTuning.kt:74`; 128 × 32 ms ≈ 4 s); overflow drops the chunk and
         //    marks the segment `shed` — it never blocks and never decodes;
         //  - `drain()` clears the queue and returns while there is no recognizer or stream
-        //    (engine:499-505), and `open()` clears it again when it runs (engine:394), so audio
+        //    (engine:523-529), and `open()` clears it again when it runs (engine:418), so audio
         //    queued during the load is SHED, never fed to the eventual stream as pre-session audio;
         //  - `commit()` freezes blank — `onFrozen(seq, "")` — on a null recognizer or stream
-        //    (engine:408-413), so the composer gets an empty prefix and whisper's own resolution
-        //    still passes through `Relay` untouched (tee:102);
-        //  - `close()` (engine:455-464) and `release()` (engine:467-470 → `releaseResident`
-        //    :482-495) post work that is a no-op on a cold engine (`stream?.let`, `recognizer?.let`);
+        //    (engine:432-437), so the composer gets an empty prefix and whisper's own resolution
+        //    still passes through `Relay` untouched (tee:143);
+        //  - `close()` (engine:479-488) and `release()` (engine:491-494 → `releaseResident`
+        //    :506-519) post work that is a no-op on a cold engine (`stream?.let`, `recognizer?.let`);
         //  - the typed transcript cannot be touched: the tee hands every chunk to `local` FIRST
-        //    (tee:47-50) and every commit to `local` first, and `Relay` forwards `onOpen`,
-        //    `onSegmentResolved`, `onError`, `onClosed` untouched (tee:99-106).
+        //    (tee:72-75) and every commit to `local` first, and `Relay` forwards `onOpen`,
+        //    `onSegmentResolved`, `onError`, `onClosed` untouched (tee:129-148).
         //
         // So on the reported path (a cold whisper connect of several seconds) the previewer's ~1 s
         // load lands during CONNECTING, `open()` runs behind it and finds the recognizer, and the
         // strip fills from the first replayed chunk. On a warm-whisper session `engineReady` may
         // precede the load by up to ~1 s: those chunks are shed (bounded by the queue) and words
         // appear the moment the load lands — still live words in the first session. A load or
-        // canary that FAILS between here and `open()` leaves that one session with a blank strip
-        // (whisper's deltas are swallowed by `Relay`, tee:100), the identical shape to the accepted
-        // three-strike mid-session disable, and `isDisabled(packToWarm)` refuses it for the rest
-        // of the process: both failures reach `disable(pack)` (engine:335 for a load that throws,
-        // :383 for a canary Fail/NoClip), the one writer of the per-language set, and `onDisabled`
+        // canary that FAILS between here and `open()` no longer costs that session its strip
+        // (4.9 — the trade the concurrency reviewer put on record at 4.8.1 is CLOSED): `open()`
+        // finds no recognizer and hands the tee `onUnavailable` (engine:412-415), the tee's
+        // `Relay` switches to PASS-THROUGH and forwards whisper's own `onDelta` for the rest of
+        // the session (tee:137-140) — the ordinary pre-4.8.1 in-flight strip — one-way, never
+        // back to swallowing mid-session, with the composer silenced so the two never paint one
+        // strip (`PreviewTeeEngineTest`, both over a fake and over the real engine's FIFO). The
+        // accepted three-strike MID-session disable keeps its blank: it fires after `open()`, and
+        // the tee is not told. `isDisabled(packToWarm)` still refuses the pack for the rest
+        // of the process: both failures reach `disable(pack)` (engine:350 for a load that throws,
+        // :398 for a canary Fail/NoClip), the one writer of the per-language set, and `onDisabled`
         // publishes the verdict through `PreviewDisabled` (:3954). ONLY a load that THROWS also
-        // reaches `onLoadFailure` → `markCorrupt` (engine:337, :3945); a failed canary is not
-        // corruption — the bytes are valid, nothing is deleted, and the engine's own KDoc (:77-82)
+        // reaches `onLoadFailure` → `markCorrupt` (engine:352, :3945); a failed canary is not
+        // corruption — the bytes are valid, nothing is deleted, and the engine's own KDoc (:89-94)
         // and `openAndCommitBehindAWarmThatFailsAreSafeAndFreezeBlank` pin exactly that. So a
-        // reader debugging a blank first session on a pack that failed its canary should look for
+        // reader debugging a first session that shows whisper's plain in-flight strip instead of
+        // live words, on a pack that failed its canary, should look for
         // `stream-open: … canary=fail … warm=0`, not for a marker delete.
         //
-        // `isDisabled(packToWarm)` is read off a `@Volatile` set (engine:147, one writer:
-        // `disable` at :276) — a Fail for THIS pack, never another language's verdict (4.5.0 T2,
+        // `isDisabled(packToWarm)` is read off a `@Volatile` set (engine:159, one writer:
+        // `disable` at :291) — a Fail for THIS pack, never another language's verdict (4.5.0 T2,
         // defect 4 still holds: the term names the pack). A null `packToWarm` means the selection
         // has no installed pack or the switch is off, and `localPreviewArms` refuses on those
         // same terms. `isWarmFor` is still read at this site for the `warm_now=` DIAGNOSTIC on

@@ -21,9 +21,22 @@ import com.whispereverywhere.transcription.TranscriptionEngine
  *    LocalWhisperEngine.kt:600 would blank the strip under the previewer's words). After a
  *    resolution is forwarded, the composer drops that seq's frozen prefix and the shrunken strip
  *    is emitted — resolution first, so delivery timing is byte-identical to today.
- *  - the composer is the ONE `onDelta` source; its three writers (preview executor: partial,
- *    freeze; local executor: resolve) are serialised under [composerLock] — and so is the
- *    DELIVERY, which is the part that makes the strip's order match the composer's. See [emit].
+ *  - **(4.9) PASS-THROUGH when the previewer cannot open.** 4.8.1 arms the session on the POSTED
+ *    warm, so this tee can be connected over a load that then throws or a canary that fails; the
+ *    concurrency reviewer put on record that such a session showed NOTHING on the strip for its
+ *    whole length — the Relay swallowed whisper's deltas and no partial ever came. Closed: the
+ *    previewer's `open` reports it cannot open (`LocalPreview.open`'s `onUnavailable` — the
+ *    engine calls it when `open()` finds no recognizer, which is exactly the state a failed load
+ *    or canary leaves behind on its FIFO), the Relay switches to pass-through and forwards
+ *    whisper's `onDelta` for the rest of the session — the ordinary pre-4.8.1 in-flight strip —
+ *    and the composer is silenced, so the two never paint the same strip. ONE-WAY within a
+ *    session: nothing switches it back to swallowing mid-session; [connect] resets it for the
+ *    next session, which opens on its own merits.
+ *  - the composer is the ONE `onDelta` source (outside pass-through); its three writers (preview
+ *    executor: partial, freeze; local executor: resolve) are serialised under [composerLock] —
+ *    and so is the DELIVERY, which is the part that makes the strip's order match the composer's.
+ *    See [emit]. Pass-through deliveries take the same lock, so a late composition and a whisper
+ *    delta can never be inside the owner's `onDelta` at once.
  *  - lifecycle (`prewarm` / `shutdown` / `awaitIdle` / `releaseContext`) is `local`'s alone: the
  *    service OWNS the resident previewer and releases it on trim/destroy; the tee borrows it.
  */
@@ -36,10 +49,22 @@ class PreviewTeeEngine(
     @Volatile private var listener: TranscriptionEngine.Listener? = null
     private val composerLock = Any()
 
+    /**
+     * THE ONE-WAY SWITCH (4.9): false while the previewer owns the strip, true from the moment it
+     * reported it cannot open for this session until [connect] starts the next one. Written on
+     * the previewer's executor (from `open`'s `onUnavailable`), read on local's executor
+     * (whisper's deltas) and on the previewer's (the composer's), hence `@Volatile`.
+     */
+    @Volatile private var passThrough = false
+
     override fun connect(language: String?, listener: TranscriptionEngine.Listener) {
         this.listener = listener
+        passThrough = false
         synchronized(composerLock) { composer.reset() }
-        preview.open { partial -> emit { composer.onPartial(partial) } }
+        preview.open(
+            onPartial = { partial -> emit { composer.onPartial(partial) } },
+            onUnavailable = { passThrough = true },
+        )
         local.connect(language, Relay(listener))
     }
 
@@ -89,15 +114,31 @@ class PreviewTeeEngine(
      * the service's `onDelta` reads two `@Volatile` gates and `launch`es
      * (FloatingBubbleService.kt:3070-3084). A null listener (after [close]) short-circuits before
      * the lock, so a late partial never even composes.
+     *
+     * (4.9) In pass-through the composer is SILENT: a blank freeze for a stream that never existed
+     * (`onFrozen(seq, "")`, the cold engine's answer) and the composed strip after a resolution
+     * would otherwise blank whisper's own in-flight words between his deltas. Whisper is the one
+     * source then, through [Relay].
      */
     private fun emit(compose: () -> String) {
+        if (passThrough) return
         val l = listener ?: return
         synchronized(composerLock) { l.onDelta(compose()) }
     }
 
     private inner class Relay(private val owner: TranscriptionEngine.Listener) : TranscriptionEngine.Listener {
         override fun onOpen() = owner.onOpen()
-        override fun onDelta(text: String) = Unit   // swallowed: the composer is the one delta source
+
+        /**
+         * Swallowed — the composer is the one delta source — EXCEPT in pass-through (4.9), where
+         * whisper's deltas are the strip. Delivered under [composerLock] for the same reason the
+         * composer's are: the owner's `onDelta` must never be entered by two emitters at once.
+         */
+        override fun onDelta(text: String) {
+            if (!passThrough) return
+            synchronized(composerLock) { owner.onDelta(text) }
+        }
+
         override fun onSegmentResolved(seq: Long, outcome: SegmentOutcome) {
             owner.onSegmentResolved(seq, outcome)
             emit { composer.resolve(seq) }

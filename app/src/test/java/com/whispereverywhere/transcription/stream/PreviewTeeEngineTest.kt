@@ -18,7 +18,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * The tee (spec §3, §4.1): `local` keeps every commit, every seq and every resolution exactly
  * as today; the previewer only paints. Pinned here: the sendAudio order (local FIRST — the
  * CapSeamPinTest order), the freeze under LOCAL's seq, the swallowed local deltas, the
- * pass-through of resolutions BEFORE the recomposed delta, and the lifecycle delegation.
+ * pass-through of resolutions BEFORE the recomposed delta, the lifecycle delegation, and (4.9)
+ * the fallback to whisper's own deltas when the previewer reports it cannot open — from that
+ * moment on, one-way, and never both sources on one strip.
  */
 class PreviewTeeEngineTest {
 
@@ -74,7 +76,13 @@ class PreviewTeeEngineTest {
         /** The real onFrozen lands the pack's pad + a drain + a decode after the cut; hold it to model that. */
         var deferFreeze = false
         private var held: (() -> Unit)? = null
-        override fun open(onPartial: (String) -> Unit) { this.onPartial = onPartial; order += "preview.open" }
+        /** (4.9) The real engine's `open()` finding no recognizer: report it at open. */
+        var unavailableAtOpen = false
+        override fun open(onPartial: (String) -> Unit, onUnavailable: () -> Unit) {
+            this.onPartial = onPartial
+            order += "preview.open"
+            if (unavailableAtOpen) onUnavailable()
+        }
         override fun sendAudio(pcm: ByteArray) { audio += pcm; order += "preview" }
         override fun commit(seq: Long, retainMs: Long, onFrozen: (Long, String) -> Unit) {
             commits += seq to retainMs
@@ -158,6 +166,107 @@ class PreviewTeeEngineTest {
         local.delta(" Hello")
         local.delta("")
         assertTrue(owner.deltas.isEmpty())
+        // (4.9) ...and over a HEALTHY previewer that stays so for the whole session: the composer
+        // still owns the strip after whisper has spoken, and whisper's later deltas are still
+        // swallowed — the pass-through switch never flipped.
+        preview.partial("hello")
+        assertEquals(listOf("hello"), owner.deltas)
+        local.delta(" Hello there")
+        assertEquals(listOf("hello"), owner.deltas)
+    }
+
+    /**
+     * (4.9) THE TEE OVER A PREVIEWER THAT CANNOT OPEN — the trade 4.8.1 recorded, closed. The
+     * previewer reports at `open` that it has nothing to serve this session with (the real
+     * engine's `open()` finding no recognizer after a warm that threw or a canary that failed);
+     * from that moment whisper's own deltas go through to the owner and the composer is silent —
+     * never both. A freeze and a resolution still pass through `local`'s seq exactly as before,
+     * and neither paints: the strip is whisper's alone. One-way within the session; a new session
+     * over a previewer that CAN open starts swallowing again.
+     */
+    @Test fun aTeeOverAPreviewerThatCannotOpenForwardsWhispersDeltasFromThenOnAndNeverBoth() {
+        preview.unavailableAtOpen = true
+        connected()
+        assertEquals(listOf("preview.open", "local.connect"), order)
+        assertEquals("local connected and the owner heard onOpen, untouched", 1, owner.opened)
+        // Whisper's in-flight strip — the pre-4.8.1 shape — reaches the owner.
+        local.delta(" Hello")
+        local.delta(" Hello there")
+        assertEquals(listOf(" Hello", " Hello there"), owner.deltas)
+        // The composer is SILENT: a stray partial, a blank freeze under a commit and the composed
+        // strip after a resolution all paint nothing — never both sources on one strip.
+        preview.partial("hello")
+        assertEquals(listOf(" Hello", " Hello there"), owner.deltas)
+        preview.frozenText = ""
+        assertEquals(0L, tee.commit())
+        assertEquals("the freeze still ran under local's seq", listOf(0L to 0L), preview.commits)
+        assertEquals("...and painted nothing", listOf(" Hello", " Hello there"), owner.deltas)
+        local.resolve(0L, SegmentOutcome.Text("Hello there."))
+        assertEquals(listOf(0L to SegmentOutcome.Text("Hello there.")), owner.resolved)
+        assertEquals("the resolution passed through and the composer painted nothing after it", "resolved:0", owner.events.last())
+        // Whisper's terminal blank after the resolution is whisper's, and it goes through too.
+        local.delta("")
+        assertEquals(listOf(" Hello", " Hello there", ""), owner.deltas)
+        // One-way: nothing the previewer does later can take the strip back mid-session.
+        preview.partial("late words")
+        assertEquals(listOf(" Hello", " Hello there", ""), owner.deltas)
+
+        // A NEW session over a previewer that can open is the ordinary tee again.
+        tee.close()
+        assertEquals(1, owner.closedCalls)
+        preview.unavailableAtOpen = false
+        val second = Owner()
+        tee.connect("en", second)
+        local.delta(" Second")
+        assertTrue("swallowed again — the switch is per session", second.deltas.isEmpty())
+        preview.partial("second")
+        assertEquals(listOf("second"), second.deltas)
+    }
+
+    /**
+     * (4.9) The same fact over the REAL engine on a held FIFO, in the exact production order the
+     * 4.8.1 gate creates: a warm is posted, the tee connects behind it (open posts behind the warm),
+     * chunks arrive, the load THROWS on the FIFO, `open()` finds no recognizer and reports it, and
+     * whisper's deltas flow from that moment. Before the load lands the strip is blank either way
+     * (whisper's burst is swallowed — the composer still owns the strip until the previewer says
+     * otherwise); from the failure onward it is whisper's.
+     */
+    @Test fun aTeeWhosePreviewerFailsItsWarmForwardsWhispersDeltasFromTheFailureOnward() {
+        var now = 0L
+        val exec = ManualExecutorService()
+        val previewer = StreamingPreviewEngine(
+            factory = ScriptedFactory(null, throwAtLoad = true), canaryClip = { FloatArray(40_960) }, executor = exec,
+            clock = { now }, nanoClock = { 0L }, log = {}, enterExecutorThread = {},
+        )
+        previewer.warm(File("unused"), StreamingPackCatalog.EN)      // posted — the wrap site's shape
+        assertFalse("no verdict yet: the 4.8.1 gate arms over this load", previewer.isDisabled(StreamingPackCatalog.EN))
+        val cold = PreviewTeeEngine(previewer, local)
+        cold.connect("en", owner)                                    // open() posts BEHIND the warm
+        assertEquals(1, owner.opened)
+        repeat(5) { now += 32; cold.sendAudio(ByteArray(1024)) }
+        local.delta(" Early")                                        // before the load lands: swallowed, as on a warm session
+        assertTrue(owner.deltas.isEmpty())
+
+        exec.runAll()                                                // the load THROWS, then open finds no recognizer
+        assertTrue("the pack is off for the process", previewer.isDisabled(StreamingPackCatalog.EN))
+        assertTrue("nothing painted by the failure itself", owner.deltas.isEmpty())
+        local.delta(" Hello")                                        // whisper's in-flight strip, from here on
+        assertEquals(listOf(" Hello"), owner.deltas)
+        repeat(5) { now += 32; cold.sendAudio(ByteArray(1024)); exec.runAll() }
+        assertEquals("audio after the verdict is refused at the previewer's door and paints nothing", listOf(" Hello"), owner.deltas)
+        // The commit path: local's seq, the cold engine's blank freeze — which paints NOTHING now —
+        // and whisper's resolution through untouched.
+        assertEquals(0L, cold.commit())
+        exec.runAll()
+        assertEquals(listOf(" Hello"), owner.deltas)
+        local.resolve(0L, SegmentOutcome.Text("Hello."))
+        assertEquals(listOf(0L to SegmentOutcome.Text("Hello.")), owner.resolved)
+        assertEquals("resolved:0", owner.events.last())
+        local.delta("")
+        assertEquals(listOf(" Hello", ""), owner.deltas)
+        cold.close()
+        exec.runAll()
+        assertEquals(1, owner.closedCalls)
     }
 
     @Test fun theStripIsFrozenPrefixPlusPartialAndAResolutionDropsItsPrefixAfterPassingThrough() {

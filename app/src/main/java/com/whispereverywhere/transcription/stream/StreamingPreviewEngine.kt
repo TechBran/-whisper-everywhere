@@ -11,9 +11,21 @@ import java.util.concurrent.LinkedBlockingQueue
  * The four calls `PreviewTeeEngine` makes on a local previewer — a seam so the tee is testable
  * with a fake. [commit]'s [onFrozen] is invoked on the previewer's executor, once, with the
  * padded stream's final text ("" when nothing could be frozen).
+ *
+ * **(4.9) [open]'s [onUnavailable] is the smallest honest signal that the previewer cannot serve
+ * THIS session.** Since 4.8.1 the tee is connected over a POSTED warm, so `open` can land on the
+ * previewer's FIFO behind a load that threw or a canary that failed; before 4.9 the tee had no
+ * way to know and swallowed whisper's deltas for a strip nobody would ever paint. The engine
+ * invokes it, once, on its executor, when `open()` runs and finds no recognizer — which is exactly
+ * what a failed warm leaves behind, and what `isDisabled(pack)` flipping true before or at open
+ * looks like from inside `open()` — and never when the load simply has not landed yet, because
+ * on the single FIFO the warm has ALWAYS run by the time `open` does. The tee answers by
+ * forwarding whisper's own deltas for the rest of the session. The one-argument overload is the
+ * pre-4.9 call, kept for callers that do not want the signal.
  */
 interface LocalPreview {
-    fun open(onPartial: (String) -> Unit)
+    fun open(onPartial: (String) -> Unit) = open(onPartial) {}
+    fun open(onPartial: (String) -> Unit, onUnavailable: () -> Unit)
     fun sendAudio(pcm: ByteArray)
     fun commit(seq: Long, retainMs: Long, onFrozen: (seq: Long, text: String) -> Unit)
     fun close()
@@ -258,9 +270,12 @@ class StreamingPreviewEngine(
      * What a still-loading previewer costs, then, is at most the audio queued before the load
      * lands (bounded by the queue) and a blank strip until the first partial; the typed
      * transcript is `local`'s alone by the tee's construction. A verdict that lands BETWEEN this
-     * read and [open] (a canary Fail on the first load of a corrupt pack) leaves that one session
-     * with a blank strip — the same shape as the accepted three-strike mid-session disable — and
-     * never a throw.
+     * read and [open] (a canary Fail on the first load of a corrupt pack, or a load that throws)
+     * used to leave that one session with a blank strip; since 4.9 [open] finds no recognizer,
+     * reports it through `LocalPreview.open`'s `onUnavailable`, and the tee falls back to
+     * whisper's own in-flight deltas for the rest of that session — the pre-4.8.1 strip, never a
+     * throw. (The three-strike MID-session disable keeps its accepted blank: it happens after
+     * [open], and the tee is not told.)
      */
     fun isDisabled(pack: StreamingPack): Boolean = pack.language in disabledLangs
 
@@ -385,10 +400,19 @@ class StreamingPreviewEngine(
         }
     }
 
-    override fun open(onPartial: (String) -> Unit) {
+    /**
+     * Posts the session's stream creation behind whatever is on the FIFO — the warm, if one was
+     * posted ahead of it. (4.9) A null [recognizer] when the task runs is a previewer that cannot
+     * serve this session — the warm threw, or the canary failed, or nothing was ever warmed — and
+     * [onUnavailable] says so, once, on this executor; the tee switches to whisper's deltas.
+     */
+    override fun open(onPartial: (String) -> Unit, onUnavailable: () -> Unit) {
         this.onPartial = onPartial
         executor.execute {
-            val rec = recognizer ?: return@execute
+            val rec = recognizer ?: run {
+                onUnavailable()
+                return@execute
+            }
             stream?.let { runCatching { it.release() } }
             stream = rec.createStream()
             queue.clear()
