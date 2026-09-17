@@ -174,24 +174,30 @@ class ModelTierCopyTest {
      * because since 4.4.0 the previewer keeps putting words on the strip at 0.4 s whatever the
      * finalizer is doing), and the AXIS of the remedy.
      *
-     * The axis is the third assertion and it is not pedantry. This build exists because the
-     * research predicts that **quantisation, not size, is the throughput lever** — `Q5_0`/`Q5_1`
-     * are the only two quantisations absent from ggml's ARM i8mm repack path and the only two this
-     * app shipped. On a ladder where three rungs are the same model at two quantisations, "a
-     * smaller rung is the fix" points a user on `medium-q8` (823 MB) at `medium-q5` (539 MB) —
-     * the same 24 layers at the quantisation the research says is the SLOW one. That is a speed
-     * prediction, in reverse, on the exact axis the session is measuring.
+     * The axis is the third assertion and it is not pedantry. "A smaller rung is the fix" is
+     * ambiguous on a ladder where three rungs are the same model at two quantisations: a user on
+     * `medium-q8` (823 MB) reads it and can land on `medium-q5` (539 MB), a smaller FILE carrying
+     * the same 24 layers at 1024 dims. So the note names the ARCHITECTURAL axis — a smaller
+     * Whisper, one with fewer layers — under which a quantisation twin is excluded by construction
+     * in both directions, because a twin is never a smaller Whisper.
      *
-     * So the note names the direction that is architecturally safe (fewer layers) and rules out
-     * the one that is not (the same model, finer or coarser). Both halves are asserted, because a
-     * future edit that drops the second clause for brevity restores the mis-steer.
+     * **The fourth assertion forbids the other failure, which is the one that actually shipped
+     * (review round 1, B1): the note may not name the quantisation axis AT ALL.** A remedy that
+     * names it ranks it. *"Not the same Whisper at a finer quantisation"* told a `medium-q5` user
+     * that `medium-q8` is not the fix and an `ultra` user that `ultra-q8` is not the fix — the two
+     * repack-path rungs, and one of the two comparisons the owner's six-device session exists to
+     * run, pre-answered in the negative in the voice of advice. The app's own vocabulary settles
+     * that reading: "finer quantisation" is the `Q8_0` side on three cards in the same list
+     * ([ModelTierCopy] `small-q8`, `medium-q8`, `ultra-q8`), and `small-q8`'s card says of that
+     * same axis that its throughput "is unknown". This note renders on FIVE production cards, so
+     * whatever it says, it says five times.
      */
     @Test fun the_keep_up_note_states_the_failure_the_symptom_and_the_axis_of_the_remedy() {
         val note = ModelTierCopy.KEEP_UP_NOTE
         assertEquals(
             "This model may not keep up with continuous speech on this device. If the typed " +
-                "text falls behind your voice, a smaller model is the fix — a smaller Whisper, " +
-                "not the same Whisper at a finer quantisation.",
+                "text falls behind your voice, a smaller Whisper is the fix — one with fewer " +
+                "layers.",
             note,
         )
         // 1. the failure mode, hedged — "may not", because nobody has measured it.
@@ -199,14 +205,20 @@ class ModelTierCopyTest {
         // 2. the symptom the user can see, and the remedy.
         assertTrue(note.contains("falls behind your voice"))
         assertTrue(note.contains("is the fix"))
-        // 3. the axis: a smaller MODEL, and explicitly not the same model re-quantised.
+        // 3. the axis, named POSITIVELY: a smaller WHISPER — fewer layers, not a smaller file.
         assertTrue(
-            "the remedy must name the axis — 'a smaller rung' sends a medium-q8 user to " +
-                "medium-q5, which is the same 24 layers at the quantisation the research calls " +
-                "the slow one",
-            note.contains("a smaller Whisper") && note.contains("not the same Whisper"),
+            "the remedy must name the architectural axis — 'a smaller rung' is ambiguous for a " +
+                "medium-q8 user, whose smaller FILE is medium-q5: the same 24 layers at 1024 dims",
+            note.contains("a smaller Whisper") && note.contains("fewer layers"),
         )
-        assertTrue(note.contains("quantisation"))
+        // 4. and it must rank the quantisation axis in NEITHER direction (review round 1, B1).
+        assertFalse(
+            "KEEP_UP_NOTE names quantisation in its remedy, which ranks that axis on five " +
+                "production cards. Nothing on it is measured on the owner's hardware, small-q8's " +
+                "own card says its throughput is unknown, and small-q5_1 vs small-q8_0 and " +
+                "medium-q5_0 vs medium-q8_0 are the two comparisons his session exists to run",
+            Regex("\\b(quantis\\w*|quantiz\\w*|q\\d_\\d)\\b").containsMatchIn(note.lowercase()),
+        )
         // The note is one string on five cards, so a speed claim smuggled into it is a speed
         // claim on five cards. The census below iterates the cards; this is the string itself.
         SPEED_CLAIM_WORDS.forEach {

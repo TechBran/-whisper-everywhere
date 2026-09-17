@@ -45,24 +45,31 @@ object ModelTierCopy {
      * `audio_ctx` floor makes the cost per commit constant, so what a heavy rung runs out of is
      * COMMITS PER SECOND, and only sustained speech exposes it. A ten-second trial will not.
      *
-     * **T2 — THE REMEDY NAMES ITS AXIS, because "a smaller rung" was a speed prediction in
-     * reverse.** The note read *"a smaller rung is the fix"*, which is right across whisper sizes
-     * and WRONG across a quantisation twin — and this ladder is three twins. A user on `medium-q8`
-     * (823 MB) told to go smaller lands on `medium-q5` (539 MB): the same 24 layers at 1024 dims,
-     * at the quantisation the research this build serves says is the SLOW one, because `Q5_0` and
-     * `Q5_1` are the only two quantisations absent from ggml's ARM i8mm repack path and the app
-     * already compiles `+i8mm`. Sending someone down that step to fix a throughput problem is a
-     * comparative speed claim about the one axis the owner's six-device session exists to measure,
-     * made by the app, in the voice of advice.
+     * **T2 — THE REMEDY NAMES ITS AXIS, AND NAMES IT POSITIVELY.** The note read *"a smaller rung
+     * is the fix"*, which is unambiguous across whisper sizes and ambiguous across a quantisation
+     * twin — and this ladder is three twins. A user on `medium-q8` (823 MB) told to go smaller can
+     * land on `medium-q5` (539 MB), which is a smaller FILE carrying the same 24 layers at 1024
+     * dims: not a smaller model at all. So the remedy names the ARCHITECTURAL axis instead — a
+     * smaller Whisper, one with fewer layers, strictly less work per commit under this app's
+     * `audio_ctx` floor. Under that wording a quantisation twin is excluded by construction, in
+     * BOTH directions, because a twin is never a smaller Whisper.
      *
-     * So the remedy names the direction that is architecturally safe — a smaller Whisper, fewer
-     * and narrower layers, strictly less work per commit — and rules out the one that is not. The
-     * second clause is the load-bearing half; dropping it for brevity restores the mis-steer.
+     * **What this note must never do — and did between `37d8b7c` and review round 1's B1 — is rank
+     * the quantisation axis.** The clause *"not the same Whisper at a finer quantisation"* read as
+     * a verdict, because the app defines "finer quantisation" itself, three cards further down this
+     * same list, as the `Q8_0` side (`small-q8`, `medium-q8`, `ultra-q8` — the LARGER file). On
+     * `medium-q5`'s card it therefore told a user whose typed text had fallen behind that
+     * `medium-q8` is not the fix, and on `ultra`'s that `ultra-q8` is not the fix: the two
+     * repack-path rungs, and one of the two comparisons the owner's six-device session exists to
+     * run. Nothing on that axis is measured on his hardware — `small-q8`'s card says of it that its
+     * throughput "is unknown", and the app may not say unknown on one card and not-the-fix on five.
+     * The clause also failed at its own purpose: `medium-q5` is the COARSER quantisation, so "at a
+     * finer quantisation" never named the mis-steer it was written to prevent, and "a smaller
+     * Whisper" alone does. Keep the remedy positive; do not restore a contrast.
      */
     const val KEEP_UP_NOTE: String =
         "This model may not keep up with continuous speech on this device. If the typed text " +
-            "falls behind your voice, a smaller model is the fix — a smaller Whisper, not the " +
-            "same Whisper at a finer quantisation."
+            "falls behind your voice, a smaller Whisper is the fix — one with fewer layers."
 
     private val copyById: Map<String, TierCopy> = mapOf(
         // 4.6 — `pro`'s card is GONE, because `pro` is retired (owner ruling 2026-09-13: no
