@@ -524,9 +524,10 @@ object TierThroughputRecord {
                 "10% of small-q8 (1,217) on this tablet despite 24 layers at 1024 against 12 at " +
                 "768. The typed text stayed with the voice throughout: KEPT_UP. CAVEATS, accepted " +
                 "not resolved: ONE device, a 12 GB flagship — the RAM threshold this rung is " +
-                "recommended above (5.5e9) is the repo's `extreme` precedent, NOT a measurement, " +
-                "and the owner's weakest-device run is the open item; ONE talk; previewer ARMED " +
-                "throughout. An 823 MB model on a 6 GB phone has not been timed by anyone",
+                "recommended above (4.5e9) is the owner's ruling of 2026-09-17, NOT a " +
+                "measurement, and the owner's weakest-device run is the open item; ONE talk; " +
+                "previewer ARMED throughout. An 823 MB model on a 6 GB phone has still not been " +
+                "timed by anyone",
         ),
     )
 

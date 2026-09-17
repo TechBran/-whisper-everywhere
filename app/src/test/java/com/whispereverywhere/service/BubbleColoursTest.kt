@@ -370,13 +370,23 @@ class BubbleColoursTest {
         assertTrue(
             BubbleColours.contrastRatio(white, BubbleColours.compositeOver(0, white)) < BubbleColours.CONTRAST_FLOOR,
         )
-        // Over a DARK app the words still read at the floor — the other half of the slider's
-        // sentence ("readable over dark content, but over a white page they can wash out").
+        // Over BLACK the words still read at the floor — the slider's "over black the words
+        // still read". BLACK, and the copy says black, not "dark content": the first cut of the
+        // sentence promised readability over dark content, and the arithmetic does not hold it
+        // — the default red at the 20% floor is under the contrast floor over an ordinary dark
+        // grey (#404040, a dimly lit video), asserted below so the wording stays argued. Below
+        // 85 the app promises nothing; black is the one backdrop the fact is stated for.
         assertTrue(
             BubbleColours.contrastRatio(white, BubbleColours.compositeOver(BubbleColours.OPACITY_FLOOR_PERCENT, black)) >= BubbleColours.CONTRAST_FLOOR,
         )
         assertTrue(
             BubbleColours.contrastRatio(BubbleColours.LIVE_DEFAULT, BubbleColours.compositeOver(BubbleColours.OPACITY_FLOOR_PERCENT, black)) >= BubbleColours.CONTRAST_FLOOR,
+        )
+        val darkGrey = 0xFF404040.toInt()
+        assertTrue(
+            "the default red at the floor over dark grey is under the contrast floor — which is " +
+                "why the slider says \"over black\" and promises nothing about dark content",
+            BubbleColours.contrastRatio(BubbleColours.LIVE_DEFAULT, BubbleColours.compositeOver(BubbleColours.OPACITY_FLOOR_PERCENT, darkGrey)) < BubbleColours.CONTRAST_FLOOR,
         )
         // The steps below the guarantee exist (the ruling) and none is below the floor (the clamp).
         assertTrue(BubbleColours.OPACITY_STEPS.any { it < BubbleColours.OPACITY_GUARANTEED_PERCENT })

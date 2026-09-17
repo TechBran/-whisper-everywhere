@@ -711,8 +711,14 @@ fun SettingsScreen(
                 SettingsSwitchItem(
                     icon = Icons.Filled.PushPin,
                     title = "Keep bubble always on screen",
+                    // The OFF half is conditional on the accessibility service and says so:
+                    // without it the service has no text-field summons, so the bubble is
+                    // always-on whatever this toggle reads (FloatingBubbleService.alwaysOnMode,
+                    // 4.3.3 N1). Since 4.8.0 OFF is the default a fresh install meets, so the
+                    // service-off path is the one this sentence used to be wrong about.
                     subtitle = "Bubble stays where you place it. Off: pops up only near " +
-                        "text fields and playing media, hides when idle",
+                        "text fields and playing media, hides when idle — needs the " +
+                        "accessibility service; without it the bubble stays on screen either way",
                     checked = bubbleAlwaysOn,
                     onCheckedChange = { enabled ->
                         app.preferencesManager.setBubbleAlwaysOn(enabled)
@@ -1686,8 +1692,9 @@ private fun BubbleOpacityRow(percent: Int, onPick: (Int) -> Unit) {
             text = "Lower lets whatever is underneath show through — at " +
                 "${BubbleColours.OPACITY_FLOOR_PERCENT}% a video plays through the panel. At " +
                 "${BubbleColours.OPACITY_GUARANTEED_PERCENT}% and above every text colour is " +
-                "readable over any app. Below ${BubbleColours.OPACITY_GUARANTEED_PERCENT}% the " +
-                "words are readable over dark content, but over a white page they can wash out.",
+                "readable over any app. Below ${BubbleColours.OPACITY_GUARANTEED_PERCENT}% " +
+                "nothing is promised: over black the words still read, but " +
+                "over a white page they can wash out.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

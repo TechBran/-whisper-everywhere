@@ -436,4 +436,17 @@ object ModelTierCopy {
      * right answer are different tiers.
      */
     const val STEER_BADGE = "Best match for your language"
+
+    /**
+     * The chip marking the steered card on the FIRST-RUN flow (4.8.0), where [STEER_BADGE] would
+     * name a reason that is not the reason. Since the owner's 2026-09-17 device rule the flow's
+     * steer is `OnboardingLogic.firstRunSteer`, and on no branch of it is language why the card
+     * is steered: over the 4.5 GB gate it is `medium-q8` by RAM and throughput margin, under it
+     * `small-q8` by RAM, and on an NPU-capable device the chip. The card already carries the
+     * reason where there is one to read — the RAM chip ("Recommended for your device"), the
+     * body's RAM sentence, the NPU tier's own copy — so this chip says only what is true on
+     * every branch: this is the app's pick, and the user still taps. The Settings picker keeps
+     * [STEER_BADGE]: its steer is still `steerIdForLanguageTagFor`, unfiltered by the RAM rule.
+     */
+    const val FIRST_RUN_STEER_BADGE = "Our pick"
 }

@@ -1073,7 +1073,10 @@ private fun TierChoiceCard(
             copy?.let { c ->
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val chips = if (steered) listOf(ModelTierCopy.STEER_BADGE) + c.badges else c.badges
+                    // 4.8.0: the first-run chip, not STEER_BADGE — the flow's steer is the
+                    // RAM rule's answer (or the chip's), never the language's, and the chip
+                    // must not name a reason that is not the reason (ModelTierCopy's KDoc).
+                    val chips = if (steered) listOf(ModelTierCopy.FIRST_RUN_STEER_BADGE) + c.badges else c.badges
                     chips.forEach { badge ->
                         Surface(
                             color = Primary.copy(alpha = 0.12f),

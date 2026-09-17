@@ -679,14 +679,24 @@ class ChooserSteerWiringPinTest {
 
     @Test
     fun theSteerBadgeLeadsTheChipsOnTheSteeredCardOnly() {
+        // 4.8.0: the FIRST-RUN chip, not STEER_BADGE. The flow's steer is the RAM rule's answer
+        // (medium over the gate, small under it) or the chip's on a capable device — language
+        // is the reason on no branch, and "Best match for your language" on the medium card
+        // told a 6 GB phone something that was not why. The picker keeps STEER_BADGE (below):
+        // its steer is still the unfiltered language/gate steer.
         assertEquals(
-            "STEER_BADGE is prepended to the tier's own chips, gated on `steered`",
+            "FIRST_RUN_STEER_BADGE is prepended to the tier's own chips, gated on `steered`",
             1,
             count(
                 flow,
-                "val chips = if (steered) listOf(ModelTierCopy.STEER_BADGE) + c.badges " +
+                "val chips = if (steered) listOf(ModelTierCopy.FIRST_RUN_STEER_BADGE) + c.badges " +
                     "else c.badges",
             ),
+        )
+        assertEquals(
+            "the flow never renders STEER_BADGE — a reason that is not the reason",
+            0,
+            liveLineCount(flow, "ModelTierCopy.STEER_BADGE"),
         )
         assertEquals("the chip row renders that list", 1, count(flow, "chips.forEach { badge ->"))
         assertEquals(

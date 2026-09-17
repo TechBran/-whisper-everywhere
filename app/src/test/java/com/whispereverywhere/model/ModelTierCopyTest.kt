@@ -2,6 +2,7 @@ package com.whispereverywhere.model
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -595,6 +596,22 @@ class ModelTierCopyTest {
         assertEquals("Best match for your language", ModelTierCopy.STEER_BADGE)
         listOf("faster", "fastest", "quicker", "instant").forEach {
             assertFalse(ModelTierCopy.STEER_BADGE.lowercase().contains(it))
+        }
+    }
+
+    @Test fun the_first_run_steer_badge_names_no_reason_because_language_is_not_one() {
+        // 4.8.0: the guided flow's steer is OnboardingLogic.firstRunSteer — medium over the RAM
+        // gate, small under it, the chip's tier on a capable device. Language decides none of
+        // those, so the flow's chip must not say "language"; and it must not say "device" either,
+        // because the green RAM chip ("Recommended for your device") already does, with a
+        // reason the user can check. Reason-neutral, and distinct from both.
+        assertEquals("Our pick", ModelTierCopy.FIRST_RUN_STEER_BADGE)
+        assertNotEquals(ModelTierCopy.STEER_BADGE, ModelTierCopy.FIRST_RUN_STEER_BADGE)
+        listOf("language", "device", "faster", "fastest", "quicker", "instant", "recommended").forEach {
+            assertFalse(
+                "the first-run chip claims <<$it>>",
+                ModelTierCopy.FIRST_RUN_STEER_BADGE.lowercase().contains(it),
+            )
         }
     }
 
