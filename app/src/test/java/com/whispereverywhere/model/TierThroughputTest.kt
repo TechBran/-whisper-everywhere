@@ -4,6 +4,7 @@ import com.whispereverywhere.service.CommitCadencePolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -26,8 +27,15 @@ import java.io.File
  * Galaxy Tab S10+ (`docs/measurements/2026-09-17-tab-cpu-ladder.md`) and the owner ruled the same
  * day — Q8 for everything, every Q5 rung retired. Three Q8 rungs are pickable, all three measured,
  * none authorised: the accuracy pass on small and medium comes first. The gate's committed answer
- * is `Withheld([small-q8, medium-q8, ultra-q8])`, and `ultra-q8` could not enter the switch even
+ * was `Withheld([small-q8, medium-q8, ultra-q8])`, and `ultra-q8` could not enter the switch even
  * if the owner reached for it, because its verdict is [KeepUp.KEPT_UP_WITHOUT_MARGIN].
+ *
+ * **4.9 — the owner ruled, and the gate reports Promotable for the first time.** After his own
+ * dictation on all three rungs (2026-09-17: *"all three actually work very well"*) the switch names
+ * all three, and `ultra-q8` clears on a [ThroughputVerdict.OwnerRuling] recorded BESIDE its
+ * unchanged KEPT_UP_WITHOUT_MARGIN row — a decision written next to the evidence it overrides,
+ * never an edit to the evidence. Two new requirements hold that shape: a ruling clears ONLY the row
+ * it is on, and a ruling nobody signed or dated is refused at construction.
  *
  * It is built in the shape the owner has already accepted for language clearance
  * (`StreamingPackClearanceTest`), one axis over, and the correspondence is exact:
@@ -42,8 +50,9 @@ import java.io.File
  * |---|---|
  * | no selectable rung may have a blank verdict | [no_measured_verdict_is_blank_and_every_measurement_names_a_real_measurer] |
  * | the production switch may never name a rung whose verdict is missing or does not clear | [authorising_a_rung_whose_verdict_does_not_clear_is_a_red_suite] |
- * | the instrument set equals the pickable rungs whose verdict does not clear | [the_instrument_set_is_the_pickable_rungs_whose_verdict_does_not_clear] |
- * | the gate withholds promotion while the switch is empty, and names the three Q8 rungs | [the_committed_state_withholds_promotion_and_names_the_three_q8_rungs] |
+ * | the instrument set equals the pickable rungs whose verdict does not clear (empty since 4.9) | [the_instrument_set_is_the_pickable_rungs_whose_verdict_does_not_clear] |
+ * | the committed state is Promotable: three rows, one ruling, the switch naming all three | [the_committed_state_is_promotable_on_three_rows_one_ruling_and_the_owners_word] |
+ * | an owner ruling clears only the row it is on, and must be signed and dated | [an_owner_ruling_clears_only_the_row_it_is_recorded_on_and_must_be_signed_and_dated] |
  * | a rung gained by the chooser cannot slip past the record; a retired rung keeps its row | [every_pickable_rung_has_a_row_and_every_row_resolves_in_the_catalogue] |
  * | a verdict is measured AT A FLOOR, and moving the floor invalidates it | [every_measurement_is_pinned_to_the_commit_floor_it_was_measured_at] |
  * | an unmeasured rung is paced at the conservative floor | [an_unmeasured_rung_is_paced_at_the_conservative_large_floor] |
@@ -178,6 +187,11 @@ class TierThroughputTest {
      * each row's outcome was assigned, NOT a gate the code enforces: `ThroughputMeasurement` has
      * no worst-commit field, so nothing computes it. `ultra-q8`'s worst was 7,930 against 8,000
      * and its outcome was assigned on that.
+     *
+     * **4.9 — the set is EMPTY, and the outcome did not move.** `ultra-q8` clears because the
+     * owner's ruling is recorded beside its row (`ownerRuling`), not because anyone touched the
+     * number: this test pins the outcome as still KEPT_UP_WITHOUT_MARGIN, so a row edited to
+     * KEPT_UP to "tidy up" fails here.
      */
     @Test fun the_instrument_set_is_the_pickable_rungs_whose_verdict_does_not_clear() {
         val measured = TierThroughputRecord.RECORD
@@ -206,17 +220,107 @@ class TierThroughputTest {
             WhisperCatalog.instruments.map { it.id },
             notClearing,
         )
-        // And today that set is one rung: the optional top rung, kept up without margin.
-        assertEquals(listOf("ultra-q8"), WhisperCatalog.instruments.map { it.id })
-        assertEquals(
-            KeepUp.KEPT_UP_WITHOUT_MARGIN,
-            (TierThroughputRecord.forTier("ultra-q8")!!.verdict as ThroughputVerdict.Measured).measurement.outcome,
-        )
-        // The default is a measured rung that clears, and so is the medium tier.
+        // And since 4.9 that set is EMPTY: the optional top rung still kept up without margin —
+        // the outcome is pinned — and clears on the owner's ruling recorded beside it.
+        assertEquals(emptyList<String>(), WhisperCatalog.instruments.map { it.id })
+        val ultra = TierThroughputRecord.forTier("ultra-q8")!!.verdict as ThroughputVerdict.Measured
+        assertEquals(KeepUp.KEPT_UP_WITHOUT_MARGIN, ultra.measurement.outcome)
+        assertNotNull("ultra-q8 clears on a RULING, and the ruling must be on the row", ultra.ownerRuling)
+        assertTrue(ultra.clearsProduction)
+        // The default is a measured rung that clears on its NUMBER, and so is the medium tier —
+        // neither needs a ruling, and neither has one.
         listOf(WhisperCatalog.DEFAULT_MODEL_ID, "medium-q8").forEach {
-            assertTrue("'$it' must carry a clearing verdict", TierThroughputRecord.forTier(it)!!.verdict.clearsProduction)
+            val v = TierThroughputRecord.forTier(it)!!.verdict as ThroughputVerdict.Measured
+            assertTrue("'$it' must carry a clearing verdict", v.clearsProduction)
+            assertEquals("'$it' clears on KEPT_UP, not on a ruling", KeepUp.KEPT_UP, v.measurement.outcome)
+            assertNull("'$it' needs no ruling and must carry none", v.ownerRuling)
             assertFalse("'$it' must not be an instrument", WhisperCatalog.byId(it)!!.instrument)
         }
+        assertFalse("ultra-q8 is no instrument since 4.9", WhisperCatalog.byId("ultra-q8")!!.instrument)
+    }
+
+    /**
+     * **AN OWNER RULING CLEARS ONLY THE ROW IT IS RECORDED ON, AND MUST BE SIGNED AND DATED.**
+     *
+     * The ruling is the gate's narrowest key: it is a field on ONE measured row, it changes that
+     * row's `clearsProduction` and nothing else, and it leaves the measurement it sits beside
+     * byte-identical. Three things are held: (1) the committed ruling is the owner's, dated
+     * 2026-09-17, in his words; (2) removing it from `ultra-q8`'s row makes that row — and only
+     * that row — stop clearing, and the gate over the real ladder go back to Overreached on the
+     * switch entry that depended on it; (3) a ruling with a blank `by` or `words`, a `by` of "the
+     * owner", or a non-ISO date is refused at construction — the clearance record's `grantedBy`
+     * rule, one axis over: a decision nobody is named for is a decision nobody can be asked about.
+     */
+    @Test fun an_owner_ruling_clears_only_the_row_it_is_recorded_on_and_must_be_signed_and_dated() {
+        val ultra = TierThroughputRecord.ULTRA_Q8.verdict as ThroughputVerdict.Measured
+        val ruling = ultra.ownerRuling
+        assertNotNull(ruling)
+        assertEquals("2026-09-17", ruling!!.on)
+        assertEquals("Brandon Slacum", ruling.by)
+        assertTrue("the ruling carries his words on turbo", ruling.words.contains("we definitely wanna keep that one"))
+        assertTrue(ruling.words.contains("six to maybe nine second drain time"))
+        assertTrue(ruling.words.contains("totally manageable and doable"))
+        assertTrue(ruling.words.contains("users would definitely like to select between these"))
+
+        // (2) Strip the ruling: the number is the same, the row no longer clears, and the real
+        // ladder's gate reports the overreach on exactly that switch entry.
+        val unruled = ultra.copy(ownerRuling = null)
+        assertEquals("the measurement is untouched by the ruling", ultra.measurement, unruled.measurement)
+        assertEquals(ultra.because, unruled.because)
+        assertFalse("without the ruling the row is KEPT_UP_WITHOUT_MARGIN and does not clear", unruled.clearsProduction)
+        assertTrue("with it, it does", ultra.clearsProduction)
+        val recordWithoutRuling = TierThroughputRecord.RECORD.map {
+            if (it.tierId == "ultra-q8") TierThroughput("ultra-q8", unruled) else it
+        }
+        assertEquals(
+            "the switch entry that depends on the ruling overreaches the moment it is gone",
+            ThroughputGateState.Overreached(listOf("ultra-q8")),
+            TierThroughputRecord.state(TierThroughputRecord.PRODUCTION_PROMOTABLE, ladder, recordWithoutRuling),
+        )
+        // ...and a ruling on one row does not reach any other: put it on medium-q5's NEVER_CAUGHT_UP
+        // row instead and only THAT row's answer changes.
+        val mediumQ5 = TierThroughputRecord.MEDIUM_Q5.verdict as ThroughputVerdict.Measured
+        val ruledElsewhere = TierThroughputRecord.RECORD.map {
+            when (it.tierId) {
+                "ultra-q8" -> TierThroughput("ultra-q8", unruled)
+                "medium-q5" -> TierThroughput("medium-q5", mediumQ5.copy(ownerRuling = ruling))
+                else -> it
+            }
+        }
+        assertTrue(ruledElsewhere.first { it.tierId == "medium-q5" }.verdict.clearsProduction)
+        assertFalse(ruledElsewhere.first { it.tierId == "ultra-q8" }.verdict.clearsProduction)
+        assertEquals(
+            ThroughputGateState.Overreached(listOf("ultra-q8")),
+            TierThroughputRecord.state(TierThroughputRecord.PRODUCTION_PROMOTABLE, ladder, ruledElsewhere),
+        )
+        // The ruling is the only thing that clears a non-KEPT_UP outcome — over the whole enum.
+        KeepUp.entries.filter { it != KeepUp.KEPT_UP }.forEach { outcome ->
+            val row = unruled.copy(measurement = unruled.measurement.copy(outcome = outcome))
+            assertFalse("$outcome does not clear unruled", row.clearsProduction)
+            assertTrue("$outcome clears with a ruling on the row", row.copy(ownerRuling = ruling).clearsProduction)
+        }
+
+        // (3) A ruling nobody signed is not a ruling.
+        listOf(
+            Triple("2026-09-17", "", "words"),
+            Triple("2026-09-17", "   ", "words"),
+            Triple("2026-09-17", "the owner", "words"),
+            Triple("2026-09-17", "The Owner", "words"),
+            Triple("2026-09-17", "Brandon Slacum", ""),
+            Triple("2026-09-17", "Brandon Slacum", "  "),
+            Triple("", "Brandon Slacum", "words"),
+            Triple("yesterday", "Brandon Slacum", "words"),
+            Triple("17/09/2026", "Brandon Slacum", "words"),
+        ).forEach { (on, by, words) ->
+            try {
+                ThroughputVerdict.OwnerRuling(on = on, by = by, words = words)
+                fail("OwnerRuling(on='$on', by='$by', words='$words') must be refused — a ruling nobody signed, dated or worded is not a ruling")
+            } catch (expected: IllegalArgumentException) {
+                // refused at construction, as the KDoc promises
+            }
+        }
+        // And the committed one passes the same bar, so the bar is not a bar nothing can clear.
+        assertEquals(ruling, ThroughputVerdict.OwnerRuling(ruling.on, ruling.by, ruling.words))
     }
 
     /**
@@ -386,16 +490,17 @@ class TierThroughputTest {
     // --------------------------------------------------------------------- THE GATE
 
     /**
-     * **The committed state: promotion is WITHHELD, the switch is EMPTY, and the three Q8 rungs
-     * are named.**
+     * **The committed state: PROMOTABLE — three measured rows, one owner ruling, and the switch
+     * naming all three.**
      *
-     * This is the normal state of 4.7 and it is **not a failure**. Every one of those three rungs
-     * is in the chooser and downloadable; what is withheld is a store promotion, which is a
-     * different act, and the owner has said what comes first: the accuracy pass on small and
-     * medium. The switch is empty because the only rung it ever named (`multi`) is retired, and a
-     * switch naming a retired rung is the stale-authorisation defect.
+     * From 4.7 to 4.8 this test held `Withheld([small-q8, medium-q8, ultra-q8])` over an empty
+     * switch, on the owner's word that the accuracy pass came first. 4.9 records that pass — his
+     * report after dictating on all three on the Tab S10+, *"all three actually work very well"*
+     * — and his ruling on turbo's margin, and the switch flips on those words. It is still not a
+     * measurement arriving that flipped it: `ultra-q8`'s row is unchanged, and the test above
+     * pins its outcome.
      */
-    @Test fun the_committed_state_withholds_promotion_and_names_the_three_q8_rungs() {
+    @Test fun the_committed_state_is_promotable_on_three_rows_one_ruling_and_the_owners_word() {
         // THE PROPERTY FIRST: whatever the switch says, the COMMITTED state may never be one of
         // the two defect states. This is what fails when somebody adds a rung to
         // PRODUCTION_PROMOTABLE without a clearing verdict — and it fails saying so.
@@ -403,7 +508,8 @@ class TierThroughputTest {
             is ThroughputGateState.Overreached -> fail(
                 "PRODUCTION_PROMOTABLE names ${committed.tiers}, whose throughput verdict does " +
                     "not clear them, or which are not selectable. A rung may enter the switch " +
-                    "only on a KEPT_UP verdict AND the owner's word",
+                    "only on a clearing verdict (KEPT_UP, or a recorded owner ruling) AND the " +
+                    "owner's word",
             )
             is ThroughputGateState.Unrecorded -> fail(
                 "${committed.tiers} are in the chooser with no throughput row at all",
@@ -412,16 +518,15 @@ class TierThroughputTest {
         }
         // ...and then today's exact value.
         assertEquals(
-            "the switch is EMPTY until the owner's accuracy pass on small and medium — it flips " +
-                "on his word, not on a measurement arriving",
-            emptySet<String>(),
+            "the switch names the three Q8 rungs on the owner's word of 2026-09-17 — \"all three " +
+                "actually work very well\"",
+            setOf("small-q8", "medium-q8", "ultra-q8"),
             TierThroughputRecord.PRODUCTION_PROMOTABLE,
         )
-        assertEquals(
-            ThroughputGateState.Withheld(listOf("small-q8", "medium-q8", "ultra-q8")),
-            TierThroughputRecord.stateOfLadder(),
-        )
+        assertEquals(ThroughputGateState.Promotable, TierThroughputRecord.stateOfLadder())
         assertEquals("the ladder is the three Q8 rungs", listOf("small-q8", "medium-q8", "ultra-q8"), ladder)
+        // The switch covers the ladder exactly — no stale entry, nothing missing.
+        assertEquals(ladder.toSet(), TierThroughputRecord.PRODUCTION_PROMOTABLE)
     }
 
     /**
@@ -431,16 +536,26 @@ class TierThroughputTest {
      *
      * Three ways to overreach, all held — and since 4.7 two of them are REAL rows rather than
      * constructed ones:
-     *  - naming a rung whose verdict is [KeepUp.KEPT_UP_WITHOUT_MARGIN] (`ultra-q8`, committed);
+     *  - naming a rung whose verdict is [KeepUp.KEPT_UP_WITHOUT_MARGIN] with no ruling beside it
+     *    (`ultra-q8`'s committed row with its 4.9 ruling stripped — the number alone);
      *  - naming a rung that is not in the ladder — `multi`, whose verdict CLEARS and which is
      *    RETIRED: the exact stale authorisation a switch left at `setOf("multi")` would have been
      *    on 2026-09-17;
      *  - naming a rung whose verdict is [ThroughputVerdict.Unmeasured] (`ultra`, retired).
      */
     @Test fun authorising_a_rung_whose_verdict_does_not_clear_is_a_red_suite() {
+        val ultraUnruled = (TierThroughputRecord.ULTRA_Q8.verdict as ThroughputVerdict.Measured).copy(ownerRuling = null)
+        val recordWithoutRuling = TierThroughputRecord.RECORD.map {
+            if (it.tierId == "ultra-q8") TierThroughput("ultra-q8", ultraUnruled) else it
+        }
         assertEquals(
-            "KEPT_UP_WITHOUT_MARGIN is not a clearance",
+            "KEPT_UP_WITHOUT_MARGIN is not a clearance on its number",
             ThroughputGateState.Overreached(listOf("ultra-q8")),
+            TierThroughputRecord.state(authorised = setOf("small-q8", "ultra-q8"), tiers = ladder, record = recordWithoutRuling),
+        )
+        // ...and with the committed ruling on the row, the same switch is merely incomplete.
+        assertEquals(
+            ThroughputGateState.Withheld(listOf("medium-q8")),
             TierThroughputRecord.state(authorised = setOf("small-q8", "ultra-q8"), tiers = ladder),
         )
         assertEquals(
@@ -492,14 +607,18 @@ class TierThroughputTest {
             )
         }
         assertTrue("...and the recorded KEPT_UP row does clear", base.clearsProduction)
-        // KEPT_UP is the ONLY outcome that clears — stated over the whole enum so a fifth value
-        // cannot arrive clearing by default.
+        // KEPT_UP is the ONLY outcome that clears on its own — stated over the whole enum so a
+        // fifth value cannot arrive clearing by default. (4.9: an owner ruling on the row is the
+        // one other way, and the ruling test holds it separately.)
         assertEquals(
             listOf(KeepUp.KEPT_UP),
             KeepUp.entries.filter { base.copy(measurement = base.measurement.copy(outcome = it)).clearsProduction },
         )
-        // The committed instance of the new value.
-        assertFalse(TierThroughputRecord.ULTRA_Q8.verdict.clearsProduction)
+        // The committed instance of the new value: on its NUMBER it does not clear; it clears on
+        // the owner's ruling recorded beside it, and on nothing else.
+        val ultra = TierThroughputRecord.ULTRA_Q8.verdict as ThroughputVerdict.Measured
+        assertFalse(ultra.copy(ownerRuling = null).clearsProduction)
+        assertTrue(ultra.clearsProduction)
     }
 
     /**
@@ -540,8 +659,13 @@ class TierThroughputTest {
             ThroughputGateState.Unrecorded(listOf("large-v3")),
             TierThroughputRecord.state(setOf("nope"), listOf("small-q8", "large-v3"), one),
         )
-        // Promotable over the REAL ladder needs both clearing rungs authorised AND ultra-q8 gone
-        // from the chooser — which is the shape a production release of this ladder would take.
+        // Promotable over the REAL ladder: all three authorised over the committed record, which
+        // is 4.9's shape — and, without ultra-q8's ruling, the two clearing rungs authorised with
+        // ultra-q8 gone from the chooser, which was the only shape 4.7 could have taken.
+        assertEquals(
+            ThroughputGateState.Promotable,
+            TierThroughputRecord.state(setOf("small-q8", "medium-q8", "ultra-q8"), ladder),
+        )
         assertEquals(
             ThroughputGateState.Promotable,
             TierThroughputRecord.state(setOf("small-q8", "medium-q8"), listOf("small-q8", "medium-q8")),
@@ -573,6 +697,7 @@ class TierThroughputTest {
             "ThroughputGateState",
             "PRODUCTION_PROMOTABLE",
             "KeepUp",
+            "OwnerRuling",
         )
         val home = "TierThroughput.kt"
         val scanned = mutableListOf<String>()
@@ -683,6 +808,12 @@ class TierThroughputTest {
         assertTrue("§AN must exist — the device session needs its own rows", sheet.contains("## AN —"))
         val an = sheet.substringAfter("## AN —", "")
         assertTrue("§AN is where the rung rows live and it is not in the sheet", an.isNotBlank())
+        // 4.9: the accuracy pass is on the sheet as the owner's REPORT, not as a WER measurement
+        // (none exists), and the ruling that clears turbo is named where the gate reads it.
+        assertTrue("§AN0 must record the owner's accuracy report verbatim", an.contains("all three actually work very well"))
+        assertTrue("§AN0 must say it is his report, not a WER", an.contains("not as a WER"))
+        assertTrue("§AN0 must name the ruling that clears ultra-q8", an.contains("ThroughputVerdict.OwnerRuling"))
+        assertTrue("§AN0 must state the gate's current answer", an.contains("Promotable"))
 
         // The three answers, and the middle one especially: a pass/fail sheet would collect "fine"
         // for a rung that only drained while the owner was silent.

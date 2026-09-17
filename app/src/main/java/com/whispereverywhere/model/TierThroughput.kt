@@ -17,11 +17,22 @@ package com.whispereverywhere.model
  *
  * **4.7 — the session happened.** On 2026-09-17 five rungs were timed on the owner's Galaxy Tab S10+
  * (`docs/measurements/2026-09-17-tab-cpu-ladder.md`) and the owner ruled the same day: *"Q8 for
- * everything." — "Q5 is definitely off the table."* The rows below carry the numbers; the switch is
- * EMPTY, because the ruling was about which rungs to keep, not about production — *"the rest of
- * the testing now will be to prove the accuracy of the small and medium model … before we actually
- * give it a go."* Two of the six 4.6 instruments were retired untimed by that ruling and keep an
- * `Unmeasured` row that says so.
+ * everything." — "Q5 is definitely off the table."* The rows below carry the numbers; the switch
+ * stayed EMPTY through 4.7 and 4.8, because the ruling was about which rungs to keep, not about
+ * production — *"the rest of the testing now will be to prove the accuracy of the small and medium
+ * model … before we actually give it a go."* Two of the six 4.6 instruments were retired untimed by
+ * that ruling and keep an `Unmeasured` row that says so.
+ *
+ * **4.9 — the accuracy pass happened, and the switch names all three.** Later on 2026-09-17, after
+ * his own dictation on all three rungs on the Tab S10+, the owner ruled: *"all three actually work
+ * very well"* — that is the on-device accuracy verdict the switch was waiting for, recorded on
+ * [TierThroughputRecord.PRODUCTION_PROMOTABLE] as HIS REPORT (no WER measurement exists, and none
+ * is claimed). And of `ultra-q8`, whose verdict is [KeepUp.KEPT_UP_WITHOUT_MARGIN] and does not
+ * clear on its number: *"we definitely wanna keep that one … six to maybe nine second drain time,
+ * which is totally manageable and doable, and users would definitely like to select between
+ * these."* That ruling is recorded BESIDE the measurement as a [ThroughputVerdict.OwnerRuling] —
+ * named, dated, verbatim — and a verdict with a ruling clears. The number did not move; the
+ * decision is written next to it. The gate reports `Promotable`, for the first time.
  *
  * ### WHY A GATE, AND NOT A JUDGEMENT CALL
  *
@@ -67,9 +78,11 @@ package com.whispereverywhere.model
  * | [PRODUCTION_PROMOTABLE] | the AUTHORISATION — "this rung may go to the public" | the owner, explicitly | at promotion time |
  *
  * A measurement arriving does not promote anything — 4.7 is the proof: three rungs measured, none
- * authorised, because the owner is running the accuracy pass first. And [state] refuses the
+ * authorised, because the owner was running the accuracy pass first. And [state] refuses the
  * reverse mistake, where the switch names a rung whose verdict is missing or does not clear. That
- * refusal is the whole gate.
+ * refusal is the whole gate — and since 4.9 it has a third key, narrower than either: a
+ * [ThroughputVerdict.OwnerRuling] recorded on ONE measured row, which clears that row and no
+ * other, and which the test refuses unsigned or undated.
  *
  * ### WHAT THIS IS NOT: a switch that removes a rung from the chooser
  *
@@ -128,7 +141,9 @@ enum class KeepUp {
      * — and the margin that would survive a slower device, a hotter one, or a longer chunk is
      * simply not there. Recorded on 2026-09-17 for `ultra-q8` (worst 7,930 ms against 8,000 on a
      * Dimensity 9300+). The honest responses are the same as for the value below: keep the rung
-     * an instrument, or retire it. Never promote it on this.
+     * an instrument, or retire it. Never promote it on this NUMBER — 4.9 promotes `ultra-q8` on
+     * the owner's recorded ruling ([ThroughputVerdict.OwnerRuling]), which is a decision written
+     * beside this outcome and not a change to it: the row still says KEPT_UP_WITHOUT_MARGIN.
      *
      * **The 0.90 line is a hand-applied convention, not a gate this code enforces.** It was
      * applied by the person assigning each row's outcome from the measurement doc;
@@ -217,23 +232,66 @@ sealed interface ThroughputVerdict {
      * **Measured is not the same as cleared.** A rung measured at [KeepUp.NEVER_CAUGHT_UP] has a
      * perfectly good verdict and must not reach production while it is selectable; the honest
      * responses to it are to retire the rung or to keep the build on the internal track. So does
-     * a rung at [KeepUp.KEPT_UP_WITHOUT_MARGIN]. The gate is about the RELEASE, never about
-     * whether the measurement happened.
+     * a rung at [KeepUp.KEPT_UP_WITHOUT_MARGIN] — on its number. The gate is about the RELEASE,
+     * never about whether the measurement happened; and since 4.9 a release decision the owner
+     * has made ON a measured row, in words, is recorded there as an [OwnerRuling] and clears it.
      */
     val clearsProduction: Boolean
 
     /**
-     * **Timed on a device.** The only verdict that can clear, and only when its outcome is
-     * [KeepUp.KEPT_UP].
+     * **THE OWNER'S DECISION, RECORDED BESIDE THE EVIDENCE IT OVERRIDES** (4.9).
+     *
+     * The gate exists so the switch can never outrun the evidence: [TierThroughputRecord.state]
+     * refuses any authorised rung whose verdict does not clear, and until 4.9 the only thing that
+     * cleared was [KeepUp.KEPT_UP]. That left one honest shape unrepresentable — the owner, having
+     * read the number and dictated on the rung himself, deciding it ships anyway. Editing the
+     * outcome to make it clear would be the lie the gate exists to catch; leaving the switch empty
+     * would be the gate overruling its owner. So the decision has its own field: a ruling is
+     * written NEXT TO the measurement, named and dated, in the words it was made in, and the
+     * measurement is untouched. A reader at promotion time sees both — the 0.99 and the sentence
+     * that accepted it — which is the whole value of a record.
+     *
+     * It clears ONLY the row it is recorded on. It is not a switch entry, not a policy, and not a
+     * change to any number; `TierThroughputTest` holds that a ruling on one row leaves every other
+     * row's answer alone, and that a ruling nobody signed or dated is refused at construction —
+     * the same rule the clearance record applies to `grantedBy`: a decision nobody is named for
+     * is a decision nobody can be asked about.
+     *
+     * @property on the ISO date the ruling was made.
+     * @property by who made it, BY NAME. *"The owner"* is not a name.
+     * @property words the ruling, verbatim or as verbatim fragments — never a paraphrase, because
+     *   the point of the field is that the reader can weigh the exact sentence against the number.
+     */
+    data class OwnerRuling(val on: String, val by: String, val words: String) {
+        init {
+            require(on.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) { "an owner ruling must carry the ISO date it was made on, not '$on'" }
+            require(by.isNotBlank()) { "an owner ruling nobody signed is not a ruling" }
+            require(!Regex("\\bthe owner\\b").containsMatchIn(by.lowercase())) { "'the owner' is not a name" }
+            require(words.isNotBlank()) { "an owner ruling with no words is not a ruling" }
+        }
+    }
+
+    /**
+     * **Timed on a device.** The only verdict that can clear — when its outcome is
+     * [KeepUp.KEPT_UP], or (4.9) when an [OwnerRuling] is recorded beside a measurement whose
+     * outcome is not.
      *
      * @property measurement the device session's own evidence.
      * @property because the reading, short enough to be read at promotion time — and where an
      *   uncertainty remains, this is where it is recorded as **accepted** rather than resolved.
      *   The clearance record's rule applies unchanged: an accepted risk is still a risk, and the
      *   value of this record at promotion time is that it says which is which.
+     * @property ownerRuling the owner's decision on THIS row, or null — the normal case. Non-null
+     *   means "the number does not clear, and the owner has read it and ruled that the rung
+     *   ships"; it never changes [measurement], which is why it is a separate field.
      */
-    data class Measured(val measurement: ThroughputMeasurement, val because: String) : ThroughputVerdict {
-        override val clearsProduction: Boolean get() = measurement.outcome == KeepUp.KEPT_UP
+    data class Measured(
+        val measurement: ThroughputMeasurement,
+        val because: String,
+        val ownerRuling: OwnerRuling? = null,
+    ) : ThroughputVerdict {
+        override val clearsProduction: Boolean
+            get() = measurement.outcome == KeepUp.KEPT_UP || ownerRuling != null
     }
 
     /**
@@ -272,10 +330,11 @@ sealed interface ThroughputVerdict {
  */
 sealed interface ThroughputGateState {
     /**
-     * Every selectable rung is measured, kept up, AND authorised. **Unreachable on the committed
-     * values so far**, which is the property that makes it worth reporting: it becomes reachable
-     * only after the owner puts a measured, clearing rung in the switch, and unreachable again the
-     * moment a rung joins the chooser without one.
+     * Every selectable rung is measured, clears, AND is authorised. **Unreachable on the committed
+     * values from 4.6 through 4.8**, which was the property that made it worth reporting; **reached
+     * for the first time at 4.9**, on three measured rows, one owner ruling and the owner's word on
+     * the switch. It becomes unreachable again the moment a rung joins the chooser without a
+     * clearing verdict — which is the property that keeps it worth reporting.
      */
     data object Promotable : ThroughputGateState
 
@@ -324,8 +383,8 @@ sealed interface ThroughputGateState {
  *
  * **What the record still does not know, stated plainly:** one device (a 12 GB Dimensity 9300+
  * flagship), one talk, one session per rung, minutes long, previewer armed throughout. No number
- * here describes a 6 GB phone. That is why [PRODUCTION_PROMOTABLE] is empty, and why the owner's
- * accuracy pass comes before any of it is promoted.
+ * here describes a 6 GB phone. That is why [PRODUCTION_PROMOTABLE] stayed empty until the owner's
+ * accuracy pass — and why, now that it names the ladder, the caveats are still on every row.
  */
 object TierThroughputRecord {
 
@@ -341,15 +400,25 @@ object TierThroughputRecord {
      * every pickable rung in [RECORD] is selectable and downloadable whether it is named here or
      * not.
      *
-     * **It is EMPTY since 4.7.** The only rung it ever named (`multi`) was retired by the Q8 ruling
-     * of 2026-09-17, and a switch that names a rung nobody can select is the stale-authorisation
-     * defect [state] reports as Overreached. The three Q8 rungs are MEASURED and not yet
-     * AUTHORISED, on the owner's own words: *"the rest of the testing now will be to prove the
-     * accuracy of the small and medium model … before we actually give it a go."* This switch
-     * flips only on his word, after that pass — and `ultra-q8` cannot enter it at all while its
-     * verdict is [KeepUp.KEPT_UP_WITHOUT_MARGIN].
+     * **It was EMPTY from 4.7 to 4.8.** The only rung it had ever named (`multi`) was retired by
+     * the Q8 ruling of 2026-09-17, and a switch that names a rung nobody can select is the
+     * stale-authorisation defect [state] reports as Overreached. The three Q8 rungs were MEASURED
+     * and not yet AUTHORISED, on the owner's own words: *"the rest of the testing now will be to
+     * prove the accuracy of the small and medium model … before we actually give it a go."*
+     *
+     * **4.9 — IT NAMES ALL THREE, on the owner's word.** THE ACCURACY PASS, as his report and not
+     * as a WER measurement (none exists, and this record claims none): on 2026-09-17, after his own
+     * dictation on all three rungs on the Tab S10+, Brandon Slacum said *"all three actually work
+     * very well"* — that sentence is the on-device accuracy verdict this switch was waiting for.
+     * `small-q8` and `medium-q8` enter on that word over their KEPT_UP rows. `ultra-q8` enters on
+     * that word AND his ruling on its margin, recorded beside its row as a
+     * [ThroughputVerdict.OwnerRuling] ([ULTRA_Q8]): *"we definitely wanna keep that one … six to
+     * maybe nine second drain time, which is totally manageable and doable, and users would
+     * definitely like to select between these."* Its outcome is still KEPT_UP_WITHOUT_MARGIN;
+     * the ruling is what clears it, and [state] would still report Overreached if the ruling were
+     * removed. The gate reports [ThroughputGateState.Promotable] for the first time.
      */
-    val PRODUCTION_PROMOTABLE: Set<String> = emptySet()
+    val PRODUCTION_PROMOTABLE: Set<String> = setOf("small-q8", "medium-q8", "ultra-q8")
 
     /**
      * **`multi` (small Q5_1) — the 4.6 anchor, RETIRED on 2026-09-17, its evidence kept.**
@@ -553,8 +622,14 @@ object TierThroughputRecord {
     /**
      * **`ultra-q8` — turbo on the repack path: it kept up, with NO margin.** [ULTRA]'s own encoder
      * and 4-layer decoder at 874 MB. THE OPTIONAL TOP RUNG since 4.7 — offered for its accuracy
-     * on the owner's words, never recommended — and the one instrument left, because this verdict
-     * does not clear.
+     * on the owner's words, never recommended — and the one instrument left through 4.8, because
+     * this verdict did not clear on its number.
+     *
+     * **4.9 — it clears on the owner's ruling, recorded here beside the number.** The measurement
+     * below is byte-for-byte 4.7's: median 4,849, worst 7,930 against 8,000, KEPT_UP_WITHOUT_MARGIN.
+     * What is new is the `ownerRuling` field — his decision of 2026-09-17, after dictating on the
+     * rung himself, in his words. The two sit side by side on purpose: a promotion decision reads
+     * the 0.99 AND the sentence that accepted it.
      */
     val ULTRA_Q8 = TierThroughput(
         tierId = "ultra-q8",
@@ -590,6 +665,14 @@ object TierThroughputRecord {
                 "doable, it's actually workable\"), not advocated. CAVEATS: one device, a " +
                 "flagship — on anything slower this rung is expected to fall behind; one talk; " +
                 "previewer armed throughout",
+            // 4.9 — THE RULING. Recorded, not paraphrased; the number above is untouched.
+            ownerRuling = ThroughputVerdict.OwnerRuling(
+                on = "2026-09-17",
+                by = "Brandon Slacum",
+                words = "we definitely wanna keep that one … six to maybe nine second drain time, " +
+                    "which is totally manageable and doable, and users would definitely like to " +
+                    "select between these",
+            ),
         ),
     )
 
@@ -671,8 +754,9 @@ object TierThroughputRecord {
      * un-gate either one, or un-retire a Q5 rung, and it enters `pickable` and the test fails
      * until somebody records what it does to the typed text.
      *
-     * Over the three Q8 rungs 4.7 offers it answers `Withheld([small-q8, medium-q8, ultra-q8])`:
-     * three rows, three measurements, an empty switch.
+     * Over the three Q8 rungs 4.7 offered it answered `Withheld([small-q8, medium-q8, ultra-q8])`:
+     * three rows, three measurements, an empty switch. Since 4.9 it answers `Promotable`: the
+     * same three rows, one owner ruling on `ultra-q8`'s, and the switch naming all three.
      */
     fun stateOfLadder(
         tiers: List<String> = WhisperCatalog.pickable.map { it.id },

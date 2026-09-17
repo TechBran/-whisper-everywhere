@@ -11,6 +11,13 @@ every Q5 rung including `multi` is retired, the chooser offers `small-q8`, `medi
 gate reports `Withheld([small-q8, medium-q8, ultra-q8])`. 4.7.0 is internal track + sideloaded tablet only. Identity is untouched on the branch and the controller bumps it at merge, so this line
 carries no versionCode for 4.6 yet. **A promotion now would put a rung nobody has timed in front of
 customers, and the previewer would hide it** — read §AN0 before promoting, not after.
+**4.9.0 (versionCode 98, 2026-09-17, later the same day) supersedes THAT paragraph in turn:** the
+owner dictated on all three rungs on the Tab S10+ and ruled *"all three actually work very well"*
+(his report, not a WER), and on turbo *"we definitely wanna keep that one"* — recorded beside its
+unchanged KEPT_UP_WITHOUT_MARGIN row as a `ThroughputVerdict.OwnerRuling`. `PRODUCTION_PROMOTABLE`
+names all three and the gate reports **`Promotable`**. §AN0 carries the detail; the ladder is
+labelled in his words (fastest / balanced / highest accuracy), the first-run lineup is cumulative by
+RAM, and 98 goes to production.
 
 Build under test: **4.6.0 / versionCode 95** — **THE INSTRUMENT LADDER. NOT PROMOTABLE AS BUILT**: six CPU rungs carry no measured throughput verdict and `TierThroughput` withholds production until they do. The six-device session is what fills them in. Sideloaded to the Tab S10+ over 94 on 2026-09-16; 94 = 4.5.2 is in PRODUCTION with the seven-language clearance and the notices; — **the first build any language may be PROMOTED from: all seven are cleared for production on the owner’s decision of 2026-09-13, and the notices the licences ask for in return ship with it** (§AL0 is the promotion gate and it now requires BOTH the record and the notices; 93 = 4.5.1 went to the internal track with the first-tap fix and the bubble colours — §AF6 and §AM; (the first-tap fix and the bubble colours — **§AF6 REWRITTEN** is the friction row and **§AM** the colours; still INTERNAL ONLY, and still only **en** and **fr** are cleared for PRODUCTION — de, ru, id, ko and zh ride this build with their corpus clearance outstanding; 92 = 4.5.0 went to the internal track with the six languages — §AL; (SIX MORE LANGUAGES for live words — **§AL**, the rows to run first, and note that only **en** and **fr** are cleared for PRODUCTION: de, ru, id, ko and zh are on this build for internal testing with their corpus clearance outstanding; 91 = 4.4.1 went to the internal track with the acquisition model on one pack — §AF, whose rows carry over except AF2, REWRITTEN because 4.5.0 removes the metered card by owner ruling; (the previewer pack now follows the language you pick — **§AF**, the rows to run first; 90 = 4.4.0 went to the internal track with the word-for-word previewer, the four-pack bundle and the startup ring — §Z and §S, whose rows carry over untested unless marked; 89 = 4.3.4 went to the internal track with Gemini Live, live-by-default, the turbo card and the voice-archive fix — §J and §K, whose rows carry over untested unless marked) (supersedes 88 on the internal track — the owner confirmed Gemini Live working in real time on 88; 89 adds live-by-default, the turbo card copy, and the voice-archive fix — §K; Gemini Live — §J; the sherpa runtime bump — §J6; 87 = 4.3.3, the accessibility service becomes optional — §H; 86 was PROMOTED TO PRODUCTION 2026-09-04 after E11 passed; 86 was the silence fix — §E11; 85 went to the internal track 2026-09-04 with the backpressure governor, the detect-margin line and the Auto copy — §E9/E10/G1; 84 was PROMOTED TO PRODUCTION 2026-09-03 after E8 passed; 85 added the backpressure governor — §E9 — the detect-margin line and the Auto copy — §G; 83 went to the internal track 2026-09-03 and was superseded there by 84, which added the flatline cut — §E8; the owner's 83 session already confirmed the 350 ms hangover "is doing a better job" and language boundaries "picked up better"), now on `main` (the owner chose a local merge). It
 carries MORE than the branch this sheet was written for: three fixes found during the owner's own
@@ -1174,6 +1181,29 @@ medium-q8 KEPT_UP, ultra-q8 KEPT_UP_WITHOUT_MARGIN, which does not clear), and t
 until you have run the accuracy pass on small and medium — so the gate reports
 **`Withheld([small-q8, medium-q8, ultra-q8])`**.
 
+**Since 4.9.0 (2026-09-17, later the same day) it names ALL THREE —
+`setOf("small-q8", "medium-q8", "ultra-q8")` — and the gate reports `Promotable`.** Two things opened
+it, and both are recorded where the gate reads them (`TierThroughput.kt`) rather than on this sheet
+alone:
+
+1. **THE ACCURACY PASS — as your report, not as a WER measurement (none exists, and none is
+   claimed).** After your own dictation on all three rungs on the Tab S10+ you said:
+   *"all three actually work very well."* That sentence is the on-device accuracy verdict the
+   switch was waiting for; it is quoted in `PRODUCTION_PROMOTABLE`'s KDoc as the thing the switch
+   flipped on.
+   `small-q8` and `medium-q8` enter on that word over their KEPT_UP rows.
+2. **`ultra-q8`'s number did not move.** Its verdict is still `KEPT_UP_WITHOUT_MARGIN` — 0.99 of
+   its floor at the worst commit, on a flagship — and it clears because an OWNER RULING is recorded
+   BESIDE the measurement, named and dated (`ThroughputVerdict.OwnerRuling`, on `ULTRA_Q8`):
+   *"we definitely wanna keep that one … six to maybe nine second drain time, which is totally
+   manageable and doable, and users would definitely like to select between these."* A ruling is a
+   decision written next to the evidence it overrides, never a change to the evidence: strip the
+   ruling and `TierThroughputTest` shows the gate going back to `Overreached([ultra-q8])`.
+
+So the honest state of this section since 4.9.0 is **internal track yes, production yes** — on your
+word, twice, both times quoted. The caveats on every row (one device, one talk, previewer armed; no
+number describes a 6 GB phone) are still on the rows.
+
 **Withheld is NOT a failure and it is not a reason to hold the internal track.** Every one of those
 six rungs is in the bundle, in the chooser and downloadable on every device, and that is exactly
 what the build is for. What is withheld is a store promotion, which is a different act. The gate
@@ -1430,7 +1460,9 @@ fail an internal-track gate: being unmeasured is what they are for.
 
 **Promote to PRODUCTION only when AN0 also passes** — that is,
 `TierThroughputRecord.PRODUCTION_PROMOTABLE` names every rung in the chooser. **At 4.6 it named
-`multi` alone; since 4.7.0 it is empty and the gate reports `Withheld([small-q8, medium-q8, ultra-q8])`**,
-so the honest state of this section is: **internal track yes, production no** — and unlike §AL, that
-is not a state a document can change. It takes the accuracy pass on small-q8 and medium-q8, and then
-your word on the switch.
+`multi` alone; from 4.7.0 to 4.8.1 it was empty and the gate reported
+`Withheld([small-q8, medium-q8, ultra-q8])`**, so the honest state of this section was: **internal
+track yes, production no** — and unlike §AL, that was not a state a document could change. It took
+the accuracy pass on small-q8 and medium-q8, and then your word on the switch. **Since 4.9.0 it
+names all three and the gate reports `Promotable`** — on your report of 2026-09-17
+(*"all three actually work very well"*) and your recorded ruling on turbo's margin (AN0 above).
