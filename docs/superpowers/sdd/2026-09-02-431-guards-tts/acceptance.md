@@ -2,9 +2,13 @@
 
 **4.6 adds §AN — the CPU instrument ladder on six devices — and it arrives with its OWN promotion
 gate, which is NOT open.** Six unmeasured rungs join the model chooser deliberately so they can be
-measured; `TierThroughputRecord.PRODUCTION_PROMOTABLE` names `multi` alone and the gate reports
-`Withheld`, so **4.6 is an internal-track build until §AN's rows are run**, whatever §AL says about
-languages. Identity is untouched on the branch and the controller bumps it at merge, so this line
+measured; `TierThroughputRecord.PRODUCTION_PROMOTABLE` named `multi` alone and the gate reported
+`Withheld`, so **4.6 was an internal-track build until §AN's rows were run**, whatever §AL says about
+languages. **4.7.0 (versionCode 96, 2026-09-17) supersedes that paragraph:** five rungs were timed on
+the Tab S10+ (`docs/measurements/2026-09-17-tab-cpu-ladder.md`), the owner ruled "Q8 for everything",
+every Q5 rung including `multi` is retired, the chooser offers `small-q8`, `medium-q8` and `ultra-q8`,
+`PRODUCTION_PROMOTABLE` is **empty** pending the owner's accuracy pass on small and medium, and the
+gate reports `Withheld([small-q8, medium-q8, ultra-q8])`. 4.7.0 is internal track + sideloaded tablet only. Identity is untouched on the branch and the controller bumps it at merge, so this line
 carries no versionCode for 4.6 yet. **A promotion now would put a rung nobody has timed in front of
 customers, and the previewer would hide it** — read §AN0 before promoting, not after.
 
@@ -1129,10 +1133,14 @@ language clearance you already accepted, and the suite fails the build on a blan
 switch that outran its evidence, and on a new rung with no row at all.
 
 Before promoting to production, read **`TierThroughputRecord.PRODUCTION_PROMOTABLE`**. **It must
-name every rung in `WhisperCatalog.pickable`.** Today it names **`multi` alone** — the only rung in
+name every rung in `WhisperCatalog.pickable`.** At 4.6 it named **`multi` alone** — then the only rung in
 this app with a measured finalize time (F = 2.3 s, your own Fold6 session of 2026-08-20 on
-versionCode 77) — and the gate reports
-**`Withheld([small-q8, medium-q5, medium-q8, ultra, ultra-q8, large-v3])`**.
+versionCode 77) — and the gate reported
+**`Withheld([small-q8, medium-q5, medium-q8, ultra, ultra-q8, large-v3])`**. **Since 4.7.0 (2026-09-17)
+it is EMPTY:** `multi` is retired, the three Q8 rungs carry measured Tab S10+ verdicts (small-q8 and
+medium-q8 KEPT_UP, ultra-q8 KEPT_UP_WITHOUT_MARGIN, which does not clear), and the switch stays empty
+until you have run the accuracy pass on small and medium — so the gate reports
+**`Withheld([small-q8, medium-q8, ultra-q8])`**.
 
 **Withheld is NOT a failure and it is not a reason to hold the internal track.** Every one of those
 six rungs is in the bundle, in the chooser and downloadable on every device, and that is exactly
@@ -1389,7 +1397,8 @@ everything else in this section is measurement rather than acceptance. The six i
 fail an internal-track gate: being unmeasured is what they are for.
 
 **Promote to PRODUCTION only when AN0 also passes** — that is,
-`TierThroughputRecord.PRODUCTION_PROMOTABLE` names every rung in the chooser. **Today it names
-`multi` alone and the gate reports `Withheld`**, so the honest state of this section is: **internal
-track yes, production no** — and unlike §AL, that is not a state a document can change. It takes
-the rows above.
+`TierThroughputRecord.PRODUCTION_PROMOTABLE` names every rung in the chooser. **At 4.6 it named
+`multi` alone; since 4.7.0 it is empty and the gate reports `Withheld([small-q8, medium-q8, ultra-q8])`**,
+so the honest state of this section is: **internal track yes, production no** — and unlike §AL, that
+is not a state a document can change. It takes the accuracy pass on small-q8 and medium-q8, and then
+your word on the switch.
