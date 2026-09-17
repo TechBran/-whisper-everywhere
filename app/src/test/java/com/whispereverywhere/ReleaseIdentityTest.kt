@@ -152,6 +152,23 @@ import org.junit.Test
  * every install gets a smooth first session — the promotable set is his call at promotion time
  * and this patch does not touch it. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 98 = 4.9.0 — the NAME moves and the CODE does not, and this paragraph is why that
+ * is not the silent mismatch this test exists to catch.** 98 was named 4.8.1 earlier on 2026-09-17
+ * by the first-session live-words round and never left this machine: not uploaded to any Play
+ * track, not sideloaded. A versionCode is spent by an UPLOAD (Play refuses a second one at the same
+ * code) or by an install the next build must replace; 98 is neither, so the same integer carries the
+ * new name. And the name is a MINOR, not a patch, because what a user sees and is offered changes on
+ * three counts the owner ruled the same day, after his own dictation on all three rungs: the three
+ * cards are labelled as a ladder in his words (fastest / balanced / highest accuracy, "slightly"
+ * amended by controller ruling on the measurement); the first-run lineup is CUMULATIVE by RAM — small
+ * always, medium and turbo at their floors, all three at or over 4.5 GB with medium steered; and the
+ * ladder is AUTHORISED for production — `TierThroughputRecord.PRODUCTION_PROMOTABLE` names all
+ * three, `ultra-q8` clearing on his ruling recorded beside its unchanged KEPT_UP_WITHOUT_MARGIN row,
+ * so the gate reports `Promotable` for the first time since it was built. 4.8.1's first-session fix
+ * rides along, and the tee now falls back to whisper's own deltas when the previewer cannot open, so
+ * a session over a failed load is never blank for its whole length. Every bump still re-arms
+ * GpuPolicy's canary latches (below) — and this is not a bump, so nothing re-arms.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -172,10 +189,10 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_8_1_at_version_code_98() {
+    fun release_identity_is_4_9_0_at_version_code_98() {
         assertEquals(
-            "versionName must be 4.8.1 for this release (app/build.gradle.kts defaultConfig)",
-            "4.8.1",
+            "versionName must be 4.9.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.9.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
