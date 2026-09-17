@@ -22,8 +22,9 @@ object HowToGuide {
                 "unlock. While you dictate, your words collect in a text window above the " +
                 "bubble — drag the double arrow at its top right corner to make it any size " +
                 "you like, and it stays that size; press and hold the arrow to go back to the " +
-                "standard size. In Settings you can keep it always on screen, or let it pop " +
-                "up on its own whenever a text field or keyboard appears and hide when idle.",
+                "standard size. Out of the box it pops up on its own whenever a text field or " +
+                "keyboard appears and hides when idle; in Settings you can keep it always on " +
+                "screen instead.",
         ),
         Section(
             "Dictating into any app",

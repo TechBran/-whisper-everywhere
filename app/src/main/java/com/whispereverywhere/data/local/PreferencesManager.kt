@@ -34,6 +34,31 @@ class PreferencesManager(private val context: Context) {
 
     init {
         purgeLegacyCredentialStores()
+        backfillBubbleAlwaysOn()
+    }
+
+    /**
+     * ONE-TIME BACKFILL for the "Keep bubble always on screen" default flip (4.8.0, owner ruling
+     * 2026-09-17: *"We have to change the default keep bubble always on screen. That's defaulted
+     * as on. We want it to not be on the screen all the time as the default."*).
+     *
+     * The default is a promise to NEW users: a fresh install gets the pop-up bubble. It must not
+     * be a change forced on EXISTING ones: a user who never touched the toggle has been living in
+     * always-on since they installed, and finding the bubble gone after an update — replaced by
+     * one that only appears near a text field — is a behaviour change nobody asked for, on the
+     * one control the whole app hangs off. So an existing install with NO stored value has the
+     * value it was living under written down once, before the flow below is created, and reads
+     * exactly what it read before. The decision is [bubbleAlwaysOnBackfill], pure and tested;
+     * this is only the read and the write. Runs before `_bubbleAlwaysOn`'s initialiser by
+     * declaration order (Kotlin runs `init` blocks and property initialisers top to bottom), which
+     * is what makes the write visible to the flow's first read.
+     */
+    private fun backfillBubbleAlwaysOn() {
+        val write = bubbleAlwaysOnBackfill(
+            hasStoredValue = prefs.contains(KEY_BUBBLE_ALWAYS_ON),
+            onboardingCompleted = prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false),
+        ) ?: return
+        prefs.edit().putBoolean(KEY_BUBBLE_ALWAYS_ON, write).apply()
     }
 
     /**
@@ -128,9 +153,14 @@ class PreferencesManager(private val context: Context) {
 
     fun isBubbleEnabled(): Boolean = _bubbleEnabled.value
 
-    // Bubble display mode: true = always on screen at the user's chosen spot (default);
-    // false = auto pop-up near focused text fields / during media, hidden otherwise.
-    private val _bubbleAlwaysOn = MutableStateFlow(prefs.getBoolean(KEY_BUBBLE_ALWAYS_ON, true))
+    // Bubble display mode: true = always on screen at the user's chosen spot; false = auto
+    // pop-up near focused text fields / during media, hidden otherwise. OFF by default since
+    // 4.8.0 (owner ruling 2026-09-17) for NEW installs only — `backfillBubbleAlwaysOn` in `init`
+    // has already written `true` for an existing install that never touched the toggle, so
+    // this read never changes anyone's mode on upgrade. Without the accessibility service the
+    // bubble is always-on regardless of this value (FloatingBubbleService.alwaysOnMode, 4.3.3 N1).
+    private val _bubbleAlwaysOn =
+        MutableStateFlow(prefs.getBoolean(KEY_BUBBLE_ALWAYS_ON, BUBBLE_ALWAYS_ON_DEFAULT))
     val bubbleAlwaysOn: StateFlow<Boolean> = _bubbleAlwaysOn.asStateFlow()
 
     fun setBubbleAlwaysOn(enabled: Boolean) {
@@ -659,6 +689,37 @@ class PreferencesManager(private val context: Context) {
     }
 
     companion object {
+        /**
+         * "Keep bubble always on screen" for a FRESH install: off (4.8.0, owner ruling
+         * 2026-09-17). Was `true` from the setting's birth through 4.7.0. The flip reaches only
+         * installs that have never stored the key AND never finished onboarding — see
+         * [bubbleAlwaysOnBackfill] for why an upgrade keeps what it had.
+         */
+        const val BUBBLE_ALWAYS_ON_DEFAULT: Boolean = false
+
+        /**
+         * THE DEFAULT-FLIP RULE, pure: what to write under the always-on key ONCE, at construction,
+         * before the flow reads it — or `null` to write nothing.
+         *
+         *  - A stored value: nothing to do; the user's (or a previous backfill's) choice stands.
+         *  - No stored value and onboarding COMPLETED: an existing install that never touched
+         *    the toggle. It has been living in always-on (the pre-4.8 default), so `true` is
+         *    persisted — the default is a promise to new users, and an existing user must not
+         *    find the bubble gone after an update.
+         *  - No stored value and onboarding NOT completed: a fresh install. Nothing is written;
+         *    the read falls through to [BUBBLE_ALWAYS_ON_DEFAULT], which is the new promise.
+         *
+         * Onboarding completion is the existing-install signal because it is the one flag every
+         * pre-4.8 install that reached a bubble has set, and no fresh install has. A fresh install
+         * that is interrupted mid-onboarding and later resumed is still fresh on both counts —
+         * no stored value, onboarding not completed — and gets the new default, which is right.
+         *
+         * Tested in `PreferencesBubbleAlwaysOnTest` over all four inputs; the wiring (that `init`
+         * asks this before the flow is built) is pinned there as source.
+         */
+        fun bubbleAlwaysOnBackfill(hasStoredValue: Boolean, onboardingCompleted: Boolean): Boolean? =
+            if (!hasStoredValue && onboardingCompleted) true else null
+
         private const val KEY_API_KEY = "openai_api_key"
         private const val KEY_LEGACY_PURGED = "legacy_credential_stores_purged_v1"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
