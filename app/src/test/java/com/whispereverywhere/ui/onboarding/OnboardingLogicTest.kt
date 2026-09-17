@@ -8,6 +8,7 @@ import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -812,10 +813,15 @@ class OnboardingLogicTest {
         // A big phone whose user already downloaded small-q8 (an upgrade from 4.7, or a decline
         // recovery) still sees it — dropping a card for a model on disk is the disturbance the
         // 4.3 rule forbids.
-        assertEquals(
-            listOf("small-q8", "medium-q8", "ultra-q8"),
-            OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, setOf("small-q8")),
-        )
+        val kept = OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, setOf("small-q8"))
+        assertEquals(listOf("small-q8", "medium-q8", "ultra-q8"), kept)
+        // And THIS is why the flow lifts (the round after 4.8.0, review): the steer over that
+        // list is still medium, and medium is its SECOND card. Unlifted, the chip sits on card
+        // two while card one wears nothing. The cut alone does not leave the steer at the head.
+        val steer = OnboardingLogic.firstRunSteer(kept, cpuSteer, 12_000_000_000L)
+        assertEquals("medium-q8", steer)
+        assertNotEquals("the cut does NOT put the steer at the head here", steer, kept.first())
+        assertEquals(listOf("medium-q8", "small-q8", "ultra-q8"), OnboardingLogic.steerFirst(kept, steer))
     }
 
     @Test fun the_boundary_at_exactly_the_gate_is_at_or_above() {
@@ -903,7 +909,7 @@ class OnboardingLogicTest {
         assertTrue("medium-q8" in over && "ultra-q8" in over)
     }
 
-    // ---------------------------------------------------------------- steerFirst (the picker's lift)
+    // ---------------------------------------------------------------- steerFirst (the lift, both surfaces)
 
     @Test fun steer_first_lifts_the_steered_card_and_keeps_every_other_card_in_place() {
         // The Settings picker's case: the full ladder, steered at medium over the gate. The
@@ -933,25 +939,43 @@ class OnboardingLogicTest {
     }
 
     @Test fun on_both_surfaces_the_same_device_is_steered_to_the_same_card_and_it_leads() {
-        // The whole point of the round: the flow (RAM-cut lineup) and the picker (full lineup,
-        // lifted) name ONE card per device, and it heads both lists. Walked over the RAM
-        // classes and every gate answer the two surfaces can be handed.
+        // The whole point of the round: the flow (RAM-cut lineup, lifted) and the picker (full
+        // lineup, lifted) name ONE card per device, and it heads BOTH lists. Walked over the RAM
+        // classes, every gate answer the two surfaces can be handed, and every installed subset
+        // of the CPU ladder — the review of this round found the flow's head wrong for exactly
+        // one of those cells (over the gate, small on disk: the cut keeps small at the head
+        // while the steer is medium), and the earlier spelling of this test drove only the
+        // empty subset and asserted membership, not the head, for the flow. Both now hold.
         val rams = listOf(0L, 3_700_000_000L, gate - 1, gate, 5_600_000_000L, 12_000_000_000L)
         val gates = listOf(emptySet(), setOf("npu"), setOf("npu-turbo"), setOf("npu", "npu-turbo"))
-        for (ram in rams) for (offered in gates) {
-            val ordered = ModelTierCopy.orderedForLanguageTagFor("en-US", offered)
+        val installedSubsets = listOf(
+            emptySet(), setOf("small-q8"), setOf("medium-q8"), setOf("ultra-q8"),
+            setOf("small-q8", "medium-q8"), setOf("medium-q8", "ultra-q8"), cpuLineup.toSet(),
+        )
+        var flowLiftMattered = 0
+        for (ram in rams) for (offered in gates) for (installed in installedSubsets) {
+            val tag = "(ram=$ram, offered=$offered, installed=$installed)"
+            val ordered = ModelTierCopy.orderedForLanguageTagFor("en-US", offered, installed)
             val cpu = ModelTierCopy.steerIdForLanguageTagFor("en-US", offered)
-            // The flow: cut, then steer over the cut.
-            val flowLineup = OnboardingLogic.firstRunLineup(ordered, ram, emptySet())
-            val flowSteer = OnboardingLogic.firstRunSteer(flowLineup, cpu, ram)
+            // The flow: cut, then steer over the cut, then lift.
+            val flowCut = OnboardingLogic.firstRunLineup(ordered, ram, installed)
+            val flowSteer = OnboardingLogic.firstRunSteer(flowCut, cpu, ram)
+            val flowLineup = OnboardingLogic.steerFirst(flowCut, flowSteer)
             // The picker: steer over the full list, then lift.
             val pickerSteer = OnboardingLogic.firstRunSteer(ordered, cpu, ram)
             val pickerLineup = OnboardingLogic.steerFirst(ordered, pickerSteer)
-            assertEquals("one steer per device (ram=$ram, offered=$offered)", flowSteer, pickerSteer)
-            assertEquals("the picker leads with it (ram=$ram, offered=$offered)", pickerSteer, pickerLineup.first())
-            assertEquals("the picker keeps the whole lineup (ram=$ram, offered=$offered)", ordered.sorted(), pickerLineup.sorted())
-            assertTrue("the flow shows it (ram=$ram, offered=$offered)", flowSteer in flowLineup)
+            assertEquals("one steer per device $tag", flowSteer, pickerSteer)
+            assertEquals("the picker leads with it $tag", pickerSteer, pickerLineup.first())
+            assertEquals("the picker keeps the whole lineup $tag", ordered.sorted(), pickerLineup.sorted())
+            assertEquals("the flow leads with it $tag", flowSteer, flowLineup.first())
+            assertEquals("the flow's lift keeps the cut's cards $tag", flowCut.sorted(), flowLineup.sorted())
+            if (flowCut.first() != flowSteer) flowLiftMattered++
         }
+        // The lift is not decoration on the flow: the cell the review named is in the walk.
+        assertTrue("the flow's cut left the steer off the head somewhere in the walk", flowLiftMattered > 0)
+        val reviewCell = OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, setOf("small-q8"))
+        assertEquals("small-q8", reviewCell.first())
+        assertEquals("medium-q8", OnboardingLogic.firstRunSteer(reviewCell, cpuSteer, 12_000_000_000L))
     }
 
     @Test fun the_gate_never_adds_a_card_and_never_reorders_one() {

@@ -893,7 +893,8 @@ private fun EnginesStep(
         // and the badge all see the SAME filtered list. An NPU-capable device is untouched by
         // both (the 4.3 one-tier rule already made it turbo alone). The Settings picker
         // applies only the STEER half (the same `firstRunSteer`, so both surfaces point at one
-        // card on one device) and never the lineup cut; see the comment at its lineup. Unkeyed on
+        // card on one device) and never the lineup cut; see the comment at its lineup. Both
+        // surfaces then LIFT the steer to the head (`steerFirst`, at the cards below). Unkeyed on
         // purpose — RAM is not a fact an install can change, unlike the two gate producers —
         // and the initial value is 0, the fail-SAFE side of the gate: until the read lands the
         // chooser shows the rung every device can run, and the revalidation guard below drops a
@@ -917,7 +918,15 @@ private fun EnginesStep(
             val kept = OnboardingLogic.revalidatePick(pickedTierId, lineup)
             if (kept != pickedTierId) onPick(kept)
         }
-        lineup
+        // The steered card leads (the round after 4.8.0, review): the cut leaves the steer at
+        // the head of a FRESH install's lineup, but the non-disturbance rule keeps an installed
+        // `small-q8` on a big phone at the head of the ordering rule's list while the steer is
+        // medium — a chip on the second card while the first wears nothing, the Bengali-review
+        // shape one axis over. Reachable: the flow is entered whenever the SELECTED tier is not
+        // on disk, and small can be on disk while a later pick's download failed or was
+        // deleted. The lift is a permutation of the same named `lineup` the guard above keys
+        // on, so the guard's membership answer is unchanged; the picker lifts the same way.
+        OnboardingLogic.steerFirst(lineup, steerId)
             .mapNotNull { WhisperCatalog.byId(it) }
             .forEach { model ->
                 TierChoiceCard(

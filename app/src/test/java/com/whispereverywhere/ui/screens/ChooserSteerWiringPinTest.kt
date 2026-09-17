@@ -190,7 +190,7 @@ class ChooserSteerWiringPinTest {
             count(
                 flow,
                 block(
-                    "        lineup",
+                    "        OnboardingLogic.steerFirst(lineup, steerId)",
                     "            .mapNotNull { WhisperCatalog.byId(it) }",
                 ),
             ),
@@ -391,12 +391,13 @@ class ChooserSteerWiringPinTest {
             count(flow, "    onPick: (String?) -> Unit,"),
         )
         assertEquals(
-            "the cards render the SAME named lineup the guard validated against",
+            "the cards render the SAME named lineup the guard validated against — lifted, which " +
+                "is a permutation, so the guard's membership answer is the cards' answer",
             1,
             count(
                 flow,
                 block(
-                    "        lineup",
+                    "        OnboardingLogic.steerFirst(lineup, steerId)",
                     "            .mapNotNull { WhisperCatalog.byId(it) }",
                 ),
             ),
@@ -622,12 +623,20 @@ class ChooserSteerWiringPinTest {
      * lineup, with its own one RAM read in the flow's shape, and `steerFirst` lifts the answer so
      * the chip and the lead card agree. The lineup cut stays on the flow alone.
      *
+     * **The review of that round: the flow lifts too.** "The flow needs no lift: its cut leaves
+     * the steer at the head" was true of a fresh install and false one state over: the
+     * non-disturbance rule keeps an installed `small-q8` on a big phone at the head of the
+     * flow's lineup while the steer is medium, and the flow is entered whenever the SELECTED
+     * tier is not on disk — which small can be (a later pick's download failed or was deleted).
+     * The pin that forbade `steerFirst` on the flow encoded that defect as a rule; it is now
+     * the inverse, and `OnboardingLogicTest` walks both surfaces over every installed subset.
+     *
      * **The mutations this closes:** the rule applied to the lineup but not the steer (a badge on
      * a card the gate hid — the Bengali-review shape one axis over); the RAM read a second time
      * for one of the two (two answers to one question); the read on Main (`getMemoryInfo` is a
      * binder call; `produceState`'s block runs in the composition's context); the picker's
      * lineup filtered; the picker's steer reverted to the language/gate one (two picks again);
-     * and the picker's steer computed but not lifted (a chip on the second card).
+     * and either surface's steer computed but not lifted (a chip on the second card).
      */
     @Test
     fun theFirstRunRamGateCutsTheFlowsLineupOnly_andBothSurfacesSteerByTheOneRule() {
@@ -708,8 +717,10 @@ class ChooserSteerWiringPinTest {
             ),
         )
         assertEquals("the steer rule is called exactly once on the picker", 1, liveLineCount(picker, "OnboardingLogic.firstRunSteer("))
-        // AND LIFTED: the ordering rule's head is the language/gate steer (small on every CPU
-        // device); the RAM rule's answer must lead, or the chip sits on the second card.
+        // AND LIFTED, ON BOTH: the ordering rule's head is the language/gate steer (small on
+        // every CPU device); the RAM rule's answer must lead, or the chip sits on the second
+        // card. On the picker that is every over-the-gate device; on the flow it is the
+        // over-the-gate device with small already on disk, which the cut keeps at the head.
         assertEquals(
             "the picker renders the ordered lineup with the steered card lifted to the top",
             1,
@@ -721,7 +732,21 @@ class ChooserSteerWiringPinTest {
                 ),
             ),
         )
-        assertEquals("the flow needs no lift: its cut leaves the steer at the head (OnboardingLogicTest)", 0, liveLineCount(flow, "steerFirst"))
+        assertEquals(
+            "the flow renders its cut lineup with the steered card lifted to the top — the cut " +
+                "leaves the steer at the head of a FRESH install's list only; an installed small " +
+                "on a big phone keeps the head while the steer is medium (OnboardingLogicTest)",
+            1,
+            count(
+                flow,
+                block(
+                    "        OnboardingLogic.steerFirst(lineup, steerId)",
+                    "            .mapNotNull { WhisperCatalog.byId(it) }",
+                ),
+            ),
+        )
+        assertEquals("the lift is called exactly once on the flow", 1, liveLineCount(flow, "OnboardingLogic.steerFirst("))
+        assertEquals("and the lift is the guard's own named lineup, not a second list", 1, liveLineCount(flow, "steerFirst(lineup, steerId)"))
     }
 
     @Test

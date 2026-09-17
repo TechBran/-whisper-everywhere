@@ -342,7 +342,8 @@ object OnboardingLogic {
      *  - **Under the gate:** only [SMALLEST_TIER_ID] — "you get pushed to the smallest model".
      *  - **At or over the gate:** [SMALLEST_TIER_ID] is dropped — "we wanna discourage people
      *    from the [small] model" — so the choice is medium and turbo, in the lineup's own order
-     *    (the steer heads it; see [firstRunSteer]).
+     *    (on a fresh install the steer heads it; see [firstRunSteer] and, for the installed-small
+     *    case where it does not, [steerFirst]).
      *
      * **The non-disturbance rule rides through both branches:** anything in [installedIds] keeps
      * its card whatever the gate says, for the reason `WhisperCatalog.pickableFor`'s
@@ -384,7 +385,7 @@ object OnboardingLogic {
      * [firstRunLineup], but a picker that steered `small-q8` for every CPU device while the flow
      * steered `medium-q8` showed a 6 GB phone two different "picks" on two surfaces, chipped with
      * a language reason that has not been the reason since 4.6. One rule, one card, one chip
-     * (`ModelTierCopy.FIRST_RUN_STEER_BADGE`); the picker lifts the answer to the top with
+     * (`ModelTierCopy.FIRST_RUN_STEER_BADGE`); BOTH surfaces lift the answer to the top with
      * [steerFirst].
      */
     fun firstRunSteer(lineup: List<String>, cpuSteer: String, totalRamBytes: Long): String {
@@ -393,16 +394,21 @@ object OnboardingLogic {
     }
 
     /**
-     * The steered card FIRST, everything else in the order given — the Settings picker's half of
-     * "one steer, one badge" (post-4.8.0, 2026-09-17).
+     * The steered card FIRST, everything else in the order given — the second half of "one
+     * steer, one badge" (post-4.8.0, 2026-09-17), applied on BOTH chooser surfaces.
      *
      * `ModelTierCopy.orderedForLanguageTagFor` already leads with ITS steer, the language/gate
      * one, and on the guided flow the RAM cut leaves [FIRST_RUN_STEER_ABOVE_GATE_ID] at the head
-     * of a fresh install's lineup by catalog order. The Settings picker keeps the whole ladder, so
+     * of a FRESH install's lineup by catalog order. The Settings picker keeps the whole ladder, so
      * its head stayed `small-q8` while its steer became medium over the gate — a badge on the
      * second card while the first wears nothing is the Bengali-review shape one axis over, so the
-     * picker lifts its steer explicitly. Stable, so every other card keeps the order it had; a
-     * steer that is not in the lineup changes nothing; nothing is added or dropped.
+     * picker lifts its steer explicitly. The flow has the same shape one state over: the
+     * non-disturbance rule in [firstRunLineup] keeps an installed `small-q8` on a big phone, at
+     * the head, while the steer is medium — and the flow is entered whenever the SELECTED tier is
+     * not on disk, which small can be. So the flow lifts too (the round after 4.8.0, review);
+     * `OnboardingLogicTest` walks both surfaces over every installed subset. Stable, so every
+     * other card keeps the order it had; a steer that is not in the lineup changes nothing;
+     * nothing is added or dropped.
      */
     fun steerFirst(lineup: List<String>, steerId: String): List<String> =
         lineup.sortedBy { if (it == steerId) 0 else 1 }
