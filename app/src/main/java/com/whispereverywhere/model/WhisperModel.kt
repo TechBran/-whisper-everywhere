@@ -106,11 +106,20 @@ data class WhisperModel(
      *
      * **AND THE VERDICT HAS A HOME: [TierThroughputRecord].** This flag says *"we are not
      * advocating this"*; the record says *what the rung did to the typed text*, with the device,
-     * the finalize time, the date and who measured it. The two are held EQUAL by
-     * `TierThroughputTest.the_one_measured_rung_is_multi_and_the_other_six_are_unmeasured` — the
-     * instrument set must be exactly the record's unmeasured rungs — so **clearing this flag
-     * without recording a measurement is a red suite**, and so is recording one without clearing
-     * the flag. That is deliberate: they are one claim and the flag is the half a reader sees.
+     * the finalize time, the date and who measured it.
+     *
+     * **4.7 — THE COUPLING RULE, GENERALISED.** Until 2026-09-17 the instrument set was held equal
+     * to the record's UNMEASURED rungs, because "unmeasured" was the only reason a rung was ever
+     * offered without advocacy. The Tab S10+ session
+     * (`docs/measurements/2026-09-17-tab-cpu-ladder.md`) produced a second reason: `ultra-q8` is
+     * MEASURED and kept up, but with no margin (`KeepUp.KEPT_UP_WITHOUT_MARGIN`, worst commit at
+     * 0.99 of its floor on a flagship), which does not clear production. So the rule is now
+     * **the instrument set equals the pickable rungs whose verdict does not clear production** —
+     * unmeasured or measured-without-clearing alike — held by
+     * `TierThroughputTest.the_instrument_set_is_the_pickable_rungs_whose_verdict_does_not_clear`.
+     * **Clearing this flag on a rung whose verdict does not clear is a red suite**, and so is
+     * keeping it on a rung whose verdict does. They are one claim and the flag is the half a
+     * reader sees.
      */
     val instrument: Boolean = false,
     /**
@@ -334,38 +343,65 @@ object WhisperCatalog {
             sha256 = SHA256_MULTI,
             scope = ModelScope.MULTILINGUAL,
             minRamBytes = 0L,
+            // 4.7 — RETIRED by the Q8 ruling of 2026-09-17 (*"Q8 for everything." — "Q5 is
+            // definitely off the table."*), on the measurement in
+            // `docs/measurements/2026-09-17-tab-cpu-ladder.md`: the same weights at Q8_0
+            // (`small-q8`, directly below) finalize a chunk in a median 1,217 ms against this
+            // rung's 2,618 ms on the same tablet, same talk, same session. This was the shipped
+            // default from 4.6.0 and the only measured rung before that session; its Fold6 row in
+            // `TierThroughputRecord` is kept, because evidence is never deleted.
+            //
+            // `retired` and NOT `unsupported`, exactly as `pro` was in 4.6: every user on this
+            // tier keeps it, it keeps working, it is still a legal 80-bin mel donor and CPU
+            // fallback, and nobody is shown a migration card for a model that works.
+            retired = true,
         ),
         // ================================================= 4.6 — THE INSTRUMENT LADDER
+        //                                                  4.7 — MEASURED, AND RULED ON
         //
-        // Five new rungs, plus `ultra` un-retired. **Every one of them is a
-        // [WhisperModel.instrument]**: selectable on every device, recommended on none, never
-        // [DEFAULT_MODEL_ID] and never a [ModelMigration] target. The owner has six devices and
-        // has chosen to measure the CPU ladder rather than accept a prediction scaled from one
-        // Fold6 anchor — *"I wanna see all the models there so I can just select between them and
-        // try each one."* Offering is not steering.
+        // 4.6 put five new rungs here, plus `ultra` un-retired, every one a
+        // [WhisperModel.instrument]: selectable on every device, recommended on none, so the owner
+        // could measure the CPU ladder rather than accept a prediction scaled from one Fold6 anchor
+        // — *"I wanna see all the models there so I can just select between them and try each
+        // one."* The block that stood here said of the quantisation axis: *"That is a prediction,
+        // not a measurement, and no row states it as one."*
         //
-        // **What the session is measuring, and why the naive metric is the wrong one.** This app
-        // clamps `audio_ctx` to `max(samples/320 + 64, 512)`, and that 512 floor binds for every
-        // chunk under 8.96 s — which is every VAD-cut chunk in ordinary dictation. So the encoder
-        // cost per COMMIT is CONSTANT, the ceiling is COMMITS PER SECOND, and the queue grows iff
-        // finalize wall time exceeds the commit floor. Sparse speech buys no relief. **Not one
-        // literal in these rows is a throughput claim**, because reasoning in terms of
-        // RTF-against-audio is how a bad tier ships.
+        // **On 2026-09-17 it was measured** (`docs/measurements/2026-09-17-tab-cpu-ladder.md`:
+        // Galaxy Tab S10+, one TEDx talk as device audio, threads=4, previewer armed, versionCode
+        // 95 + b54fc1b, timed by Claude Fable 5.1 over remote adb at the owner's instruction).
+        // Median finalize wall time per VAD chunk: `small-q8` 1,217 ms against `multi`'s 2,618;
+        // `medium-q8` 1,341 ms against `medium-q5`'s 9,294 (which NEVER caught up — the queue
+        // grew and the chunks lengthened to 9-14 s); `ultra-q8` 4,849 ms with a worst commit of
+        // 7,930 against its 8,000 ms floor. The prediction held, and by more than it predicted.
         //
-        // **The ORDER is the ladder the chooser renders** ([entries] order; `ModelTierCopy.
-        // orderedForLanguageTagFor` sorts stably over it), and it is grouped BY MODEL FAMILY with
-        // each quantisation twin adjacent to its sibling — small, medium, turbo, large-v3 — rather
-        // than in ascending bytes. Bytes would interleave the families (medium-Q8's 823 MB above
-        // turbo-Q5's 574 MB) and separate the two comparisons that carry the most information:
-        // **small Q5_1 vs Q8_0** (same model, the quantisation axis, the cheapest decisive test)
-        // and **medium Q5_0 vs Q8_0**. A user reading the list sees each model once with its
-        // quantisations together; the owner comparing two cards finds them side by side.
+        // **The owner's ruling, same day:** *"Q8 for everything." — "Q5 is definitely off the
+        // table."* — *"We're only testing on models that we're actually gonna use."* So the ladder
+        // is now THREE pickable rungs, every one Q8_0: `small-q8` is the floor for every device
+        // and the default; `medium-q8` is the medium tier, recommended above a RAM threshold;
+        // `ultra-q8` is an OPTIONAL top rung — *"if people really want that higher quality
+        // accuracy … it's doable, it's actually workable"* — offered, never advocated, because it
+        // kept up on a flagship with no margin. The four Q5 rows (`multi`, `medium-q5`, `ultra`,
+        // `large-v3`) are RETIRED — hidden from the chooser, untouched for anyone who has one —
+        // and the two Q5_0 rungs the session never timed (`ultra`, `large-v3`) were retired
+        // unmeasured by the same ruling.
         //
-        // **The quantisation axis is why these rungs exist at all.** `Q5_0` and `Q5_1` are the
-        // only two quantisations absent from ggml's ARM i8mm repack path and the only two this app
-        // has ever shipped, while the build already compiles `+i8mm`
-        // (`docs/superpowers/research/2026-09-13-cpu-tier-upgrade.md`). Every `q8_0` rung here is
-        // ON that path. **That is a prediction, not a measurement, and no row states it as one.**
+        // **Production authorisation is NOT granted by this.** The owner's next step is an
+        // accuracy pass on small and medium — *"the rest of the testing now will be to prove the
+        // accuracy of the small and medium model … before we actually give it a go"* — so
+        // `TierThroughputRecord.PRODUCTION_PROMOTABLE` is EMPTY and this build goes to the
+        // internal track and a sideloaded tablet only.
+        //
+        // **Why the naive metric is the wrong one, still.** This app clamps `audio_ctx` to
+        // `max(samples/320 + 64, 512)`, and that 512 floor binds for every chunk under 8.96 s —
+        // which is every VAD-cut chunk in ordinary dictation. So the encoder cost per COMMIT is
+        // CONSTANT, the ceiling is COMMITS PER SECOND, and the queue grows iff finalize wall time
+        // exceeds the commit floor. Sparse speech buys no relief. That is the metric the doc uses
+        // and the only one these rows are read in.
+        //
+        // **The ORDER is unchanged** ([entries] order; `ModelTierCopy.orderedForLanguageTagFor`
+        // sorts stably over it): grouped BY MODEL FAMILY with each quantisation twin beside its
+        // retired sibling — small, medium, turbo, large-v3 — so the retired rows still read as
+        // the twins they are and the measurement doc's pairs are the catalogue's pairs.
         WhisperModel(
             id = "small-q8",
             displayName = "Multilingual (small, Q8_0)",
@@ -379,8 +415,12 @@ object WhisperCatalog {
             scope = ModelScope.MULTILINGUAL,
             // 80, from the header (n_mels at offset 40). Same 12 encoder layers at 768 dims as
             // `multi` — literally the same model, 40% larger, at a different quantisation.
+            //
+            // 4.7 — THE FLOOR FOR EVERY DEVICE, and [DEFAULT_MODEL_ID]. Recommended everywhere
+            // (`minRamBytes = 0`), measured to keep up with margin on the Tab S10+ (median
+            // 1,217 ms per commit, worst 1,993 ms; `TierThroughputRecord.SMALL_Q8`), and no longer
+            // an instrument: the flag meant "no verdict that clears", and it has one.
             minRamBytes = 0L,
-            instrument = true,
         ),
         WhisperModel(
             id = "medium-q5",
@@ -398,7 +438,13 @@ object WhisperCatalog {
             scope = ModelScope.MULTILINGUAL,
             // 80 from the header; 24 encoder layers at 1024 dims.
             minRamBytes = 0L,
-            instrument = true,
+            // 4.7 — RETIRED by the Q8 ruling of 2026-09-17, and this is the row the ruling was
+            // most about: on the Tab S10+ it NEVER caught up (median 9,294 ms per commit against
+            // an 8,000 ms floor, worst 11,782; `TierThroughputRecord.MEDIUM_Q5`), while the same
+            // weights at Q8_0 (`medium-q8`, below) finalized in 1,341 ms. Its measured row is
+            // kept as evidence. Retired, not unsupported: an installed one keeps working, at the
+            // cadence it always had, for anyone who chose it on the internal track.
+            retired = true,
         ),
         WhisperModel(
             id = "medium-q8",
@@ -412,8 +458,21 @@ object WhisperCatalog {
             // Byte-for-byte the same hyperparameters as `medium-q5` off the header — n_vocab
             // 51865, 24 encoder layers at 1024, 80 mel bins — differing ONLY in ftype (2007 = Q8_0
             // against 1008 = Q5_0). That is what makes this pair a controlled comparison.
-            minRamBytes = 0L,
-            instrument = true,
+            //
+            // 4.7 — THE MEDIUM TIER. Measured to keep up with margin on the Tab S10+ (median
+            // 1,341 ms per commit, worst 2,508 against an 8,000 ms floor;
+            // `TierThroughputRecord.MEDIUM_Q8`), so it is no longer an instrument.
+            //
+            // **The RAM threshold is PROVISIONAL.** 5.5e9 is this repo's own `extreme` (medium.en)
+            // precedent — the same 24-layer medium at Q5_0, gated at "genuine 6 GB-class hardware
+            // after ActivityManager.totalMem slack" since 2026-07-17 — carried over because an
+            // 823 MB model is a real fact about the device in the user's hand, unlike the
+            // instrument flag it replaces. It has NOT been measured against a weak device: the
+            // only measurement is a 12 GB flagship. **THE OPEN ITEM is the owner's weakest-device
+            // measurement**, which is what would move this number in either direction. Below it
+            // the rung stays selectable and the chooser says "High-end devices only", which is a
+            // statement about RAM and is true.
+            minRamBytes = 5_500_000_000L,
         ),
         WhisperModel(
             id = "ultra",
@@ -430,26 +489,21 @@ object WhisperCatalog {
             // filterbank — the fact `isCpuFallbackEligible` used to spell as `id != "ultra"`.
             // Read from this file's ggml header (n_mels, offset 40), not assumed.
             melBins = 128,
-            // 4.6 — UN-RETIRED, as an INSTRUMENT, per the owner's ruling of 2026-09-13. Three
-            // literals changed together and each one has to:
-            //  - `retired` is gone, so the tier is OFFERED again. Nobody has been able to select
-            //    it since 3.7, which means nobody has run large-v3-turbo on the CPU since VAD
-            //    chunking landed — it is offered here so it can be measured, not because it has
-            //    been. The research gives it zero device minutes and refutes it by arithmetic
-            //    (turbo's whole saving is 28 removed DECODER layers in a workload that is 83-88%
-            //    encoder, and its encoder IS large-v3's). That is exactly a prediction the owner
-            //    has chosen to test.
-            //  - `unsupported` goes with it, necessarily: a tier the app OFFERS cannot also be one
-            //    it migrates people OFF ([ModelMigration.decide] raises the "no longer supported"
-            //    card on `unsupported` alone), and `every_unsupported_tier_is_also_retired` states
-            //    the same coupling from the test side. An `ultra` user who has carried that
-            //    migration card since 3.7 simply has a live tier again.
-            //  - `minRamBytes` drops from 7.0e9 to 0. An instrument makes no RAM claim: it is
-            //    unrecommended because nobody has measured its throughput, not because of the
-            //    device in the user's hand, and a RAM gate here would render the card as
-            //    "needs more RAM than this device reports" on a phone where that is false.
+            // 4.6 UN-RETIRED it as an INSTRUMENT (owner ruling 2026-09-13) so it could be
+            // measured on the CPU for the first time since VAD chunking landed; `unsupported` was
+            // dropped with `retired` (a tier the app offers cannot also be one it migrates people
+            // off) and `minRamBytes` went from 7.0e9 to 0 (an instrument makes no RAM claim).
+            //
+            // 4.7 — RETIRED AGAIN, UNMEASURED, by the Q8 ruling of 2026-09-17 (*"Q5 is
+            // definitely off the table"*). The session never timed it: its Q8_0 twin (`ultra-q8`,
+            // below) kept up on the tablet with no margin, and `medium-q5` — the only Q5_0 rung
+            // that was timed — never caught up, so a Q5_0 rung with a heavier encoder was not
+            // worth a run. `unsupported` STAYS FALSE, which is the difference from 3.7: nobody who
+            // picked it on the internal track is shown a migration card, and it is not the
+            // migration source it was — retired means hidden, not wanted-off. `minRamBytes` stays
+            // 0 because a retired row's threshold gates nothing.
             minRamBytes = 0L,
-            instrument = true,
+            retired = true,
         ),
         WhisperModel(
             id = "ultra-q8",
@@ -465,6 +519,17 @@ object WhisperCatalog {
             // 2008 = Q5_0). So it is refused as a mel donor and as a CPU fallback for exactly the
             // reason `ultra` is ([isCpuFallbackEligible]), by its recorded width and not by name.
             melBins = 128,
+            // 4.7 — THE OPTIONAL TOP RUNG, and the ONE instrument left. It is MEASURED now
+            // (`TierThroughputRecord.ULTRA_Q8`: median 4,849 ms per commit on the Tab S10+, worst
+            // 7,930 against an 8,000 ms floor — `KeepUp.KEPT_UP_WITHOUT_MARGIN`), so the flag no
+            // longer means "unmeasured". It means what it always meant underneath: **offered, not
+            // advocated, because the verdict does not clear production** — the margin that would
+            // survive a device slower than a Dimensity 9300+ flagship, or thermal drift on that
+            // one, is not there. The owner's words: *"if people really want that higher quality
+            // accuracy … it's doable, it's actually workable."* Offered for its accuracy, never
+            // recommended, never the default, never a migration target. `minRamBytes` stays 0 for
+            // the reason the instrument KDoc gives: a RAM gate would attribute the caution to the
+            // device, and the caution is about the margin.
             minRamBytes = 0L,
             instrument = true,
         ),
@@ -486,7 +551,12 @@ object WhisperCatalog {
             // the two — same encoder, eight times the decoder.
             melBins = 128,
             minRamBytes = 0L,
-            instrument = true,
+            // 4.7 — RETIRED, UNMEASURED, by the Q8 ruling of 2026-09-17: a Q5_0 rung, and the
+            // heaviest file on the ladder, on the day the owner took every Q5 rung off the table.
+            // The session never timed it. Retired, not unsupported — an internal-track user who
+            // downloaded the gigabyte keeps it. The mel-width field it forced into the catalogue
+            // stays load-bearing: `ultra-q8` is a pickable 128-bin rung and reads it.
+            retired = true,
         ),
         WhisperModel(
             id = "npu",
@@ -615,22 +685,24 @@ object WhisperCatalog {
      *
      * ### 4.6 — AND THEREFORE A DEVICE OFFERED THE ONE TIER IS OFFERED NO INSTRUMENT
      *
-     * **A recorded consequence, not an oversight.** 4.6 adds six [WhisperModel.instrument] rungs to
-     * [pickable] so the owner can measure them, and the narrowing above takes every one of them
+     * **A recorded consequence, not an oversight.** 4.6 added six [WhisperModel.instrument] rungs
+     * to [pickable] so the owner could measure them, and the narrowing above takes every CPU rung
      * back on any device whose gate set names [ONE_TIER_ID] — which is the whole 8 Gen 3-class
      * fleet, the Fold6 included. So on a capable device whose turbo delivery works, the chooser
-     * renders `npu-turbo` plus whatever is already installed, and `small-q8`, `medium-q5`,
-     * `medium-q8`, `ultra`, `ultra-q8` and `large-v3` render no card at all: they are neither
-     * selectable nor downloadable there. `WhisperCatalogHelpersTest`'s
-     * `a_device_offered_the_one_tier_is_offered_no_instrument` executes that sentence, deliberately
-     * beside `every_instrument_is_pickable_ungated_and_installable_by_download` — the two halves of
-     * the same fact, so a later reader finds the case that does NOT work next to the case that does
+     * renders `npu-turbo` plus whatever is already installed, and the CPU ladder — since 4.7 the
+     * three Q8 rungs `small-q8`, `medium-q8` and `ultra-q8`, of which only `ultra-q8` is still an
+     * instrument — renders no card at all: neither selectable nor downloadable there.
+     * `WhisperCatalogHelpersTest`'s `a_device_offered_the_one_tier_is_offered_no_instrument`
+     * executes that sentence, deliberately beside
+     * `every_instrument_is_pickable_ungated_and_installable_by_download` — the two halves of the
+     * same fact, so a later reader finds the case that does NOT work next to the case that does
      * instead of inferring it from a silence.
      *
-     * It costs the 4.6 session something specific, which is why it is written down rather than
-     * merely true: the Fold6 carries the ladder's only measured anchor (`multi`, F = 2.3 s), so
-     * `multi` vs `small-q8` — the cheapest decisive experiment in the research — cannot be run on
-     * the device its own baseline was measured on while this rule stands.
+     * It cost the 4.6 session something specific, which is why it was written down rather than
+     * merely true: the Fold6 carried the ladder's only measured anchor (`multi`, F = 2.3 s), so
+     * `multi` vs `small-q8` could not be run on the device its own baseline was measured on. The
+     * comparison was run on the Tab S10+ instead (2026-09-17, both arms on one device: 2,618 ms
+     * against 1,217 ms), which is how the ruling that retired `multi` was made.
      *
      * **Reversing it is not ours to do.** The one-tier rule is the owner's ruling of 2026-08-30,
      * quoted at [ONE_TIER_ID]; widening it so a measurement rung slips through would be the same
@@ -752,8 +824,8 @@ object WhisperCatalog {
             "url is provenance, not a source)"
 
     /**
-     * Default tier on first run. **`multi` (small q5_1) since 4.6**, was `pro` (small.en) from 3.7
-     * Workstream H.
+     * Default tier on first run. **`small-q8` (small Q8_0) since 4.7**; was `multi` (small Q5_1)
+     * in 4.6, and `pro` (small.en) from 3.7 Workstream H.
      *
      * The chooser offers [pickable], steers a fresh install by locale
      * ([ModelTierCopy.steerIdForLanguageTag]), and the user picks explicitly; this constant is the
@@ -761,21 +833,29 @@ object WhisperCatalog {
      * OnboardingSetupViewModel, the download-phase re-resolve in OnboardingFlowScreen, and
      * [ModelMigration]'s ENGLISH target.
      *
-     * **It moved because `pro` is retired** (owner ruling 2026-09-13 — multilingual rungs only),
-     * and a retired default is an unshippable state: it is unreachable from the picker, so a user
-     * who lands on it by fallback cannot see the card for the tier they are on.
+     * **The default is the rung the app can stand behind on evidence**, and since 2026-09-17
+     * that is `small-q8`. It is measured (`docs/measurements/2026-09-17-tab-cpu-ladder.md`: Galaxy
+     * Tab S10+, device audio from one TEDx talk, previewer armed — median 1,217 ms per commit,
+     * worst 1,993 ms, KEPT_UP with margin; `TierThroughputRecord.SMALL_Q8`), and it is the SAME
+     * whisper-small weights as the `multi` it replaces — 12 encoder layers at 768 dims, the
+     * multilingual vocabulary — stored at Q8_0 instead of Q5_1: 2.2x faster per commit on that
+     * tablet (2,618 ms against 1,217, both arms in one session) for +74 MB of download. Same
+     * model, on ggml's ARM i8mm repack path that Q5_1 is absent from.
      *
-     * **It moved TO `multi` specifically, and `multi` is the only rung it could have moved to.**
-     * The ladder that 4.6 adds is six [WhisperModel.instrument]s — offered so they can be measured
-     * — and a default has to be a rung the app is prepared to stand behind. `multi` is the one
-     * that clears the app's own eligibility rule on evidence: F = 2.3 s, duty 0.42, measured on
-     * the Fold6 by this repo's audio-ctx bench of 2026-08-20, against the rule's demand of
-     * F <= 5.3 s. Every other rung on the ladder has a derived number or none at all. Defaulting
-     * to one of those would hand the fleet a finalizer nobody has timed — and the streaming
-     * previewer would hide it, because words appear on the strip 0.4 s behind the voice whatever
-     * the finalizer is doing.
+     * **It moved because `multi` is retired** (the owner's Q8 ruling of 2026-09-17 — *"Q5 is
+     * definitely off the table"*), and a retired default is an unshippable state: it is
+     * unreachable from the picker, so a user who lands on it by fallback cannot see the card for
+     * the tier they are on. The 4.6 rule that put `multi` here is unchanged in shape — a default
+     * has to clear the app's own eligibility rule on a measurement, not a derivation, because the
+     * streaming previewer would hide an untimed finalizer (words appear on the strip 0.4 s behind
+     * the voice whatever the finalizer is doing) — and `small-q8` now clears it by more than
+     * `multi` did. `TierThroughputTest.the_default_and_every_migration_target_carry_a_clearing_verdict`
+     * holds that.
+     *
+     * One device, one talk, previewer armed: the caveats are on the record's own row, not hidden
+     * here.
      */
-    const val DEFAULT_MODEL_ID = "multi"
+    const val DEFAULT_MODEL_ID = "small-q8"
 
     fun byId(id: String?): WhisperModel? = entries.firstOrNull { it.id == id }
 
@@ -784,9 +864,10 @@ object WhisperCatalog {
      * recommended at all if it is a [WhisperModel.instrument]** (4.6).
      *
      * The instrument clause runs first and answers on the rung, not on the device: an instrument
-     * is offered so it can be MEASURED, and a card badged *"Recommended for your device"* is the
-     * app claiming a throughput verdict it does not have. The RAM comparison is untouched for
-     * every other row, boundary included (`>=`).
+     * is offered without a throughput verdict that clears, and a card badged *"Recommended for
+     * your device"* is the app claiming one. The RAM comparison is untouched for every other row,
+     * boundary included (`>=`) — since 4.7 `medium-q8` is the live subject of that boundary
+     * (5.5e9, provisional), and `small-q8` at 0 is recommended everywhere.
      */
     fun isRecommendedForDevice(model: WhisperModel, totalRamBytes: Long): Boolean =
         !model.instrument && totalRamBytes >= model.minRamBytes

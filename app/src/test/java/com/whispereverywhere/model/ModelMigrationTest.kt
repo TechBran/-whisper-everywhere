@@ -18,6 +18,38 @@ class ModelMigrationTest {
     @Test fun a_current_tier_needs_no_migration() {
         assertEquals(ModelMigration.Action.None, decide("pro"))
         assertEquals(ModelMigration.Action.None, decide("multi"))
+        assertEquals(ModelMigration.Action.None, decide("small-q8"))
+        assertEquals(ModelMigration.Action.None, decide("medium-q8"))
+    }
+
+    /**
+     * **4.7 — `multi` is RETIRED, and every user on it gets `None`, over the whole input space.**
+     * `multi` was the shipped default of 4.6.0 — in PRODUCTION — and the Q8 ruling of 2026-09-17
+     * retired it on the strength of a same-device measurement that its Q8_0 twin is 2.2x faster.
+     * That is a reason to stop OFFERING it, not a reason to disturb anyone on it: the model works,
+     * at the cadence it always had. `retired` and not `unsupported`, so `decide` falls through to
+     * `None` for every combination of the other three inputs, exactly as `pro`'s users did in 4.6.
+     */
+    @Test fun a_user_on_the_retired_190_mb_default_is_left_completely_alone() {
+        assertTrue(WhisperCatalog.byId("multi")!!.retired)
+        assertFalse(WhisperCatalog.byId("multi")!!.unsupported)
+        listOf(true, false).forEach { online ->
+            listOf(true, false).forEach { targetInstalled ->
+                listOf(true, false).forEach { selectedInstalled ->
+                    assertEquals(
+                        "multi/online=$online/target=$targetInstalled/installed=$selectedInstalled",
+                        ModelMigration.Action.None,
+                        decide("multi", selectedInstalled, targetInstalled, online),
+                    )
+                }
+            }
+        }
+        // And the other three Q5 rungs the same ruling retired.
+        listOf("medium-q5", "ultra", "large-v3").forEach {
+            assertTrue("'$it' is retired", WhisperCatalog.byId(it)!!.retired)
+            assertEquals("'$it' raised a migration action", ModelMigration.Action.None, decide(it))
+            assertEquals(ModelMigration.Action.None, decide(it, targetInstalled = true))
+        }
     }
 
     @Test fun a_retired_but_supported_tier_is_left_completely_alone() {
@@ -81,6 +113,10 @@ class ModelMigrationTest {
         // longer supported" since 3.7, and the chooser is now simultaneously inviting them to try
         // that very rung. `decide` gates on `unsupported` alone, so dropping both flags together
         // is what makes the card go away.
+        //
+        // 4.7: `ultra` is RETIRED again (the Q8 ruling), and `unsupported` STAYS FALSE — so these
+        // four rows still hold, now as the retired-not-uninstalled rule rather than the offered
+        // rule. Nobody who picked it on the internal track is shown the card it carried in 3.7.
         assertEquals(ModelMigration.Action.None, decide("ultra"))
         assertEquals(ModelMigration.Action.None, decide("ultra", online = false))
         assertEquals(ModelMigration.Action.None, decide("ultra", targetInstalled = true))
@@ -114,13 +150,13 @@ class ModelMigrationTest {
     }
 
     @Test fun swap_happens_offline_too_once_the_target_is_installed() {
-        // No network needed to swap a file that is already downloaded. (4.6: the target is `multi`,
-        // not `pro` — `pro` is retired, so the ENGLISH arm of targetIdFor resolves through
+        // No network needed to swap a file that is already downloaded. (4.6: the target became
+        // `multi`, not `pro` — `pro` is retired, so the ENGLISH arm of targetIdFor resolves through
         // DEFAULT_MODEL_ID to the multilingual rung. Safe in this direction and only this one:
-        // `multi` transcribes English perfectly, being the same whisper-small weights with a
-        // multilingual vocab head; the reverse is the MF3 bug.)
+        // whisper-small with a multilingual vocab head transcribes English perfectly; the reverse
+        // is the MF3 bug. 4.7: `multi` is retired too, so the target is its Q8_0 twin `small-q8`.)
         assertEquals(
-            ModelMigration.Action.SwapAndDelete("extreme", "multi"),
+            ModelMigration.Action.SwapAndDelete("extreme", "small-q8"),
             decide("extreme", targetInstalled = true, online = false),
         )
     }
@@ -137,38 +173,46 @@ class ModelMigrationTest {
     // tier maps to WhisperCatalog.DEFAULT_MODEL_ID regardless of scope.
     //
     // 4.6 — **the MULTILINGUAL arm no longer has a catalogue row pointing at it.** `ultra` was the
-    // only unsupported MULTILINGUAL tier and it is a live rung again, so the arm is proved on the
-    // function directly. That is not a weaker test: the arm is still REACHED by every future
+    // only unsupported MULTILINGUAL tier and it stopped being unsupported, so the arm is proved on
+    // the function directly. That is not a weaker test: the arm is still REACHED by every future
     // multilingual retirement, and a mapping that only holds for today's rows is exactly the
     // assumption MF3 was.
-    @Test fun the_multilingual_target_is_multi_whether_or_not_a_tier_currently_points_at_it() {
-        assertEquals("multi", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
+    //
+    // 4.7 — the arm answers `small-q8`: `multi` is retired, and a target must be pickable, not
+    // retired and not an instrument. Same weights at Q8_0, measured, 264 MB.
+    @Test fun the_multilingual_target_is_small_q8_whether_or_not_a_tier_currently_points_at_it() {
+        assertEquals("small-q8", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
         // The arm reached the way a real retirement would reach it: a MULTILINGUAL row carrying
         // the unsupported bit. No such row exists today, which is why it is constructed.
         assertEquals(ModelScope.MULTILINGUAL, WhisperCatalog.byId("ultra")!!.scope)
         assertEquals(
             "a multilingual retirement must land on a multilingual rung, or dictation breaks " +
                 "silently in every language the user actually speaks",
-            "multi",
+            "small-q8",
             ModelMigration.targetIdFor(WhisperCatalog.byId("ultra")!!.scope),
         )
+        // The rung the arm used to answer is retired — a target that is retired moves users from
+        // one dead end to another, which is the defect `no_migration_target_is_ever_retired_or_an_instrument`
+        // proves absent over the whole input space.
+        assertTrue(WhisperCatalog.byId("multi")!!.retired)
     }
 
     /**
      * 4.6 — was `an_english_unsupported_tier_migrates_to_pro`. With `pro` retired the ENGLISH arm
-     * resolves through `DEFAULT_MODEL_ID` to `multi`, so **both arms of `targetIdFor` now answer
-     * `multi`** — and that is the right answer to both.
+     * resolves through `DEFAULT_MODEL_ID` to the multilingual small rung, so **both arms of
+     * `targetIdFor` answer the same rung** — and that is the right answer to both. 4.7: that rung
+     * is `small-q8`.
      *
      * The collapse is safe in exactly ONE direction and this is that direction: an ENGLISH-scope
-     * user landing on a MULTILINGUAL rung loses nothing, because `multi` is the same 190 MB of
-     * whisper-small weights with a multilingual vocab head and transcribes English perfectly.
-     * The reverse — a multilingual user routed to an English-only tier — is MF3, and the scope
-     * parameter is what still makes it unreachable.
+     * user landing on a MULTILINGUAL rung loses nothing, because `small-q8` is whisper-small's
+     * weights with a multilingual vocab head and transcribes English perfectly. The reverse — a
+     * multilingual user routed to an English-only tier — is MF3, and the scope parameter is what
+     * still makes it unreachable.
      */
     @Test fun an_english_unsupported_tier_migrates_to_the_multilingual_default() {
         val a = decide("extreme", targetInstalled = true) as ModelMigration.Action.SwapAndDelete
         assertEquals(WhisperCatalog.DEFAULT_MODEL_ID, a.toId)
-        assertEquals("multi", a.toId)
+        assertEquals("small-q8", a.toId)
         assertEquals("extreme", a.fromId)
         // The two arms agree TODAY, and the two constants behind them are still separate on
         // purpose: folding the multilingual target into DEFAULT_MODEL_ID would mean the next
@@ -291,9 +335,11 @@ class ModelMigrationTest {
      *
      * The direction is what the test pins. Today the only source is `extreme` (medium.en Q5_0:
      * 24 encoder layers at 1024 dims, read from that file's own ggml header) and the only target
-     * is `multi` (small Q5_1: 12 at 768) — strictly fewer and narrower layers, so strictly less
-     * work per commit in this app's encoder-dominated regime, where the `audio_ctx` floor makes
-     * the cost per commit constant. That is an architectural fact, not a device measurement.
+     * is `small-q8` (small Q8_0: 12 at 768; `multi` until 4.7) — strictly fewer and narrower
+     * layers, so strictly less work per commit in this app's encoder-dominated regime, where the
+     * `audio_ctx` floor makes the cost per commit constant. That is an architectural fact, not a
+     * device measurement — though since 2026-09-17 there is one too: on the Tab S10+ the Q8_0
+     * small finalized in 1,217 ms against the Q5_0 medium's 9,294.
      *
      * **Bytes are NOT the test, and finding that out is why this reads the way it does.** The
      * obvious assertion — target smaller than source — was written first and then MUTATION-KILLED:

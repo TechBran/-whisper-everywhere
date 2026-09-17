@@ -278,7 +278,8 @@ class WhisperModelManager(
         // `OnboardingSetupViewModel.ensureSpeech()` — which serves Home's missing-engine row for
         // whatever `prefs.selectedModelId` names — and `SettingsScreen.kt`'s
         // `ModelMigration.Action.OfferDownload` handler. The third cannot reach `npu` today,
-        // because every migration target is `pro`/`multi` by construction and that is pinned; it is
+        // because every migration target is a single-file ggml rung (`small-q8` since 4.7) by
+        // construction and that is pinned; it is
         // named anyway, because it is the argument FOR the sink: a guard placed at the call sites
         // someone had enumerated would have left open the one they had not, and Q8 adds a fourth
         // install path (`importNpuAssetPair`) that deliberately does not come through here at all.

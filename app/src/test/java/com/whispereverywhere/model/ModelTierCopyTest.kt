@@ -27,8 +27,9 @@ class ModelTierCopyTest {
      * 4.6 — **the ungated lineup, spelled out once.** The ladder's exact content and order are
      * pinned in `WhisperCatalogHelpersTest.pickable_is_exactly_the_ladder_in_order`; what the
      * ordering tests below are about is which card LEADS, so they compose against this rather
-     * than restating seven ids per row. `entries` order, with the steered card lifted to the
-     * front — which is the whole of the 3.7 rule, over a longer list.
+     * than restating the ids per row. `entries` order, with the steered card lifted to the
+     * front — which is the whole of the 3.7 rule, over a longer list. 4.7: the list is the three
+     * Q8 rungs, and the steered card (`small-q8`) is already first in catalogue order.
      *
      * **One list, not two, since `pro` was retired.** The 3.7 rule had an English lineup and an
      * everyone-else lineup because the steer differed; with every offered rung multilingual there
@@ -37,8 +38,7 @@ class ModelTierCopyTest {
      * a user on a tier that is worse for their language") is now satisfied structurally, because
      * there is no worse-for-your-language rung left in the chooser.
      */
-    private val ladderLineup =
-        listOf("multi", "small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3")
+    private val ladderLineup = listOf("small-q8", "medium-q8", "ultra-q8")
 
     @Test fun every_offered_tier_has_copy() {
         offeredTiers.forEach { model ->
@@ -108,15 +108,44 @@ class ModelTierCopyTest {
         assertNull(ModelTierCopy.forId("pro"))
         // 4.6: `multi` was "Best multilingual accuracy" — owner-approved in 3.7, TRUE while it was
         // one of two rungs and the only multilingual one, and FALSE the moment five larger
-        // multilingual rungs are offered beside it. A card may not claim a position it no longer
-        // holds; that is the same discipline that wrote the 3.7 string. What `multi` uniquely
-        // holds now is the only measured verdict on the ladder, which the body states.
-        assertEquals("Everyday accuracy, smallest download", ModelTierCopy.forId("multi")!!.headline)
+        // multilingual rungs were offered beside it; it became "Everyday accuracy, smallest
+        // download" / "...the one rung on this list with a measured verdict behind it."
+        // 4.7: `multi` is RETIRED (the Q8 ruling of 2026-09-17), so its card is gone the way
+        // `pro`'s went — and its headline moved to `small-q8`, of which it is now true.
+        assertNull(ModelTierCopy.forId("multi"))
+        // The three Q8 cards, pinned exactly. Every sentence is checkable against
+        // docs/measurements/2026-09-17-tab-cpu-ladder.md or a file's own ggml header.
+        assertEquals("Everyday accuracy, smallest download", ModelTierCopy.forId("small-q8")!!.headline)
         assertEquals(
-            "The 190 MB model this app has shipped from the start, and the one rung on this " +
-                "list with a measured verdict behind it.",
-            ModelTierCopy.forId("multi")!!.body,
+            "Whisper small — the same weights as the retired 190 MB Q5_1 model, stored at Q8_0 " +
+                "— so its accuracy matches that model's. Measured to keep up with margin on the " +
+                "owner's tablet, and recommended on every device.",
+            ModelTierCopy.forId("small-q8")!!.body,
         )
+        assertEquals("Sharper accuracy, larger download", ModelTierCopy.forId("medium-q8")!!.headline)
+        assertEquals(
+            "Whisper medium at Q8_0: 24 encoder layers at 1024 dims against small's 12 at 768. " +
+                "Measured to keep up with margin on the owner's tablet; recommended where the " +
+                "device reports at least 5.5 GB of memory.",
+            ModelTierCopy.forId("medium-q8")!!.body,
+        )
+        assertEquals("Highest accuracy, largest download", ModelTierCopy.forId("ultra-q8")!!.headline)
+        assertEquals(
+            "Large-v3-turbo at Q8_0 — large-v3's own 32-layer encoder with a 4-layer decoder: " +
+                "the most accurate model on this ladder. On the owner's flagship tablet it kept " +
+                "up with no margin to spare, so on a less capable device expect the typed text " +
+                "to fall behind. Offered for its accuracy, not recommended. " +
+                ModelTierCopy.KEEP_UP_NOTE,
+            ModelTierCopy.forId("ultra-q8")!!.body,
+        )
+        // The measured sentences are SCOPED to the device they were measured on — the shape the
+        // no-speed-claims rule allows — and the RAM sentence states the catalogue's own threshold.
+        listOf("small-q8", "medium-q8").forEach {
+            assertTrue("'$it' must scope its measured claim to the tablet", ModelTierCopy.forId(it)!!.body.contains("on the owner's tablet"))
+        }
+        assertTrue(ModelTierCopy.forId("ultra-q8")!!.body.lowercase().contains("on the owner's flagship tablet"))
+        assertEquals(5_500_000_000L, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
+        assertTrue(ModelTierCopy.forId("medium-q8")!!.body.contains("at least 5.5 GB"))
     }
 
     @Test fun retired_and_unknown_tiers_have_no_copy() {
@@ -126,12 +155,17 @@ class ModelTierCopyTest {
         assertNull(ModelTierCopy.forId("eco"))
         assertNull(ModelTierCopy.forId("base"))
         assertNull(ModelTierCopy.forId("nope"))
-        // 4.6: `ultra` LEFT this list — it is offered again, so it has a card. Stated as the rule
-        // rather than as a list, so the next retirement or un-retirement cannot outlive it.
+        // 4.6: `ultra` LEFT this list — it was offered again, so it had a card. 4.7: it is back,
+        // with `multi`, `medium-q5` and `large-v3` — every Q5 rung, by the Q8 ruling. Stated as
+        // the rule rather than as a list, so the next retirement or un-retirement cannot outlive
+        // it.
         WhisperCatalog.entries.filter { it.retired }.forEach {
             assertNull("retired tier '${it.id}' still has copy", ModelTierCopy.forId(it.id))
         }
-        assertNotNull("ultra is offered again and must have a card", ModelTierCopy.forId("ultra"))
+        listOf("multi", "medium-q5", "ultra", "large-v3").forEach {
+            assertNull("'$it' is retired (Q8 ruling 2026-09-17) and must have no card", ModelTierCopy.forId(it))
+        }
+        assertNotNull("ultra-q8 is offered and must have a card", ModelTierCopy.forId("ultra-q8"))
     }
 
     @Test fun no_offered_tier_names_a_retired_one() {
@@ -140,17 +174,35 @@ class ModelTierCopyTest {
         // The match is WORD-ANCHORED (H3 review, m1): retired ids are short common substrings —
         // "record"/"recording" contains "eco", "based"/"database" contains "base" — so a plain
         // `contains` fails ordinary dictation copy while naming a reference that is not there.
+        //
+        // 4.7 — ONE STATED EXEMPTION: the retired id `large-v3` is ALSO the upstream checkpoint
+        // family's name, and two offered cards carry it as the name of the model they ARE —
+        // `ultra-q8` is "Large-v3-turbo" and the pinned `npu-turbo` body reads "Large-v3's own
+        // encoder". That is the same reasoning SPEED_CLAIM_WORDS gives for "turbo": renaming
+        // someone else's checkpoint to dodge a word census would make the cards harder to match
+        // to the files they fetch. What the rule is about — positioning against a card the user
+        // cannot see — is held for that rung by its BADGE instead: no offered card names the
+        // retired large-v3 rung's 1081 MB.
+        val familyNames = setOf("large-v3")
         val retiredIds = WhisperCatalog.entries.filter { it.retired }.map { it.id.lowercase() }
         offeredTiers.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             val all = (copy.headline + " " + copy.body + " " + copy.badges.joinToString(" ")).lowercase()
-            retiredIds.forEach { r ->
+            (retiredIds - familyNames).forEach { r ->
                 assertFalse(
                     "tier '${model.id}' copy names retired tier '$r'",
                     Regex("\\b" + Regex.escape(r) + "\\b").containsMatchIn(all),
                 )
             }
+            assertFalse(
+                "tier '${model.id}' copy positions itself against the retired 1081 MB large-v3 rung",
+                all.contains("1081 mb") || all.contains("1,081"),
+            )
         }
+        // The exemption is exactly one id, and it is a retired one — a live `large-v3` rung would
+        // make the family-name reading and the rung reading collide on a card the user CAN see.
+        assertEquals(setOf("large-v3"), familyNames)
+        assertTrue(WhisperCatalog.byId("large-v3")!!.retired)
     }
 
     // =================================================== 4.6 T2 — THE COPY TELLS THE TRUTH
@@ -158,14 +210,15 @@ class ModelTierCopyTest {
     // The ladder makes three copy rules load-bearing that were previously slack, and each gets a
     // census below rather than a comment:
     //
-    //   1. No non-NPU rung claims speed, in either direction — nothing on this ladder has been
-    //      measured and the owner is about to measure it on six devices. The two NPU cards KEEP
+    //   1. No non-NPU rung RANKS another by speed, in either direction — the three Q8 rungs were
+    //      not measured against one another on the user's device. A measured sentence scoped to
+    //      the device it was measured on is allowed (4.7); a rank is not. The two NPU cards KEEP
     //      their measured, owner-ruled "fastest": that is a true claim and removing it would be
     //      the regression, so the census asserts BOTH halves.
-    //   2. The heavy rungs warn, plainly, that they may not keep up with continuous speech, and
-    //      name the remedy.
-    //   3. A q8_0 rung reads as the SAME MODEL as its q5_0 twin at a different quantisation, or
-    //      the owner's session cannot interpret its own results.
+    //   2. The one rung whose verdict does not clear warns, plainly, that it may not keep up
+    //      with continuous speech, and names the remedy; a measured pass does not warn.
+    //   3. A q8_0 rung still names its quantisation and its retired q5 twin's, because the
+    //      twins are installed on the devices of everyone who tried one on the internal track.
 
     /**
      * **[ModelTierCopy.KEEP_UP_NOTE] has to say three things, and the third is the one 4.6 could
@@ -212,15 +265,16 @@ class ModelTierCopyTest {
             note.contains("a smaller Whisper") && note.contains("fewer layers"),
         )
         // 4. and it must rank the quantisation axis in NEITHER direction (review round 1, B1).
+        // 4.7: the axis IS measured now (Q8_0 won, twice, on one device), and the note still
+        // must not name it — the remedy is a smaller Whisper, and every quantisation twin of an
+        // offered rung is retired, so naming the axis would point at a card the user cannot see.
         assertFalse(
-            "KEEP_UP_NOTE names quantisation in its remedy, which ranks that axis on five " +
-                "production cards. Nothing on it is measured on the owner's hardware, small-q8's " +
-                "own card says its throughput is unknown, and small-q5_1 vs small-q8_0 and " +
-                "medium-q5_0 vs medium-q8_0 are the two comparisons his session exists to run",
+            "KEEP_UP_NOTE names quantisation in its remedy, which ranks that axis on the card — " +
+                "the remedy is an architectural one (fewer layers), and the Q5 twins are retired",
             Regex("\\b(quantis\\w*|quantiz\\w*|q\\d_\\d)\\b").containsMatchIn(note.lowercase()),
         )
-        // The note is one string on five cards, so a speed claim smuggled into it is a speed
-        // claim on five cards. The census below iterates the cards; this is the string itself.
+        // The note is one string, so a speed claim smuggled into it is a speed claim on every
+        // card that carries it. The census below iterates the cards; this is the string itself.
         SPEED_CLAIM_WORDS.forEach {
             assertFalse(
                 "KEEP_UP_NOTE claims speed with '$it' — it may state a failure MODE, never a rank",
@@ -235,14 +289,14 @@ class ModelTierCopyTest {
      * would be satisfied by scrubbing the lineup silent — which would delete two claims that are
      * measured, owner-ruled and true.
      *
-     * **The forbidding half.** Six of the seven CPU rungs are [WhisperModel.instrument]s, offered
-     * so the owner can measure them on six devices, and the seventh (`multi`) has one measured
-     * verdict that its card states as a verdict rather than as a rank. None of the seven has been
-     * measured against another, so none may be ranked against another — in EITHER direction. The
-     * reverse claim is the one that feels safe and is not: the research this build serves predicts
-     * the intuitive ordering is wrong, because the LARGER `q8_0` file is the one on ggml's ARM
-     * i8mm repack path. See [SPEED_CLAIM_WORDS] for the vocabulary and for the three words that
-     * are deliberately not in it.
+     * **The forbidding half.** The three Q8 rungs each carry a measured verdict, and each card
+     * states it as a verdict scoped to the device it was measured on — never as a rank. None of
+     * the three was measured against another on the user's device, so none may be ranked against
+     * another in EITHER direction. (4.6's version of this paragraph said the intuitive ordering
+     * was probably wrong because the LARGER `q8_0` file sits on ggml's ARM i8mm repack path; the
+     * 2026-09-17 session measured exactly that, and the rule survives the measurement because it
+     * is about the user's device, not the owner's tablet.) See [SPEED_CLAIM_WORDS] for the
+     * vocabulary and for the three words that are deliberately not in it.
      *
      * **The requiring half.** `npu` and `npu-turbo` are gated tiers whose speed was measured on
      * our own devices (encode 1.78 s fixed per commit on the Fold6 against Multilingual's 2.3 s;
@@ -259,7 +313,7 @@ class ModelTierCopyTest {
         val cpuRungs = offeredTiers.filter { !it.gated }
         // Guard the census's own reach: if the ladder ever loses its CPU rows, this test must not
         // pass by iterating nothing.
-        assertEquals("the CPU ladder is not seven rungs any more", 7, cpuRungs.size)
+        assertEquals("the CPU ladder is not three rungs any more", 3, cpuRungs.size)
         cpuRungs.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             // The displayName rides on the same card (OnboardingModelScreen.kt:686), above the
@@ -270,10 +324,10 @@ class ModelTierCopyTest {
                 ).lowercase()
             SPEED_CLAIM_WORDS.forEach { word ->
                 assertFalse(
-                    "CPU rung '${model.id}' claims speed with '$word'. Nothing on this ladder has " +
-                        "been measured on the owner's hardware and he is about to measure it on " +
-                        "six devices — a card that predicts the winner, or the loser, is a claim " +
-                        "he has to catch instead of a finding he makes",
+                    "CPU rung '${model.id}' claims speed with '$word'. The three Q8 rungs were " +
+                        "measured on ONE tablet and never against one another on the user's " +
+                        "device — a card may state its own measured verdict, scoped to that " +
+                        "tablet, and may not rank the rungs in either direction",
                     Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(all),
                 )
             }
@@ -292,7 +346,7 @@ class ModelTierCopyTest {
     }
 
     /**
-     * **EVERY HEAVY RUNG WARNS, AND THE ONE EXEMPTION IS EARNED RATHER THAN LISTED.**
+     * **EVERY INSTRUMENT WARNS, AND NOTHING WITH A CLEARING VERDICT DOES.**
      *
      * The note has to be the LAST thing on the card, not a clause buried mid-paragraph — it is
      * the sentence a user comes back to after the typed text has fallen a paragraph behind, and
@@ -300,29 +354,28 @@ class ModelTierCopyTest {
      * at 0.4 s whatever the finalizer is doing). It also may not be the WHOLE card: a rung that
      * only warns has not said what it is.
      *
-     * **`small-q8` is the one instrument that does not warn, and the test derives that rather
-     * than accepting it.** The exemption rule: an instrument may stay silent only if it is the
-     * QUANTISATION TWIN of a rung that is not an instrument — i.e. of the one rung on this ladder
-     * with a measured verdict behind it. `small-q8` is `multi`'s twin: the same 12-layer, 768-dim
-     * whisper small, measured at F = 2.3 s and duty 0.42 on the Fold6, stored at `Q8_0` instead
-     * of `Q5_1`. Warning that THAT may not keep up would be a speed claim in reverse about the
-     * one rung the research predicts is FASTER (it is the twin that sits on ggml's ARM i8mm
-     * repack path). So the card says its throughput is unknown instead, which the test also
-     * requires — the exemption buys a different sentence, never silence.
+     * 4.6 had five warners and one earned exemption (`small-q8`, the twin of the one measured
+     * rung, which said "throughput unknown" instead). 4.7 — **the instrument set is one rung and
+     * it warns**: `ultra-q8` kept up on the owner's flagship tablet with no margin
+     * (`KeepUp.KEPT_UP_WITHOUT_MARGIN`), so "may not keep up with continuous speech on this
+     * device" is the honest shape of what a less capable device will see, and the remedy the
+     * note names — a smaller Whisper — is `medium-q8` or `small-q8`, both offered.
      *
-     * Nothing with a measured verdict warns at all: `multi` and the two NPU tiers have numbers
-     * behind them, and a caution on a measured pass would train the user to ignore the caution.
+     * Nothing with a clearing verdict warns at all: `small-q8`, `medium-q8` and the two NPU tiers
+     * have numbers behind them, and a caution on a measured pass would train the user to ignore
+     * the caution. (`medium-q8` on a device under its RAM threshold gets the screen's own "High-end
+     * devices only" line instead, which is a statement about RAM and is true.)
      */
-    @Test fun every_heavy_rung_warns_and_the_one_exemption_is_earned() {
+    @Test fun every_instrument_warns_and_nothing_with_a_clearing_verdict_does() {
         val note = ModelTierCopy.KEEP_UP_NOTE
         val instruments = WhisperCatalog.entries.filter { it.instrument }
-        assertEquals("the instrument set is not six rungs any more", 6, instruments.size)
+        assertEquals("the instrument set is not one rung any more", listOf("ultra-q8"), instruments.map { it.id })
 
         val warners = instruments.filter { ModelTierCopy.forId(it.id)!!.body.endsWith(note) }
-        val silent = instruments - warners.toSet()
         assertEquals(
-            "the heavy rungs must end their card with the keep-up warning",
-            listOf("medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3"),
+            "every instrument must end its card with the keep-up warning — an instrument is a " +
+                "rung whose verdict does not clear, and the user is owed the failure mode",
+            instruments.map { it.id },
             warners.map { it.id },
         )
         warners.forEach {
@@ -332,34 +385,16 @@ class ModelTierCopyTest {
                     "what the model IS, which is the whole of what these cards are for",
                 body.removeSuffix(note).trim().length > 40,
             )
-        }
-
-        assertEquals("exactly one instrument may stay quiet", 1, silent.size)
-        silent.forEach { model ->
-            val twin = twinOf(model)
-            assertNotNull(
-                "instrument '${model.id}' carries no keep-up warning and is nobody's quantisation " +
-                    "twin. Silence is earned ONLY by being the twin of a rung with a measured " +
-                    "verdict; every other rung on this ladder must warn",
-                twin,
-            )
-            assertFalse(
-                "instrument '${model.id}' is exempt because it is '${twin!!.id}'s twin, but " +
-                    "'${twin.id}' is an instrument too — so neither of them has a measured " +
-                    "verdict and the exemption rests on nothing",
-                twin.instrument,
-            )
-            // The exemption buys a DIFFERENT sentence, not silence.
-            val body = ModelTierCopy.forId(model.id)!!.body.lowercase()
-            assertTrue(
-                "'${model.id}' neither warns nor states that its throughput is unmeasured",
-                body.contains("throughput") && body.contains("unknown"),
-            )
+            // The instrument's card states the measured shape of the risk in its own words too:
+            // it kept up with no margin on a flagship, and slower devices should expect to fall
+            // behind. Both sentences are in docs/measurements/2026-09-17-tab-cpu-ladder.md.
+            assertTrue("'${it.id}' must say it kept up with no margin", body.contains("no margin"))
+            assertTrue("'${it.id}' must say it is not recommended", body.contains("not recommended"))
         }
 
         (offeredTiers - instruments.toSet()).forEach { model ->
             assertFalse(
-                "'${model.id}' has a measured verdict and still carries the keep-up warning — a " +
+                "'${model.id}' has a clearing verdict and still carries the keep-up warning — a " +
                     "caution on a measured pass teaches the user to ignore cautions",
                 ModelTierCopy.forId(model.id)!!.body.contains(note),
             )
@@ -367,67 +402,48 @@ class ModelTierCopyTest {
     }
 
     /**
-     * **A REQUANTISED RUNG READS AS ITS TWIN AT ANOTHER QUANTISATION, OR THE SESSION CANNOT
-     * INTERPRET ITS OWN RESULTS.**
+     * **EVERY OFFERED RUNG IS THE Q8_0 SIDE OF A QUANTISATION TWIN WHOSE Q5 SIDE IS RETIRED, AND
+     * THE CATALOGUE STILL BACKS THE WORD "SAME".**
      *
-     * Three of the seven CPU rungs are the same weights as a neighbour at a different
-     * quantisation, and the two comparisons that carry the most information in the owner's
-     * six-device session are exactly those pairs: `multi` (small Q5_1) against `small-q8` — the
-     * cheapest decisive test of the whole quantisation hypothesis, same model, 40% more bytes,
-     * on ggml's ARM i8mm repack path — and `medium-q5` against `medium-q8`, which asks whether
-     * the repack path rescues a rung that otherwise fails.
+     * 4.6 required each Q8_0 card to read as its twin at another quantisation, name the twin's
+     * badge, and point only at a card the same user could SEE — the session could not interpret
+     * "the 539 MB one was slower than the 823 MB one" otherwise. The session happened, the
+     * finding was made (Q8_0 won, 2.2x and 6.9x on one device), and the owner retired every Q5
+     * twin. So the visible-twin half of that rule is now unsatisfiable by construction — the
+     * twin is a card nobody can see — and a Q8 card that positioned itself against it would be
+     * the exact defect the 3.7 rule retired `pro`'s cross-reference for.
      *
-     * *"The 539 MB one was slower than the 823 MB one"* is only a FINDING if the reader can see
-     * that those two are the same 24 layers at 1024 dims. If the cards do not say so it is just a
-     * pair of downloads, and the session's most informative result reads as noise. So the census
-     * requires the sameness where the eye lands (the headline), the two quantisation tokens, and
-     * the twin named by the size badge the twin's own card carries — and it requires the twin to
-     * be a card the same user can actually SEE, which is the 3.7 rule that retired `pro`'s
-     * cross-reference.
-     *
-     * Then it requires the CATALOGUE to back the word "same": equal mel width, equal language
-     * scope, different digest, and the `Q8_0` row the larger file. A card claiming two rows are
-     * one model while the rows disagree about what they are is a worse defect than a card that
-     * says nothing.
+     * What survives, and is held here: every offered CPU rung IS a Q8_0 twin (the ruling, at the
+     * copy layer); its card names its own quantisation, because the retired Q5 files are still on
+     * the devices of everyone who tried one and a user comparing "the one I had" with "this one"
+     * needs the token; the card names NO retired id (the word-anchored census above); and the
+     * CATALOGUE agrees the two rows are one model — equal mel width, equal scope, different
+     * digest, the Q8_0 row the larger file, the twin retired.
      */
-    @Test fun every_requantised_rung_reads_as_its_twin_at_another_quantisation() {
+    @Test fun every_offered_rung_is_the_q8_side_of_a_twin_whose_q5_side_is_retired() {
         val pairs = WhisperCatalog.entries.mapNotNull { row -> twinOf(row)?.let { row to it } }
         assertEquals("three quantisation twins, so six rows in pairs", 6, pairs.size)
         val requantised = pairs.filter { quantOf(it.first) == "Q8_0" }
         assertEquals(
-            "the Q8_0 side of each twin is what needs the copy — it is the row the reader has " +
-                "never seen before",
+            "the Q8_0 side of each twin is the offered side — the owner's ruling, at the copy layer",
             listOf("small-q8", "medium-q8", "ultra-q8"),
             requantised.map { it.first.id },
         )
+        assertEquals(
+            "every offered CPU rung is a Q8_0 twin, and nothing else is offered",
+            requantised.map { it.first.id },
+            WhisperCatalog.pickable.map { it.id },
+        )
         requantised.forEach { (q8, twin) ->
             val copy = ModelTierCopy.forId(q8.id)!!
-            val headline = copy.headline.lowercase()
-            assertTrue(
-                "'${q8.id}' does not say at a GLANCE that it is the same model as '${twin.id}' — " +
-                    "the headline is the glance, and the body is what gets skipped",
-                headline.contains("same") && headline.contains("quantisation"),
-            )
-            assertTrue("'${q8.id}' body does not claim sameness", copy.body.lowercase().contains("the same"))
             assertTrue("'${q8.id}' body does not name its own quantisation", copy.body.contains("Q8_0"))
-            assertTrue(
-                "'${q8.id}' body does not name '${twin.id}'s quantisation (${quantOf(twin)}) — " +
-                    "without both tokens the two cards cannot be told apart from each other",
-                copy.body.contains(quantOf(twin)!!),
+            assertTrue("'${twin.id}' must be retired — the Q8 ruling", twin.retired)
+            assertNull("'${twin.id}' is retired and must have no card", ModelTierCopy.forId(twin.id))
+            assertFalse(
+                "'${q8.id}' positions itself against '${twin.id}', a card the user cannot see",
+                Regex("\\b" + Regex.escape(twin.id) + "\\b").containsMatchIn(copy.body.lowercase()),
             )
-            val twinMb = "${twin.approxBytes / 1_000_000L} MB"
-            assertTrue(
-                "'${q8.id}' body does not name its twin by the badge the twin's own card shows " +
-                    "($twinMb), so the reader has nothing to match it to",
-                copy.body.contains(twinMb),
-            )
-            assertEquals(twinMb, ModelTierCopy.forId(twin.id)!!.badges.first { it.endsWith(" MB") })
-            assertTrue(
-                "'${q8.id}' points at '${twin.id}', which is not in the pickable lineup — a card " +
-                    "may only position itself against one the same user can see",
-                WhisperCatalog.pickable.map { it.id }.contains(twin.id),
-            )
-            // And the catalogue has to agree with the word "same".
+            // And the catalogue has to agree with the word "same" wherever a card uses it.
             assertEquals("mel width disagrees for '${q8.id}' and '${twin.id}'", twin.melBins, q8.melBins)
             assertEquals("scope disagrees for '${q8.id}' and '${twin.id}'", twin.scope, q8.scope)
             assertFalse("'${q8.id}' and '${twin.id}' share a digest", q8.sha256 == twin.sha256)
@@ -437,6 +453,12 @@ class ModelTierCopyTest {
                 q8.approxBytes > twin.approxBytes,
             )
         }
+        // `small-q8`'s card names the retired twin by SIZE and quantisation ("the retired 190 MB
+        // Q5_1 model"), because that is the model every 4.6.0 production user is on and the
+        // sentence "its accuracy matches that model's" is the one they need — same weights.
+        val small = ModelTierCopy.forId("small-q8")!!.body
+        assertTrue(small.contains("190 MB") && small.contains("Q5_1") && small.contains("retired"))
+        assertTrue(small.contains("the same weights"))
     }
 
     /**
@@ -454,27 +476,41 @@ class ModelTierCopyTest {
      * app would tell a 16 GB phone that its RAM is short of a 264 MB model, and predict the
      * outcome, in one sentence, on the rung the research says may be the FASTER of its pair.
      *
-     * So: no offered CPU rung may be RAM-gated at all. `WhisperCatalogHelpersTest` already forbids
-     * it for instruments; this is the copy-side statement of the same rule over the whole offered
-     * lineup, with the string it would print named so the next reader can see what is at stake.
-     * `extreme` is the one row that still carries a threshold and it is retired — the `>=`
-     * boundary rule keeps its test subject there.
+     * So in 4.6 no offered CPU rung was RAM-gated at all. **4.7 narrows that to its real subject:
+     * no INSTRUMENT is RAM-gated**, because the instrument's caution is about the margin, not the
+     * device — and a MEASURED rung may carry a threshold, because for it the screen's sentence is
+     * true. `medium-q8` is that rung: it kept up on a 12 GB tablet, an 823 MB model on a 4 GB
+     * phone is a real fact about the device in the user's hand, and "needs more RAM than this
+     * device reports" is exactly what the owner's ruling says ("recommended above a RAM
+     * threshold"). The threshold is PROVISIONAL (the `extreme` precedent, pending the owner's
+     * weakest-device run), which the catalogue row says. The default stays at 0 — the floor for
+     * every device — so no phone reads a chooser with nothing recommended on it.
      */
-    @Test fun no_offered_cpu_rung_is_ram_gated_because_that_surface_predicts_performance() {
-        offeredTiers.filter { !it.gated }.forEach { model ->
+    @Test fun no_instrument_is_ram_gated_and_the_one_threshold_is_on_the_measured_medium_tier() {
+        offeredTiers.filter { !it.gated && it.instrument }.forEach { model ->
             assertEquals(
-                "offered rung '${model.id}' is RAM-gated, so OnboardingModelScreen.kt:783 will " +
-                    "print 'you can still pick it, but performance may suffer' on its card — a " +
-                    "speed claim about an unmeasured rung, attributed to the device's RAM, which " +
-                    "is not why it is unrecommended",
+                "instrument '${model.id}' is RAM-gated, so OnboardingModelScreen.kt:783 will " +
+                    "print 'you can still pick it, but performance may suffer' on its card — " +
+                    "attributing to the device's RAM a caution that is about the rung's margin",
                 0L,
                 model.minRamBytes,
             )
         }
-        // The rule has a live test subject, and it is the retired row — so the `>=` boundary
-        // behaviour of `isRecommendedForDevice` is still exercised by something.
-        assertTrue(WhisperCatalog.byId("extreme")!!.minRamBytes > 0L)
+        // The default is recommended everywhere.
+        assertEquals(0L, WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!.minRamBytes)
+        // The one offered rung with a threshold, and it is measured — not an instrument.
+        assertEquals(
+            listOf("medium-q8"),
+            offeredTiers.filter { !it.gated && it.minRamBytes > 0L }.map { it.id },
+        )
+        assertFalse(WhisperCatalog.byId("medium-q8")!!.instrument)
+        assertEquals(5_500_000_000L, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
+        // ...and its card states the threshold in the user's units, so the screen's RAM line and
+        // the card's own sentence agree about why.
+        assertTrue(ModelTierCopy.forId("medium-q8")!!.body.contains("5.5 GB"))
+        // The retired precedent the number came from is still a resolvable row with the same value.
         assertTrue(WhisperCatalog.byId("extreme")!!.retired)
+        assertEquals(WhisperCatalog.byId("extreme")!!.minRamBytes, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
     }
 
     /**
@@ -487,26 +523,27 @@ class ModelTierCopyTest {
      * **The 3.7 rule is satisfied, not abandoned.** Its point was the Bengali review: never land a
      * user on a tier that is worse for the language they speak. With every offered rung
      * multilingual, there is no worse-for-your-language rung left to land on. And the English
-     * user's replacement is not a downgrade — `multi` is the same 190 MB of whisper-small weights
-     * with a multilingual vocab head.
+     * user's replacement is not a downgrade — whisper-small's weights with a multilingual vocab
+     * head. 4.7: the steer is `small-q8` (was `multi`, retired by the Q8 ruling).
      */
-    @Test fun english_locales_are_steered_to_multi_now_that_the_english_rung_is_retired() {
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("en"))
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("en-US"))
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("en_GB"))
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("EN-au"))
-        // And the tier the branch used to name is not merely unsteered — it is out of the lineup.
+    @Test fun english_locales_are_steered_to_small_q8_now_that_the_english_rung_is_retired() {
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTag("en"))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTag("en-US"))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTag("en_GB"))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTag("EN-au"))
+        // And the tiers the steer used to name are not merely unsteered — they are out of the lineup.
         assertFalse(WhisperCatalog.pickable.map { it.id }.contains("pro"))
+        assertFalse(WhisperCatalog.pickable.map { it.id }.contains("multi"))
     }
 
-    @Test fun every_other_locale_is_steered_to_multi() {
+    @Test fun every_other_locale_is_steered_to_small_q8() {
         // The Bengali review is the reason this rule exists at all: an English-only tier must
         // never be the thing a non-English speaker lands on by default.
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("bn"))
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("bn-BD"))
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("fr-CA"))
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag("zh-Hans-CN"))
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTag(""))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTag("bn"))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTag("bn-BD"))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTag("fr-CA"))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTag("zh-Hans-CN"))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTag(""))
     }
 
     /**
@@ -557,7 +594,7 @@ class ModelTierCopyTest {
                 "'$tag': an instrument leads the lineup — offering is not steering",
                 WhisperCatalog.byId(ordered.first())!!.instrument,
             )
-            assertEquals("'$tag': the head is the measured rung", "multi", ordered.first())
+            assertEquals("'$tag': the head is the measured floor", "small-q8", ordered.first())
         }
     }
 
@@ -601,14 +638,15 @@ class ModelTierCopyTest {
         // traded the accuracy they came for against a speed they never asked about. `pro` is
         // retired now, so the English user's CPU rung IS `multi`, and `npu` carries `multi`'s own
         // weights on faster silicon. There is no accuracy being traded away: it is the same model.
-        // The substitution's precondition (`cpuSteer == "multi"`) is unchanged in the source — it
-        // simply holds for every locale now.
+        // The substitution's precondition (`cpuSteer == MULTILINGUAL_STEER_ID`; a `"multi"`
+        // literal until 4.7) simply holds for every locale now — and since 4.7 it is spelled on
+        // the steer constant, so the steer moving to `small-q8` did not switch it off.
         assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("en", setOf("npu")))
         assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("en-US", setOf("npu")))
         assertEquals("npu", ModelTierCopy.steerIdForLanguageTagFor("EN-au", setOf("npu")))
         // Gate says no: the CPU steer, for every locale.
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", emptySet()))
-        assertEquals("multi", ModelTierCopy.steerIdForLanguageTagFor("en-US", emptySet()))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTagFor("bn-BD", emptySet()))
+        assertEquals("small-q8", ModelTierCopy.steerIdForLanguageTagFor("en-US", emptySet()))
     }
 
     /**
@@ -701,7 +739,7 @@ class ModelTierCopyTest {
         }
         // Being steered to is a position in a list and a chip. It is not selection, and nothing
         // about the gate moves the catalog default or lets a gated tier into `pickable`.
-        assertEquals("multi", WhisperCatalog.DEFAULT_MODEL_ID)
+        assertEquals("small-q8", WhisperCatalog.DEFAULT_MODEL_ID)
         assertFalse(WhisperCatalog.pickable.map { it.id }.contains("npu"))
         assertFalse(WhisperCatalog.pickable.map { it.id }.contains("npu-turbo"))
     }
@@ -820,7 +858,7 @@ class ModelTierCopyTest {
             )
         }
         // And the pick changes STEERING only: the app-wide default fallback story is untouched.
-        assertEquals("multi", WhisperCatalog.DEFAULT_MODEL_ID)
+        assertEquals("small-q8", WhisperCatalog.DEFAULT_MODEL_ID)
     }
 
     @Test fun the_lineup_with_both_npu_tiers_is_a_permutation_of_pickableFor_with_the_steer_leading() {
@@ -868,30 +906,34 @@ class ModelTierCopyTest {
             Row(setOf("npu-turbo"), emptySet(), "en-US", listOf("npu-turbo")),
             Row(setOf("npu-turbo"), emptySet(), "bn-BD", listOf("npu-turbo")),
             // ---- CAPABLE, with history. The card for a model the user already has survives.
-            Row(setOf("npu", "npu-turbo"), setOf("multi"), "bn-BD", listOf("npu-turbo", "multi")),
-            Row(setOf("npu", "npu-turbo"), setOf("multi"), "en-US", listOf("npu-turbo", "multi")),
-            // 4.6: was setOf("pro") — `pro` is RETIRED now, so an installed one keeps no card (the
-            // eco/base/pro row below asserts exactly that). An installed INSTRUMENT is the state
-            // this branch creates, and it keeps its card like any other offered tier.
-            Row(setOf("npu", "npu-turbo"), setOf("large-v3"), "en-US", listOf("npu-turbo", "large-v3")),
-            Row(setOf("npu", "npu-turbo"), setOf("large-v3"), "bn-BD", listOf("npu-turbo", "large-v3")),
+            // 4.7: the CPU floor is `small-q8`; `multi` is RETIRED and asserted below as keeping
+            // no card — the 4.6.0 production default, the tier the 4.3 recovery used to download.
+            Row(setOf("npu", "npu-turbo"), setOf("small-q8"), "bn-BD", listOf("npu-turbo", "small-q8")),
+            Row(setOf("npu", "npu-turbo"), setOf("small-q8"), "en-US", listOf("npu-turbo", "small-q8")),
+            // 4.6: was setOf("pro") — `pro` is RETIRED, so an installed one keeps no card (the
+            // eco/base/pro row below asserts exactly that). An installed INSTRUMENT keeps its card
+            // like any other offered tier — 4.7: `ultra-q8`, the one instrument left.
+            Row(setOf("npu", "npu-turbo"), setOf("ultra-q8"), "en-US", listOf("npu-turbo", "ultra-q8")),
+            Row(setOf("npu", "npu-turbo"), setOf("ultra-q8"), "bn-BD", listOf("npu-turbo", "ultra-q8")),
             Row(setOf("npu", "npu-turbo"), setOf("npu"), "bn-BD", listOf("npu-turbo", "npu")),
             // 4.6: `pro` dropped out of both expectations — retired, so `!it.retired` filters it
-            // before `alsoOfferedIds` is ever consulted — and the two locales now answer
-            // IDENTICALLY, because the language key has no English-only tier left to order
-            // against `multi`.
+            // before `alsoOfferedIds` is ever consulted — and the two locales answer IDENTICALLY,
+            // because the language key has no English-only tier left to order against the steer.
+            // 4.7: `multi` drops out the same way, on the same rule.
             Row(
-                setOf("npu", "npu-turbo"), setOf("npu", "multi", "pro"), "bn-BD",
-                listOf("npu-turbo", "npu", "multi"),
+                setOf("npu", "npu-turbo"), setOf("npu", "small-q8", "multi", "pro"), "bn-BD",
+                listOf("npu-turbo", "npu", "small-q8"),
             ),
             Row(
-                setOf("npu", "npu-turbo"), setOf("npu", "multi", "pro"), "en-US",
-                listOf("npu-turbo", "npu", "multi"),
+                setOf("npu", "npu-turbo"), setOf("npu", "small-q8", "multi", "pro"), "en-US",
+                listOf("npu-turbo", "npu", "small-q8"),
             ),
             // Turbo already installed: it is both the one offer and an existing install.
             Row(setOf("npu", "npu-turbo"), setOf("npu-turbo"), "en-US", listOf("npu-turbo")),
-            // An installed RETIRED tier changes nothing — `!retired` runs first.
+            // An installed RETIRED tier changes nothing — `!retired` runs first. 4.7: the four Q5
+            // rungs join the set, and `multi` is the member that matters.
             Row(setOf("npu-turbo"), setOf("eco", "base", "pro"), "bn-BD", listOf("npu-turbo")),
+            Row(setOf("npu-turbo"), setOf("multi", "medium-q5", "ultra", "large-v3"), "en-US", listOf("npu-turbo")),
             // ---- NOT CAPABLE. The rule is byte-identical to 3.7/4.1 and the installed state is
             // still irrelevant; 4.6 only made the list it orders longer (the whole ladder).
             Row(emptySet(), emptySet(), "en-US", ladderLineup),
@@ -1164,10 +1206,12 @@ class ModelTierCopyTest {
             "the top of the accuracy order is claimed by $claimants. Exactly one card may claim " +
                 "it, and every other accuracy superlative must name the scope it holds within — " +
                 "4.1's turbo card said 'the most accurate model this app ships', which 4.6's " +
-                "large-v3 rung made false",
-            listOf("large-v3"),
+                "large-v3 rung made false. 4.7: large-v3 is retired, so the unscoped claim moved " +
+                "to ultra-q8 — large-v3-turbo, the most accurate model still on the ladder",
+            listOf("ultra-q8"),
             claimants,
         )
+        assertTrue("the claimant must be pickable, or the claim is about a card nobody sees", WhisperCatalog.pickable.any { it.id == "ultra-q8" })
         // The other half of the same rule: turbo's measured accuracy claim is STILL THERE, and
         // scoped. A future pass that scrubs superlatives app-wide would take a true, owner-ruled
         // claim with it, and this line is what stops that being silent.
@@ -1200,22 +1244,23 @@ class ModelTierCopyTest {
 
         /**
          * **4.6 T2 — the vocabulary a CPU rung may not use, in EITHER direction.** A slow claim
-         * is as unearned as a fast one: nothing on this ladder is measured, and the research the
-         * build serves predicts the intuitive ordering is wrong (the LARGER `q8_0` file is the one
-         * on ggml's ARM i8mm repack path). A card that predicts the winner — or the loser — is a
-         * claim the owner has to catch instead of a finding he makes.
+         * is as unearned as a fast one: in 4.6 nothing on the ladder was measured; since 4.7 the
+         * three Q8 rungs are measured on ONE tablet and never against one another on the user's
+         * device. A card that ranks the winner — or the loser — is a claim the owner has to catch
+         * instead of a finding a user can check. A MEASURED verdict scoped to the tablet ("kept
+         * up with margin on the owner's tablet") uses none of these words, by design.
          *
          * Every entry is matched WORD-ANCHORED, which is what lets the list keep "fast" without
          * failing "breakfast" and "slow" without failing "smallest".
          *
          * Three things are deliberately absent, and each absence is a decision:
          *
-         *  * **"throughput" and "latency"** — neutral nouns. `small-q8`'s card says *"its
-         *    throughput on this device is unknown"*, which is the honest shape for an unmeasured
-         *    rung and the opposite of a claim. Banning the noun would force the card into silence.
+         *  * **"throughput" and "latency"** — neutral nouns. 4.6's `small-q8` card said *"its
+         *    throughput on this device is unknown"*, the honest shape for an unmeasured rung and
+         *    the opposite of a claim. Banning the noun would have forced the card into silence.
          *  * **"keep up"** — [ModelTierCopy.KEEP_UP_NOTE]'s own words. "May not keep up" is a
          *    hedged failure MODE, which is what the brief asks the heavy rungs to state; it is not
-         *    a rank against another rung.
+         *    a rank against another rung. "Kept up with margin" is its measured past tense.
          *  * **"turbo"** — the upstream model's NAME (`ggml-large-v3-turbo-q5_0.bin`), carried by
          *    `ultra`'s displayName and body. Renaming someone else's checkpoint to dodge a word
          *    census would make the cards harder to match to the files they fetch.

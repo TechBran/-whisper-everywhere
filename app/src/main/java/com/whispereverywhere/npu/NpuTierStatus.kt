@@ -114,11 +114,19 @@ object NpuTierStatus {
     }
 
     /**
-     * The tier the decline recovery downloads (4.3) — `multi`, the multilingual CPU tier, which is
-     * both a legal 80-bin mel donor and the fallback `cpuTierModelPath()` will then find. Named
-     * here, once, because the card's button and any test of it must mean the same tier.
+     * The tier the decline recovery downloads (4.3) — the multilingual CPU tier the app stands
+     * behind, which is both a legal 80-bin mel donor and the fallback `cpuTierModelPath()` will
+     * then find. Named here, once, because the card's button and any test of it must mean the
+     * same tier.
+     *
+     * **4.7 — `small-q8`, was `multi`.** `multi` was retired by the Q8 ruling of 2026-09-17, and a
+     * recovery that downloads a RETIRED tier would download one the capable chooser then cannot
+     * render (`WhisperCatalog.pickableFor` runs `!it.retired` before `alsoOfferedIds`, so an
+     * installed retired tier keeps no card). `small-q8` is the same whisper-small weights at Q8_0,
+     * measured on the owner's tablet, 80-bin, single-file, and the catalogue default — the same
+     * three properties `multi` was chosen for, on a rung the user can see.
      */
-    const val RECOVERY_TIER_ID = "multi"
+    const val RECOVERY_TIER_ID = "small-q8"
 
     /** The recovery button's label — the spec's own words for the one-tap action. */
     const val RECOVERY_ACTION = "Download the standard model"
@@ -132,7 +140,7 @@ object NpuTierStatus {
      * no working backend at all. But the write is PERMANENT while the decline that provoked it is
      * only process-scoped, so without this sentence a capable phone comes back after a restart
      * showing `npu-turbo` at the head of its one-card chooser, badged "Best match for your
-     * language", while quietly transcribing on the 190 MB CPU model — discoverable only in
+     * language", while quietly transcribing on the 264 MB CPU model — discoverable only in
      * Settings. The behaviour is right; the silence was not.
      *
      * Three things, because dropping any one leaves the switch half-explained: that the model
@@ -179,7 +187,7 @@ object NpuTierStatus {
      * record dies with the process, so the next launch re-routes to this tier. That reasoning has
      * a second premise nobody had written down — **the selection must still name this tier** —
      * and the recovery is precisely what breaks it. After the user taps "Download the standard
-     * model", `selectedModelId` is `multi`; `hasCpuFallback` flips true, so this note silently
+     * model", `selectedModelId` is [RECOVERY_TIER_ID]; `hasCpuFallback` flips true, so this note silently
      * swaps to the fallback-installed arm, and that arm kept promising a restart that
      * `NpuBackendSelector.routesToNpu` would send straight to the CPU. Worse, it sat inches below
      * the green [RECOVERY_SWITCH_NOTE] carrying the CORRECT way back — two sentences on one
@@ -236,7 +244,7 @@ object NpuTierStatus {
      *
      * A restart works only while the selection still names this tier: the decline record is
      * process state and dies with the process, but `routesToNpu` reads the SELECTION, so a restart
-     * on a device whose selection has moved to `multi` re-routes to the CPU and tries nothing.
+     * on a device whose selection has moved to [RECOVERY_TIER_ID] re-routes to the CPU and tries nothing.
      * The honest remedy there is the one the recovery's own confirmation already names — pick the
      * tier again, on this screen.
      */

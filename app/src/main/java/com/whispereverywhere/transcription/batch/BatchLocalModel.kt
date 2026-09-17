@@ -30,7 +30,8 @@ import com.whispereverywhere.model.WhisperModel
  * the structural test for that is [WhisperModel.pairedArtifact] — the same predicate
  * `isInstallableByDownload` uses, and for the same reason: it tracks the thing that actually breaks
  * rather than a list of ids, so the next two-artefact tier is handled by a rule nobody has to
- * remember to update. Every one-file ggml tier — `pro`, `multi`, `eco`, `base`, `ultra` — keeps the
+ * remember to update. Every one-file ggml tier — the three Q8 rungs, and the retired `pro`,
+ * `multi`, `eco`, `base`, `ultra` — keeps the
  * path it has always been given, byte for byte.
  *
  * ### Null is a refusal that names the tier, never a silent wrong model

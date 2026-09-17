@@ -12,18 +12,26 @@ package com.whispereverywhere.model
  * MULTILINGUAL tier. A card positions itself DIRECTLY or against a tier the same user can still
  * see, never against a retired one ([ModelTierCopyTest.no_offered_tier_names_a_retired_one]).
  *
- * **4.6 — the CPU lineup is a seven-rung ladder and the ENGLISH-scope badge rule is unreachable
- * from here.** Every offered rung is multilingual (owner ruling 2026-09-13), so the "English only"
- * arm of that census now applies to no offered tier; it stays because the rule is about a card the
- * user reads, not about today's catalogue, and a re-offered English rung must inherit it. The
- * `90+ languages` arm carries every card there is.
+ * **4.6 — every offered rung is multilingual and the ENGLISH-scope badge rule is unreachable from
+ * here.** Owner ruling 2026-09-13; the "English only" arm of that census now applies to no offered
+ * tier. It stays because the rule is about a card the user reads, not about today's catalogue, and
+ * a re-offered English rung must inherit it. The `90+ languages` arm carries every card there is.
  *
- * **The no-speed-claims rule reaches this object now, where before it only constrained CLOUD
- * copy.** Six of the seven CPU rungs are [WhisperModel.instrument]s — offered so the owner can
- * measure them on six devices — and none of their cards ranks them by speed in either direction;
- * the reasoning is at the ladder's own comment block below. The two NPU cards KEEP their measured,
- * owner-ruled "fastest": that claim is true and scoped to silicon this app has benchmarked, and
- * removing a true claim would be the regression.
+ * **4.7 — the CPU lineup is THREE Q8 rungs, every one measured.** The owner's Q8 ruling of
+ * 2026-09-17 (*"Q8 for everything." — "Q5 is definitely off the table."*) retired the four Q5 rungs
+ * on the Tab S10+ measurement in `docs/measurements/2026-09-17-tab-cpu-ladder.md`. `small-q8` is the
+ * floor for every device and the default; `medium-q8` is the medium tier, recommended above a RAM
+ * threshold; `ultra-q8` is the optional top rung — offered for its accuracy, not recommended —
+ * and the one [WhisperModel.instrument] left. Retired rungs have no card ([forId] answers null),
+ * exactly as `pro` has had none since 4.6.
+ *
+ * **The no-speed-claims rule STANDS on the CPU cards, and what it forbids is a RANK.** None of the
+ * three rungs was measured against another on the user's device, so no card ranks them by speed in
+ * either direction. What a card MAY now say is a MEASURED sentence scoped to the device it was
+ * measured on — "measured to keep up with margin on the owner's tablet" is a finding with a
+ * document behind it, not a prediction — and each card says exactly that, no more. The two NPU
+ * cards KEEP their measured, owner-ruled "fastest": that claim is true and scoped to silicon this
+ * app has benchmarked, and removing a true claim would be the regression.
  */
 object ModelTierCopy {
 
@@ -32,7 +40,10 @@ object ModelTierCopy {
 
     /**
      * **The warning every heavy CPU rung carries** (4.6). One string, one place, so five cards
-     * cannot say it five ways and so a test can pin the wording.
+     * could not say it five ways and so a test can pin the wording. Since 4.7 it renders on ONE
+     * card — `ultra-q8`, the rung measured to keep up with no margin — because a measured pass
+     * does not warn (a caution on a measured pass teaches the user to ignore cautions), and the
+     * remedy it names is still true: `small-q8` and `medium-q8` are smaller Whispers.
      *
      * It is deliberately NOT a speed claim in reverse. It states the failure MODE and the remedy,
      * which is what a user who hits it needs, and it is the one caution the previewer makes
@@ -78,86 +89,69 @@ object ModelTierCopy {
         // fallback row handles the null. Its copy was "Best English accuracy" / "The sharpest
         // on-device English dictation this app ships." — both still true of the file, which is
         // exactly why `pro` is retired rather than `unsupported`: nobody is being told to leave it.
-        "multi" to TierCopy(
-            // 4.6: was "Best multilingual accuracy" (3.7, owner-approved) — TRUE while `multi` was
-            // one of two rungs and the only multilingual one, and FALSE the moment five larger
-            // multilingual rungs are offered beside it. Correcting it is required by the same
-            // discipline that wrote the 3.7 string: a card may not claim a position it no longer
-            // holds. What `multi` uniquely holds now is that it is the only rung on the ladder
-            // anyone has MEASURED (F = 2.3 s, duty 0.42, Fold6, this repo's audio-ctx bench of
-            // 2026-08-20) — which is exactly why it is the default and the migration target.
-            headline = "Everyday accuracy, smallest download",
-            badges = listOf("90+ languages", "190 MB"),
-            body = "The 190 MB model this app has shipped from the start, and the one rung on " +
-                "this list with a measured verdict behind it.",
-        ),
-        // ============================================ 4.6 — THE INSTRUMENT RUNGS' CARDS
+        // 4.7 — `multi`'s card is GONE, because `multi` is retired (the owner's Q8 ruling of
+        // 2026-09-17) and a retired tier has no card; so are `medium-q5`'s, `ultra`'s and
+        // `large-v3`'s. Same contract as `pro`'s in 4.6: `forId` answers null, the screens' own
+        // fallback row handles the null, and nobody on those tiers is told to leave. `multi`'s
+        // card was "Everyday accuracy, smallest download" / "The 190 MB model this app has
+        // shipped from the start, and the one rung on this list with a measured verdict behind
+        // it." — the second sentence stopped being true on 2026-09-17, when three more were.
         //
-        // Six cards for the six `WhisperModel.instrument` rungs. Two rules govern every one of
-        // them, and neither is timidity:
+        // ============================================ 4.7 — THE Q8 LADDER'S CARDS
         //
-        //  1. **No rung here claims speed, in either direction.** Nothing on this ladder has been
-        //     measured on the owner's hardware and he is about to measure it on six devices. A
-        //     card that predicts the winner is worse than one that stays quiet — it is a claim he
-        //     has to catch instead of a finding he makes. The arithmetic also says a ranking would
-        //     probably be wrong: this app feeds whisper's FIXED-window encoder short VAD-cut
-        //     chunks with `audio_ctx` clamped to at least 512, so cost per commit is constant and
-        //     the workload is encoder-dominated — the regime published benchmark tables, which run
-        //     long files where decode dominates, do not measure. `large-v3-turbo` is large-v3's
-        //     entire 32-layer/1280-dim encoder with the decoder cut to 4 layers against medium's
-        //     24 at 1024: it wins on decode and loses on encode.
+        // Three cards for the three Q8 rungs, every one MEASURED on the owner's Galaxy Tab S10+
+        // (docs/measurements/2026-09-17-tab-cpu-ladder.md — one device, one TEDx talk as device
+        // audio, threads=4, previewer armed). Two rules govern every one of them:
+        //
+        //  1. **No rung here RANKS another by speed, in either direction.** The three were not
+        //     measured against one another on the user's device, and the arithmetic says an
+        //     intuitive ranking would be wrong anyway: this app feeds whisper's FIXED-window
+        //     encoder short VAD-cut chunks with `audio_ctx` clamped to at least 512, so cost per
+        //     commit is constant and the workload is encoder-dominated — the regime published
+        //     benchmark tables, which run long files where decode dominates, do not measure.
+        //     What a card MAY say is the measured verdict, scoped to the device it was measured
+        //     on: "kept up with margin on the owner's tablet" is a finding with a document behind
+        //     it. Every such sentence below is checkable against that document.
         //  2. **Accuracy IS rankable and these cards rank it**, because whisper's own size
         //     ordering is not a claim about this app's hardware. So each card says what its model
-        //     IS — size, depth, and the quantisation wherever that is the only thing separating it
-        //     from the card beside it — and lets six devices answer the rest.
+        //     IS — size, depth, quantisation — and where it sits on the accuracy order.
         //
-        // The quantisation has to be on the card or the session cannot interpret its own results:
-        // three of these rungs are the SAME MODEL as a neighbour at a different quantisation, and
-        // "the 539 MB one was slower than the 823 MB one" is only a finding if the reader can see
-        // that those two are the same weights. Every hyperparameter quoted below was read off each
-        // file's own ggml header on 2026-09-13, so every sentence is checkable.
+        // The quantisation stays on the card, because the retired Q5 rungs are still on the
+        // devices of everyone who picked one on the internal track, and a user comparing "the
+        // 190 MB one I had" with "the 264 MB one" must be able to see they are the same weights.
+        // Every hyperparameter quoted below was read off each file's own ggml header on
+        // 2026-09-13, so every sentence is checkable.
         //
         // The NPU cards further down KEEP their measured "fastest": that claim is true, owner-
         // ruled, and scoped to silicon this app has benchmarked. Removing a true claim would be
         // the regression.
         "small-q8" to TierCopy(
-            headline = "Same model, finer quantisation",
+            // The headline `multi` carried, because it is now true of THIS rung: 264 MB is the
+            // smallest download on the ladder, and whisper-small is the everyday-accuracy tier.
+            headline = "Everyday accuracy, smallest download",
             badges = listOf("90+ languages", "264 MB"),
-            body = "Whisper small — the same weights as the 190 MB rung, stored at Q8_0 instead " +
-                "of Q5_1, so its accuracy should track that rung's and only the arithmetic " +
-                "differs. Offered for measurement: its throughput on this device is unknown.",
-        ),
-        "medium-q5" to TierCopy(
-            headline = "Sharper accuracy, larger download",
-            badges = listOf("90+ languages", "539 MB"),
-            body = "Whisper medium: 24 encoder layers at 1024 dims against the 190 MB rung's 12 " +
-                "at 768, and the multilingual medium this app has not offered before. " + KEEP_UP_NOTE,
+            body = "Whisper small — the same weights as the retired 190 MB Q5_1 model, stored at " +
+                "Q8_0 — so its accuracy matches that model's. Measured to keep up with margin " +
+                "on the owner's tablet, and recommended on every device.",
         ),
         "medium-q8" to TierCopy(
-            headline = "The same medium, finer quantisation",
+            headline = "Sharper accuracy, larger download",
             badges = listOf("90+ languages", "823 MB"),
-            body = "The same whisper medium as the 539 MB rung — identical depth, dims and " +
-                "vocabulary — stored at Q8_0 instead of Q5_0, so the accuracy should match and " +
-                "only the arithmetic differs. " + KEEP_UP_NOTE,
-        ),
-        "ultra" to TierCopy(
-            headline = "Large-v3 accuracy, trimmed decoder",
-            badges = listOf("90+ languages", "574 MB"),
-            body = "Large-v3's own 32-layer encoder with its decoder cut to 4 layers, which is " +
-                "why it downloads at about half the size of the full model. " + KEEP_UP_NOTE,
+            body = "Whisper medium at Q8_0: 24 encoder layers at 1024 dims against small's 12 " +
+                "at 768. Measured to keep up with margin on the owner's tablet; recommended " +
+                "where the device reports at least 5.5 GB of memory.",
         ),
         "ultra-q8" to TierCopy(
-            headline = "The same turbo, finer quantisation",
-            badges = listOf("90+ languages", "874 MB"),
-            body = "The same large-v3-turbo as the 574 MB rung — same encoder, same 4-layer " +
-                "decoder — stored at Q8_0 instead of Q5_0. Its accuracy should match; the " +
-                "arithmetic differs. " + KEEP_UP_NOTE,
-        ),
-        "large-v3" to TierCopy(
+            // The unscoped accuracy superlative moved here from `large-v3`'s card when that rung
+            // was retired; `exactly_one_card_claims_the_top_of_the_accuracy_order` holds that
+            // exactly one card carries it.
             headline = "Highest accuracy, largest download",
-            badges = listOf("90+ languages", "1081 MB"),
-            body = "Whisper large-v3 at full depth: the 574 MB rung's encoder plus its complete " +
-                "32-layer decoder. " + KEEP_UP_NOTE,
+            badges = listOf("90+ languages", "874 MB"),
+            body = "Large-v3-turbo at Q8_0 — large-v3's own 32-layer encoder with a 4-layer " +
+                "decoder: the most accurate model on this ladder. On the owner's flagship " +
+                "tablet it kept up with no margin to spare, so on a less capable device expect " +
+                "the typed text to fall behind. Offered for its accuracy, not recommended. " +
+                KEEP_UP_NOTE,
         ),
         // 4.0: the gated tier. Only devices that pass the SoC gate AND have both context binaries
         // installed ever see this card, so the copy may speak about "this device" in the present
@@ -182,6 +176,15 @@ object ModelTierCopy {
         // (docs/measurements, 2026-09-02) and ~6 s per 17.6 s chunk on the Tab S10+ (2026-09-09).
         // Owner ruling 2026-09-10: "it's actually the fastest one we have and most accurate".
         // Still no absolute — "fastest" and "most accurate" rank our lineup, not the world.
+        //
+        // **4.7 — the 190 MB Multilingual model this body compares against was RETIRED on
+        // 2026-09-17, and the sentence is left VERBATIM, deliberately.** Both halves of the claim
+        // were measured against THAT model on the Fold6, and the Q8 twin that replaced it
+        // (`small-q8`) has not been timed on any NPU-capable device — its only measurement is the
+        // Tab S10+, which has no Hexagon. Re-pointing the comparison at the 264 MB model would
+        // restate a measured claim about weights it was not measured against; deleting it would
+        // drop a true, owner-ruled claim. So the card still names the model the comparison was
+        // made on, and the open item is a Fold6 session that times `small-q8` beside turbo.
         //
         // **4.6 T2 — THE ACCURACY HALF WAS SCOPED; THE SPEED HALF IS UNTOUCHED.** The card read
         // "Best accuracy, fastest" / "The most accurate model this app ships", and 4.6 falsified
@@ -253,13 +256,16 @@ object ModelTierCopy {
     fun steerIdForLanguageTag(languageTag: String): String = MULTILINGUAL_STEER_ID
 
     /**
-     * The rung every locale is steered to since 4.6 — `multi`, the only rung with a measured
-     * throughput verdict and therefore the only one the app is entitled to point at. Deliberately
-     * NOT spelled `WhisperCatalog.DEFAULT_MODEL_ID`, even though they agree today: the steer is
-     * what a fresh install is POINTED at and the default is what an absent pick FALLS BACK to, and
-     * collapsing them would mean the next time either moves, both move silently.
+     * The rung every locale is steered to — `small-q8` since 4.7 (was `multi` in 4.6): the floor
+     * for every device on the owner's Q8 ruling of 2026-09-17, measured to keep up with margin on
+     * his tablet (`docs/measurements/2026-09-17-tab-cpu-ladder.md`; `TierThroughputRecord.SMALL_Q8`)
+     * and recommended everywhere — the rung the app is entitled to point a fresh install at.
+     * Deliberately NOT spelled `WhisperCatalog.DEFAULT_MODEL_ID`, even though they agree today:
+     * the steer is what a fresh install is POINTED at and the default is what an absent pick
+     * FALLS BACK to, and collapsing them would mean the next time either moves, both move
+     * silently.
      */
-    private const val MULTILINGUAL_STEER_ID = "multi"
+    private const val MULTILINGUAL_STEER_ID = "small-q8"
 
     /**
      * [steerIdForLanguageTag] with the gated tiers folded in — and, since 4.1 L9, THE OWNER'S
@@ -275,23 +281,25 @@ object ModelTierCopy {
      * WORSE model for their language, and turbo is not that.
      *
      * **`npu` substitutes for the MULTILINGUAL steer, exactly as before, when turbo is absent.**
-     * It carries `multi`'s weights on faster silicon, so for the user `multi` was already the
-     * right answer for, it is a strictly better one.
+     * It carries whisper-small's weights on faster silicon — the same weights as the CPU steer,
+     * `multi` in 4.6 and its Q8_0 twin `small-q8` since 4.7 — so for the user the CPU steer was
+     * already the right answer for, it is a strictly better one.
      *
      * **4.6 — that substitution now reaches an ENGLISH locale too, and the old rule's own
      * reasoning is what carries it there.** Until 4.6 an English locale kept `pro` in that state:
      * "the device is fast" was not a reason to hand someone the less accurate model for their
-     * language. `pro` is retired now, so the English user's CPU rung IS `multi` — and `npu` is
-     * `multi`'s own weights on the Hexagon. There is no accuracy being traded away because it is
-     * the same model. The condition in the body (`cpuSteer == "multi"`) is UNCHANGED; it simply
-     * holds for every locale, which is the ruling's consequence rather than a new rule.
+     * language. `pro` is retired now, so the English user's CPU rung IS the multilingual small
+     * steer — and `npu` is those same weights on the Hexagon. There is no accuracy being traded
+     * away because it is the same model. The condition in the body is spelled on
+     * [MULTILINGUAL_STEER_ID] rather than on a literal since 4.7, so the steer moving from `multi`
+     * to `small-q8` did not silently switch the substitution off; it holds for every locale, which
+     * is the ruling's consequence rather than a new rule.
      *
      * **This is a STEER, not a selection — untouched by the pick.** Nothing here writes
      * `prefs.selectedModelId`; both chooser surfaces still require a tap,
-     * `WhisperCatalog.DEFAULT_MODEL_ID` is `multi` (4.6, moved off the retired `pro` where the
-     * default lives, not here) and `ModelMigration`'s multilingual target stays `multi`. A gated
-     * tier that could become the default by locale alone would be selected on devices whose
-     * assets are absent.
+     * `WhisperCatalog.DEFAULT_MODEL_ID` is `small-q8` (4.7; the default lives there, not here) and
+     * `ModelMigration`'s multilingual target is `small-q8` too. A gated tier that could become the
+     * default by locale alone would be selected on devices whose assets are absent.
      *
      * @param offeredGatedIds the caller's gate answer — the ids of gated tiers this device's
      *        chooser may SHOW. Two producers since 4.2 F6: routing surfaces still pass
@@ -310,7 +318,7 @@ object ModelTierCopy {
         // authority (the widened @param above). Everything else is the pre-pick rule, verbatim.
         if ("npu-turbo" in offeredGatedIds) return "npu-turbo"
         val cpuSteer = steerIdForLanguageTag(languageTag)
-        return if ("npu" in offeredGatedIds && cpuSteer == "multi") "npu" else cpuSteer
+        return if ("npu" in offeredGatedIds && cpuSteer == MULTILINGUAL_STEER_ID) "npu" else cpuSteer
     }
 
     /**
@@ -344,7 +352,7 @@ object ModelTierCopy {
      * a Bengali user on a capable device would read the English-only tier promoted above the
      * multilingual one it had just been demoted below, by a change that was supposed to be about
      * silicon. With `pro` retired there is no English-only tier in any lineup, and
-     * [steerIdForLanguageTag] answers `multi` for every tag — so `languageSteer == steer` whenever
+     * [steerIdForLanguageTag] answers the one CPU steer for every tag — so `languageSteer == steer` whenever
      * the gate is silent, and the key selects nothing the first key did not. **It is a rule about
      * what may not happen, not an optimisation**: the next language-specific rung reaches it again
      * and gets the 3.7 answer without anyone rediscovering the reasoning. Deleting it because

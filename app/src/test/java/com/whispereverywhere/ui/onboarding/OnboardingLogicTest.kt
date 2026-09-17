@@ -360,7 +360,8 @@ class OnboardingLogicTest {
                 // exists; the claim that matters is unchanged and stronger stated structurally —
                 // every rung `pickable` holds is back in the lineup, so the mandatory step is
                 // completable whatever the gate answered.
-                assertTrue("multi pickable ($gateSet, $tag)", "multi" in lineup)
+                assertTrue("small-q8 pickable ($gateSet, $tag)", "small-q8" in lineup)
+                assertFalse("the retired 190 MB rung came back through the escape", "multi" in lineup)
                 WhisperCatalog.pickable.forEach {
                     assertTrue("${it.id} pickable after the escape ($gateSet, $tag)", it.id in lineup)
                 }
@@ -574,18 +575,19 @@ class OnboardingLogicTest {
         // to Home on it — right for a model the user CHOSE, wrong for a repair of a broken one,
         // which would eject them from the screen mid-explanation, before the switch note could be
         // read and before the note and button they were looking at retire.
+        // 4.7: the recovery tier is `small-q8` (was `multi`, retired by the Q8 ruling).
         assertFalse(
             "the recovery must NOT navigate away from its own explanation",
-            OnboardingLogic.downloadLeavesTheChooser("multi", recoveryTapped = true),
+            OnboardingLogic.downloadLeavesTheChooser("small-q8", recoveryTapped = true),
         )
-        // The entire non-capable fleet's normal path: an ordinary Download tap on the multi card
-        // completes with the SAME Done(modelId) and must keep navigating exactly as it always
-        // has. This is why the rule is keyed on the tap and not on the tier id alone.
+        // The entire non-capable fleet's normal path: an ordinary Download tap on the small-q8
+        // card completes with the SAME Done(modelId) and must keep navigating exactly as it
+        // always has. This is why the rule is keyed on the tap and not on the tier id alone.
         assertTrue(
-            "an ordinary multi download must still finish onboarding",
-            OnboardingLogic.downloadLeavesTheChooser("multi", recoveryTapped = false),
+            "an ordinary small-q8 download must still finish onboarding",
+            OnboardingLogic.downloadLeavesTheChooser("small-q8", recoveryTapped = false),
         )
-        listOf("pro", "npu-turbo", "npu", null, "nope").forEach { id ->
+        listOf("pro", "multi", "npu-turbo", "npu", null, "nope").forEach { id ->
             assertTrue(
                 "every non-recovery tier navigates, tapped or not: $id",
                 OnboardingLogic.downloadLeavesTheChooser(id, recoveryTapped = false),

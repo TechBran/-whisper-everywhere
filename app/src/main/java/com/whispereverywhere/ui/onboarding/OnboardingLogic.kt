@@ -323,7 +323,8 @@ object OnboardingLogic {
      * action that needs explaining.
      *
      * Keyed on the RECOVERY TAP, not on the tier id alone: an ordinary Download tap on the
-     * `multi` card — the entire non-capable fleet's normal path — completes with the same
+     * `small-q8` card (4.7; `multi` until the Q8 ruling) — the entire non-capable fleet's normal
+     * path — completes with the same
      * `Done(modelId)` and must keep navigating exactly as it always has.
      */
     fun downloadLeavesTheChooser(doneModelId: String?, recoveryTapped: Boolean): Boolean =

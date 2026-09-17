@@ -828,8 +828,9 @@ private fun EnginesStep(
         )
         Spacer(Modifier.height(16.dp))
         // 3.7 Workstream H: the steered tier first — English locale -> pro, everything else ->
-        // multi. A steer, not a lock: both cards stay tappable and TIER_SWITCH_HINT below still
-        // promises the switch.
+        // multi; since 4.6 one steer for every locale, and since 4.7 that steer is `small-q8`
+        // (ModelTierCopy.steerIdForLanguageTag). A steer, not a lock: every card stays tappable
+        // and TIER_SWITCH_HINT below still promises the switch.
         //
         // 4.0/4.1: on a device that passes the NPU gate AND already holds a gated tier's own
         // context binaries, that tier joins the lineup — the answer is a SET of tier ids because

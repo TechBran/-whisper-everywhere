@@ -552,7 +552,8 @@ interface ModelPathProvider {
     fun companionModelPath(): String? = null
 
     /**
-     * The installed **CPU-tier whisper ggml model** (`multi`), which the NPU tier needs for two
+     * The installed **CPU-tier whisper ggml model** (`small-q8` since 4.7, or any installed
+     * 80-bin ggml — see `WhisperCatalog.isCpuFallbackEligible`), which the NPU tier needs for two
      * distinct things and which is one file for both:
      *
      *  1. **the mel filterbank donor.** The NPU tier computes its spectrogram with whisper.cpp's

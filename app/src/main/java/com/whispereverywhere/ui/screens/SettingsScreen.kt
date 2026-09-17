@@ -321,8 +321,8 @@ fun SettingsScreen(
             SettingsSection(title = "Speech model") {
                 if (retiredModel != null) {
                     // MF3: the target must match the retired model's scope — a multilingual
-                    // user must land on "multi" (multilingual), not silently on the ENGLISH-only
-                    // default. See ModelMigration.targetIdFor.
+                    // user must land on the multilingual target (`small-q8` since 4.7), not silently
+                    // on an ENGLISH-only default. See ModelMigration.targetIdFor.
                     val target = WhisperCatalog.byId(ModelMigration.targetIdFor(retiredModel.scope))!!
                     // Re-derived every recomposition (same idiom as the permission checks
                     // below) so the card reacts to connectivity and to a completed download.

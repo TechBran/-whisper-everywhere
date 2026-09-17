@@ -181,7 +181,7 @@ fun OnboardingModelScreen(
     // 4.3 micro-round — WHERE THE SELECTION POINTS, which is the second premise under the decline
     // note's "restart to try the AI chip again". A restart re-tries this tier only because the
     // decline record dies with the process — but routesToNpu reads the SELECTION, and the recovery
-    // moves it to `multi`. Read off Main (a SharedPreferences hit) and keyed on BOTH the install
+    // moves it to `NpuTierStatus.RECOVERY_TIER_ID`. Read off Main (a SharedPreferences hit) and keyed on BOTH the install
     // generation and the download state, because the recovery's own write lands between them:
     // manager.download() bumps the generation, THEN the ViewModel writes selectedModelId, THEN the
     // state becomes Done. Keyed on the generation alone this would re-read one write too early and
@@ -212,7 +212,7 @@ fun OnboardingModelScreen(
 
     // 4.3 fix round (I-1): did the user get here by tapping the DECLINE RECOVERY? Remembered
     // rather than derived, because `Done(modelId)` alone cannot tell the recovery apart from an
-    // ordinary Download tap on the multi card — which is the whole non-capable fleet's normal
+    // ordinary Download tap on the small-q8 card — which is the whole non-capable fleet's normal
     // path and must keep behaving exactly as it always has.
     var recoveryTapped by remember { mutableStateOf(false) }
 
@@ -339,7 +339,7 @@ fun OnboardingModelScreen(
                     // load-bearing clause and would be false.
                     // 4.3 micro-round: the third input is WHERE THE SELECTION POINTS. Without it
                     // the fallback-installed arm keeps promising "restart to try the AI chip
-                    // again" after the recovery has moved the selection to `multi` — a restart
+                    // again" after the recovery has moved the selection to the recovery tier — a restart
                     // that routesToNpu sends straight to the CPU, printed inches below the green
                     // note carrying the correct way back.
                     unavailableNote = NpuTierStatus.cardNote(

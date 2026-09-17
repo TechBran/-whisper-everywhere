@@ -313,14 +313,21 @@ class NpuTierStatusTest {
 
     @Test
     fun theRecoveryConstantsNameOneTierAndOneAction() {
-        // `multi` and nothing else: it is MULTILINGUAL (so the recovery never hands a non-English
-        // speaker an English-only model — the Bengali-review discipline), it is a single-file URL
-        // tier the existing download path can actually install, and it is a legal 80-bin CPU
-        // fallback, which is the entire point of downloading it.
-        assertEquals("multi", NpuTierStatus.RECOVERY_TIER_ID)
+        // `small-q8` and nothing else (4.7; `multi` until the Q8 ruling of 2026-09-17 retired it):
+        // it is MULTILINGUAL (so the recovery never hands a non-English speaker an English-only
+        // model — the Bengali-review discipline), it is a single-file URL tier the existing
+        // download path can actually install, it is a legal 80-bin CPU fallback, which is the
+        // entire point of downloading it — and it is PICKABLE, which a retired `multi` would not
+        // be: `pickableFor` runs `!it.retired` before `alsoOfferedIds`, so a recovery onto a
+        // retired tier would install a model the capable chooser then renders no card for.
+        assertEquals("small-q8", NpuTierStatus.RECOVERY_TIER_ID)
         val model = WhisperCatalog.byId(NpuTierStatus.RECOVERY_TIER_ID)
         assertNotNull("the recovery tier must resolve in the catalog", model)
         assertEquals(ModelScope.MULTILINGUAL, model!!.scope)
+        assertFalse("the recovery tier must not be retired — its card has to render after the download", model.retired)
+        assertFalse("nor an instrument — the recovery is the app choosing, so it must choose a rung it stands behind", model.instrument)
+        assertTrue("it is in the pickable lineup", WhisperCatalog.pickable.any { it.id == model.id })
+        assertEquals("and it is the catalogue default", WhisperCatalog.DEFAULT_MODEL_ID, model.id)
         assertTrue(
             "the recovery must be installable by the EXISTING download path — a paired tier " +
                 "cannot be, and download()'s first act would delete the file at `fileName`",

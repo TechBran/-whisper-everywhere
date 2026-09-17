@@ -97,19 +97,29 @@ class WhisperCatalogHelpersTest {
 
         assertEquals(ModelScope.MULTILINGUAL, m("ultra").scope)
         // 4.6: was 7.0e9 (8 GB-class after totalMem slack), set in 3.7 when `ultra` was a retired
-        // outlier. It is an INSTRUMENT now and an instrument states NO RAM threshold: it is
-        // unrecommended because nobody has measured its throughput, which is not a fact about the
-        // device in the user's hand, and a gate here would render the card as "needs more RAM than
-        // this device reports" on phones where that is false. See
-        // no_instrument_hides_behind_a_ram_threshold for the whole-set version of this claim.
+        // outlier. It became an INSTRUMENT, and an instrument states NO RAM threshold: it is
+        // unrecommended for a reason that is not a fact about the device in the user's hand, and a
+        // gate here would render the card as "needs more RAM than this device reports" on phones
+        // where that is false. 4.7 retired it again; a retired row's threshold gates nothing, so
+        // the 0 stays.
         assertEquals(0L, m("ultra").minRamBytes)
 
         // 4.6's five new rungs: every one MULTILINGUAL (the owner's ruling — "we should really
-        // only be showing only multi language models, period"), every one ungated by RAM.
+        // only be showing only multi language models, period").
         listOf("small-q8", "medium-q5", "medium-q8", "ultra-q8", "large-v3").forEach {
             assertEquals("rung '$it' must be multilingual", ModelScope.MULTILINGUAL, m(it).scope)
-            assertEquals("rung '$it' is an instrument and claims no RAM class", 0L, m(it).minRamBytes)
         }
+        // 4.7 — RAM thresholds after the Q8 ruling. `small-q8` is the floor for every device and
+        // states none; `ultra-q8` is the one instrument left and states none (the flag is the
+        // reason, not the device); the retired rows gate nothing. `medium-q8` is the one rung with
+        // a threshold, and it is PROVISIONAL: 5.5e9 is the repo's own `extreme` (medium.en)
+        // precedent — the same 24-layer medium, "genuine 6 GB-class after totalMem slack" —
+        // carried over pending the owner's weakest-device measurement, which is the open item.
+        listOf("small-q8", "medium-q5", "ultra-q8", "large-v3").forEach {
+            assertEquals("rung '$it' claims no RAM class", 0L, m(it).minRamBytes)
+        }
+        assertEquals("medium-q8 is recommended above the extreme precedent's 6 GB-class threshold", 5_500_000_000L, m("medium-q8").minRamBytes)
+        assertEquals("...which IS the extreme precedent, literally", m("extreme").minRamBytes, m("medium-q8").minRamBytes)
     }
 
     @Test
@@ -157,6 +167,9 @@ class WhisperCatalogHelpersTest {
      */
     @Test fun every_ladder_rung_states_its_twice_verified_lfs_values() {
         val base = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/"
+        // 4.7 — the three flags the Q8 ruling of 2026-09-17 set per rung, pinned beside the LFS
+        // values: `retired` for every Q5 rung, `instrument` for the one Q8 rung that kept up
+        // without margin, and the provisional RAM threshold on the medium tier.
         data class Rung(
             val id: String,
             val displayName: String,
@@ -164,37 +177,50 @@ class WhisperCatalogHelpersTest {
             val bytes: Long,
             val sha: String,
             val mels: Int,
+            val retired: Boolean,
+            val instrument: Boolean,
+            val minRam: Long,
         )
         listOf(
             // whisper small, 12 encoder layers at 768 dims, n_vocab 51865, ftype 2007 = Q8_0.
-            // THE DECISIVE ONE: the same model as today's default, 40% larger, and the only new
-            // rung whose q8_0 arithmetic can be compared against a measured q5_1 baseline.
+            // THE DECISIVE ONE, decided: the same model as the 4.6 default, 40% larger, measured
+            // 2.2x faster per commit beside it on the Tab S10+. The 4.7 default and floor.
             Rung(
                 "small-q8", "Multilingual (small, Q8_0)", "ggml-small-q8_0.bin", 264_464_607L,
                 "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f", 80,
+                retired = false, instrument = false, minRam = 0L,
             ),
             // whisper medium, 24 encoder layers at 1024, n_vocab 51865, ftype 1008 = Q5_0. The
-            // multilingual medium the app has never had — its only medium is medium.en.
+            // multilingual medium the app had never had — and the rung that NEVER caught up on
+            // the tablet (9,294 ms median against an 8 000 ms floor). Retired.
             Rung(
                 "medium-q5", "Multilingual (medium, Q5_0)", "ggml-medium-q5_0.bin", 539_212_467L,
                 "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f", 80,
+                retired = true, instrument = false, minRam = 0L,
             ),
-            // The same medium, ftype 2007 = Q8_0. Identical hyperparameters off the header.
+            // The same medium, ftype 2007 = Q8_0. Identical hyperparameters off the header;
+            // 1,341 ms median on the tablet. THE MEDIUM TIER, recommended above a provisional
+            // 5.5e9 (the `extreme` precedent — the owner's weakest-device run is the open item).
             Rung(
                 "medium-q8", "Multilingual (medium, Q8_0)", "ggml-medium-q8_0.bin", 823_369_779L,
                 "42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502", 80,
+                retired = false, instrument = false, minRam = 5_500_000_000L,
             ),
             // large-v3-turbo, 32 encoder layers at 1280, 4 text layers, n_vocab 51866, ftype
-            // 2007 = Q8_0. 128-bin, like everything in the large-v3 family.
+            // 2007 = Q8_0. 128-bin, like everything in the large-v3 family. Kept up with NO
+            // margin on the tablet (worst 7,930 against 8 000): the optional top rung, and the
+            // one instrument left.
             Rung(
                 "ultra-q8", "Ultra (large-v3-turbo, Q8_0)", "ggml-large-v3-turbo-q8_0.bin", 874_188_075L,
                 "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1", 128,
+                retired = false, instrument = true, minRam = 0L,
             ),
             // large-v3 itself: the same 32-layer/1280-dim encoder plus a FULL 32-layer decoder,
-            // ftype 2008 = Q5_0. The accuracy ceiling and the largest file the app can fetch.
+            // ftype 2008 = Q5_0. The largest file the app can fetch. Retired untimed.
             Rung(
                 "large-v3", "Multilingual (large-v3, Q5_0)", "ggml-large-v3-q5_0.bin", 1_081_140_203L,
                 "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1", 128,
+                retired = true, instrument = false, minRam = 0L,
             ),
         ).forEach { r ->
             val m = WhisperCatalog.byId(r.id)!!
@@ -205,11 +231,11 @@ class WhisperCatalogHelpersTest {
             assertEquals("${r.id}: the LFS oid, lowercased hex", r.sha, m.sha256)
             assertEquals("${r.id}: the header's own n_mels", r.mels, m.melBins)
             assertEquals("${r.id}: the owner's ruling — multilingual rungs only", ModelScope.MULTILINGUAL, m.scope)
-            assertTrue("${r.id}: unmeasured, so an instrument", m.instrument)
-            assertFalse("${r.id}: offered — that is the point of the ruling that added it", m.retired)
-            assertFalse("${r.id}: nobody is migrated off a rung that was never advocated", m.unsupported)
-            assertFalse("${r.id}: no device is refused the experiment", m.gated)
-            assertEquals("${r.id}: an instrument claims no RAM class", 0L, m.minRamBytes)
+            assertEquals("${r.id}: the instrument flag, per the Q8 ruling", r.instrument, m.instrument)
+            assertEquals("${r.id}: retired iff Q5, per the Q8 ruling", r.retired, m.retired)
+            assertFalse("${r.id}: nobody is migrated off a rung that was never advocated, retired or not", m.unsupported)
+            assertFalse("${r.id}: no device is refused a CPU rung by a gate", m.gated)
+            assertEquals("${r.id}: the RAM threshold", r.minRam, m.minRamBytes)
             assertNull("${r.id}: one file", m.pairedArtifact)
             assertEquals("${r.id}: a single-file rung advertises its one file", m.approxBytes, m.primaryBytes)
         }
@@ -244,14 +270,25 @@ class WhisperCatalogHelpersTest {
         // RAM BOUNDARY — the rule under test here. `extreme` still carries a real threshold
         // (5.5e9, genuine 6 GB-class after totalMem slack) and is still resolvable, so the `>=`
         // boundary is tested on a row that has one.
-        val extreme = WhisperCatalog.byId("extreme")!! // minRam 5_500_000_000
-
-        // just below -> not recommended
-        assertFalse(WhisperCatalog.isRecommendedForDevice(extreme, 5_499_999_999L))
-        // exactly at threshold -> recommended (>=)
-        assertTrue(WhisperCatalog.isRecommendedForDevice(extreme, 5_500_000_000L))
-        // above -> recommended
-        assertTrue(WhisperCatalog.isRecommendedForDevice(extreme, 12_000_000_000L))
+        //
+        // 4.7: the boundary has a LIVE subject again — `medium-q8`, the medium tier, recommended
+        // above the same 5.5e9 (the `extreme` precedent, provisional pending the owner's
+        // weakest-device run). It is the one PICKABLE rung with a threshold, so this is the row
+        // the chooser's "Recommended for your device" badge actually turns on.
+        listOf("extreme", "medium-q8").forEach { id ->
+            val model = WhisperCatalog.byId(id)!! // minRam 5_500_000_000
+            assertEquals(id, 5_500_000_000L, model.minRamBytes)
+            // just below -> not recommended
+            assertFalse("$id just below", WhisperCatalog.isRecommendedForDevice(model, 5_499_999_999L))
+            // exactly at threshold -> recommended (>=)
+            assertTrue("$id at the threshold", WhisperCatalog.isRecommendedForDevice(model, 5_500_000_000L))
+            // above -> recommended
+            assertTrue("$id above", WhisperCatalog.isRecommendedForDevice(model, 12_000_000_000L))
+        }
+        // The Tab S10+ the rung was measured on reports 12 GB; a 4 GB phone is not told it is the
+        // right choice for it, and `small-q8` is recommended there instead.
+        assertFalse(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("medium-q8")!!, 4_000_000_000L))
+        assertTrue(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("small-q8")!!, 4_000_000_000L))
     }
 
     @Test
@@ -293,7 +330,7 @@ class WhisperCatalogHelpersTest {
             0L, 1_000_000_000L, 5_500_000_000L, 7_000_000_000L, 8_000_000_000L,
             12_000_000_000L, 16_000_000_000L, 24_000_000_000L, 64_000_000_000L, Long.MAX_VALUE,
         )
-        val instrument = WhisperCatalog.byId("multi")!!.copy(id = "an-instrument", instrument = true)
+        val instrument = WhisperCatalog.byId("small-q8")!!.copy(id = "an-instrument", instrument = true)
         assertEquals("an instrument states no RAM threshold — it has nothing to claim", 0L, instrument.minRamBytes)
         everyRam.forEach { ram ->
             assertFalse(
@@ -324,7 +361,7 @@ class WhisperCatalogHelpersTest {
      * breaks is the point."*
      */
     @Test fun the_instrument_flag_withholds_the_badge_and_touches_nothing_else() {
-        val instrument = WhisperCatalog.byId("multi")!!.copy(id = "an-instrument", instrument = true)
+        val instrument = WhisperCatalog.byId("small-q8")!!.copy(id = "an-instrument", instrument = true)
         assertFalse("an instrument is not retired — a retired tier is not in the chooser at all", instrument.retired)
         assertFalse("nor unsupported: nobody is migrated off a rung they were invited to try", instrument.unsupported)
         assertFalse("nor gated: no device is refused the experiment", instrument.gated)
@@ -338,29 +375,48 @@ class WhisperCatalogHelpersTest {
     }
 
     /**
-     * 4.6 — **THE INSTRUMENT SET, declared.** Six rungs: the five the ladder adds and `ultra`,
-     * un-retired beside them. `multi` is deliberately NOT one: it is the only rung with a measured
-     * verdict (F = 2.3 s, duty 0.42, Fold6, 2026-08-20) and therefore the only one this app is
-     * entitled to recommend, default to, or migrate anyone onto.
+     * 4.6 declared **THE INSTRUMENT SET** as six rungs — the five the ladder added and `ultra`,
+     * un-retired beside them — because nobody had timed any of them. 4.7 — **it is ONE rung.**
+     * The Tab S10+ session of 2026-09-17 timed four of the six; the owner's Q8 ruling retired the
+     * four Q5 rows (two of them untimed); `small-q8` and `medium-q8` kept up with margin and lost
+     * the flag; `ultra-q8` kept up with NO margin (worst commit 0.99 of its floor on a flagship)
+     * and keeps it. The flag now means what it always meant underneath: offered without a
+     * throughput verdict that clears production. `TierThroughputTest` holds the coupling from
+     * the record's side; this is the catalogue's side of the same fact.
      *
      * A new rung that forgets the flag fires here, which is the alarm worth having: the failure
      * mode is silent and its blast radius is a production user handed a 1 GB download badged
      * *"Recommended for your device"* on the strength of nothing.
      */
-    @Test fun the_instrument_set_is_exactly_the_unmeasured_rungs_of_the_ladder() {
+    @Test fun the_instrument_set_is_exactly_the_pickable_rungs_whose_verdict_does_not_clear() {
         assertEquals(
             "the instrument set changed — a rung was added without the flag, or a rung earned a " +
-                "verdict and nobody said so here",
-            listOf("small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3"),
+                "clearing verdict and nobody said so here",
+            listOf("ultra-q8"),
             WhisperCatalog.instruments.map { it.id },
         )
-        assertFalse(
-            "`multi` must NOT be an instrument: it is the one measured rung, which is exactly " +
-                "why it is the default and the migration target",
-            WhisperCatalog.byId("multi")!!.instrument,
-        )
+        listOf("small-q8", "medium-q8").forEach {
+            assertFalse(
+                "'$it' must NOT be an instrument: it kept up with margin on the Tab S10+ " +
+                    "(docs/measurements/2026-09-17-tab-cpu-ladder.md), which is exactly why the " +
+                    "app may recommend it",
+                WhisperCatalog.byId(it)!!.instrument,
+            )
+        }
+        // The rung the 4.6 set was defined against is retired now, and a retired row is never an
+        // instrument — an instrument is OFFERED, and a retired tier is not.
+        assertFalse(WhisperCatalog.byId("multi")!!.instrument)
+        WhisperCatalog.entries.filter { it.retired }.forEach {
+            assertFalse("retired '${it.id}' cannot be an instrument", it.instrument)
+        }
         // Derived, never a second list.
         assertEquals(WhisperCatalog.entries.filter { it.instrument }, WhisperCatalog.instruments)
+        // THE COUPLING, from this side: the instruments are the pickable rungs whose verdict does
+        // not clear, and nothing else.
+        assertEquals(
+            WhisperCatalog.pickable.filter { !TierThroughputRecord.forTier(it.id)!!.verdict.clearsProduction }.map { it.id },
+            WhisperCatalog.instruments.map { it.id },
+        )
     }
 
     /**
@@ -384,14 +440,14 @@ class WhisperCatalogHelpersTest {
                 )
             }
         }
-        // The other half of the claim, and the one a RAM literal would have broken: `multi` — the
-        // measured rung — IS still recommended everywhere, so the ladder did not silently turn the
-        // chooser into a screen with no recommendation on it at all.
+        // The other half of the claim, and the one a RAM literal would have broken: `small-q8` —
+        // the measured floor, `multi` until 4.7 — IS recommended everywhere, so the ladder did not
+        // silently turn the chooser into a screen with no recommendation on it at all.
         everyRam.forEach { ram ->
             assertTrue(
-                "the measured rung must still be recommended at $ram — a chooser where NOTHING " +
+                "the measured floor must be recommended at $ram — a chooser where NOTHING " +
                     "is recommended is a different defect from one where the wrong thing is",
-                WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("multi")!!, ram),
+                WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("small-q8")!!, ram),
             )
         }
     }
@@ -576,10 +632,15 @@ class WhisperCatalogHelpersTest {
         // useless at this point… because of the accuracy."
         assertFalse(ids.contains("eco"))
         assertFalse(ids.contains("base"))
-        // 4.6: `ultra` LEFT this list. It was retired in 3.7, which is why nobody has run
-        // large-v3-turbo on the CPU since VAD chunking landed; the owner's ruling of 2026-09-13
-        // offers it again, as an instrument, so it can be measured.
-        assertTrue("ultra is offered again — owner ruling 2026-09-13", ids.contains("ultra"))
+        // 4.6: `ultra` LEFT this list — the owner's ruling of 2026-09-13 offered it again as an
+        // instrument so it could be measured. 4.7: it is BACK, with the other three Q5 rungs —
+        // the Q8 ruling of 2026-09-17 ("Q5 is definitely off the table"), and `ultra` was never
+        // timed on the CPU after all: its Q8_0 twin kept up with no margin, and the only Q5_0
+        // rung timed never caught up.
+        listOf("multi", "medium-q5", "ultra", "large-v3").forEach {
+            assertFalse("'$it' is a Q5 rung and the owner retired every one of them", ids.contains(it))
+        }
+        assertTrue("its Q8_0 twin is what is offered", ids.contains("ultra-q8"))
         // The rule itself, over the whole set rather than a list of names.
         WhisperCatalog.entries.filter { it.retired }.forEach {
             assertFalse("retired tier '${it.id}' is in the chooser", ids.contains(it.id))
@@ -589,19 +650,29 @@ class WhisperCatalogHelpersTest {
     /**
      * 4.6 — **THE PICKABLE LADDER, EXACTLY AND IN ORDER.** Was
      * `pickable_is_exactly_pro_and_multi`: the post-3.7 lineup of pro (the English flagship) and
-     * multi (the international tier). The ladder replaces it, and the order is the one the chooser
-     * renders — `multi` at the bottom with the quantisation twins grouped above it.
+     * multi (the international tier). The seven-rung instrument ladder replaced it.
+     *
+     * 4.7 — **THE Q8 LADDER: three rungs, every one Q8_0, in catalogue order.** The owner's ruling
+     * of 2026-09-17 on the Tab S10+ measurement: *"Q8 for everything." — "Q5 is definitely off
+     * the table." — "We're only testing on models that we're actually gonna use."* So the chooser
+     * on the test tablet shows ONLY these three (plus the gated NPU rows on capable devices,
+     * unchanged).
      */
     @Test fun pickable_is_exactly_the_ladder_in_order() {
         assertEquals(
-            listOf("multi", "small-q8", "medium-q5", "medium-q8", "ultra", "ultra-q8", "large-v3"),
+            listOf("small-q8", "medium-q8", "ultra-q8"),
             WhisperCatalog.pickable.map { it.id },
         )
-        // Six of the seven are instruments. `multi` is the ONE rung the app stands behind — the
-        // only one with a measured verdict — which is what makes it the default, the steer and the
-        // migration target, and what makes the other six offers rather than advice.
-        assertEquals(6, WhisperCatalog.pickable.count { it.instrument })
-        assertEquals(listOf("multi"), WhisperCatalog.pickable.filterNot { it.instrument }.map { it.id })
+        // One of the three is an instrument — `ultra-q8`, kept up with no margin. `small-q8` and
+        // `medium-q8` are the rungs the app stands behind: measured, kept up with margin, which is
+        // what makes the first the default, the steer and the migration target, and the second
+        // the recommended medium tier — and what makes the third an offer rather than advice.
+        assertEquals(1, WhisperCatalog.pickable.count { it.instrument })
+        assertEquals(listOf("small-q8", "medium-q8"), WhisperCatalog.pickable.filterNot { it.instrument }.map { it.id })
+        // Every pickable rung is Q8_0 — the ruling, at the list that enforces it.
+        WhisperCatalog.pickable.forEach {
+            assertTrue("'${it.id}' is not a Q8_0 file and the owner ruled Q8 for everything", it.fileName.endsWith("-q8_0.bin"))
+        }
         // **THE OWNER'S RULING OF 2026-09-13, AT THE LIST THAT ENFORCES IT**: *"we should really
         // only be showing only multi language models, period. We shouldn't show English only at
         // all."* `pro` (small.en) was the last English-only rung offered; `eco` (base.en) and
@@ -649,14 +720,17 @@ class WhisperCatalogHelpersTest {
         // tier says nothing about the model, only about whether it is OFFERED.
         assertTrue(WhisperCatalog.isCpuFallbackEligible(pro))
         assertTrue(WhisperCatalog.hasCpuFallback(setOf("pro")))
-        // The whole retired set, and the rule they all share.
+        // The whole retired set, and the rule they all share. 4.7: the four Q5 rungs join it —
+        // `multi` (the 4.6.0 default, in production), `medium-q5`, `ultra` and `large-v3` — by
+        // the owner's Q8 ruling of 2026-09-17, and every one of them is retired the same gentle
+        // way `pro` was: hidden, resolvable, untouched.
         assertEquals(
-            listOf("eco", "base", "pro", "extreme"),
+            listOf("eco", "base", "pro", "extreme", "multi", "medium-q5", "ultra", "large-v3"),
             WhisperCatalog.entries.filter { it.retired }.map { it.id },
         )
         assertEquals(
-            "`extreme` is the ONLY tier the app still migrates anyone off — and 4.6 removed the " +
-                "other one (`ultra`) rather than adding to it",
+            "`extreme` is the ONLY tier the app still migrates anyone off — 4.6 removed `ultra` " +
+                "rather than adding to it, and 4.7 retired four rungs without adding to it either",
             listOf("extreme"),
             WhisperCatalog.entries.filter { it.unsupported }.map { it.id },
         )
@@ -682,9 +756,15 @@ class WhisperCatalogHelpersTest {
         // be one it migrates people off — `decide()` gates on `unsupported` alone, so leaving that
         // bit set would raise "This model is no longer supported" on a rung the chooser is
         // simultaneously inviting the user to try. An `ultra` user who has carried that card since
-        // 3.7 simply has a live tier again.
-        assertFalse(WhisperCatalog.byId("ultra")!!.retired)
-        assertFalse(WhisperCatalog.byId("ultra")!!.unsupported)
+        // 3.7 simply had a live tier again.
+        //
+        // 4.7: `ultra` is RETIRED again by the Q8 ruling — and `unsupported` stays FALSE, which is
+        // THE split this test is about, seen on the rung that has now crossed it in both
+        // directions. Retiring hides; it does not raise the card. Same for the other three.
+        listOf("multi", "medium-q5", "ultra", "large-v3").forEach {
+            assertTrue("'$it' is retired (Q8 ruling 2026-09-17)", WhisperCatalog.byId(it)!!.retired)
+            assertFalse("'$it' is NOT unsupported — nobody on it is shown the migration card", WhisperCatalog.byId(it)!!.unsupported)
+        }
     }
 
     /**
@@ -708,16 +788,24 @@ class WhisperCatalogHelpersTest {
     }
 
     /**
-     * 4.6 — was `default_is_pro`. It moved because `pro` is retired and a retired default is an
-     * unshippable state, and it moved TO `multi` because `multi` is the only rung it could have
-     * moved to: the ladder's other six are [WhisperModel.instrument]s, offered so they can be
-     * measured, and `multi` is the one that clears the app's own eligibility rule ON EVIDENCE
-     * (F = 2.3 s, duty 0.42, Fold6, this repo's audio-ctx bench of 2026-08-20, against the rule's
-     * demand of F <= 5.3 s).
+     * 4.6 — was `default_is_pro`. It moved because `pro` was retired and a retired default is an
+     * unshippable state, and it moved TO `multi` because `multi` was the only rung that cleared
+     * the app's own eligibility rule ON EVIDENCE (F = 2.3 s, duty 0.42, Fold6, 2026-08-20).
+     *
+     * 4.7 — `default_is_small_q8`. It moved because `multi` is retired (the owner's Q8 ruling of
+     * 2026-09-17), and it moved to `small-q8` because that is the rung the app can stand behind
+     * on evidence now: the same whisper-small weights at Q8_0, measured on the Tab S10+ at a
+     * median 1,217 ms per commit against `multi`'s 2,618 in the same session
+     * (docs/measurements/2026-09-17-tab-cpu-ladder.md) — 2.2x faster for +74 MB, KEPT_UP with
+     * margin, recommended on every device.
      */
-    @Test fun default_is_multi() {
-        assertEquals("multi", WhisperCatalog.DEFAULT_MODEL_ID)
+    @Test fun default_is_small_q8() {
+        assertEquals("small-q8", WhisperCatalog.DEFAULT_MODEL_ID)
         assertNotNull(WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID))
+        // The default is the floor for every device: no RAM threshold, recommended everywhere.
+        assertEquals(0L, WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!.minRamBytes)
+        // And the rung it replaced is retired — a retired default is what this move avoided.
+        assertTrue(WhisperCatalog.byId("multi")!!.retired)
     }
 
     /**
@@ -847,7 +935,7 @@ class WhisperCatalogHelpersTest {
         assertEquals(listOf("npu", "npu-turbo"), WhisperCatalog.entries.filter { it.gated }.map { it.id })
         assertFalse(WhisperCatalog.pickable.any { it.gated })
         assertFalse(WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!.gated)
-        assertEquals("multi", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
+        assertEquals("small-q8", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
     }
 
     @Test fun pickableFor_offers_a_gated_tier_exactly_when_its_id_is_in_the_set() {
@@ -962,26 +1050,34 @@ class WhisperCatalogHelpersTest {
     }
 
     /**
-     * **EXISTING INSTALLS ARE NOT DISTURBED.** A capable device already running `multi` or `npu`
-     * keeps its card — the chooser offers turbo GOING FORWARD, it does not repossess a model the
-     * user already downloaded. (Deleting a gigabyte someone paid bandwidth for is not ours to do.)
+     * **EXISTING INSTALLS ARE NOT DISTURBED.** A capable device already running a live CPU rung
+     * or `npu` keeps its card — the chooser offers turbo GOING FORWARD, it does not repossess a
+     * model the user already downloaded. (Deleting a gigabyte someone paid bandwidth for is not
+     * ours to do.)
+     *
+     * **4.7 — and a RETIRED rung on disk keeps working but keeps NO CARD, which now includes
+     * `multi`.** `!it.retired` runs before `alsoOfferedIds`, so the 190 MB model a capable device
+     * downloaded through the 4.3 decline recovery is still installed, still transcribing, still
+     * the selection — and absent from the chooser, exactly as an installed `pro` has been since
+     * 4.6. That is the retired-not-uninstalled rule doing what it says, and it is why the
+     * recovery tier moved to `small-q8` (`NpuTierStatus.RECOVERY_TIER_ID`).
      */
     @Test fun a_capable_device_keeps_the_card_for_a_model_it_already_has() {
         val capable = setOf("npu", "npu-turbo")
         // Fresh capable install: exactly one card, in every locale. The spec's device acceptance.
         assertEquals(listOf("npu-turbo"), WhisperCatalog.pickableFor(capable).map { it.id })
-        // The 190 MB CPU tier already on disk: still there, and turbo still leads.
+        // The 264 MB CPU floor already on disk: still there, and turbo still leads.
         assertEquals(
-            listOf("multi", "npu-turbo"),
-            WhisperCatalog.pickableFor(capable, setOf("multi")).map { it.id },
+            listOf("small-q8", "npu-turbo"),
+            WhisperCatalog.pickableFor(capable, setOf("small-q8")).map { it.id },
         )
         assertEquals(
-            listOf("npu-turbo", "multi"),
-            ModelTierCopy.orderedForLanguageTagFor("bn-BD", capable, setOf("multi")),
+            listOf("npu-turbo", "small-q8"),
+            ModelTierCopy.orderedForLanguageTagFor("bn-BD", capable, setOf("small-q8")),
         )
         assertEquals(
-            listOf("npu-turbo", "multi"),
-            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("multi")),
+            listOf("npu-turbo", "small-q8"),
+            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("small-q8")),
         )
         // The 358 MB npu pair already imported: same promise, and the L9 runner-up key still puts
         // it directly below the pick.
@@ -989,38 +1085,36 @@ class WhisperCatalogHelpersTest {
             listOf("npu-turbo", "npu"),
             ModelTierCopy.orderedForLanguageTagFor("bn-BD", capable, setOf("npu")),
         )
-        // Both, plus a live CPU rung — everything the user has, nothing they do not. (4.6: was
-        // `setOf("npu", "pro")`; `pro` is retired now, so it can no longer demonstrate a kept
-        // card — it demonstrates the rule directly below instead. `medium-q5` stands in as an
-        // installed instrument, which is the new state this branch creates.)
+        // Both, plus a live CPU rung — everything the user has, nothing they do not. (4.6 used
+        // `medium-q5` here as an installed instrument; it is retired now, so `medium-q8` — the
+        // medium tier — stands in, and the retired one is asserted absent below.)
         assertEquals(
-            listOf("npu-turbo", "npu", "medium-q5"),
-            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("npu", "medium-q5")),
+            listOf("npu-turbo", "npu", "medium-q8"),
+            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("npu", "medium-q8")),
         )
         // A RETIRED tier on disk does NOT re-enter through this door: `!it.retired` runs first,
-        // which is why the screens may stat the whole catalog for the fallback question. (4.6:
-        // `ultra` left this set when it was un-retired — it is a LIVE rung now, so an installed
-        // one DOES keep its card, which is the assertion directly below rather than a hole here;
-        // `pro` JOINED it, and it is the important member — the largest installed base of any
-        // retired tier, and this is the line that says their card does not come back.)
+        // which is why the screens may stat the whole catalog for the fallback question. 4.7: the
+        // four Q5 rungs join the set, and `multi` is the important member — the 4.6.0 production
+        // default, and the tier the 4.3 recovery used to download — and this is the line that
+        // says its card does not come back.
         assertEquals(
             listOf("npu-turbo"),
-            WhisperCatalog.pickableFor(capable, setOf("eco", "base", "pro", "extreme"))
+            WhisperCatalog.pickableFor(capable, setOf("eco", "base", "pro", "extreme", "multi", "medium-q5", "ultra", "large-v3"))
                 .map { it.id },
         )
         assertEquals(
-            "a capable device with the un-retired 574 MB rung on disk keeps its card, exactly as " +
-                "it keeps `multi`'s — the non-disturbance rule does not care how big the file is, " +
+            "a capable device with the 874 MB instrument on disk keeps its card, exactly as it " +
+                "keeps `small-q8`'s — the non-disturbance rule does not care how big the file is, " +
                 "and an INSTRUMENT is an ordinary offered tier for every purpose but the badge",
-            listOf("ultra", "npu-turbo"),
-            WhisperCatalog.pickableFor(capable, setOf("ultra")).map { it.id },
+            listOf("ultra-q8", "npu-turbo"),
+            WhisperCatalog.pickableFor(capable, setOf("ultra-q8")).map { it.id },
         )
         // Nothing THE 4.3 GATE does selects anything: it changes what is OFFERED, never what is
-        // chosen. (4.6 moved the default from `pro` to `multi` — a separate decision, made where
-        // the default lives, because `pro` is retired and a retired default is unreachable from
-        // the picker. The gate still does not touch it.)
-        assertEquals("multi", WhisperCatalog.DEFAULT_MODEL_ID)
-        assertEquals("multi", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
+        // chosen. (4.6 moved the default from `pro` to `multi`, 4.7 from `multi` to `small-q8` —
+        // separate decisions, made where the default lives, because a retired default is
+        // unreachable from the picker. The gate still does not touch it.)
+        assertEquals("small-q8", WhisperCatalog.DEFAULT_MODEL_ID)
+        assertEquals("small-q8", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
         // And every tier a user could already be ON still RESOLVES, so `installedModel()` never
         // returns null and nobody is force-marched into onboarding with a model on disk. Stated
         // over the whole catalogue since 4.6, so five new rungs cannot be forgotten out of it.
