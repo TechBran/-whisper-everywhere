@@ -67,13 +67,6 @@ object HowToGuide {
                 "same way.",
         ),
         Section(
-            "Dictation-first keyboard",
-            "An optional setting for people who mostly dictate: when it is on, tapping a text " +
-                "field raises the bubble instead of the keyboard. The keyboard button on the " +
-                "bubble brings your normal keyboard back whenever you want it. Some keyboards " +
-                "may ignore this — the setting says so honestly.",
-        ),
-        Section(
             "Your transcriptions and your stats",
             "Every session is saved under Transcriptions for 14 days, then cleaned up " +
                 "automatically. The stats panel above shows today's transcription time, how " +

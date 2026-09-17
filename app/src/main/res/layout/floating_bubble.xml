@@ -207,9 +207,10 @@
              portions of the blob — same fill color, overlapping the body inside its ripple
              headroom so they fuse into one organism. Lock extends right, speaker bottom-left.
              Both are idle-only; the pill hides them. Drawn last = on top of the body. -->
-        <!-- Corner layout (owner 2026-08-01): lock top-right, keyboard bottom-right, speaker
-             bottom-left — one corner each, every lobe pulled AWAY from the mic so each has a
-             clean hitbox and a mistap hits nothing instead of the wrong control. -->
+        <!-- Corner layout (owner 2026-08-01): lock top-right, speaker bottom-left — one corner
+             each, every lobe pulled AWAY from the mic so each has a clean hitbox and a mistap
+             hits nothing instead of the wrong control. (The bottom-right keyboard lobe went with
+             the dictation-first keyboard feature, owner ruling 2026-09-17.) -->
         <FrameLayout
             android:id="@+id/lock_lobe"
             android:layout_width="32dp"
@@ -226,26 +227,6 @@
                 android:layout_gravity="center"
                 android:src="@drawable/ic_lock_open"
                 android:contentDescription="Lock bubble position" />
-        </FrameLayout>
-
-        <!-- 36dp, deliberately larger than the other lobes: it is a frequent-tap TARGET in the
-             dictation-first flow (owner 2026-08-01: 28dp was hard to hit), not an indicator. -->
-        <FrameLayout
-            android:id="@+id/keyboard_lobe"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_gravity="end|bottom"
-            android:background="@drawable/lobe_circle"
-            android:elevation="2dp"
-            android:visibility="gone">
-
-            <ImageView
-                android:id="@+id/keyboard_icon"
-                android:layout_width="20dp"
-                android:layout_height="20dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_keyboard"
-                android:contentDescription="Show keyboard" />
         </FrameLayout>
 
         <FrameLayout

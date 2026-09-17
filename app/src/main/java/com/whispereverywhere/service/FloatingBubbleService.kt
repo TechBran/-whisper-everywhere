@@ -974,7 +974,6 @@ class FloatingBubbleService : Service(),
     private lateinit var speechStopIcon: ImageView
     private lateinit var speakClipIcon: ImageView
     private lateinit var lockLobe: View
-    private lateinit var keyboardLobe: View
     private lateinit var speakerLobe: View
     private lateinit var ttsScrubber: com.whispereverywhere.ui.components.TtsScrubberView
 
@@ -1350,17 +1349,6 @@ class FloatingBubbleService : Service(),
         // SpeakTextActivity's toolbar reads, which the service-local isSpeakingNow never saw —
         // those were classified as transcribable media over our own voice.
         mediaDetector.selfAudioActive = { com.whispereverywhere.tts.TtsController.isSpeechActive() }
-
-        // The dictation-first toggle applies to the LIVE bubble (owner report 2026-08-01: the
-        // keyboard lobe only appeared after disabling/re-enabling the bubble — its visibility was
-        // evaluated solely in updateBubbleState's IDLE branch, which nothing re-ran on a pref
-        // flip). Re-render the idle chrome whenever the pref changes; other states re-evaluate on
-        // their natural next transition to IDLE.
-        serviceScope.launch(Dispatchers.Main) {
-            app.preferencesManager.dictationFirstKeyboard.collect {
-                if (currentState == BubbleState.IDLE) updateBubbleState(BubbleState.IDLE)
-            }
-        }
 
         // Foreground FIRST (satisfies the startForegroundService contract), and guarded: on
         // Android 12+/14+ this throws when the start context is disallowed or RECORD_AUDIO was
@@ -1846,7 +1834,6 @@ class FloatingBubbleService : Service(),
         bubbleIcon.visibility = View.GONE
         processingRing.visibility = View.GONE
         lockLobe.visibility = View.GONE
-        keyboardLobe.visibility = View.GONE
         speakerLobe.visibility = View.GONE
         setBubbleWidth(160)
         waveformView.visibility = View.VISIBLE
@@ -2538,14 +2525,8 @@ class FloatingBubbleService : Service(),
         speechStopIcon.setOnClickListener { com.whispereverywhere.tts.TtsController.stop() }
         speakClipIcon = bubbleView.findViewById(R.id.speak_clip_icon)
         lockLobe = bubbleView.findViewById(R.id.lock_lobe)
-        keyboardLobe = bubbleView.findViewById(R.id.keyboard_lobe)
         speakerLobe = bubbleView.findViewById(R.id.speaker_lobe)
         lockLobe.setOnClickListener { togglePin() }
-        // Dictation-first: summon (or re-hide) the system keyboard for the current field.
-        keyboardLobe.setOnClickListener {
-            val shown = WhisperAccessibilityService.toggleSummonedKeyboard()
-            android.util.Log.i("WE-DIAG", "keyboard lobe: summoned=$shown")
-        }
         speakerLobe.setOnClickListener { readClipboardAndSpeak() }
         ttsScrubber = bubbleView.findViewById(R.id.tts_scrubber)
         ttsScrubber.onSeek = { fraction ->
@@ -5562,7 +5543,6 @@ class FloatingBubbleService : Service(),
             // Satellite lobes are idle-only; the IDLE branch turns them back on.
             stopClipPulse()
             lockLobe.visibility = View.GONE
-            keyboardLobe.visibility = View.GONE
             speakerLobe.visibility = View.GONE
 
             when (newState) {
@@ -5575,15 +5555,6 @@ class FloatingBubbleService : Service(),
                     // permanent lock hanging off the blob was redundant chrome. It flashes for
                     // ~1.5 s as confirmation whenever the pin state changes — see togglePin.
                     lockLobe.visibility = View.GONE
-                    // The lobe's ONE action is WhisperAccessibilityService.toggleSummonedKeyboard(),
-                    // which returns false immediately when the service is not bound — a dead
-                    // control (4.3.3, review N2). The pref alone is not enough to show it; with the
-                    // service ON isEnabled() is true and this is the pref alone, as before.
-                    keyboardLobe.visibility =
-                        if (app.preferencesManager.isDictationFirstKeyboard() &&
-                            WhisperAccessibilityService.isEnabled()
-                        ) View.VISIBLE
-                        else View.GONE
                     speakerLobe.visibility = if (!isSpeakingNow &&
                         com.whispereverywhere.tts.TtsController.isVoiceInstalled(this@FloatingBubbleService)
                     ) View.VISIBLE else View.GONE

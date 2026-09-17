@@ -156,7 +156,6 @@ class WhisperAccessibilityService : AccessibilityService() {
             notificationTimeout = 30 // Faster response
         }
         serviceInfo = info
-        applyKeyboardShowMode()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -526,20 +525,6 @@ class WhisperAccessibilityService : AccessibilityService() {
     private fun notifyTextFieldUnfocused() {
         lastFocusedEditText = null
         lastFieldRect = null
-        // A summoned keyboard is per-field: leaving the field re-arms dictation-first suppression.
-        // Same 1 s toggle-echo guard as the falling edge (owner repro 2026-08-01, "three presses
-        // before it starts toggling"): tapping the LOBE itself churns window state, the 300 ms
-        // focus re-check briefly fails while the IME animates, and this reset was silently undoing
-        // the summon the user had JUST made — until the churn died down a few taps later.
-        if (keyboardSummoned) {
-            if (System.currentTimeMillis() - lastSummonToggleMs > 1_000) {
-                android.util.Log.i("WE-DIAG", "kbd re-arm: field unfocused")
-                keyboardSummoned = false
-                applyKeyboardShowMode()
-            } else {
-                android.util.Log.i("WE-DIAG", "kbd re-arm SKIPPED: within toggle echo window")
-            }
-        }
         focusListener?.onTextFieldUnfocused()
     }
 
@@ -561,22 +546,11 @@ class WhisperAccessibilityService : AccessibilityService() {
             windows.any { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
         }.getOrDefault(false)
         val rising = imeVisible && !imeWasVisible
-        val falling = !imeVisible && imeWasVisible
         imeWasVisible = imeVisible
-        if (falling) {
-            // The user dismissed the keyboard they summoned: re-arm dictation-first suppression.
-            // NOT within a beat of a lobe toggle, though — the IME hides ASYNCHRONOUSLY, so a
-            // hide->show double-tap lands the FIRST hide's falling edge after the second toggle
-            // already set summoned=true, and honoring that stale echo silently re-hid a keyboard
-            // the user just asked for. That desync compounded into the owner-reported "after a
-            // few toggles it doesn't come back at all" (2026-08-01).
-            if (keyboardSummoned && System.currentTimeMillis() - lastSummonToggleMs > 1_000) {
-                android.util.Log.i("WE-DIAG", "kbd re-arm: IME dismissed")
-                keyboardSummoned = false
-                applyKeyboardShowMode()
-            }
-            return
-        }
+        // Only the rising edge acts. The falling edge is tracked (imeWasVisible) and otherwise
+        // ignored: a dismissed keyboard is the user's business, and the bubble's own hide follows
+        // the field's unfocus. (The dictation-first re-arm that used to sit here went with the
+        // feature, owner ruling 2026-09-17.)
         if (!rising) return
         // The ordinary detection already handled this focus moments ago — don't double-fire.
         if (System.currentTimeMillis() - lastFocusTime < 800) return
@@ -599,29 +573,10 @@ class WhisperAccessibilityService : AccessibilityService() {
         }
     }
 
-    // ------------------------------------------------------------------ dictation-first keyboard
-
-    /** True while the user has explicitly summoned the system keyboard for the current field. */
-    @Volatile private var keyboardSummoned = false
-
-    /** When the lobe last toggled — the falling-edge re-arm must ignore ITS OWN hide's echo. */
-    @Volatile private var lastSummonToggleMs = 0L
-
-    /**
-     * Applies the dictation-first preference to the soft-keyboard controller: suppressed while
-     * the preference is on and the keyboard has not been summoned; AUTO otherwise. Never throws —
-     * an OEM that ignores show modes simply keeps its keyboard, and the feature degrades to the
-     * lobe doing nothing (the preference copy promises no more than this).
-     */
-    fun applyKeyboardShowMode() {
-        runCatching {
-            val prefOn = com.whispereverywhere.WhisperEverywhereApp.getInstance()
-                .preferencesManager.isDictationFirstKeyboard()
-            softKeyboardController.showMode =
-                if (prefOn && !keyboardSummoned) android.accessibilityservice.AccessibilityService.SHOW_MODE_HIDDEN
-                else android.accessibilityservice.AccessibilityService.SHOW_MODE_AUTO
-        }
-    }
+    // This service never touches `softKeyboardController.showMode`. The dictation-first keyboard
+    // (owner UX 2026-08-01: suppress the system keyboard on focus, a bubble lobe summons it back)
+    // was removed by owner ruling 2026-09-17. The show mode is per-bind state that comes up AUTO,
+    // so a user who had it on gets the normal keyboard back on the next bind, nothing to migrate.
 
     override fun onInterrupt() {}
 
@@ -1143,50 +1098,6 @@ class WhisperAccessibilityService : AccessibilityService() {
 
         fun isEnabled(): Boolean = instance != null
 
-        /** Re-read the dictation-first preference (Settings toggle just changed it). */
-        fun applyKeyboardPreference() {
-            instance?.applyKeyboardShowMode()
-        }
-
-        /**
-         * The bubble's keyboard lobe: toggle the summoned system keyboard for the current field.
-         * Returns the NEW summoned state (true = keyboard now allowed to show).
-         */
-        fun toggleSummonedKeyboard(): Boolean {
-            val svc = instance ?: return false
-            svc.keyboardSummoned = !svc.keyboardSummoned
-            svc.lastSummonToggleMs = System.currentTimeMillis()
-            svc.applyKeyboardShowMode()
-            if (svc.keyboardSummoned) {
-                // Lifting suppression (SHOW_MODE_AUTO) does not SHOW an IME that has settled into
-                // hidden — the field must re-request it. A click on the focused field is the one
-                // cross-app way an accessibility service has to ask; without it only the first
-                // toggle ever worked (the initial mode flip triggers a re-evaluation, later ones
-                // do not — owner repro 2026-08-01). The node is refresh()ed first (a stale node
-                // no-ops the click), the anatomy is logged, and if the IME has not risen shortly
-                // the request is retried once — the lobe tap's own window churn can swallow the
-                // first click.
-                val focused = svc.findFocusedEditText()
-                val field = focused ?: svc.lastFocusedEditText?.takeIf { runCatching { it.refresh() }.getOrDefault(false) }
-                val clicked = field?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-                android.util.Log.i(
-                    "WE-DIAG",
-                    "kbd summon: field=" + (if (focused != null) "focused" else if (field != null) "last" else "none") +
-                        " clickOk=" + clicked,
-                )
-                svc.serviceScope.launch {
-                    delay(600)
-                    if (svc.keyboardSummoned && !svc.imeWasVisible) {
-                        val retry = (svc.findFocusedEditText() ?: svc.lastFocusedEditText)
-                            ?.performAction(AccessibilityNodeInfo.ACTION_CLICK) ?: false
-                        android.util.Log.i("WE-DIAG", "kbd summon retry: clickOk=" + retry)
-                    }
-                }
-            } else {
-                android.util.Log.i("WE-DIAG", "kbd toggle -> hidden")
-            }
-            return svc.keyboardSummoned
-        }
         fun getInstance(): WhisperAccessibilityService? = instance
 
         fun setFocusListener(listener: OnTextFieldFocusListener?) {

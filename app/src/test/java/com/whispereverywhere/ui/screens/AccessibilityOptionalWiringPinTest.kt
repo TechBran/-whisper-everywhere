@@ -35,8 +35,11 @@ import org.junit.Test
  *    because it was there.
  *  - *The resting bubble made conditional on the service again.* `alwaysOnMode()` back to the
  *    bare preference compiles and leaves a clipboard-mode user with an empty screen (N1).
- *  - *The keyboard lobe shown on the preference alone.* Its one action returns false with no
- *    bound service, so that is a control that does nothing when tapped (N2).
+ *  - *The dictation-first keyboard revived.* Removed whole by owner ruling 2026-09-17 (it was
+ *    a Preferences switch that SUPPRESSED the system keyboard while the service ran, with a
+ *    bubble lobe to summon it back). N2's old pin — the lobe shown only on pref AND bound
+ *    service — is now its inverse: no lobe, no preference, and no `SHOW_MODE_HIDDEN` anywhere
+ *    in app/src/main, so no code path can hide anyone's keyboard again.
  *  - *`&& WhisperAccessibilityService.isEnabled()` bolted onto the boot restart's eligibility
  *    check or the service's own start.* Either makes the service required again, from a place
  *    no copy or screen test looks at (N3). Both pins are member-scoped, never file-wide.
@@ -448,50 +451,48 @@ class AccessibilityOptionalWiringPinTest {
         )
     }
 
+    /**
+     * The dictation-first keyboard is GONE (owner ruling 2026-09-17: "we can get rid of that.
+     * We're not gonna need it"). This was N2's pin, inverted: it used to hold that the bubble's
+     * keyboard lobe showed only on the preference AND a bound service. Now it holds that there is
+     * no lobe, no preference, no summon, and — the part that matters to a user who had the switch
+     * on — no code path left that can set the accessibility service's show mode to HIDDEN. The
+     * show mode is per-bind state that comes up AUTO, so the removal migrates nothing; the pin is
+     * that nothing can put it back. Live-scoped where a truthful comment may still say the name.
+     */
     @Test
-    fun theKeyboardLobeIsNeverOfferedWhenNothingCanSummonAKeyboard() {
-        // N2: the lobe's ONE action is toggleSummonedKeyboard(), which returns false the instant
-        // the service is unbound — the premise, pinned at its source so this test cannot outlive
-        // it.
+    fun theDictationFirstKeyboardIsGoneAndNothingCanHideTheKeyboardAgain() {
+        val prefs = read("src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt")
+        val layout = read("src/main/res/layout/floating_bubble.xml")
+        val guide = read("src/main/java/com/whispereverywhere/ui/HowToGuide.kt")
+        assertEquals("no keyboard lobe on the bubble", 0, liveLineCount(service, "keyboardLobe"))
+        assertEquals("no keyboard lobe in the layout", 0, count(layout, "keyboard_lobe"))
+        assertEquals("no keyboard icon in the layout", 0, count(layout, "ic_keyboard"))
+        assertEquals("no summon for the service to answer", 0, count(service, "toggleSummonedKeyboard"))
+        assertEquals("no summon on the service", 0, count(accessibilityService, "toggleSummonedKeyboard"))
+        assertEquals("no summoned state", 0, count(accessibilityService, "keyboardSummoned"))
         assertEquals(
-            "the summon returns false with no bound service",
-            1,
-            count(
-                accessibilityService,
-                block(
-                    "        fun toggleSummonedKeyboard(): Boolean {",
-                    "            val svc = instance ?: return false",
-                ),
-            ),
-        )
-        assertEquals(
-            "so the lobe shows on the pref AND a bound service — never the pref alone",
-            1,
-            count(
-                service,
-                block(
-                    "                    keyboardLobe.visibility =",
-                    "                        if (app.preferencesManager.isDictationFirstKeyboard() &&",
-                    "                            WhisperAccessibilityService.isEnabled()",
-                    "                        ) View.VISIBLE",
-                    "                        else View.GONE",
-                ),
-            ),
-        )
-        assertEquals(
-            "and that is the lobe's ONE show: the other two writes are the GONE resets",
+            "the preference is gone from the store (the key string may survive in the retired-keys note)",
             0,
-            liveLineCount(service, "keyboardLobe.visibility = View.VISIBLE"),
+            liveLineCount(prefs, "DictationFirstKeyboard"),
         )
+        assertEquals("nothing reads it from the bubble", 0, count(service, "isDictationFirstKeyboard"))
+        assertEquals("nothing reads it from the service", 0, count(accessibilityService, "isDictationFirstKeyboard"))
+        assertEquals("no Settings switch", 0, count(settings, "Dictation-first"))
+        assertEquals("no guide section", 0, count(guide, "Dictation-first"))
+        // THE RULE THE USER FEELS: the service must never again set SHOW_MODE_HIDDEN. Counted over
+        // every file under app/src/main, live lines only, so the retirement notes may name it.
+        val mainRoot = source("src/main/AndroidManifest.xml").parentFile!!
+        val hidden = mainRoot.walkTopDown()
+            .filter { it.isFile && (it.extension == "kt" || it.extension == "xml") }
+            .filter { liveLineCount(it.readText().replace("\r\n", "\n"), "SHOW_MODE_HIDDEN") > 0 }
+            .map { it.relativeTo(mainRoot).path }
+            .toList()
+        assertEquals("SHOW_MODE_HIDDEN is set nowhere in app/src/main", emptyList<String>(), hidden)
         assertEquals(
-            "three visibility writes in all — two resets, one conditional show",
-            3,
-            liveLineCount(service, "keyboardLobe.visibility"),
-        )
-        assertEquals(
-            "the tap is still that one service call",
-            1,
-            count(service, "val shown = WhisperAccessibilityService.toggleSummonedKeyboard()"),
+            "and the service never touches the soft-keyboard controller's show mode at all",
+            0,
+            liveLineCount(accessibilityService, "softKeyboardController.showMode"),
         )
     }
 
@@ -503,10 +504,11 @@ class AccessibilityOptionalWiringPinTest {
     // required again — silently, compile-clean, and green everywhere else in this suite.
     //
     // SCOPE, deliberately: each pin reads ONE member body (the house `memberBody`), never the
-    // whole file. `FloatingBubbleService` reads `isEnabled()` legitimately in three other places —
-    // `alwaysOnMode()` (N1), the keyboard lobe's IDLE show (N2) and `deliverFinalTranscript` (§4,
-    // pinned in `AccessibilityOptionalDeliveryPinTest`) — and a file-wide count would forbid those
-    // too, i.e. it would go red on the very fixes the review asked for.
+    // whole file. `FloatingBubbleService` reads `isEnabled()` legitimately in two other places —
+    // `alwaysOnMode()` (N1) and `deliverFinalTranscript` (§4, pinned in
+    // `AccessibilityOptionalDeliveryPinTest`); the keyboard lobe's IDLE show (N2) went with the
+    // dictation-first keyboard — and a file-wide count would forbid those too, i.e. it would go
+    // red on the very fixes the review asked for.
 
     @Test
     fun theBootRestartNeverGatesOnTheAccessibilityService() {
