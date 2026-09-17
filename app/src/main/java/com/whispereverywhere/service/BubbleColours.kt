@@ -24,9 +24,20 @@ package com.whispereverywhere.service
  * is **not** a short list. What actually fails is not a colour, it is **low contrast** — and
  * contrast is computable. [CONTRAST_FLOOR] is asserted by `BubbleColoursTest` over
  * [panelTextArgbs] — EVERY colour that lands on the panel, not merely every palette entry — for
- * every pair of choices in [PALETTE] at every step of [OPACITY_STEPS] over both extreme
- * backdrops. Black-on-black is unreachable because it fails that arithmetic; so do pure red and
- * the app's own brand red, which is the whole reason [LIVE_DEFAULT] is not `#FF0000`.
+ * every pair of choices in [PALETTE] at every step of [OPACITY_STEPS] from
+ * [OPACITY_GUARANTEED_PERCENT] up ([GUARANTEED_STEPS]) over both extreme backdrops.
+ * Black-on-black is unreachable because it fails that arithmetic; so do pure red and the app's
+ * own brand red, which is the whole reason [LIVE_DEFAULT] is not `#FF0000`.
+ *
+ * ### 4.8.0 — the ladder goes MUCH clearer, and the guarantee is scoped rather than dropped
+ *
+ * Owner, 2026-09-17, on his tablet: *"The background clarity that we have, ninety percent
+ * opaque, we can go even further for the clear. It stops at eighty five percent. We can go even
+ * clearer than that, much clearer, honestly, where we're barely seeing that dark background and
+ * your video, whatever you have playing, will just play through that. So we can extend that bar
+ * even more."* So [OPACITY_STEPS] now runs down to 20%. The contrast arithmetic did not change
+ * and is not overruled: below [OPACITY_GUARANTEED_PERCENT] the app no longer PROMISES legibility
+ * over a white app, and the slider says so — the user is choosing the trade with it stated.
  *
  * ### Why the maths lives here and not in `android.graphics.Color`
  *
@@ -51,36 +62,67 @@ object BubbleColours {
      * How opaque the panel may be, in percent. The user picks one of these; nothing else is
      * reachable, because [opacityPercent] snaps every stored value onto this ladder.
      *
-     * Four steps rather than a continuous slider for the same reason the palette is curated:
-     * every reachable value is then enumerable, so the invariant is a cross product a test can
-     * walk rather than a range it has to sample.
+     * Steps rather than a continuous slider for the same reason the palette is curated: every
+     * reachable value is then enumerable, so the invariant is a cross product a test can walk
+     * rather than a range it has to sample. The spacing is UNEVEN by design — 10% strides down
+     * where the panel is furniture behind a video, 5% strides from 80 up where the contrast
+     * arithmetic turns over ([OPACITY_GUARANTEED_PERCENT] sits between 80 and 90) — so the
+     * Settings slider is driven by INDEX into this list, never by percent. Sorted ascending;
+     * `BubbleColoursTest` holds that, and that 85 and 90 are on it.
      */
-    val OPACITY_STEPS: List<Int> = listOf(85, 90, 95, 100)
+    val OPACITY_STEPS: List<Int> = listOf(20, 30, 40, 50, 60, 70, 80, 85, 90, 95, 100)
 
     /**
-     * THE FLOOR, AND WHY IT IS NOT CAUTION — state this before raising it.
+     * THE FLOOR: as clear as the panel goes. 20% — nearly clear, so a video plays through it.
      *
-     * The bubble floats over arbitrary third-party apps. As the panel becomes more transparent
-     * the backdrop stops being *our* black and becomes **someone else's screen**, whose colour
-     * we cannot know, cannot test and cannot choose. Below some opacity, therefore, **no** text
-     * colour can be guaranteed readable — over a white app even white text falls under
-     * [CONTRAST_FLOOR] at 50%, and the guarantee is not weakened at that point, it is *gone*.
+     * Owner ruling 2026-09-17: *"we can go even clearer than that, much clearer, honestly, where
+     * we're barely seeing that dark background and your video, whatever you have playing, will
+     * just play through that."* Until 4.8.0 this was 85 and carried the legibility guarantee;
+     * that number and its reasoning live on, unchanged, as [OPACITY_GUARANTEED_PERCENT]. The
+     * floor is now a fact about how far the slider goes, not about what can be read there.
+     *
+     * **Below [OPACITY_GUARANTEED_PERCENT] the app no longer promises legibility over a white
+     * app.** The bubble floats over arbitrary third-party apps; as the panel goes clear the
+     * backdrop stops being *our* black and becomes someone else's screen, and over a white one
+     * even white text falls under [CONTRAST_FLOOR] at 50%. That is still true, and it is why the
+     * guarantee stops at 85 rather than being stretched — the arithmetic is not overruled, it is
+     * SCOPED. What changed is who decides: the user is choosing the trade with it stated on the
+     * slider (over dark content the words read fine; over a white page they can wash out), the
+     * way the owner chose it with the tablet in his hand. Nothing here decides for them.
+     *
+     * 20 rather than 0: at 0% there is no panel and the words float bare on the app beneath —
+     * a different feature, not a clearer panel — and the owner's words were "barely seeing that
+     * dark background", not "not seeing it".
+     */
+    const val OPACITY_FLOOR_PERCENT: Int = 20
+
+    /**
+     * WHERE THE GUARANTEE ENDS: the lowest step at which every [PALETTE] entry clears
+     * [CONTRAST_FLOOR] over ANY backdrop — the number the 4.5.1 floor was, kept as the fact it
+     * always was, now that the floor itself has moved below it.
      *
      * 85% is not a round number somebody liked: it is the **lowest 5%-step at which the whole
      * of [PALETTE] still clears the floor over a white backdrop**, and the entry that binds it
      * is the owner's own red ([LIVE_DEFAULT], 4.74:1 here). One step lower, 80%, and the red
-     * falls to 3.96:1 — `BubbleColoursTest` asserts both directions, so the floor cannot be
-     * moved without the palette being re-argued.
+     * falls to 3.96:1 — `BubbleColoursTest` asserts both directions, so this cannot be moved
+     * without the palette being re-argued.
      *
-     * Because the floor makes every palette entry safe at every step, the two settings are
-     * **independent**: there is no cross-validation anywhere in the app, and lowering the
-     * opacity can never make a colour the user already chose illegible.
-     *
-     * If more transparency than this is wanted, that is the owner's ruling to make with the
-     * trade in front of him — the trade being that below 85% the app stops being able to promise
-     * the words are readable at all.
+     * At and above this step the two settings are **independent**: every palette entry is safe
+     * at every guaranteed step, so there is no cross-validation anywhere in the app and lowering
+     * the opacity within the guaranteed band can never make a colour the user already chose
+     * illegible. Below it the panel is the user's call (see [OPACITY_FLOOR_PERCENT]), and the
+     * invariant is asserted over [GUARANTEED_STEPS] exactly as it was asserted over the whole
+     * ladder before — the same strength, on the steps where it can be true.
      */
-    const val OPACITY_FLOOR_PERCENT: Int = 85
+    const val OPACITY_GUARANTEED_PERCENT: Int = 85
+
+    /**
+     * The steps the legibility invariant is stated over — [OPACITY_STEPS] from
+     * [OPACITY_GUARANTEED_PERCENT] up. [worstContrast] and therefore [legibleEverywhere] walk
+     * this list: "legible everywhere the guarantee holds", which since 4.8.0 is not everywhere
+     * the slider goes.
+     */
+    val GUARANTEED_STEPS: List<Int> = OPACITY_STEPS.filter { it >= OPACITY_GUARANTEED_PERCENT }
 
     /**
      * The shipped default, and it is the panel users have today: `preview_bubble_background` is
@@ -100,7 +142,8 @@ object BubbleColours {
      * the committed default lives).
      *
      * Every entry is opaque and every entry clears [CONTRAST_FLOOR] at 85% over both a black and
-     * a white backdrop; the darkest is `Red` at 4.74:1 and it is what sets [OPACITY_FLOOR_PERCENT].
+     * a white backdrop; the darkest is `Red` at 4.74:1 and it is what sets
+     * [OPACITY_GUARANTEED_PERCENT].
      * Adding an entry means re-running `BubbleColoursTest`, which will reject it if it is too dark
      * — that is the intended way to extend this list.
      */
@@ -136,18 +179,18 @@ object BubbleColours {
      * The live words' default: **red**, per the ruling, and `#FF5252` rather than `#FF0000`.
      *
      * Pure red is not a caution-driven rejection — it fails the arithmetic. Over a white app at
-     * the default 90% it reaches 4.40:1 and at the 85% floor 3.78:1, both under
+     * the default 90% it reaches 4.40:1 and at the 85% guaranteed step 3.78:1, both under
      * [CONTRAST_FLOOR]; `#FF5252` reaches 5.51:1 and 4.74:1. (The app's own brand red `#EF4444`
      * fails too, at 4.67:1 / 4.02:1, which is why the default is not reused from `colors.xml`.)
      * Every ratio quoted in this file is what the functions below return — recomputed against
      * them, because a KDoc number that came from a third implementation is what the next reader
      * trusts.
      * Pure red is perfectly legible over a *dark* app — the failure is entirely the backdrop we
-     * cannot know, which is the same fact [OPACITY_FLOOR_PERCENT] exists for.
+     * cannot know, which is the same fact [OPACITY_GUARANTEED_PERCENT] exists for.
      *
      * It is also the darkest entry on [PALETTE], so the owner can overrule the shade in this one
-     * constant; moving it to anything darker will fail `BubbleColoursTest` and force the opacity
-     * floor to be re-argued with it, which is the correct coupling.
+     * constant; moving it to anything darker will fail `BubbleColoursTest` and force the
+     * guaranteed step to be re-argued with it, which is the correct coupling.
      */
     val LIVE_DEFAULT: Int = 0xFFFF5252.toInt()
 
@@ -205,13 +248,15 @@ object BubbleColours {
     private val EXTREME_BACKDROPS = listOf(0xFF000000.toInt(), 0xFFFFFFFF.toInt())
 
     /**
-     * The stored opacity, clamped to [OPACITY_FLOOR_PERCENT] and snapped onto [OPACITY_STEPS].
+     * The stored opacity, clamped to [OPACITY_FLOOR_PERCENT]..100 and snapped onto
+     * [OPACITY_STEPS] — the nearest step, which on this uneven ladder means 82 → 80 and 83 → 85.
      *
      * Every read goes through this, exactly as every panel-geometry read goes through
      * `applyPreviewSize`'s re-clamp: a value written by an older build, a corrupted preferences
-     * file, or a future edit of the ladder must not be able to put an unreadable panel on
+     * file, or a future edit of the ladder must not be able to put a value off the ladder on
      * screen. `0` — what an unset Int preference reads as — becomes the floor, not full
-     * transparency.
+     * transparency. (Every pre-4.8 stored value — 85, 90, 95, 100 — is still on the ladder, so an
+     * upgrade snaps nobody anywhere.)
      */
     fun opacityPercent(stored: Int): Int {
         val clamped = stored.coerceIn(OPACITY_FLOOR_PERCENT, OPACITY_STEPS.max())
@@ -308,18 +353,22 @@ object BubbleColours {
     }
 
     /**
-     * The WORST contrast [textArgb] can reach anywhere the bubble is allowed to be — the minimum
-     * over every [OPACITY_STEPS] step and both [EXTREME_BACKDROPS].
+     * The WORST contrast [textArgb] can reach anywhere the GUARANTEE holds — the minimum over
+     * every [GUARANTEED_STEPS] step and both [EXTREME_BACKDROPS]. Since 4.8.0 that is not every
+     * step the slider reaches: below [OPACITY_GUARANTEED_PERCENT] the panel is the user's call
+     * and no colour is promised readable there, so those steps are outside this minimum by
+     * construction — including them would make every palette entry "illegible" and the guard
+     * meaningless, which is the opposite of scoping it.
      *
      * The two extremes bound every screen, but NOT by monotonicity of the ratio — composite
      * *luminance* is monotone in the backdrop's, the contrast *ratio* is not: it falls and then
      * rises, with an interior minimum where the backdrop's luminance meets the text's. The
      * bounding argument is arithmetic instead, and worth writing down so a future palette edit is
-     * not licensed by a theorem that does not hold: the LIGHTEST composite reachable here is grey
-     * `38` (L = 0.019) because [OPACITY_FLOOR_PERCENT] stops the panel going thinner, and the
-     * DARKEST entry on [PALETTE] is L = 0.279 — so no intermediate backdrop can get near a text
-     * colour's luminance, and any colour dark enough for that to be possible already fails over
-     * the black extreme.
+     * not licensed by a theorem that does not hold: the LIGHTEST composite reachable within the
+     * guarantee is grey `38` (L = 0.019) because [OPACITY_GUARANTEED_PERCENT] is where the band
+     * starts, and the DARKEST entry on [PALETTE] is L = 0.279 — so no intermediate backdrop can
+     * get near a text colour's luminance, and any colour dark enough for that to be possible
+     * already fails over the black extreme.
      *
      * Requiring both extremes is what excludes dark text at *any* opacity (over a black backdrop
      * the composite is black at every alpha, so a dark colour fails there regardless) and what
@@ -330,13 +379,17 @@ object BubbleColours {
      * number rather than the opaque colour's — the silent hole a derived hint fell into once.
      */
     fun worstContrast(textArgb: Int): Double =
-        OPACITY_STEPS.minOf { percent ->
+        GUARANTEED_STEPS.minOf { percent ->
             EXTREME_BACKDROPS.minOf { backdrop ->
                 val background = compositeOver(percent, backdrop)
                 contrastRatio(composite(textArgb, background), background)
             }
         }
 
-    /** Whether [textArgb] clears [CONTRAST_FLOOR] everywhere the bubble can be. */
+    /**
+     * Whether [textArgb] clears [CONTRAST_FLOOR] everywhere the guarantee holds — every step of
+     * [GUARANTEED_STEPS] over both extreme backdrops. See [worstContrast] for why the steps
+     * below [OPACITY_GUARANTEED_PERCENT] are outside the question.
+     */
     fun legibleEverywhere(textArgb: Int): Boolean = worstContrast(textArgb) >= CONTRAST_FLOOR
 }

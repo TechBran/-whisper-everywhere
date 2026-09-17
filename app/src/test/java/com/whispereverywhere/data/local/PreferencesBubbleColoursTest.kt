@@ -88,8 +88,12 @@ class PreferencesBubbleColoursTest {
         assertEquals(BubbleColours.OPACITY_FLOOR_PERCENT, readOpacity())
 
         store["bubble_live_colour"] = 0xFFEF4444.toInt() // the app's brand red: fails the floor
+        // 4.8.0: 40 is ON the ladder now (the owner extended it down to 20), so it reads back as
+        // itself; a value UNDER the new floor still comes back as the floor.
         store["bubble_opacity_percent"] = 40
         assertEquals(BubbleColours.LIVE_DEFAULT, readLive())
+        assertEquals(40, readOpacity())
+        store["bubble_opacity_percent"] = 7
         assertEquals(BubbleColours.OPACITY_FLOOR_PERCENT, readOpacity())
 
         // Whatever is stored, EVERY colour the panel then paints is legible — the two values the

@@ -163,26 +163,61 @@ class BubbleColourRowsPinTest {
     }
 
     @Test
-    fun theOpacityControlCannotReachBelowTheFLOOR() {
-        // The one setting that can void the guarantee for every colour at once. Its range starts
-        // at the floor and its resolution is the ladder — both read from BubbleColours, so the
-        // control cannot disagree with the object that computed them.
-        assertEquals(1, liveLineCount(opacity, "BubbleColours.OPACITY_FLOOR_PERCENT.toFloat()"))
-        assertTrue(liveLineCount(opacity, "BubbleColours.OPACITY_STEPS") >= 1)
-        assertEquals("no literal bound", 0, liveLineCount(opacity, "0f..") + liveLineCount(opacity, "..100f"))
-        // The floor's REASON is said to the user, not only to the next reader of the KDoc: a
-        // slider that stops at 85% with no explanation reads as an arbitrary limit. The number in
-        // that sentence is INTERPOLATED from the constant rather than typed, so moving the floor
-        // cannot leave the copy claiming the old one.
-        assertTrue(
-            "the row must say what the floor buys",
-            liveLineCount(opacity, "OPACITY_FLOOR_PERCENT}%") >= 1,
+    fun theOpacityControlIsINDEXDrivenOverTheLadderAndSaysTheTradeInTheLaddersOwnNumbers() {
+        // 4.8.0 RE-SPELL (the old needle — a percent range starting at the floor — tripped by
+        // name first, as a pin should). The ladder is UNEVEN now (20..80 by 10, then 85, 90,
+        // 95, 100), and a percent-range Slider with `steps` assumes EVEN spacing: it would put
+        // stops at values not on the ladder and turn the setter's re-snap into a correction the
+        // user can feel. So the control is driven by INDEX: value = the current step's index,
+        // range 0..size-1, `steps` = size-2 (one stop per entry), and the pick maps back
+        // THROUGH the list. Every reachable value is therefore a ladder entry by construction.
+        assertEquals(
+            "the slider's value is the current step's INDEX, from the ladder",
+            1,
+            liveLineCount(opacity, "val index = BubbleColours.OPACITY_STEPS.indexOf(percent).coerceAtLeast(0)"),
+        )
+        assertEquals(1, liveLineCount(opacity, "value = index.toFloat(),"))
+        assertEquals(
+            "the range is the index range, read from the ladder's size",
+            1,
+            liveLineCount(opacity, "valueRange = 0f..(BubbleColours.OPACITY_STEPS.size - 1).toFloat(),"),
         )
         assertEquals(
-            "the floor must not be spelled as a literal in the copy",
-            0,
-            liveLineCount(opacity, "\"${BubbleColours.OPACITY_FLOOR_PERCENT}%"),
+            "one stop per ladder entry",
+            1,
+            liveLineCount(opacity, "steps = BubbleColours.OPACITY_STEPS.size - 2,"),
         )
+        assertEquals(
+            "the pick maps the position back THROUGH the ladder — never `position.toInt()` as a percent",
+            1,
+            liveLineCount(opacity, "onPick(BubbleColours.OPACITY_STEPS[position.roundToInt()])"),
+        )
+        assertEquals("no percent literal bound", 0, liveLineCount(opacity, "..100f") + liveLineCount(opacity, "85f"))
+        assertEquals(
+            "the old percent-driven form is gone: a percent value with `steps` is exactly the " +
+                "even-spacing assumption this re-spell removes",
+            0,
+            liveLineCount(opacity, "value = percent.toFloat()") + liveLineCount(opacity, "OPACITY_FLOOR_PERCENT.toFloat()"),
+        )
+        // THE TRADE IS SAID TO THE USER, in three facts, each INTERPOLATED from its constant
+        // rather than typed so moving a number cannot leave the copy claiming the old one:
+        // how low it goes, where the guarantee ends, what happens below it.
+        assertTrue("how low it goes", liveLineCount(opacity, "OPACITY_FLOOR_PERCENT}%") >= 1)
+        assertTrue("where the guarantee ends", liveLineCount(opacity, "OPACITY_GUARANTEED_PERCENT}% and above") >= 1)
+        assertTrue("what happens below it", liveLineCount(opacity, "Below \${BubbleColours.OPACITY_GUARANTEED_PERCENT}%") >= 1)
+        assertTrue(liveLineCount(opacity, "over a white page they can wash out") >= 1)
+        assertTrue(liveLineCount(opacity, "a video plays through the panel") >= 1)
+        assertEquals(
+            "no percent spelled as a literal in the copy",
+            0,
+            liveLineCount(opacity, "\"${BubbleColours.OPACITY_FLOOR_PERCENT}%") +
+                liveLineCount(opacity, "\"${BubbleColours.OPACITY_GUARANTEED_PERCENT}%") +
+                liveLineCount(opacity, " ${BubbleColours.OPACITY_GUARANTEED_PERCENT}% ") +
+                liveLineCount(opacity, " ${BubbleColours.OPACITY_FLOOR_PERCENT}% "),
+        )
+        // The old sentence — "is as far as it goes" — claimed the floor was the guarantee. It
+        // is not, since 4.8.0, and the sentence must not survive.
+        assertEquals(0, liveLineCount(opacity, "as far as it goes"))
     }
 
     @Test

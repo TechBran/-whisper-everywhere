@@ -59,6 +59,7 @@ import com.whispereverywhere.ui.onboarding.OnboardingLogic
 import com.whispereverywhere.ui.theme.*
 import com.whispereverywhere.util.formatBytes
 import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1662,13 +1663,17 @@ private fun BubblePaletteGrid(
 }
 
 /**
- * How opaque the panel is, and the one control that can void the guarantee for every colour at
- * once — so its range starts at [BubbleColours.OPACITY_FLOOR_PERCENT] and its resolution is
- * [BubbleColours.OPACITY_STEPS], both read from the object that computed them.
+ * How opaque the panel is. Its reachable set is [BubbleColours.OPACITY_STEPS], read from the
+ * object that computed it, and since 4.8.0 the slider is driven by INDEX into that list rather
+ * than by percent: the ladder is uneven (10s down where the panel is furniture behind a video,
+ * 5s from 80 where the contrast arithmetic turns over), and a percent-range `Slider` with `steps`
+ * assumes even spacing — it would put stops at values that are not on the ladder and let the
+ * setter's re-snap become a correction the user can feel.
  *
- * The floor's REASON is said to the user and not only to the next reader of a KDoc: a slider that
- * stops at 85% with no explanation reads as an arbitrary limit, and the next person to be asked
- * about it should be able to see the trade.
+ * The trade is said to the user and not only to the next reader of a KDoc (owner ruling
+ * 2026-09-17: the panel may go nearly clear so a video plays through it): how low it goes, where
+ * the legibility guarantee ends ([BubbleColours.OPACITY_GUARANTEED_PERCENT]) and what happens
+ * below it. All three numbers are interpolated from the constants, never typed.
  */
 @Composable
 private fun BubbleOpacityRow(percent: Int, onPick: (Int) -> Unit) {
@@ -1678,21 +1683,27 @@ private fun BubbleOpacityRow(percent: Int, onPick: (Int) -> Unit) {
             style = MaterialTheme.typography.bodyLarge,
         )
         Text(
-            text = "Lower lets the app underneath show through. " +
-                "${BubbleColours.OPACITY_FLOOR_PERCENT}% is as far as it goes: below that the " +
-                "background behind your words is mostly someone else's screen, and no colour " +
-                "can be promised readable on it.",
+            text = "Lower lets whatever is underneath show through — at " +
+                "${BubbleColours.OPACITY_FLOOR_PERCENT}% a video plays through the panel. At " +
+                "${BubbleColours.OPACITY_GUARANTEED_PERCENT}% and above every text colour is " +
+                "readable over any app. Below ${BubbleColours.OPACITY_GUARANTEED_PERCENT}% the " +
+                "words are readable over dark content, but over a white page they can wash out.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // `percent` arrives already snapped (the getter runs opacityPercent), so it is on the
+        // ladder; the coerce is for the one frame a stale composition could hand a value that
+        // is not, and it lands on the floor rather than throwing.
+        val index = BubbleColours.OPACITY_STEPS.indexOf(percent).coerceAtLeast(0)
         Slider(
-            value = percent.toFloat(),
-            onValueChange = { snapped -> onPick(snapped.toInt()) },
-            valueRange = BubbleColours.OPACITY_FLOOR_PERCENT.toFloat()..
-                BubbleColours.OPACITY_STEPS.max().toFloat(),
+            value = index.toFloat(),
+            onValueChange = { position ->
+                onPick(BubbleColours.OPACITY_STEPS[position.roundToInt()])
+            },
+            valueRange = 0f..(BubbleColours.OPACITY_STEPS.size - 1).toFloat(),
             // One position per ladder entry: `steps` counts the stops BETWEEN the ends, so the
-            // reachable set is exactly OPACITY_STEPS and the setter's re-snap is a no-op rather
-            // than a correction the user can feel.
+            // reachable set is exactly OPACITY_STEPS — by index, so the uneven spacing is a
+            // property of the list and not of the control.
             steps = BubbleColours.OPACITY_STEPS.size - 2,
         )
     }

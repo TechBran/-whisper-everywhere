@@ -95,14 +95,20 @@ class BubbleColoursTest {
     // ---------------------------------------------------------------- THE INVARIANT
 
     @Test
-    fun everyPALETTEEntryClearsTheFloorAtEVERYReachableOpacityOverEITHERExtremeBackdrop() {
+    fun everyPALETTEEntryClearsTheFloorAtEVERYGuaranteedOpacityOverEITHERExtremeBackdrop() {
         // THE WHOLE GUARD. The bubble floats over arbitrary third-party apps, so the backdrop is
         // unknowable; composite luminance is monotone in the backdrop's, so black and white
         // BOUND every screen that can ever be behind it. Requiring both is what excludes dark
         // text at any opacity (over a black backdrop the composite is black at every alpha) and
         // what makes the LOWEST opacity the binding case for light text.
+        //
+        // 4.8.0: the product is over GUARANTEED_STEPS — every step from OPACITY_GUARANTEED_PERCENT
+        // up — which is exactly the ladder this test walked before the owner extended it
+        // downward (asserted in theLadderGoesDownTo20AndTheGuaranteeStartsAt85). The strength
+        // here is unchanged; the steps below 85 are outside the promise by construction.
+        assertEquals(listOf(85, 90, 95, 100), BubbleColours.GUARANTEED_STEPS)
         for (swatch in BubbleColours.PALETTE) {
-            for (percent in BubbleColours.OPACITY_STEPS) {
+            for (percent in BubbleColours.GUARANTEED_STEPS) {
                 for (backdrop in listOf(black, white)) {
                     val bg = BubbleColours.compositeOver(percent, backdrop)
                     val ratio = BubbleColours.contrastRatio(swatch.argb, bg)
@@ -147,7 +153,7 @@ class BubbleColoursTest {
         for (live in BubbleColours.PALETTE) {
             for (committed in BubbleColours.PALETTE) {
                 for (argb in BubbleColours.panelTextArgbs(live.argb, committed.argb)) {
-                    for (percent in BubbleColours.OPACITY_STEPS) {
+                    for (percent in BubbleColours.GUARANTEED_STEPS) {
                         for (backdrop in listOf(black, white)) {
                             val bg = BubbleColours.compositeOver(percent, backdrop)
                             val ratio = BubbleColours.contrastRatio(BubbleColours.composite(argb, bg), bg)
@@ -174,8 +180,8 @@ class BubbleColoursTest {
                 }
             }
         }
-        // The binding case is the owner's own red at the floor step over a white app — the same
-        // 4.74:1 that DERIVED the opacity floor. If the worst case ever moves off it, the floor
+        // The binding case is the owner's own red at the GUARANTEED step over a white app — the
+        // same 4.74:1 that DERIVED that step. If the worst case ever moves off it, the guarantee
         // and the palette are no longer one decision.
         assertEquals("the worst case on the whole panel is $worstWhere", 4.7424, worst, 0.001)
     }
@@ -205,25 +211,70 @@ class BubbleColoursTest {
     }
 
     @Test
-    fun theTWOSettingsAreINDEPENDENTBecauseTheFLOORCarriesTheWholeGuarantee() {
+    fun theTWOSettingsAreINDEPENDENTWithinTheGuaranteeBecauseTheGUARANTEEDStepCarriesItWhole() {
         // The brief's two consequences: a colour chosen at one opacity must not become
-        // illegible when the opacity is LOWERED later. This is the branch built — the floor
-        // makes every valid colour safe at every valid opacity — so there is no cross-validation
-        // anywhere in the app and no state in which one setting invalidates the other. The
-        // proof is that the WORST step is the floor step, and the palette clears it.
-        val floorStep = BubbleColours.OPACITY_STEPS.min()
-        assertEquals(BubbleColours.OPACITY_FLOOR_PERCENT, floorStep)
+        // illegible when the opacity is LOWERED later. This is the branch built — the guaranteed
+        // step makes every valid colour safe at every guaranteed opacity — so there is no
+        // cross-validation anywhere in the app and no state in which one setting invalidates
+        // the other WITHIN THE BAND. The proof is that the WORST guaranteed step is the
+        // guaranteed step itself, and the palette clears it.
+        //
+        // 4.8.0 RE-SPELL: this used to say `OPACITY_FLOOR_PERCENT == OPACITY_STEPS.min()` and
+        // that the floor carries the guarantee. The floor is 20 now and carries nothing — the
+        // owner's ruling — so the claim moves, unchanged in strength, onto
+        // OPACITY_GUARANTEED_PERCENT, which is the same 85 it always was.
+        val guaranteed = BubbleColours.GUARANTEED_STEPS.min()
+        assertEquals(BubbleColours.OPACITY_GUARANTEED_PERCENT, guaranteed)
+        assertTrue("the guaranteed step is ON the ladder", guaranteed in BubbleColours.OPACITY_STEPS)
         for (swatch in BubbleColours.PALETTE) {
-            val atFloor = BubbleColours.OPACITY_STEPS.minOf { percent ->
+            val acrossBand = BubbleColours.GUARANTEED_STEPS.minOf { percent ->
                 listOf(black, white).minOf {
                     BubbleColours.contrastRatio(swatch.argb, BubbleColours.compositeOver(percent, it))
                 }
             }
-            val atFloorStepOnly = listOf(black, white).minOf {
-                BubbleColours.contrastRatio(swatch.argb, BubbleColours.compositeOver(floorStep, it))
+            val atGuaranteedOnly = listOf(black, white).minOf {
+                BubbleColours.contrastRatio(swatch.argb, BubbleColours.compositeOver(guaranteed, it))
             }
-            assertEquals("${swatch.name}: the floor step IS the worst case", atFloorStepOnly, atFloor, 1e-9)
+            assertEquals("${swatch.name}: the guaranteed step IS the worst case in the band", atGuaranteedOnly, acrossBand, 1e-9)
+            assertTrue("${swatch.name} clears the floor there", atGuaranteedOnly >= BubbleColours.CONTRAST_FLOOR)
         }
+        // And the independence claim is honest about its scope: it is NOT made below the band.
+        // The step directly under it takes the owner's red under the floor over a white app.
+        assertTrue(
+            BubbleColours.contrastRatio(
+                BubbleColours.LIVE_DEFAULT,
+                BubbleColours.compositeOver(BubbleColours.OPACITY_GUARANTEED_PERCENT - 5, white),
+            ) < BubbleColours.CONTRAST_FLOOR,
+        )
+    }
+
+    @Test
+    fun theLadderGoesDownTo20AndTheGuaranteeStartsAt85() {
+        // Owner ruling 2026-09-17: "we can go even clearer than that, much clearer, honestly,
+        // where we're barely seeing that dark background and your video … will just play through
+        // that." The ladder's SHAPE, pinned: sorted, 20 at the bottom, the old four steps still
+        // on it (nobody's stored value moves on upgrade), and 85 — the guarantee — on it too.
+        val steps = BubbleColours.OPACITY_STEPS
+        assertEquals("sorted ascending", steps.sorted(), steps)
+        assertEquals("no duplicate step", steps.size, steps.toSet().size)
+        assertEquals(BubbleColours.OPACITY_FLOOR_PERCENT, steps.min())
+        assertEquals(20, BubbleColours.OPACITY_FLOOR_PERCENT)
+        assertEquals(100, steps.max())
+        assertEquals(listOf(20, 30, 40, 50, 60, 70, 80, 85, 90, 95, 100), steps)
+        assertTrue("85 is on the ladder", 85 in steps)
+        assertTrue("90 is on the ladder", 90 in steps)
+        assertTrue("the default is on the ladder", BubbleColours.OPACITY_DEFAULT_PERCENT in steps)
+        assertEquals("the default did not move", 90, BubbleColours.OPACITY_DEFAULT_PERCENT)
+        // Every step the 4.5.1 ladder had is still reachable, so an upgrade snaps nobody.
+        listOf(85, 90, 95, 100).forEach { assertEquals(it, BubbleColours.opacityPercent(it)) }
+        // The guarantee: 85, the old floor, and the band above it is exactly the old ladder.
+        assertEquals(85, BubbleColours.OPACITY_GUARANTEED_PERCENT)
+        assertEquals(listOf(85, 90, 95, 100), BubbleColours.GUARANTEED_STEPS)
+        assertTrue(BubbleColours.OPACITY_GUARANTEED_PERCENT > BubbleColours.OPACITY_FLOOR_PERCENT)
+        // And the ladder is UNEVEN — 10s below 80, 5s from 80 — which is why the Settings slider
+        // is index-driven (BubbleColourRowsPinTest) rather than a percent range with even stops.
+        val strides = steps.zipWithNext { a, b -> b - a }
+        assertTrue("uneven by design", strides.toSet().size > 1)
     }
 
     @Test
@@ -244,9 +295,9 @@ class BubbleColoursTest {
         assertFalse("brand red #EF4444", BubbleColours.legibleEverywhere(0xFFEF4444.toInt()))
         // The three shades' numbers, PINNED — they are quoted in `LIVE_DEFAULT`'s KDoc, which is
         // what the next reader trusts, and an unasserted number in a KDoc drifts from the
-        // arithmetic beside it. Over a white app at the default step and at the floor step.
+        // arithmetic beside it. Over a white app at the default step and at the guaranteed step.
         val white90 = BubbleColours.compositeOver(90, white)
-        val white85 = BubbleColours.compositeOver(BubbleColours.OPACITY_FLOOR_PERCENT, white)
+        val white85 = BubbleColours.compositeOver(BubbleColours.OPACITY_GUARANTEED_PERCENT, white)
         assertEquals(4.40, BubbleColours.contrastRatio(0xFFFF0000.toInt(), white90), 0.01)
         assertEquals(3.78, BubbleColours.contrastRatio(0xFFFF0000.toInt(), white85), 0.01)
         assertEquals(5.51, BubbleColours.contrastRatio(BubbleColours.LIVE_DEFAULT, white90), 0.01)
@@ -265,40 +316,78 @@ class BubbleColoursTest {
     }
 
     @Test
-    fun theOPACITYFloorIsTheLOWESTStepTheWholePaletteSurvives_andNotARoundNumberSomebodyLiked() {
-        // One step below the floor, the palette breaks — so the floor is DERIVED from the
-        // darkest colour the owner's ruling asks for (the red) rather than picked.
-        val below = BubbleColours.OPACITY_FLOOR_PERCENT - 5
+    fun theGUARANTEEDStepIsTheLOWESTStepTheWholePaletteSurvives_andNotARoundNumberSomebodyLiked() {
+        // One step below the guaranteed step, the palette breaks — so 85 is DERIVED from the
+        // darkest colour the owner's ruling asks for (the red) rather than picked. 4.8.0 moved
+        // the FLOOR under it; this argues the 85 boundary so it stays argued, not assumed.
+        val below = BubbleColours.OPACITY_GUARANTEED_PERCENT - 5
+        assertEquals(80, below)
+        assertTrue("80 is a step the slider can now reach", below in BubbleColours.OPACITY_STEPS)
         val worstBelow = BubbleColours.PALETTE.minOf { swatch ->
             listOf(black, white).minOf {
                 BubbleColours.contrastRatio(swatch.argb, BubbleColours.compositeOver(below, it))
             }
         }
         assertTrue(
-            "at $below%% the palette's worst entry is $worstBelow:1 — if this passed, the floor is too high",
+            "at $below%% the palette's worst entry is $worstBelow:1 — if this passed, the guarantee starts too high",
             worstBelow < BubbleColours.CONTRAST_FLOOR,
         )
-        val worstAtFloor = BubbleColours.PALETTE.minOf { swatch ->
+        // THE BINDING ENTRY BY NAME: the owner's red over a white app at 80 is 3.96:1, under
+        // the 4.5:1 floor — the number the KDoc on OPACITY_GUARANTEED_PERCENT quotes.
+        val redAt80OverWhite = BubbleColours.contrastRatio(
+            BubbleColours.LIVE_DEFAULT, BubbleColours.compositeOver(80, white),
+        )
+        assertEquals(3.96, redAt80OverWhite, 0.01)
+        assertTrue("the owner's red FAILS the floor at 80 over white", redAt80OverWhite < BubbleColours.CONTRAST_FLOOR)
+        val worstAtGuaranteed = BubbleColours.PALETTE.minOf { swatch ->
             listOf(black, white).minOf {
-                BubbleColours.contrastRatio(swatch.argb, BubbleColours.compositeOver(BubbleColours.OPACITY_FLOOR_PERCENT, it))
+                BubbleColours.contrastRatio(swatch.argb, BubbleColours.compositeOver(BubbleColours.OPACITY_GUARANTEED_PERCENT, it))
             }
         }
-        assertTrue(worstAtFloor >= BubbleColours.CONTRAST_FLOOR)
+        assertTrue(worstAtGuaranteed >= BubbleColours.CONTRAST_FLOOR)
     }
 
     @Test
-    fun belowSomeOpacityNOColourAtAllCanBeGuaranteed_whichIsWHYThereIsAFloor() {
-        // The reason the floor is not caution. As the panel becomes more transparent the
+    fun belowSomeOpacityNOColourAtAllCanBeGuaranteed_whichIsWHYTheGuaranteeStopsWhereItDoes() {
+        // The reason the guarantee is not caution. As the panel becomes more transparent the
         // backdrop stops being OUR black and becomes someone else's screen. Past a point even
         // WHITE — the lightest thing there is — cannot clear the floor over a white app, so the
-        // guarantee is not weakened, it is gone. Nothing in the app may reach these values.
+        // guarantee is not weakened there, it is gone.
+        //
+        // 4.8.0: those values ARE reachable now — the owner ruled the panel may go nearly clear
+        // so a video plays through it — and this test's claim changes from "nothing may reach
+        // them" to "the app does not PROMISE anything there, and says so". The arithmetic is
+        // scoped, not overruled: `legibleEverywhere` walks GUARANTEED_STEPS, so the steps below
+        // 85 are outside every legibility answer the app gives, and the slider copy states the
+        // trade (BubbleColourRowsPinTest). White over white at the 20% floor is the honest
+        // worst case of what the user is choosing.
         assertTrue(
             BubbleColours.contrastRatio(white, BubbleColours.compositeOver(50, white)) < BubbleColours.CONTRAST_FLOOR,
         )
         assertTrue(
+            BubbleColours.contrastRatio(white, BubbleColours.compositeOver(BubbleColours.OPACITY_FLOOR_PERCENT, white)) < BubbleColours.CONTRAST_FLOOR,
+        )
+        assertTrue(
             BubbleColours.contrastRatio(white, BubbleColours.compositeOver(0, white)) < BubbleColours.CONTRAST_FLOOR,
         )
+        // Over a DARK app the words still read at the floor — the other half of the slider's
+        // sentence ("readable over dark content, but over a white page they can wash out").
+        assertTrue(
+            BubbleColours.contrastRatio(white, BubbleColours.compositeOver(BubbleColours.OPACITY_FLOOR_PERCENT, black)) >= BubbleColours.CONTRAST_FLOOR,
+        )
+        assertTrue(
+            BubbleColours.contrastRatio(BubbleColours.LIVE_DEFAULT, BubbleColours.compositeOver(BubbleColours.OPACITY_FLOOR_PERCENT, black)) >= BubbleColours.CONTRAST_FLOOR,
+        )
+        // The steps below the guarantee exist (the ruling) and none is below the floor (the clamp).
+        assertTrue(BubbleColours.OPACITY_STEPS.any { it < BubbleColours.OPACITY_GUARANTEED_PERCENT })
         assertTrue(BubbleColours.OPACITY_STEPS.none { it < BubbleColours.OPACITY_FLOOR_PERCENT })
+        // And the guard's scope is exactly the band: a colour legible at 85 and above is
+        // `legibleEverywhere` even though it is NOT legible over white at 20 — because 20 is not
+        // a step the app promises anything about.
+        assertTrue(BubbleColours.legibleEverywhere(white))
+        assertTrue(
+            BubbleColours.contrastRatio(white, BubbleColours.compositeOver(20, white)) < BubbleColours.CONTRAST_FLOOR,
+        )
     }
 
     // ---------------------------------------------------------------- the stored values
@@ -307,10 +396,16 @@ class BubbleColoursTest {
     fun aStoredOpacityIsSNAPPEDToTheLadderAndCanNEVERComeBackUnderTheFloor() {
         // Every read re-clamps, the way `applyPreviewSize` re-clamps the panel geometry: a
         // value written by an older build, a corrupted preferences file or a future palette
-        // edit must not be able to put an unreadable panel on screen.
-        assertEquals(85, BubbleColours.opacityPercent(0))
-        assertEquals(85, BubbleColours.opacityPercent(-1))
-        assertEquals(85, BubbleColours.opacityPercent(40))
+        // edit must not be able to put an off-ladder value on screen. Since 4.8.0 the floor is
+        // 20 and the ladder is UNEVEN, so the snap is "nearest step" and the boundaries between
+        // 80 and 85 are asserted by name: 82 -> 80, 83 -> 85.
+        assertEquals(20, BubbleColours.opacityPercent(0))
+        assertEquals(20, BubbleColours.opacityPercent(-1))
+        assertEquals(20, BubbleColours.opacityPercent(23))
+        assertEquals(30, BubbleColours.opacityPercent(26))
+        assertEquals(40, BubbleColours.opacityPercent(40))
+        assertEquals(80, BubbleColours.opacityPercent(82))
+        assertEquals(85, BubbleColours.opacityPercent(83))
         assertEquals(85, BubbleColours.opacityPercent(84))
         assertEquals(85, BubbleColours.opacityPercent(85))
         assertEquals(85, BubbleColours.opacityPercent(86))
@@ -318,6 +413,7 @@ class BubbleColoursTest {
         assertEquals(90, BubbleColours.opacityPercent(92))
         assertEquals(95, BubbleColours.opacityPercent(96))
         assertEquals(100, BubbleColours.opacityPercent(100))
+        assertEquals(100, BubbleColours.opacityPercent(200))
         assertEquals(100, BubbleColours.opacityPercent(255))
         // Every answer is on the ladder, for every input in a wide sweep.
         for (stored in -50..200) {
