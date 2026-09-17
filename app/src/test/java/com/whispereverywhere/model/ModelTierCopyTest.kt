@@ -115,39 +115,81 @@ class ModelTierCopyTest {
         assertNull(ModelTierCopy.forId("multi"))
         // The three Q8 cards, pinned exactly. Every sentence is checkable against
         // docs/measurements/2026-09-17-tab-cpu-ladder.md or a file's own ggml header.
-        assertEquals("Everyday accuracy, smallest download", ModelTierCopy.forId("small-q8")!!.headline)
+        //
+        // 4.9 — THE HEADLINES ARE THE OWNER'S WORDS (2026-09-17: "For small, we say fast —
+        // fastest, less accurate. Medium: balanced speed and accuracy. V3 turbo: highest
+        // accuracy, slightly slower than both other tiers."), with ONE amended by controller
+        // ruling: turbo's "slightly" is not a word the doc supports (4,849 ms per commit against
+        // 1,341 is 3.6×; his own felt drain was six to nine seconds against one to two), so the
+        // card says "slower than the other two" and carries his report in the body as his
+        // report, dated, on his tablet. Read together they are a ladder: fastest / balanced /
+        // highest accuracy.
+        assertEquals("Fastest, less accurate", ModelTierCopy.forId("small-q8")!!.headline)
         assertEquals(
-            "Whisper small — the same weights as the retired 190 MB Q5_1 model, stored at Q8_0. " +
-                "Measured to keep up with margin on the owner's tablet, and recommended on " +
-                "every device.",
+            "Whisper small at Q8_0 — the same weights as the retired 190 MB Q5_1 model. The " +
+                "fastest of the three on the owner's tablet and the least accurate: 1,217 ms " +
+                "per commit against medium's 1,341 and turbo's 4,849, measured 2026-09-17. " +
+                "Recommended on every device.",
             ModelTierCopy.forId("small-q8")!!.body,
         )
-        assertEquals("Sharper accuracy, larger download", ModelTierCopy.forId("medium-q8")!!.headline)
+        assertEquals("Balanced speed and accuracy", ModelTierCopy.forId("medium-q8")!!.headline)
         assertEquals(
             "Whisper medium at Q8_0: 24 encoder layers at 1024 dims against small's 12 at 768. " +
-                "Measured to keep up with margin on the owner's tablet; recommended where the " +
-                "device reports at least 4.5 GB of memory.",
+                "Within a tenth of small's speed on the owner's tablet (1,341 ms per commit " +
+                "against 1,217, measured 2026-09-17), and a much more accurate model. " +
+                "Recommended where the device reports at least 4.5 GB of memory.",
             ModelTierCopy.forId("medium-q8")!!.body,
         )
-        assertEquals("Highest accuracy, largest download", ModelTierCopy.forId("ultra-q8")!!.headline)
+        assertEquals("Highest accuracy, slower than the other two", ModelTierCopy.forId("ultra-q8")!!.headline)
         assertEquals(
             "Large-v3-turbo at Q8_0 — large-v3's own 32-layer encoder with a 4-layer decoder: " +
-                "the most accurate model on this ladder. On the owner's flagship tablet it kept " +
-                "up with no margin to spare, so on a less capable device expect the typed text " +
-                "to fall behind. Offered for its accuracy, not recommended. " +
-                ModelTierCopy.KEEP_UP_NOTE,
+                "the most accurate model on this ladder. Slower than the other two on the " +
+                "owner's tablet (4,849 ms per commit against 1,217 and 1,341, measured " +
+                "2026-09-17), where it kept up with no margin to spare; his own report the " +
+                "same day, after dictating on it: a six to nine second drain, \"totally " +
+                "manageable and doable\". On a less capable device expect the typed text to " +
+                "fall behind — a smaller Whisper is the fix. Recommended where the device " +
+                "reports at least 4.5 GB of memory.",
             ModelTierCopy.forId("ultra-q8")!!.body,
         )
-        // The measured sentences are SCOPED to the device they were measured on — the shape the
-        // no-speed-claims rule allows — and the RAM sentence states the catalogue's own threshold.
-        listOf("small-q8", "medium-q8").forEach {
-            assertTrue("'$it' must scope its measured claim to the tablet", ModelTierCopy.forId(it)!!.body.contains("on the owner's tablet"))
+        // The three headlines read as a ladder: each names its axis in the owner's vocabulary.
+        assertTrue(ModelTierCopy.forId("small-q8")!!.headline.startsWith("Fastest"))
+        assertTrue(ModelTierCopy.forId("medium-q8")!!.headline.startsWith("Balanced"))
+        assertTrue(ModelTierCopy.forId("ultra-q8")!!.headline.startsWith("Highest accuracy"))
+        assertFalse(
+            "turbo's card may not say 'slightly' — the measurement is 3.6× per commit and the " +
+                "owner's own drain was six to nine seconds; restoring the word is his call, one word",
+            ModelTierCopy.forId("ultra-q8")!!.headline.lowercase().contains("slightly"),
+        )
+        // Every body cites the measurement: the tablet AND the date of the doc it is checkable
+        // against (docs/measurements/2026-09-17-tab-cpu-ladder.md), and the three numbers are
+        // the doc's medians. Turbo's body ALSO carries the owner's dated report, as his report.
+        listOf("small-q8", "medium-q8", "ultra-q8").forEach {
+            val body = ModelTierCopy.forId(it)!!.body
+            assertTrue("'$it' must scope its measured claim to the tablet", body.contains("on the owner's tablet"))
+            assertTrue("'$it' must date the measurement it cites", body.contains("2026-09-17"))
         }
-        assertTrue(ModelTierCopy.forId("ultra-q8")!!.body.lowercase().contains("on the owner's flagship tablet"))
-        // 4.8.0: the owner's 4.5 GB (was 4.7's provisional 5.5 GB), on the row and on the card.
+        assertTrue(ModelTierCopy.forId("small-q8")!!.body.contains("1,217"))
+        assertTrue(ModelTierCopy.forId("medium-q8")!!.body.contains("1,341"))
+        assertTrue(ModelTierCopy.forId("ultra-q8")!!.body.contains("4,849"))
+        val turbo = ModelTierCopy.forId("ultra-q8")!!.body
+        assertTrue("turbo's body carries the owner's drain figure as HIS report", turbo.contains("six to nine second") && turbo.contains("his own report"))
+        assertTrue("...in his words", turbo.contains("totally manageable and doable"))
+        // 4.9: no card says "offered for measurement", "instrument" or "not recommended" — the
+        // ladder ships, and the RAM badge is what says whether a device can carry a rung.
+        listOf("small-q8", "medium-q8", "ultra-q8").forEach {
+            val all = (ModelTierCopy.forId(it)!!.headline + " " + ModelTierCopy.forId(it)!!.body).lowercase()
+            listOf("instrument", "for measurement", "not recommended", "offered for").forEach { phrase ->
+                assertFalse("'$it' still carries the retired sentence <<$phrase>>", all.contains(phrase))
+            }
+        }
+        // 4.8.0: the owner's 4.5 GB (was 4.7's provisional 5.5 GB), on the row and on the card
+        // — and since 4.9 on turbo's card too, at its own floor.
         assertEquals(4_500_000_000L, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
         assertTrue(ModelTierCopy.forId("medium-q8")!!.body.contains("at least 4.5 GB"))
         assertFalse(ModelTierCopy.forId("medium-q8")!!.body.contains("5.5 GB"))
+        assertEquals(4_500_000_000L, WhisperCatalog.byId("ultra-q8")!!.minRamBytes)
+        assertTrue(ModelTierCopy.forId("ultra-q8")!!.body.contains("at least 4.5 GB"))
     }
 
     @Test fun retired_and_unknown_tiers_have_no_copy() {
@@ -212,13 +254,15 @@ class ModelTierCopyTest {
     // The ladder makes three copy rules load-bearing that were previously slack, and each gets a
     // census below rather than a comment:
     //
-    //   1. No non-NPU rung RANKS another by speed, in either direction — the three Q8 rungs were
-    //      not measured against one another on the user's device. A measured sentence scoped to
-    //      the device it was measured on is allowed (4.7); a rank is not. The two NPU cards KEEP
-    //      their measured, owner-ruled "fastest": that is a true claim and removing it would be
-    //      the regression, so the census asserts BOTH halves.
-    //   2. The one rung whose verdict does not clear warns, plainly, that it may not keep up
-    //      with continuous speech, and names the remedy; a measured pass does not warn.
+    //   1. A CPU rung may rank its siblings by speed ONLY as measured on the tablet, dated (4.9;
+    //      until then no rank at all — the three Q8 rungs were not measured against one another
+    //      on the user's device, and still have not been). What stays forbidden is the ABSOLUTE:
+    //      a speed word about every device, or about the device in the user's hand. The two NPU
+    //      cards KEEP their measured, owner-ruled "fastest on this device": that is a true claim
+    //      and removing it would be the regression, so the census asserts BOTH halves.
+    //   2. Every rung whose verdict does not clear warns, plainly, that it may not keep up with
+    //      continuous speech, and names the remedy; a rung whose verdict clears does not carry
+    //      the note. Since 4.9 no rung's verdict fails to clear, so the note renders nowhere.
     //   3. A q8_0 rung still names its quantisation and its retired q5 twin's, because the
     //      twins are installed on the devices of everyone who tried one on the internal track.
 
@@ -286,54 +330,93 @@ class ModelTierCopyTest {
     }
 
     /**
-     * **NO NON-NPU RUNG CLAIMS SPEED, AND THE TWO NPU CARDS STILL DO.** One test for both halves,
-     * on purpose: they are the same rule seen from its two ends, and a census that only forbade
-     * would be satisfied by scrubbing the lineup silent — which would delete two claims that are
-     * measured, owner-ruled and true.
+     * **A CPU RUNG RANKS SPEED ONLY AGAINST ITS SIBLINGS, ON THE TABLET, DATED — AND THE TWO NPU
+     * CARDS STILL CLAIM THEIRS.** One test for both halves, on purpose: they are the same rule seen
+     * from its two ends, and a census that only forbade would be satisfied by scrubbing the
+     * lineup silent — which would delete two claims that are measured, owner-ruled and true.
      *
-     * **The forbidding half.** The three Q8 rungs each carry a measured verdict, and each card
-     * states it as a verdict scoped to the device it was measured on — never as a rank. None of
-     * the three was measured against another on the user's device, so none may be ranked against
-     * another in EITHER direction. (4.6's version of this paragraph said the intuitive ordering
-     * was probably wrong because the LARGER `q8_0` file sits on ggml's ARM i8mm repack path; the
-     * 2026-09-17 session measured exactly that, and the rule survives the measurement because it
-     * is about the user's device, not the owner's tablet.) See [SPEED_CLAIM_WORDS] for the
-     * vocabulary and for the three words that are deliberately not in it.
+     * **The forbidding half, AMENDED in 4.9 and not deleted.** From 4.6 to 4.8 no CPU card could
+     * use a speed word at all: the three Q8 rungs were measured on ONE tablet and never against
+     * one another on the user's device, so a rank in either direction was a prediction. 4.9
+     * allows exactly one thing more, on the owner's ruling that the tiers be labelled as a ladder
+     * ("fastest, less accurate" / "balanced speed and accuracy" / "highest accuracy, slower"):
+     * a RANK AMONG THE THREE, when the card names the device it was measured on and the date —
+     * the headline ranks, the body scopes, and both are pinned exactly above. So a speed word is
+     * legal in a CPU card's headline (the pinned rank) and in a body sentence that names the
+     * owner's tablet, and nowhere else on the card. What stays forbidden, and is the reason the
+     * rule exists: the ABSOLUTE — "fastest" about every device, or about the device in the
+     * user's hand ("this device"), which the app has not measured. See [SPEED_CLAIM_WORDS] for
+     * the vocabulary and for the three words that are deliberately not in it.
      *
      * **The requiring half.** `npu` and `npu-turbo` are gated tiers whose speed was measured on
      * our own devices (encode 1.78 s fixed per commit on the Fold6 against Multilingual's 2.3 s;
      * ~6 s per 17.6 s chunk on the Tab S10+) and ruled on by the owner (2026-09-10). Their cards
      * must go on saying so. This is the assertion that makes a future "scrub every speed word"
      * pass fail loudly instead of quietly costing the app a true claim.
-     *
-     * Note how this composes with the 3.7 census: [every_tier_takes_a_speed_vs_accuracy_position]
-     * requires one of [POSITION_WORDS], and this one forbids the speed members of that list on
-     * every CPU card — so a CPU rung has to satisfy the 3.7 rule with "accuracy", which is the one
-     * axis whisper's own checkpoint ordering entitles these cards to rank.
      */
-    @Test fun no_cpu_rung_claims_speed_and_the_two_npu_cards_still_do() {
+    @Test fun a_cpu_rung_ranks_speed_only_on_the_tablet_dated_and_the_two_npu_cards_still_claim_theirs() {
         val cpuRungs = offeredTiers.filter { !it.gated }
         // Guard the census's own reach: if the ladder ever loses its CPU rows, this test must not
         // pass by iterating nothing.
         assertEquals("the CPU ladder is not three rungs any more", 3, cpuRungs.size)
+        val absoluteScopes = listOf("every device", "any device", "all devices", "everywhere", "this device", "your device", "your phone")
         cpuRungs.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             // The displayName rides on the same card (OnboardingModelScreen.kt:686), above the
-            // headline, so it is part of what the user reads as this rung's claim.
-            val all = (
-                model.displayName + " " + copy.headline + " " + copy.body + " " +
-                    copy.badges.joinToString(" ")
-                ).lowercase()
+            // headline, so it is part of what the user reads as this rung's claim — and it may
+            // never carry a speed word (it names the model and its quantisation, nothing else).
             SPEED_CLAIM_WORDS.forEach { word ->
                 assertFalse(
-                    "CPU rung '${model.id}' claims speed with '$word'. The three Q8 rungs were " +
-                        "measured on ONE tablet and never against one another on the user's " +
-                        "device — a card may state its own measured verdict, scoped to that " +
-                        "tablet, and may not rank the rungs in either direction",
-                    Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(all),
+                    "CPU rung '${model.id}' claims speed in its NAME with '$word'",
+                    Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(model.displayName.lowercase()),
                 )
+                copy.badges.forEach { badge ->
+                    assertFalse("CPU rung '${model.id}' claims speed in a badge: '$badge'", Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(badge.lowercase()))
+                }
+            }
+            // The body: a speed word is legal ONLY in a sentence that names the tablet, and the
+            // body as a whole must cite the dated measurement it is checkable against.
+            val bodySentences = copy.body.split(". ").map { it.lowercase() }
+            bodySentences.forEach { sentence ->
+                val ranks = SPEED_CLAIM_WORDS.any { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(sentence) }
+                if (ranks) {
+                    assertTrue(
+                        "CPU rung '${model.id}' ranks speed in a sentence that does not name the " +
+                            "tablet it was measured on: <<$sentence>>. The three Q8 rungs were " +
+                            "measured on ONE tablet and never on the user's device — a rank is " +
+                            "legal only as that measurement, scoped to it",
+                        sentence.contains("owner's tablet"),
+                    )
+                }
+                // And NEVER the absolute, in any sentence: a speed word beside "every device" or
+                // "this device" is a claim about hardware nobody has measured.
+                absoluteScopes.forEach { scope ->
+                    assertFalse(
+                        "CPU rung '${model.id}' makes an absolute speed claim: <<$sentence>> pairs " +
+                            "a speed word with '$scope'",
+                        ranks && sentence.contains(scope),
+                    )
+                }
+            }
+            assertTrue("CPU rung '${model.id}' must date the measurement its rank rests on", copy.body.contains("2026-09-17"))
+            assertTrue("CPU rung '${model.id}' must name the tablet", copy.body.contains("owner's tablet"))
+            // The headline's rank is legal because it is pinned exactly beside a scoped body —
+            // and it may not itself claim a scope it has not earned.
+            absoluteScopes.forEach { scope ->
+                assertFalse("CPU rung '${model.id}' headline claims '$scope'", copy.headline.lowercase().contains(scope))
             }
         }
+        // The rank the three headlines state is the DOC'S order (1,217 < 1,341 < 4,849 ms per
+        // commit, docs/measurements/2026-09-17-tab-cpu-ladder.md): small is the one card that
+        // says "fastest", turbo the one that says "slower", medium neither.
+        assertTrue(ModelTierCopy.forId("small-q8")!!.headline.lowercase().contains("fastest"))
+        assertFalse(ModelTierCopy.forId("medium-q8")!!.headline.lowercase().let { h -> listOf("fastest", "slower", "faster", "slow").any { Regex("\\b$it\\b").containsMatchIn(h) } })
+        assertTrue(ModelTierCopy.forId("ultra-q8")!!.headline.lowercase().contains("slower"))
+        assertEquals(
+            "exactly one CPU card may call itself the fastest of the three",
+            listOf("small-q8"),
+            cpuRungs.filter { Regex("\\bfastest\\b").containsMatchIn(ModelTierCopy.forId(it.id)!!.headline.lowercase()) }.map { it.id },
+        )
         val npuCards = offeredTiers.filter { it.gated }
         assertEquals(listOf("npu", "npu-turbo"), npuCards.map { it.id })
         npuCards.forEach { model ->
@@ -357,21 +440,26 @@ class ModelTierCopyTest {
      * only warns has not said what it is.
      *
      * 4.6 had five warners and one earned exemption (`small-q8`, the twin of the one measured
-     * rung, which said "throughput unknown" instead). 4.7 — **the instrument set is one rung and
-     * it warns**: `ultra-q8` kept up on the owner's flagship tablet with no margin
-     * (`KeepUp.KEPT_UP_WITHOUT_MARGIN`), so "may not keep up with continuous speech on this
-     * device" is the honest shape of what a less capable device will see, and the remedy the
-     * note names — a smaller Whisper — is `medium-q8` or `small-q8`, both offered.
+     * rung, which said "throughput unknown" instead). 4.7 — the instrument set was one rung and
+     * it warned: `ultra-q8` kept up on the owner's flagship tablet with no margin
+     * (`KeepUp.KEPT_UP_WITHOUT_MARGIN`). 4.9 — **the instrument set is EMPTY and the note renders
+     * on no card.** The owner's ruling of 2026-09-17 cleared turbo for production (recorded beside
+     * its measurement in `TierThroughputRecord`), so by the coupling rule it is no longer an
+     * instrument; the rule here is unchanged — every instrument ends with the note, nothing with a
+     * clearing verdict carries it — and over an empty set its first half is vacuous, so this test
+     * ALSO holds that turbo's card still states the measured shape of its risk in its own words:
+     * the doc's "no margin", the fall-behind caution and the remedy. A rung that clears on a
+     * ruling rather than a margin is still a rung the user is owed that sentence about.
      *
-     * Nothing with a clearing verdict warns at all: `small-q8`, `medium-q8` and the two NPU tiers
-     * have numbers behind them, and a caution on a measured pass would train the user to ignore
-     * the caution. (`medium-q8` on a device under its RAM threshold gets the screen's own "High-end
-     * devices only" line instead, which is a statement about RAM and is true.)
+     * Nothing with a clearing verdict carries the NOTE: a caution on a measured pass would train
+     * the user to ignore the caution. (`medium-q8` and `ultra-q8` on a device under their RAM
+     * floor get the picker's own "High-end devices only" line instead, which is a statement about
+     * RAM and is true.)
      */
     @Test fun every_instrument_warns_and_nothing_with_a_clearing_verdict_does() {
         val note = ModelTierCopy.KEEP_UP_NOTE
         val instruments = WhisperCatalog.entries.filter { it.instrument }
-        assertEquals("the instrument set is not one rung any more", listOf("ultra-q8"), instruments.map { it.id })
+        assertEquals("the instrument set is not empty any more — the new rung must end with the note", emptyList<String>(), instruments.map { it.id })
 
         val warners = instruments.filter { ModelTierCopy.forId(it.id)!!.body.endsWith(note) }
         assertEquals(
@@ -387,12 +475,6 @@ class ModelTierCopyTest {
                     "what the model IS, which is the whole of what these cards are for",
                 body.removeSuffix(note).trim().length > 40,
             )
-            // The instrument's card states the measured shape of the risk in its own words too.
-            // "Keeps up on this flagship with no margin" is the doc's finding — that sentence is in
-            // docs/measurements/2026-09-17-tab-cpu-ladder.md. "Slower devices should expect to
-            // fall behind" is the CARD's own inference from 0.99, not a sentence the doc contains.
-            assertTrue("'${it.id}' must say it kept up with no margin", body.contains("no margin"))
-            assertTrue("'${it.id}' must say it is not recommended", body.contains("not recommended"))
         }
 
         (offeredTiers - instruments.toSet()).forEach { model ->
@@ -402,6 +484,17 @@ class ModelTierCopyTest {
                 ModelTierCopy.forId(model.id)!!.body.contains(note),
             )
         }
+
+        // The rung that clears by RULING and not by margin still states the risk in its own words.
+        // "Kept up with no margin" is the doc's finding (docs/measurements/2026-09-17-tab-cpu-
+        // ladder.md, 0.99 of the floor at the worst commit); "on a less capable device expect the
+        // typed text to fall behind" is the card's own inference from 0.99, and the remedy is the
+        // note's remedy — a smaller Whisper, which is `medium-q8` or `small-q8`, both offered.
+        val turbo = ModelTierCopy.forId("ultra-q8")!!.body
+        assertTrue("turbo must say it kept up with no margin", turbo.contains("no margin"))
+        assertTrue("turbo must carry the fall-behind caution", turbo.contains("expect the typed text to fall behind"))
+        assertTrue("turbo must name the remedy's axis — a smaller Whisper", turbo.contains("a smaller Whisper is the fix"))
+        assertFalse("turbo is no instrument and does not carry the note itself", turbo.contains(note))
     }
 
     /**
@@ -496,11 +589,12 @@ class ModelTierCopyTest {
      * true. `medium-q8` is that rung: it kept up on a 12 GB tablet, an 823 MB model on a 4 GB
      * phone is a real fact about the device in the user's hand, and "needs more RAM than this
      * device reports" is exactly what the owner's ruling says ("recommended above a RAM
-     * threshold"). The threshold is PROVISIONAL (the `extreme` precedent, pending the owner's
-     * weakest-device run), which the catalogue row says. The default stays at 0 — the floor for
+     * threshold"). **4.9: `ultra-q8` is the second such rung** — cleared by the owner's recorded
+     * ruling, no longer an instrument, and carrying a floor of its own constant (equal to
+     * medium's today, so he can raise turbo's alone). The default stays at 0 — the floor for
      * every device — so no phone reads a chooser with nothing recommended on it.
      */
-    @Test fun no_instrument_is_ram_gated_and_the_one_threshold_is_on_the_measured_medium_tier() {
+    @Test fun no_instrument_is_ram_gated_and_the_two_thresholds_are_on_measured_rungs() {
         offeredTiers.filter { !it.gated && it.instrument }.forEach { model ->
             assertEquals(
                 "instrument '${model.id}' is RAM-gated, so OnboardingModelScreen.kt:783 will " +
@@ -512,16 +606,20 @@ class ModelTierCopyTest {
         }
         // The default is recommended everywhere.
         assertEquals(0L, WhisperCatalog.byId(WhisperCatalog.DEFAULT_MODEL_ID)!!.minRamBytes)
-        // The one offered rung with a threshold, and it is measured — not an instrument.
+        // The two offered rungs with a threshold, and both are measured — neither an instrument.
         assertEquals(
-            listOf("medium-q8"),
+            listOf("medium-q8", "ultra-q8"),
             offeredTiers.filter { !it.gated && it.minRamBytes > 0L }.map { it.id },
         )
         assertFalse(WhisperCatalog.byId("medium-q8")!!.instrument)
+        assertFalse(WhisperCatalog.byId("ultra-q8")!!.instrument)
         assertEquals(4_500_000_000L, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
-        // ...and its card states the threshold in the user's units, so the screen's RAM line and
+        assertEquals(WhisperCatalog.MEDIUM_Q8_MIN_RAM_BYTES, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
+        assertEquals(WhisperCatalog.ULTRA_Q8_MIN_RAM_BYTES, WhisperCatalog.byId("ultra-q8")!!.minRamBytes)
+        // ...and each card states its threshold in the user's units, so the screen's RAM line and
         // the card's own sentence agree about why.
         assertTrue(ModelTierCopy.forId("medium-q8")!!.body.contains("4.5 GB"))
+        assertTrue(ModelTierCopy.forId("ultra-q8")!!.body.contains("4.5 GB"))
         // 4.8.0: the number is the owner's, not the retired `extreme` precedent's any more —
         // that row is still resolvable and still 5.5e9, and the two no longer agree, which is
         // the point: medium-q8's threshold was RULED, not inherited.
@@ -1269,12 +1367,13 @@ class ModelTierCopyTest {
         val POSITION_WORDS = listOf("fastest", "fast", "slower", "accuracy")
 
         /**
-         * **4.6 T2 — the vocabulary a CPU rung may not use, in EITHER direction.** A slow claim
-         * is as unearned as a fast one: in 4.6 nothing on the ladder was measured; since 4.7 the
-         * three Q8 rungs are measured on ONE tablet and never against one another on the user's
-         * device. A card that ranks the winner — or the loser — is a claim the owner has to catch
-         * instead of a finding a user can check. A MEASURED verdict scoped to the tablet ("kept
-         * up with margin on the owner's tablet") uses none of these words, by design.
+         * **4.6 T2 — the vocabulary a CPU rung may not use unscoped, in EITHER direction.** A
+         * slow claim is as unearned as a fast one: in 4.6 nothing on the ladder was measured;
+         * since 4.7 the three Q8 rungs are measured on ONE tablet and never against one another
+         * on the user's device. Since 4.9 a card MAY use these words to rank the three — the
+         * owner's ladder labels — but only in a headline pinned beside a body that names the
+         * tablet and the date, and never beside "every device" or "this device": a rank the
+         * user can check against a document, not a claim the owner has to catch.
          *
          * Every entry is matched WORD-ANCHORED, which is what lets the list keep "fast" without
          * failing "breakfast" and "slow" without failing "smallest".

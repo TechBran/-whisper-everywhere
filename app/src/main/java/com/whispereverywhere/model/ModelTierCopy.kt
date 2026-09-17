@@ -39,17 +39,33 @@ package com.whispereverywhere.model
  * 2026-09-17 (*"Q8 for everything." — "Q5 is definitely off the table."*) retired the four Q5 rungs
  * on the Tab S10+ measurement in `docs/measurements/2026-09-17-tab-cpu-ladder.md`. `small-q8` is the
  * floor for every device and the default; `medium-q8` is the medium tier, recommended above a RAM
- * threshold; `ultra-q8` is the optional top rung — offered for its accuracy, not recommended —
- * and the one [WhisperModel.instrument] left. Retired rungs have no card ([forId] answers null),
- * exactly as `pro` has had none since 4.6.
+ * threshold; `ultra-q8` was the optional top rung — offered for its accuracy, not recommended —
+ * and the one [WhisperModel.instrument] left until 4.9. Retired rungs have no card ([forId]
+ * answers null), exactly as `pro` has had none since 4.6.
  *
- * **The no-speed-claims rule STANDS on the CPU cards, and what it forbids is a RANK.** None of the
- * three rungs was measured against another on the user's device, so no card ranks them by speed in
- * either direction. What a card MAY now say is a MEASURED sentence scoped to the device it was
- * measured on — "measured to keep up with margin on the owner's tablet" is a finding with a
- * document behind it, not a prediction — and each card says exactly that, no more. The two NPU
- * cards KEEP their measured, owner-ruled "fastest": that claim is true and scoped to silicon this
- * app has benchmarked, and removing a true claim would be the regression.
+ * **4.9 — THE LADDER READS AS A LADDER, in the owner's words.** Ruling 2026-09-17, after his own
+ * dictation on all three: *"We should label each tier … in a simpler way to help users understand
+ * them. For small, we say fast — fastest, less accurate. Medium: balanced speed and accuracy. V3
+ * turbo: highest accuracy, slightly slower than both other tiers."* The three headlines are those
+ * words, made true — and one of them is amended, by controller ruling, where the measurement does
+ * not support the word: turbo's card says *"slower than the other two"*, not *"slightly slower"*,
+ * because 4,849 ms per commit against 1,341 and 1,217 is 3.6×, and the owner's own felt drain on
+ * the tablet (*"six to maybe nine second"*) against roughly one to two is not "slightly". His
+ * report is on the card as HIS report, dated, on his tablet — which is the honest version of his
+ * sentence. If he wants "slightly" back it is one word.
+ *
+ * **The no-speed-claims rule is AMENDED, not deleted, and what it still forbids is an ABSOLUTE.**
+ * Since 4.7 it forbade any RANK among the three CPU rungs, because none was measured against
+ * another on the user's device. 4.9 allows exactly one thing more: a ranking among the three
+ * rungs, when the card names the device it was measured on — the tablet — and the date. That is a
+ * finding with a document behind it (`docs/measurements/2026-09-17-tab-cpu-ladder.md`: 1,217 /
+ * 1,341 / 4,849 ms per commit, one device, one talk, one session), and a headline that ranks
+ * beside a body that scopes is the shape the owner asked for. What stays forbidden is "fastest" as
+ * a claim about every device, or about the device in the user's hand: a CPU card may not pair a
+ * speed word with "every device", "any device" or "this device". The two NPU cards KEEP their
+ * measured, owner-ruled "fastest on this device": that claim is true and scoped to silicon this app
+ * has benchmarked, and removing a true claim would be the regression. `ModelTierCopyTest` holds
+ * every clause.
  */
 object ModelTierCopy {
 
@@ -58,10 +74,18 @@ object ModelTierCopy {
 
     /**
      * **The warning every heavy CPU rung carries** (4.6). One string, one place, so five cards
-     * could not say it five ways and so a test can pin the wording. Since 4.7 it renders on ONE
+     * could not say it five ways and so a test can pin the wording. Since 4.7 it rendered on ONE
      * card — `ultra-q8`, the rung measured to keep up with no margin — because a measured pass
      * does not warn (a caution on a measured pass teaches the user to ignore cautions), and the
      * remedy it names is still true: `small-q8` and `medium-q8` are smaller Whispers.
+     *
+     * **Since 4.9 it renders on NO card.** The owner's ruling cleared `ultra-q8` for production
+     * and took the instrument flag off it, so the ladder has no rung whose verdict does not
+     * clear; turbo's card states the measured shape of its risk in its own sentence instead (no
+     * margin on the tablet; on a less capable device the typed text can fall behind, a smaller
+     * Whisper is the fix). The constant is kept, pinned, for the next rung that needs it —
+     * `ModelTierCopyTest` holds that it renders on every instrument and on nothing else, which
+     * with an empty instrument set is "on nothing".
      *
      * It is deliberately NOT a speed claim in reverse. It states the failure MODE and the remedy,
      * which is what a user who hits it needs, and it is the one caution the previewer makes
@@ -116,23 +140,29 @@ object ModelTierCopy {
         // it." — the second sentence stopped being true on 2026-09-17, when three more were.
         //
         // ============================================ 4.7 — THE Q8 LADDER'S CARDS
+        //                                              4.9 — LABELLED AS A LADDER
         //
         // Three cards for the three Q8 rungs, every one MEASURED on the owner's Galaxy Tab S10+
         // (docs/measurements/2026-09-17-tab-cpu-ladder.md — one device, one TEDx talk as device
-        // audio, threads=4, previewer armed). Two rules govern every one of them:
+        // audio, threads=4, previewer armed: 1,217 / 1,341 / 4,849 ms per commit). Three rules
+        // govern every one of them:
         //
-        //  1. **No rung here RANKS another by speed, in either direction.** The three were not
-        //     measured against one another on the user's device, and the arithmetic says an
-        //     intuitive ranking would be wrong anyway: this app feeds whisper's FIXED-window
-        //     encoder short VAD-cut chunks with `audio_ctx` clamped to at least 512, so cost per
-        //     commit is constant and the workload is encoder-dominated — the regime published
-        //     benchmark tables, which run long files where decode dominates, do not measure.
-        //     What a card MAY say is the measured verdict, scoped to the device it was measured
-        //     on: "kept up with margin on the owner's tablet" is a finding with a document behind
-        //     it. Every such sentence below is checkable against that document.
+        //  1. **A rung here MAY rank its siblings by speed — ONLY as measured, on the tablet,
+        //     dated.** (4.9; until then the rule forbade any rank.) The owner asked for the
+        //     ladder in plain words — "fastest, less accurate" / "balanced speed and accuracy" /
+        //     "highest accuracy, slower" — and the measurement supports the ORDER: it is one
+        //     device, one talk, one session, and the arithmetic says the order is a property of
+        //     this app's workload (encoder-dominated: `audio_ctx` clamped to at least 512, so
+        //     cost per commit is constant) rather than of published benchmark tables. So the
+        //     headline ranks and the body scopes: every body names the owner's tablet and the
+        //     date. What NO card may say is the absolute — "fastest" about every device, or
+        //     about the device in the user's hand.
         //  2. **Accuracy IS rankable and these cards rank it**, because whisper's own size
         //     ordering is not a claim about this app's hardware. So each card says what its model
         //     IS — size, depth, quantisation — and where it sits on the accuracy order.
+        //  3. **No card says "offered for measurement", "instrument" or "not recommended" any
+        //     more** (4.9): the ladder ships on the owner's word, every rung is an ordinary tier
+        //     with a RAM floor, and the RAM badge says what the device can carry.
         //
         // The quantisation stays on the card, because the retired Q5 rungs are still on the
         // devices of everyone who picked one on the internal track, and a user comparing "the
@@ -144,44 +174,62 @@ object ModelTierCopy {
         // ruled, and scoped to silicon this app has benchmarked. Removing a true claim would be
         // the regression.
         "small-q8" to TierCopy(
-            // The headline `multi` carried, because it is now true of THIS rung: 264 MB is the
-            // smallest download on the ladder, and whisper-small is the everyday-accuracy tier.
-            headline = "Everyday accuracy, smallest download",
+            // The owner's words, verbatim: "For small, we say fast — fastest, less accurate."
+            // True on the tablet (1,217 ms per commit, the lowest of the three) and true of the
+            // checkpoint (whisper small is the least accurate of the three); the body scopes it.
+            headline = "Fastest, less accurate",
             badges = listOf("90+ languages", "264 MB"),
             // What this body may NOT say is that its accuracy "matches" the Q5_1 model's. The
             // measurement doc records wallMs only; Q8_0 and Q5_1 are two quantisations of the
-            // same weights and nothing in this repo has compared their transcripts. The owner's
-            // ruling names that comparison as the OPEN gate ("the rest of the testing now will
-            // be to prove the accuracy of the small and medium model"), and a card that
-            // pre-announced its result would be the app deciding a question the owner has
-            // reserved. So the card states the two checkable facts — same weights, Q8_0 — and
-            // stops; a user comparing "the 190 MB one I had" with this one can still see they
-            // are one model. The accuracy verdict, when it exists, is a document, not a guess.
-            body = "Whisper small — the same weights as the retired 190 MB Q5_1 model, stored at " +
-                "Q8_0. Measured to keep up with margin on the owner's tablet, and recommended " +
-                "on every device.",
+            // same weights and nothing in this repo has compared their transcripts. So the card
+            // states the checkable facts — same weights, Q8_0, the three numbers from the doc —
+            // and a user comparing "the 190 MB one I had" with this one can still see they are
+            // one model. "The least accurate" ranks the checkpoint, which whisper's own size
+            // order entitles it to; it is not a claim about the Q5_1 twin.
+            body = "Whisper small at Q8_0 — the same weights as the retired 190 MB Q5_1 model. " +
+                "The fastest of the three on the owner's tablet and the least accurate: " +
+                "1,217 ms per commit against medium's 1,341 and turbo's 4,849, measured " +
+                "2026-09-17. Recommended on every device.",
         ),
         "medium-q8" to TierCopy(
-            headline = "Sharper accuracy, larger download",
+            // The owner's words, verbatim: "Medium: balanced speed and accuracy." On the tablet
+            // it lands within a tenth of small's speed for a model with twice the layers.
+            headline = "Balanced speed and accuracy",
             badges = listOf("90+ languages", "823 MB"),
             // 4.8.0: the threshold is the owner's 4.5 GB (was 4.7's provisional 5.5 GB). The
             // number here and `medium-q8.minRamBytes` are one fact; ModelTierCopyTest holds them
-            // together.
+            // together. "Within a tenth" is the doc's own reading (1,341 vs 1,217: 10%).
             body = "Whisper medium at Q8_0: 24 encoder layers at 1024 dims against small's 12 " +
-                "at 768. Measured to keep up with margin on the owner's tablet; recommended " +
-                "where the device reports at least 4.5 GB of memory.",
+                "at 768. Within a tenth of small's speed on the owner's tablet (1,341 ms per " +
+                "commit against 1,217, measured 2026-09-17), and a much more accurate model. " +
+                "Recommended where the device reports at least 4.5 GB of memory.",
         ),
         "ultra-q8" to TierCopy(
+            // The owner's words were "highest accuracy, slightly slower than both other tiers".
+            // CONTROLLER RULING on one word: the doc says 3.6× per commit (4,849 against 1,341)
+            // and the owner's own felt drain is six to nine seconds against roughly one to two,
+            // so "slightly" is not a sentence the measurement supports. "Slower than the other
+            // two" is; his report goes in the body as HIS report, dated, on his tablet. If he
+            // wants "slightly" back it is one word.
+            //
             // The unscoped accuracy superlative moved here from `large-v3`'s card when that rung
             // was retired; `exactly_one_card_claims_the_top_of_the_accuracy_order` holds that
             // exactly one card carries it.
-            headline = "Highest accuracy, largest download",
+            headline = "Highest accuracy, slower than the other two",
             badges = listOf("90+ languages", "874 MB"),
+            // No KEEP_UP_NOTE since 4.9 (the rung clears production on the owner's ruling and is
+            // not an instrument), but the measured shape of the risk stays in the card's own
+            // words — "no margin", the fall-behind caution and the remedy — because 0.99 of the
+            // floor on a flagship is still what the doc says, and a user on a slower phone is
+            // owed that sentence before they download 874 MB.
             body = "Large-v3-turbo at Q8_0 — large-v3's own 32-layer encoder with a 4-layer " +
-                "decoder: the most accurate model on this ladder. On the owner's flagship " +
-                "tablet it kept up with no margin to spare, so on a less capable device expect " +
-                "the typed text to fall behind. Offered for its accuracy, not recommended. " +
-                KEEP_UP_NOTE,
+                "decoder: the most accurate model on this ladder. Slower than the other two " +
+                "on the owner's tablet (4,849 ms per commit against 1,217 and 1,341, measured " +
+                "2026-09-17), where it kept up with no margin to spare; his own report the " +
+                "same day, after dictating on it: a six to nine second drain, \"totally " +
+                "manageable and doable\". On a less capable device expect the typed text to " +
+                "fall behind — a smaller Whisper is the fix. Recommended where the device " +
+                "reports at least 4.5 GB of memory.",
         ),
         // 4.0: the gated tier. Only devices that pass the SoC gate AND have both context binaries
         // installed ever see this card, so the copy may speak about "this device" in the present
