@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -46,6 +47,8 @@ import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
 import com.whispereverywhere.ui.theme.Primary
+import com.whispereverywhere.ui.theme.Success
+import com.whispereverywhere.ui.theme.Warning
 import com.whispereverywhere.util.formatBytes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -987,7 +990,17 @@ private fun EnginesStep(
     }
 }
 
-/** One selectable tier card rendering [ModelTierCopy] — the same copy Settings' picker shows. */
+/**
+ * One selectable tier card rendering [ModelTierCopy] — the same copy Settings' picker shows.
+ *
+ * 4.7 — the RAM rule too, with the same helper and the same wording as `OnboardingModelScreen`'s
+ * `ModelTierCard`: the *Recommended for your device* badge when [WhisperCatalog.isRecommendedForDevice]
+ * answers true for this device (it answers false for an instrument at every RAM, so an
+ * instrument is never badged), and the *High-end devices only* note ONLY when the rung has a
+ * RAM floor and this device reports less than it. Before this the guided flow rendered
+ * headline/badges/body alone, so a 3-4 GB phone in first-run onboarding saw the 823 MB
+ * `medium-q8` card with no RAM note while Settings' picker showed one for the same rung.
+ */
 @Composable
 private fun TierChoiceCard(
     model: WhisperModel,
@@ -996,6 +1009,13 @@ private fun TierChoiceCard(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    // The device RAM is not in scope on this screen; obtain the verdict the way
+    // OnboardingModelScreen does — the manager's isRecommendedForDevice(model), which reads
+    // ActivityManager.MemoryInfo.totalMem and applies the catalogue's rule.
+    val recommended = remember(model.id) {
+        WhisperEverywhereApp.getInstance().whisperModelManager.isRecommendedForDevice(model)
+    }
+    val ramGated = model.minRamBytes > 0L
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1047,6 +1067,32 @@ private fun TierChoiceCard(
                             )
                         }
                     }
+                    if (recommended) {
+                        // OnboardingModelScreen's TierBadge, in place: same wording, same colour.
+                        Surface(
+                            color = Success.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    Icons.Filled.Verified,
+                                    contentDescription = null,
+                                    tint = Success,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "Recommended for your device",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Success,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -1054,6 +1100,23 @@ private fun TierChoiceCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            // High-end-only note for RAM-gated tiers the device can't recommend.
+            if (ramGated && !recommended) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    color = Warning.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text(
+                        text = "High-end devices only — this tier needs more RAM than " +
+                            "this device reports. You can still pick it, but performance " +
+                            "may suffer.",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Warning,
+                    )
+                }
             }
         }
     }

@@ -567,6 +567,45 @@ class ChooserSteerWiringPinTest {
         )
     }
 
+    /**
+     * 4.7 — the guided flow's card honours the RAM rule the Settings picker already did, with the
+     * same helper and the same wording. Before this `TierChoiceCard` rendered headline/badges/body
+     * only, so a 3-4 GB phone in first-run onboarding saw the 823 MB `medium-q8` card with no RAM
+     * note while `OnboardingModelScreen` showed one for the same rung. Pinned as source text on
+     * both files, the way every other claim about these two surfaces is pinned here.
+     */
+    @Test
+    fun theGuidedFlowCardHonoursTheRamRuleWithThePickersOwnHelperAndWording() {
+        // The same helper on both surfaces — the manager's, which reads the device RAM itself.
+        assertEquals("the picker asks the manager", 1, count(picker, "manager.isRecommendedForDevice(model)"))
+        assertEquals(
+            "the guided flow asks the same manager, for the same verdict",
+            1,
+            count(flow, "WhisperEverywhereApp.getInstance().whisperModelManager.isRecommendedForDevice(model)"),
+        )
+        // The same badge, worded identically, and gated on that verdict alone (instruments are
+        // never recommended, so they are never badged — that is the catalogue's rule, not a
+        // second one here).
+        listOf(flow, picker).forEach { src ->
+            assertEquals(1, count(src, "\"Recommended for your device\""))
+            assertEquals(1, count(src, "if (recommended) {"))
+            // The same note, verbatim, and only when the rung has a RAM floor the device is under.
+            assertEquals(1, count(src, "val ramGated = model.minRamBytes > 0L"))
+            assertEquals(1, count(src, "if (ramGated && !recommended) {"))
+            assertEquals(
+                1,
+                count(
+                    src,
+                    block(
+                        "                        text = \"High-end devices only — this tier needs more RAM than \" +",
+                        "                            \"this device reports. You can still pick it, but performance \" +",
+                        "                            \"may suffer.\",",
+                    ),
+                ),
+            )
+        }
+    }
+
     @Test
     fun theSteerBadgeLeadsTheChipsOnTheSteeredCardOnly() {
         assertEquals(
