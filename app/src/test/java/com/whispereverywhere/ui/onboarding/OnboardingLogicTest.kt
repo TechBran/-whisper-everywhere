@@ -762,6 +762,13 @@ class OnboardingLogicTest {
     // For other devices … I'd say we do four point five gigs minimum. If you have under that,
     // then you get pushed to the smallest model; anything above, then you're gonna choose from
     // the medium or v3 turbo." And: "we wanna discourage people from the [small] model."
+    //
+    // 4.9 (the same day, later, after his own dictation): "If their phone can't handle the RAM,
+    // then we shouldn't offer that model to them, pretty much like we're already doing. If you
+    // can fit the medium model, you should also be able to see the small model based on your
+    // RAM. And if you can see v3 turbo, of course, you should see all three tiers, and you
+    // choose what you want." — the lineup is CUMULATIVE by each rung's own floor; the steer
+    // (medium over the gate) is where the discouragement lives.
 
     private val gate = OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES
     private val cpuLineup = ModelTierCopy.orderedForLanguageTagFor("en-US", emptySet())
@@ -772,6 +779,12 @@ class OnboardingLogicTest {
         // One fact, two readers: the card's "Recommended for your device" badge and the card's
         // presence in the first-run lineup must answer the same question.
         assertEquals(WhisperCatalog.byId("medium-q8")!!.minRamBytes, OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES)
+        // 4.9: turbo carries a floor of its own, one constant per rung so it can be raised
+        // alone; today the two are the same number, and the lineup reads each rung's own.
+        assertEquals(WhisperCatalog.MEDIUM_Q8_MIN_RAM_BYTES, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
+        assertEquals(WhisperCatalog.ULTRA_Q8_MIN_RAM_BYTES, WhisperCatalog.byId("ultra-q8")!!.minRamBytes)
+        assertEquals(4_500_000_000L, WhisperCatalog.ULTRA_Q8_MIN_RAM_BYTES)
+        assertEquals(0L, WhisperCatalog.byId("small-q8")!!.minRamBytes)
         // The fixture premise: the ungated CPU lineup is the three Q8 rungs, smallest first.
         assertEquals(listOf("small-q8", "medium-q8", "ultra-q8"), cpuLineup)
         assertEquals("small-q8", cpuSteer)
@@ -797,42 +810,79 @@ class OnboardingLogicTest {
         )
     }
 
-    @Test fun over_the_gate_the_first_run_chooser_is_medium_and_turbo_in_lineup_order() {
-        // "anything above, then you're gonna choose from the medium or v3 turbo" — and "we wanna
-        // discourage people from the [small] model", so small is dropped. A nominal 6 GB phone
-        // reports ~5.6e9; the owner's tablet 12e9.
-        assertEquals(listOf("medium-q8", "ultra-q8"), OnboardingLogic.firstRunLineup(cpuLineup, 5_600_000_000L, emptySet()))
-        assertEquals(listOf("medium-q8", "ultra-q8"), OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, emptySet()))
-        // The steer heads it: medium is first in lineup order and medium is the steer above
-        // the gate, so the badge lands on the first card.
+    @Test fun over_the_gate_the_first_run_chooser_is_all_three_rungs_in_ladder_order() {
+        // 4.9: "if you can see v3 turbo, of course, you should see all three tiers, and you
+        // choose what you want" — small is NOT dropped any more (4.8.0 dropped it on "we wanna
+        // discourage people from the [small] model"; the later ruling keeps it on the card and
+        // moves the discouragement to the steer). A nominal 6 GB phone reports ~5.6e9; the
+        // owner's tablet 12e9.
+        assertEquals(listOf("small-q8", "medium-q8", "ultra-q8"), OnboardingLogic.firstRunLineup(cpuLineup, 5_600_000_000L, emptySet()))
+        assertEquals(listOf("small-q8", "medium-q8", "ultra-q8"), OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, emptySet()))
+        // The steer is still medium, and it is now the SECOND card of the cut — which is why the
+        // flow lifts (steerFirst): the chip and the lead card must agree.
         val over = OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, emptySet())
-        assertEquals(OnboardingLogic.firstRunSteer(over, cpuSteer, 12_000_000_000L), over.first())
+        val steer = OnboardingLogic.firstRunSteer(over, cpuSteer, 12_000_000_000L)
+        assertEquals("medium-q8", steer)
+        assertNotEquals("the cumulative cut leaves small at the head; the lift moves the steer up", steer, over.first())
+        assertEquals(listOf("medium-q8", "small-q8", "ultra-q8"), OnboardingLogic.steerFirst(over, steer))
+    }
+
+    @Test fun the_lineup_is_cumulative_by_each_rungs_own_floor() {
+        // The rule reads each rung's own minRamBytes, not the one gate constant: a device that
+        // meets a rung's floor sees it AND every rung under it. Driven over a synthetic split
+        // of the two floors so the test binds to the mechanism, not to today's equal numbers.
+        val small = WhisperCatalog.byId("small-q8")!!
+        val medium = WhisperCatalog.byId("medium-q8")!!
+        val ultra = WhisperCatalog.byId("ultra-q8")!!
+        assertTrue("small is the floor for every device", small.minRamBytes == 0L)
+        assertTrue("medium's floor is the owner's gate", medium.minRamBytes == gate)
+        assertTrue("turbo's floor is at least medium's — the ladder never inverts", ultra.minRamBytes >= medium.minRamBytes)
+        // At every RAM the cut is a PREFIX of the ladder: the rungs whose floor the device meets.
+        for (ram in listOf(0L, gate - 1, gate, ultra.minRamBytes - 1, ultra.minRamBytes, 12_000_000_000L, Long.MAX_VALUE)) {
+            val expected = cpuLineup.filter { ram >= WhisperCatalog.byId(it)!!.minRamBytes }
+            assertEquals("ram=$ram", expected, OnboardingLogic.firstRunLineup(cpuLineup, ram, emptySet()))
+            assertEquals("ram=$ram: the cut is a prefix of the ladder", cpuLineup.take(expected.size), expected)
+            // ...and every card the flow shows is one the catalogue would badge on this device.
+            expected.forEach {
+                assertTrue("ram=$ram: '$it' is in the lineup but not recommended", WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId(it)!!, ram))
+            }
+        }
     }
 
     @Test fun over_the_gate_an_installed_small_rung_keeps_its_card() {
         // A big phone whose user already downloaded small-q8 (an upgrade from 4.7, or a decline
         // recovery) still sees it — dropping a card for a model on disk is the disturbance the
-        // 4.3 rule forbids.
+        // 4.3 rule forbids. Since 4.9 it sees it anyway (the lineup is cumulative); the
+        // non-disturbance rule is what would keep it if turbo's floor were ever raised above
+        // an installed turbo's device.
         val kept = OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, setOf("small-q8"))
         assertEquals(listOf("small-q8", "medium-q8", "ultra-q8"), kept)
         // And THIS is why the flow lifts (the round after 4.8.0, review): the steer over that
-        // list is still medium, and medium is its SECOND card. Unlifted, the chip sits on card
-        // two while card one wears nothing. The cut alone does not leave the steer at the head.
+        // list is medium, and medium is its SECOND card. Unlifted, the chip sits on card two
+        // while card one wears nothing. The cut alone does not leave the steer at the head.
         val steer = OnboardingLogic.firstRunSteer(kept, cpuSteer, 12_000_000_000L)
         assertEquals("medium-q8", steer)
         assertNotEquals("the cut does NOT put the steer at the head here", steer, kept.first())
         assertEquals(listOf("medium-q8", "small-q8", "ultra-q8"), OnboardingLogic.steerFirst(kept, steer))
+        // An installed rung under its floor keeps its card too — the rule the non-disturbance
+        // clause is actually for.
+        assertEquals(
+            listOf("small-q8", "ultra-q8"),
+            OnboardingLogic.firstRunLineup(cpuLineup, gate - 1, setOf("ultra-q8")),
+        )
     }
 
     @Test fun the_boundary_at_exactly_the_gate_is_at_or_above() {
         // ">= gate" is over, "gate - 1" is under — the same `>=` the catalogue's own
         // isRecommendedForDevice uses, so the badge and the lineup flip on the same byte.
-        assertEquals(listOf("medium-q8", "ultra-q8"), OnboardingLogic.firstRunLineup(cpuLineup, gate, emptySet()))
+        assertEquals(listOf("small-q8", "medium-q8", "ultra-q8"), OnboardingLogic.firstRunLineup(cpuLineup, gate, emptySet()))
         assertEquals(listOf("small-q8"), OnboardingLogic.firstRunLineup(cpuLineup, gate - 1, emptySet()))
         assertEquals("medium-q8", OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, gate))
         assertEquals("small-q8", OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, gate - 1))
-        assertTrue(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("medium-q8")!!, gate))
-        assertFalse(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("medium-q8")!!, gate - 1))
+        listOf("medium-q8", "ultra-q8").forEach {
+            assertTrue(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId(it)!!, gate))
+            assertFalse(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId(it)!!, gate - 1))
+        }
     }
 
     @Test fun an_npu_capable_lineup_is_untouched_by_the_gate_in_either_direction() {
@@ -905,7 +955,8 @@ class OnboardingLogicTest {
         assertFalse("ultra-q8" in under)
         val over = OnboardingLogic.firstRunLineup(npuLineup, 12_000_000_000L, emptySet())
         assertTrue("npu" in over)
-        assertFalse("small-q8" in over)
+        // 4.9: cumulative — small stays on the card over the gate.
+        assertTrue("small-q8" in over)
         assertTrue("medium-q8" in over && "ultra-q8" in over)
     }
 
@@ -971,11 +1022,15 @@ class OnboardingLogicTest {
             assertEquals("the flow's lift keeps the cut's cards $tag", flowCut.sorted(), flowLineup.sorted())
             if (flowCut.first() != flowSteer) flowLiftMattered++
         }
-        // The lift is not decoration on the flow: the cell the review named is in the walk.
+        // The lift is not decoration on the flow: the cell the review named is in the walk —
+        // and since 4.9's cumulative cut it is every over-the-gate CPU cell, installed or not.
         assertTrue("the flow's cut left the steer off the head somewhere in the walk", flowLiftMattered > 0)
         val reviewCell = OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, setOf("small-q8"))
         assertEquals("small-q8", reviewCell.first())
         assertEquals("medium-q8", OnboardingLogic.firstRunSteer(reviewCell, cpuSteer, 12_000_000_000L))
+        val freshCell = OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, emptySet())
+        assertEquals("small-q8", freshCell.first())
+        assertEquals("medium-q8", OnboardingLogic.firstRunSteer(freshCell, cpuSteer, 12_000_000_000L))
     }
 
     @Test fun the_gate_never_adds_a_card_and_never_reorders_one() {

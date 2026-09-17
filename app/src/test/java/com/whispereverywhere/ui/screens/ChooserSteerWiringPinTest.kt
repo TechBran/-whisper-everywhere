@@ -611,7 +611,8 @@ class ChooserSteerWiringPinTest {
     /**
      * 4.8.0 — **THE FIRST-RUN RAM GATE CUTS THE FLOW'S LINEUP AND NEVER THE PICKER'S; THE STEER
      * IS ONE RULE ON BOTH.** Owner ruling 2026-09-17: under 4.5 GB a fresh install is pushed to
-     * the smallest Q8 rung; over it the choice is medium and turbo; an NPU-capable device is
+     * the smallest Q8 rung; over it the choice is medium and turbo (4.9: CUMULATIVE — over it
+     * all three, each rung at its own floor, medium still steered); an NPU-capable device is
      * untouched. `OnboardingLogicTest` executes the rule. What it cannot see is whether the guided
      * flow asks it — on BOTH the lineup and the steer, with the SAME RAM read — and whether the
      * Settings picker was accidentally given the same cut, which would take small Q8 away from a

@@ -121,10 +121,11 @@ fun OnboardingModelScreen(
     // 4.8.0: this picker is deliberately NOT filtered by the first-run RAM rule the guided flow
     // applies (`OnboardingLogic.firstRunLineup`). The owner's ruling of 2026-09-17 is about
     // FIRST-RUN choice — what a fresh install is pushed to or offered — and all three Q8 rungs
-    // stay selectable here: a user who wants small Q8 on a big phone can still pick it, and a
-    // user under the gate who wants medium can still read "High-end devices only" on its card
-    // and choose it anyway. ChooserSteerWiringPinTest holds that the lineup rule is called on
-    // the flow and not here.
+    // stay selectable here: since 4.9 the flow's lineup is cumulative by RAM (small always;
+    // medium and turbo at their floors), so the one thing this picker still shows that the flow
+    // hides is a rung the device is UNDER — and a user under the gate who wants medium or turbo
+    // can read "High-end devices only" on its card and choose it anyway.
+    // ChooserSteerWiringPinTest holds that the lineup rule is called on the flow and not here.
     //
     // The STEER is another matter (the round after 4.8.0): it is the SAME rule as the flow's —
     // `OnboardingLogic.firstRunSteer`, medium over the 4.5 GB gate, small under it, the chip's

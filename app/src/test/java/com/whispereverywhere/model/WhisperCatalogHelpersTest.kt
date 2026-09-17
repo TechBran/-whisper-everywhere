@@ -110,15 +110,20 @@ class WhisperCatalogHelpersTest {
             assertEquals("rung '$it' must be multilingual", ModelScope.MULTILINGUAL, m(it).scope)
         }
         // 4.7 — RAM thresholds after the Q8 ruling. `small-q8` is the floor for every device and
-        // states none; `ultra-q8` is the one instrument left and states none (the flag is the
-        // reason, not the device); the retired rows gate nothing. `medium-q8` is the one rung with
-        // a threshold. 4.8.0: it is THE OWNER'S NUMBER — "four point five gigs minimum"
-        // (2026-09-17) — no longer 4.7's provisional 5.5e9 carried from the `extreme` precedent.
-        // 4.5e9 sits between a nominal 4 GB phone's totalMem (~3.7e9) and a 6 GB one's (~5.6e9).
-        listOf("small-q8", "medium-q5", "ultra-q8", "large-v3").forEach {
+        // states none; the retired rows gate nothing. `medium-q8` carries a threshold. 4.8.0: it
+        // is THE OWNER'S NUMBER — "four point five gigs minimum" (2026-09-17) — no longer 4.7's
+        // provisional 5.5e9 carried from the `extreme` precedent. 4.5e9 sits between a nominal
+        // 4 GB phone's totalMem (~3.7e9) and a 6 GB one's (~5.6e9).
+        // 4.9 — `ultra-q8` is an ordinary rung now (the owner's ruling clears it) and carries a
+        // floor of its OWN CONSTANT, equal to medium's today: the owner gave no separate number
+        // for turbo, and its resident set is not larger than medium's (4-layer decoder).
+        listOf("small-q8", "medium-q5", "large-v3").forEach {
             assertEquals("rung '$it' claims no RAM class", 0L, m(it).minRamBytes)
         }
         assertEquals("medium-q8 is recommended above the owner's 4.5 GB", 4_500_000_000L, m("medium-q8").minRamBytes)
+        assertEquals(WhisperCatalog.MEDIUM_Q8_MIN_RAM_BYTES, m("medium-q8").minRamBytes)
+        assertEquals("ultra-q8's floor is its own constant", WhisperCatalog.ULTRA_Q8_MIN_RAM_BYTES, m("ultra-q8").minRamBytes)
+        assertEquals("...the same number as medium's today, by controller ruling", 4_500_000_000L, m("ultra-q8").minRamBytes)
         assertTrue("...and it no longer inherits the extreme precedent", m("extreme").minRamBytes != m("medium-q8").minRamBytes)
         // ...and it is the SAME number the first-run gate reads, so the badge and the lineup agree.
         assertEquals(
@@ -214,11 +219,13 @@ class WhisperCatalogHelpersTest {
             // large-v3-turbo, 32 encoder layers at 1280, 4 text layers, n_vocab 51866, ftype
             // 2007 = Q8_0. 128-bin, like everything in the large-v3 family. Kept up with NO
             // margin on the tablet (worst 7,930 against 8 000): the optional top rung, and the
-            // one instrument left.
+            // one instrument left in 4.7. 4.9: an ORDINARY rung on the owner's ruling
+            // (2026-09-17, "we definitely wanna keep that one"), with a RAM floor of its own
+            // constant — the same 4.5e9 as medium's today.
             Rung(
                 "ultra-q8", "Ultra (large-v3-turbo, Q8_0)", "ggml-large-v3-turbo-q8_0.bin", 874_188_075L,
                 "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1", 128,
-                retired = false, instrument = true, minRam = 0L,
+                retired = false, instrument = false, minRam = 4_500_000_000L,
             ),
             // large-v3 itself: the same 32-layer/1280-dim encoder plus a FULL 32-layer decoder,
             // ftype 2008 = Q5_0. The largest file the app can fetch. Retired untimed.
@@ -385,13 +392,17 @@ class WhisperCatalogHelpersTest {
 
     /**
      * 4.6 declared **THE INSTRUMENT SET** as six rungs — the five the ladder added and `ultra`,
-     * un-retired beside them — because nobody had timed any of them. 4.7 — **it is ONE rung.**
+     * un-retired beside them — because nobody had timed any of them. 4.7 — **it was ONE rung.**
      * The Tab S10+ session of 2026-09-17 timed four of the six; the owner's Q8 ruling retired the
      * four Q5 rows (two of them untimed); `small-q8` and `medium-q8` kept up with margin and lost
      * the flag; `ultra-q8` kept up with NO margin (worst commit 0.99 of its floor on a flagship)
-     * and keeps it. The flag now means what it always meant underneath: offered without a
-     * throughput verdict that clears production. `TierThroughputTest` holds the coupling from
-     * the record's side; this is the catalogue's side of the same fact.
+     * and kept it. 4.9 — **it is EMPTY.** The owner's ruling on turbo (*"we definitely wanna keep
+     * that one … totally manageable and doable"*) is recorded beside its measurement as a
+     * `ThroughputVerdict.OwnerRuling`, and a verdict with a ruling clears production, so the
+     * flag came off by the coupling rule — the number did not move. The flag means what it always
+     * meant underneath: offered without a throughput verdict that clears production.
+     * `TierThroughputTest` holds the coupling from the record's side; this is the catalogue's
+     * side of the same fact.
      *
      * A new rung that forgets the flag fires here, which is the alarm worth having: the failure
      * mode is silent and its blast radius is a production user handed a 1 GB download badged
@@ -399,9 +410,9 @@ class WhisperCatalogHelpersTest {
      */
     @Test fun the_instrument_set_is_exactly_the_pickable_rungs_whose_verdict_does_not_clear() {
         assertEquals(
-            "the instrument set changed — a rung was added without the flag, or a rung earned a " +
+            "the instrument set changed — a rung was added without the flag, or a rung lost a " +
                 "clearing verdict and nobody said so here",
-            listOf("ultra-q8"),
+            emptyList<String>(),
             WhisperCatalog.instruments.map { it.id },
         )
         listOf("small-q8", "medium-q8").forEach {
@@ -412,6 +423,11 @@ class WhisperCatalogHelpersTest {
                 WhisperCatalog.byId(it)!!.instrument,
             )
         }
+        assertFalse(
+            "'ultra-q8' must NOT be an instrument since 4.9: its verdict clears on the owner's " +
+                "recorded ruling of 2026-09-17, and the flag tracks the verdict",
+            WhisperCatalog.byId("ultra-q8")!!.instrument,
+        )
         // The rung the 4.6 set was defined against is retired now, and a retired row is never an
         // instrument — an instrument is OFFERED, and a retired tier is not.
         assertFalse(WhisperCatalog.byId("multi")!!.instrument)
@@ -441,7 +457,12 @@ class WhisperCatalogHelpersTest {
             0L, 2_000_000_000L, 4_000_000_000L, 5_500_000_000L, 6_000_000_000L, 7_000_000_000L,
             8_000_000_000L, 12_000_000_000L, 16_000_000_000L, 24_000_000_000L, Long.MAX_VALUE,
         )
-        WhisperCatalog.instruments.forEach { model ->
+        // 4.9: the committed set is empty, so the rule is ALSO driven over a constructed row —
+        // a loop over nothing proves nothing, and the rule has to hold on the day a rung is next
+        // flagged.
+        val subjects = WhisperCatalog.instruments +
+            WhisperCatalog.byId("small-q8")!!.copy(id = "an-instrument", instrument = true)
+        subjects.forEach { model ->
             everyRam.forEach { ram ->
                 assertFalse(
                     "instrument '${model.id}' was recommended at $ram bytes of RAM",
@@ -480,6 +501,14 @@ class WhisperCatalogHelpersTest {
                 it.minRamBytes,
             )
         }
+        // 4.9: the set is empty, and the rule's OTHER half is now the live one — a MEASURED,
+        // ruled rung MAY carry a threshold, because for it the screen's RAM sentence is true.
+        // Both floors are on rungs whose verdict clears; neither is an instrument.
+        listOf("medium-q8", "ultra-q8").forEach {
+            val m = WhisperCatalog.byId(it)!!
+            assertTrue("'$it' carries a floor", m.minRamBytes > 0L)
+            assertFalse("'$it' is not an instrument — a floor on an instrument would lie about the reason", m.instrument)
+        }
     }
 
     /**
@@ -497,6 +526,8 @@ class WhisperCatalogHelpersTest {
      */
     @Test fun every_instrument_is_pickable_ungated_and_installable_by_download() {
         val pickableIds = WhisperCatalog.pickable.map { it.id }
+        // 4.9: the committed set is empty; the loop stays so the rule fires on the next flagged
+        // rung, and the every-device assertion below is stated over the whole ladder instead.
         WhisperCatalog.instruments.forEach {
             assertTrue("instrument '${it.id}' is not offered at all", pickableIds.contains(it.id))
             assertFalse("instrument '${it.id}' is retired — it would not render", it.retired)
@@ -510,11 +541,13 @@ class WhisperCatalogHelpersTest {
             assertEquals("a single-file rung advertises exactly its one file", it.approxBytes, it.primaryBytes)
         }
         // And the gate answer no device can change: `pickableFor(emptySet())` — the whole
-        // non-capable fleet — offers every instrument. This is the assertion that would fail if a
-        // future edit tried to hide a heavy rung behind a device predicate.
+        // non-capable fleet — offers every instrument, and (4.9) every rung of the ladder: the
+        // RAM cut is the guided flow's own filter over this list, never this list's. This is the
+        // assertion that would fail if a future edit tried to hide a heavy rung behind a device
+        // predicate at the catalogue.
         val everyDeviceSees = WhisperCatalog.pickableFor(emptySet()).map { it.id }
-        WhisperCatalog.instruments.forEach {
-            assertTrue("instrument '${it.id}' is hidden from a device that failed the NPU gate", everyDeviceSees.contains(it.id))
+        (WhisperCatalog.instruments + WhisperCatalog.pickable).forEach {
+            assertTrue("rung '${it.id}' is hidden from a device that failed the NPU gate", everyDeviceSees.contains(it.id))
         }
     }
 
@@ -540,15 +573,19 @@ class WhisperCatalogHelpersTest {
      * and it needs no new rule — which is also why nothing here would have to change if he opens
      * it, only the two producers of that argument.
      */
-    @Test fun a_device_offered_the_one_tier_is_offered_no_instrument() {
-        val instrumentIds = WhisperCatalog.instruments.map { it.id }.toSet()
-        assertTrue("4.6 has no instruments, so this test is pinning nothing", instrumentIds.isNotEmpty())
+    @Test fun a_device_offered_the_one_tier_is_offered_no_cpu_rung() {
+        // 4.9: the subject is the whole CPU ladder, because the instrument set is empty and the
+        // fact this test records was never about the flag — it is about the 4.3 collapse taking
+        // every CPU rung off a capable device, which the owner re-ruled on 2026-09-17 ("NPU tier
+        // detection still stays the same … they should absolutely get the NPU tier").
+        val cpuRungIds = WhisperCatalog.pickable.map { it.id }.toSet()
+        assertTrue("the ladder has no CPU rungs, so this test is pinning nothing", cpuRungIds.isNotEmpty())
 
         // Both spellings of "this device was offered the one tier": turbo alone (a capable device
         // whose `npu` pack the census cannot deliver) and both gated tiers (the Fold6, where both
         // are live). The collapse is keyed on ONE_TIER_ID's presence, so both narrow.
         listOf(setOf(WhisperCatalog.ONE_TIER_ID), setOf("npu", WhisperCatalog.ONE_TIER_ID)).forEach { offered ->
-            // A fresh capable install: one card, and it is not an instrument.
+            // A fresh capable install: one card, and it is not a CPU rung.
             assertEquals(
                 "$offered: the 4.3 one-card lineup moved",
                 listOf(WhisperCatalog.ONE_TIER_ID),
@@ -558,9 +595,9 @@ class WhisperCatalogHelpersTest {
             // so an install of `multi` or `npu` does not bring the ladder with it.
             listOf(emptySet(), setOf("multi"), setOf("npu"), setOf("npu", "multi")).forEach { installed ->
                 val lineup = WhisperCatalog.pickableFor(offered, installed).map { it.id }
-                instrumentIds.forEach { id ->
+                cpuRungIds.forEach { id ->
                     assertFalse(
-                        "$offered/$installed: instrument '$id' is offered on a one-tier device — " +
+                        "$offered/$installed: CPU rung '$id' is offered on a one-tier device — " +
                             "if that is now intended, this test is the thing to change, deliberately",
                         lineup.contains(id),
                     )
@@ -571,9 +608,9 @@ class WhisperCatalogHelpersTest {
                 // these two arguments.)
                 listOf("en-US", "bn-BD", "zh-Hans-CN", "").forEach { tag ->
                     val rendered = ModelTierCopy.orderedForLanguageTagFor(tag, offered, installed)
-                    instrumentIds.forEach { id ->
+                    cpuRungIds.forEach { id ->
                         assertFalse(
-                            "'$tag'/$offered/$installed: instrument '$id' has a card on a one-tier device",
+                            "'$tag'/$offered/$installed: CPU rung '$id' has a card on a one-tier device",
                             rendered.contains(id),
                         )
                     }
@@ -581,21 +618,21 @@ class WhisperCatalogHelpersTest {
             }
         }
 
-        // THE DOOR, proved to work before anyone needs it. If the owner rules that the instruments
-        // should join the one-card lineup for this measurement session, it is the existing
-        // `alsoOfferedIds` and nothing else: every instrument comes back, in catalog order, with
-        // turbo still leading and no retired tier following it in. (The producer that would carry
-        // the ids is `OnboardingLogic.chooserAlsoOfferedIds`, which already does exactly this with
+        // THE DOOR, proved to work before anyone needs it. If the owner rules that the CPU ladder
+        // should join the one-card lineup, it is the existing `alsoOfferedIds` and nothing else:
+        // every rung comes back, in catalog order, with turbo still leading and no retired tier
+        // following it in. (The producer that would carry the ids is
+        // `OnboardingLogic.chooserAlsoOfferedIds`, which already does exactly this with
         // `WhisperCatalog.pickable` on the delivery-failure path — pinned in `OnboardingLogicTest`.)
         val capable = setOf("npu", WhisperCatalog.ONE_TIER_ID)
-        val ifOpened = WhisperCatalog.pickableFor(capable, instrumentIds).map { it.id }
-        instrumentIds.forEach { id ->
-            assertTrue("the alsoOfferedIds door does not admit instrument '$id'", ifOpened.contains(id))
+        val ifOpened = WhisperCatalog.pickableFor(capable, cpuRungIds).map { it.id }
+        cpuRungIds.forEach { id ->
+            assertTrue("the alsoOfferedIds door does not admit CPU rung '$id'", ifOpened.contains(id))
         }
         assertEquals(
             "the door admits the ladder but not in catalog order, or lets something else in",
             WhisperCatalog.entries
-                .filter { it.id == WhisperCatalog.ONE_TIER_ID || it.id in instrumentIds }
+                .filter { it.id == WhisperCatalog.ONE_TIER_ID || it.id in cpuRungIds }
                 .map { it.id },
             ifOpened,
         )
@@ -672,12 +709,13 @@ class WhisperCatalogHelpersTest {
             listOf("small-q8", "medium-q8", "ultra-q8"),
             WhisperCatalog.pickable.map { it.id },
         )
-        // One of the three is an instrument — `ultra-q8`, kept up with no margin. `small-q8` and
-        // `medium-q8` are the rungs the app stands behind: measured, kept up with margin, which is
-        // what makes the first the default, the steer and the migration target, and the second
-        // the recommended medium tier — and what makes the third an offer rather than advice.
-        assertEquals(1, WhisperCatalog.pickable.count { it.instrument })
-        assertEquals(listOf("small-q8", "medium-q8"), WhisperCatalog.pickable.filterNot { it.instrument }.map { it.id })
+        // 4.9: NONE of the three is an instrument. `small-q8` and `medium-q8` are measured and
+        // kept up with margin, which is what makes the first the default, the steer and the
+        // migration target, and the second the recommended medium tier; `ultra-q8` kept up with
+        // no margin and ships on the owner's recorded ruling — an ordinary rung with a RAM floor,
+        // still never the default and never a migration target.
+        assertEquals(0, WhisperCatalog.pickable.count { it.instrument })
+        assertEquals(listOf("small-q8", "medium-q8", "ultra-q8"), WhisperCatalog.pickable.filterNot { it.instrument }.map { it.id })
         // Every pickable rung is Q8_0 — the ruling, at the list that enforces it.
         WhisperCatalog.pickable.forEach {
             assertTrue("'${it.id}' is not a Q8_0 file and the owner ruled Q8 for everything", it.fileName.endsWith("-q8_0.bin"))

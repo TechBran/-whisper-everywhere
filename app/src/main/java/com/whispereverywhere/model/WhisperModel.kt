@@ -120,6 +120,15 @@ data class WhisperModel(
      * **Clearing this flag on a rung whose verdict does not clear is a red suite**, and so is
      * keeping it on a rung whose verdict does. They are one claim and the flag is the half a
      * reader sees.
+     *
+     * **4.9 — THE SET IS EMPTY, AND THE FLAG STAYS.** The owner's ruling of 2026-09-17 on
+     * `ultra-q8` (*"we definitely wanna keep that one … six to maybe nine second drain time,
+     * which is totally manageable and doable"*) is recorded as a `ThroughputVerdict.OwnerRuling`
+     * beside its measurement, and a verdict with a ruling clears production — so by the coupling
+     * rule the last instrument lost the flag, and no pickable rung carries it. The flag is not
+     * deleted: it is what the NEXT rung offered without a clearing verdict wears on the day it
+     * enters the chooser, and `WhisperCatalogHelpersTest` still holds every rule about it over
+     * a constructed row so the rules cannot rot while the set is empty.
      */
     val instrument: Boolean = false,
     /**
@@ -257,6 +266,32 @@ object WhisperCatalog {
 
     private fun urlFor(fileName: String): String = BASE_URL + fileName
 
+    /**
+     * `medium-q8`'s RAM floor — THE OWNER'S NUMBER (4.8.0, ruling 2026-09-17: *"I'd say we do
+     * four point five gigs minimum"*). It is the same constant the first-run gate reads
+     * (`OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES`, asserted equal in OnboardingLogicTest), so the
+     * card's "Recommended for your device" badge and the card's presence in the first-run lineup
+     * answer one question. `ActivityManager.totalMem` under-reports physical RAM: a nominal 4 GB
+     * phone reports ~3.7e9 and a 6 GB one ~5.6e9, so 4.5e9 separates exactly the two classes he
+     * named.
+     */
+    const val MEDIUM_Q8_MIN_RAM_BYTES: Long = 4_500_000_000L
+
+    /**
+     * `ultra-q8`'s RAM floor (4.9.0) — ONE CONSTANT OF ITS OWN, equal to [MEDIUM_Q8_MIN_RAM_BYTES]
+     * today, so the owner can raise turbo's alone without touching medium's.
+     *
+     * A CONTROLLER RULING on the number: the owner gave no separate figure for turbo — his
+     * lineup rule was *"if you can see v3 turbo, of course, you should see all three tiers"*,
+     * i.e. the rung whose floor a device meets and every rung under it — and turbo's resident
+     * set is not larger than medium's: large-v3-turbo has a 4-layer decoder against medium's 24,
+     * so its cross-attention KV cache is ≈ 31 MB against medium's ≈ 151 MB, and the files are
+     * 874 MB against 823 MB. Nothing in the app's own memory model puts turbo above medium, so
+     * the two floors are one number — and two constants, because "one number today" is not a
+     * rule that says they must stay one.
+     */
+    const val ULTRA_Q8_MIN_RAM_BYTES: Long = 4_500_000_000L
+
     val entries: List<WhisperModel> = listOf(
         WhisperModel(
             id = "eco",
@@ -386,11 +421,24 @@ object WhisperCatalog {
         // and the two Q5_0 rungs the session never timed (`ultra`, `large-v3`) were retired
         // unmeasured by the same ruling.
         //
-        // **Production authorisation is NOT granted by this.** The owner's next step is an
+        // **Production authorisation was NOT granted by this.** The owner's next step was an
         // accuracy pass on small and medium — *"the rest of the testing now will be to prove the
         // accuracy of the small and medium model … before we actually give it a go"* — so
-        // `TierThroughputRecord.PRODUCTION_PROMOTABLE` is EMPTY and this build goes to the
-        // internal track and a sideloaded tablet only.
+        // `TierThroughputRecord.PRODUCTION_PROMOTABLE` stayed EMPTY through 4.7 and 4.8, and
+        // those builds went to the internal track and a sideloaded tablet only.
+        //
+        // **4.9 — THE LADDER SHIPS, on the owner's word (2026-09-17, after his own dictation on
+        // the Tab S10+):** *"all three actually work very well"*, and of turbo: *"we definitely
+        // wanna keep that one … six to maybe nine second drain time, which is totally manageable
+        // and doable. And users would definitely like to select between these."* So the three
+        // Q8 rungs are one ladder, every rung an ordinary tier: `ultra-q8` is no longer an
+        // instrument (the ruling is recorded beside its measurement in `TierThroughputRecord`,
+        // where the gate reads it), it carries a RAM floor like medium's ([ULTRA_Q8_MIN_RAM_BYTES]),
+        // and `PRODUCTION_PROMOTABLE` names all three. The lineup a device is offered is
+        // CUMULATIVE by RAM (`OnboardingLogic.firstRunLineup`): every rung whose floor the device
+        // meets — *"if you can fit the medium model, you should also be able to see the small
+        // model"* — so under the floor a fresh install sees small alone, and at or over it all
+        // three, in ladder order.
         //
         // **Why the naive metric is the wrong one, still.** This app clamps `audio_ctx` to
         // `max(samples/320 + 64, 512)`, and that 512 floor binds for every chunk under 8.96 s —
@@ -475,8 +523,9 @@ object WhisperCatalog {
             // asserted equal in OnboardingLogicTest), so the badge on this card and the card's
             // presence in the first-run lineup answer one question. Below it the rung stays
             // selectable from Settings and the chooser says "High-end devices only", which is a
-            // statement about RAM and is true.
-            minRamBytes = 4_500_000_000L,
+            // statement about RAM and is true. 4.9: the number lives on [MEDIUM_Q8_MIN_RAM_BYTES],
+            // beside turbo's own constant, so the two floors can be moved apart deliberately.
+            minRamBytes = MEDIUM_Q8_MIN_RAM_BYTES,
         ),
         WhisperModel(
             id = "ultra",
@@ -523,19 +572,30 @@ object WhisperCatalog {
             // 2008 = Q5_0). So it is refused as a mel donor and as a CPU fallback for exactly the
             // reason `ultra` is ([isCpuFallbackEligible]), by its recorded width and not by name.
             melBins = 128,
-            // 4.7 — THE OPTIONAL TOP RUNG, and the ONE instrument left. It is MEASURED now
+            // 4.7 — THE OPTIONAL TOP RUNG, and the ONE instrument left: MEASURED
             // (`TierThroughputRecord.ULTRA_Q8`: median 4,849 ms per commit on the Tab S10+, worst
-            // 7,930 against an 8,000 ms floor — `KeepUp.KEPT_UP_WITHOUT_MARGIN`), so the flag no
-            // longer means "unmeasured". It means what it always meant underneath: **offered, not
-            // advocated, because the verdict does not clear production** — the margin that would
-            // survive a device slower than a Dimensity 9300+ flagship, or thermal drift on that
-            // one, is not there. The owner's words: *"if people really want that higher quality
-            // accuracy … it's doable, it's actually workable."* Offered for its accuracy, never
-            // recommended, never the default, never a migration target. `minRamBytes` stays 0 for
-            // the reason the instrument KDoc gives: a RAM gate would attribute the caution to the
-            // device, and the caution is about the margin.
-            minRamBytes = 0L,
-            instrument = true,
+            // 7,930 against an 8,000 ms floor — `KeepUp.KEPT_UP_WITHOUT_MARGIN`), offered for its
+            // accuracy and not advocated, because the margin that would survive a device slower
+            // than a Dimensity 9300+ flagship, or thermal drift on that one, was not there.
+            //
+            // 4.9 — AN ORDINARY RUNG, ON THE OWNER'S RULING (2026-09-17, after his own dictation
+            // on the Tab S10+): *"For v3 Turbo Q8, we definitely wanna keep that one. And all
+            // three as well, because all three actually work very well. V3 Turbo, I'm noticing
+            // only about a six to maybe nine second drain time, which is totally manageable and
+            // doable. And users would definitely like to select between these."* The MEASUREMENT
+            // is unchanged — still KEPT_UP_WITHOUT_MARGIN, still 0.99 of its floor at the worst
+            // commit — and the ruling is recorded beside it as a `ThroughputVerdict.OwnerRuling`,
+            // named and dated, which is what clears the rung for production without touching the
+            // number. So the `instrument` flag comes off (the coupling rule: the set is the
+            // pickable rungs whose verdict does not clear, and this one now clears), and the rung
+            // carries a RAM floor like medium's ([ULTRA_Q8_MIN_RAM_BYTES], its own constant):
+            // `isRecommendedForDevice` answers by RAM, so on a device that meets the floor it is
+            // badged "Recommended for your device" like its two siblings, and only the steer
+            // carries "Our pick". Under the floor the Settings picker shows the RAM note and the
+            // guided flow does not show the card at all (`OnboardingLogic.firstRunLineup`). Still
+            // never the default and never a migration target — those name the rung with the
+            // margin, not the one the owner likes best.
+            minRamBytes = ULTRA_Q8_MIN_RAM_BYTES,
         ),
         WhisperModel(
             id = "large-v3",
@@ -643,7 +703,8 @@ object WhisperCatalog {
      * Derived, never a second list: a row carries the flag and this finds it, so a rung cannot be
      * an instrument in one place and a recommendation in another. Read by the tests that prove no
      * instrument is recommended, default or a migration target, and it is the handle the
-     * throughput-verdict gate keys on.
+     * throughput-verdict gate keys on. **Empty since 4.9** (the owner's ruling on `ultra-q8`
+     * clears it); the list stays because the next unmeasured rung lands in it.
      */
     val instruments: List<WhisperModel> = entries.filter { it.instrument }
 
@@ -695,10 +756,12 @@ object WhisperCatalog {
      * back on any device whose gate set names [ONE_TIER_ID] — which is the whole 8 Gen 3-class
      * fleet, the Fold6 included. So on a capable device whose turbo delivery works, the chooser
      * renders `npu-turbo` plus whatever is already installed, and the CPU ladder — since 4.7 the
-     * three Q8 rungs `small-q8`, `medium-q8` and `ultra-q8`, of which only `ultra-q8` is still an
-     * instrument — renders no card at all: neither selectable nor downloadable there.
-     * `WhisperCatalogHelpersTest`'s `a_device_offered_the_one_tier_is_offered_no_instrument`
-     * executes that sentence, deliberately beside
+     * three Q8 rungs `small-q8`, `medium-q8` and `ultra-q8`; since 4.9 none of them an
+     * instrument — renders no card at all: neither selectable nor downloadable there. The owner
+     * re-ruled the same on 2026-09-17: *"NPU tier detection still stays the same: if they have
+     * that chip and we have a pack available for them, they should absolutely get the NPU tier."*
+     * `WhisperCatalogHelpersTest`'s `a_device_offered_the_one_tier_is_offered_no_cpu_rung`
+     * (named `…_no_instrument` until 4.9 emptied the set) executes that sentence, deliberately beside
      * `every_instrument_is_pickable_ungated_and_installable_by_download` — the two halves of the
      * same fact, so a later reader finds the case that does NOT work next to the case that does
      * instead of inferring it from a silence.
@@ -871,8 +934,12 @@ object WhisperCatalog {
      * The instrument clause runs first and answers on the rung, not on the device: an instrument
      * is offered without a throughput verdict that clears, and a card badged *"Recommended for
      * your device"* is the app claiming one. The RAM comparison is untouched for every other row,
-     * boundary included (`>=`) — since 4.7 `medium-q8` is the live subject of that boundary
-     * (4.5e9 since 4.8.0, the owner's number), and `small-q8` at 0 is recommended everywhere.
+     * boundary included (`>=`) — since 4.7 `medium-q8` is a live subject of that boundary
+     * (4.5e9 since 4.8.0, the owner's number), since 4.9 `ultra-q8` is the other (its own
+     * constant, the same number today), and `small-q8` at 0 is recommended everywhere. So on a
+     * device at or over the floor all three CPU cards are badged, and only the steer wears
+     * "Our pick" — the badge says the device can carry the rung, the chip says which one the app
+     * would start with.
      */
     fun isRecommendedForDevice(model: WhisperModel, totalRamBytes: Long): Boolean =
         !model.instrument && totalRamBytes >= model.minRamBytes

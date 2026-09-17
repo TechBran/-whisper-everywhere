@@ -887,8 +887,9 @@ private fun EnginesStep(
             OnboardingLogic.chooserAlsoOfferedIds(installedIds, oneTierDeliveryFailed)
         // 4.8.0: the device's RAM, read ONCE at flow level and off Main like the two producers
         // above (`ActivityManager.getMemoryInfo` is a binder call). It feeds the owner's
-        // 2026-09-17 first-run rule below — under 4.5 GB the chooser is the smallest Q8 rung,
-        // over it the choice is medium and turbo — through the pure `firstRunLineup` /
+        // 2026-09-17 first-run rule below — since 4.9 CUMULATIVE: every Q8 rung whose own RAM
+        // floor the device meets, so under 4.5 GB the chooser is the smallest rung alone and at
+        // or over it all three, medium steered — through the pure `firstRunLineup` /
         // `firstRunSteer`, applied to the ordered lineup and the steer so the guard, the cards
         // and the badge all see the SAME filtered list. An NPU-capable device is untouched by
         // both (the 4.3 one-tier rule already made it turbo alone). The Settings picker
@@ -1027,8 +1028,11 @@ private fun EnginesStep(
  * 4.7 — the RAM rule too, with the same helper and the same wording as `OnboardingModelScreen`'s
  * `ModelTierCard`: the *Recommended for your device* badge when [WhisperCatalog.isRecommendedForDevice]
  * answers true for this device (it answers false for an instrument at every RAM, so an
- * instrument is never badged), and the *High-end devices only* note ONLY when the rung has a
- * RAM floor and this device reports less than it. Before this the guided flow rendered
+ * instrument is never badged — since 4.9 no rung is one, so every CPU card the cumulative
+ * lineup shows is badged and only the steer wears "Our pick"), and the *High-end devices only*
+ * note ONLY when the rung has a RAM floor and this device reports less than it — which, since
+ * the 4.9 lineup is cut by that same floor, no fresh-install card on THIS surface can render;
+ * the Settings picker, unfiltered, still does. Before this the guided flow rendered
  * headline/badges/body alone, so a 3-4 GB phone in first-run onboarding saw the 823 MB
  * `medium-q8` card with no RAM note while Settings' picker showed one for the same rung.
  */

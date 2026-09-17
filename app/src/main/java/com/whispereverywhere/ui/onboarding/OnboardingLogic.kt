@@ -302,12 +302,18 @@ object OnboardingLogic {
      * — so the card's "Recommended for your device" badge and the card's presence in the
      * first-run lineup are one question with one answer. Change it in both places or the test
      * says so.
+     *
+     * Since 4.9 the LINEUP no longer reads this constant — [firstRunLineup] reads each rung's own
+     * `minRamBytes` (`WhisperCatalog.MEDIUM_Q8_MIN_RAM_BYTES`, `ULTRA_Q8_MIN_RAM_BYTES`), which
+     * is what lets the owner raise turbo's floor alone. The STEER still reads it: medium at or
+     * over the gate, small under it ([firstRunSteer]).
      */
     const val FIRST_RUN_RAM_GATE_BYTES: Long = 4_500_000_000L
 
     /**
-     * The smallest Q8 rung — what a device under the gate is pushed to, and what a device over
-     * it is not shown on first run. One name so the two branches below cannot name two rungs.
+     * The smallest Q8 rung — what a device under the gate is pushed to, and (since 4.9) the
+     * floor every device sees in its lineup: its `minRamBytes` is 0, so the cumulative rule
+     * never drops it. One name so the steer rule below and the lineup rule cannot name two rungs.
      */
     private const val SMALLEST_TIER_ID = "small-q8"
 
@@ -323,32 +329,47 @@ object OnboardingLogic {
      * NO headroom for a SoC slower than a Dimensity 9300+, or for thermal drift on that one, and
      * a RAM gate says nothing about speed. A steer is the app's recommendation for a device it
      * has not measured, so it goes to the rung with the margin; turbo stays on the card beside
-     * it, offered for its accuracy, one tap away.
+     * it, offered for its accuracy, one tap away — and since 4.9 so does small, on the card
+     * below ("Fastest, less accurate"), because the lineup is cumulative and the steer is not a
+     * cut.
      */
     const val FIRST_RUN_STEER_ABOVE_GATE_ID: String = "medium-q8"
 
     /**
-     * The first-run chooser's lineup after the owner's 2026-09-17 device rule — the guided
-     * flow's ONE filter over `ModelTierCopy.orderedForLanguageTagFor`. The Settings picker does
-     * NOT apply it: the rule is about first-run choice, and a user who wants small Q8 on a big
-     * phone can still pick it there.
+     * The first-run chooser's lineup — the guided flow's ONE filter over
+     * `ModelTierCopy.orderedForLanguageTagFor`. The Settings picker does NOT apply it: the rule
+     * is about first-run choice, and the picker shows the whole ladder with the RAM note on any
+     * rung the device is under.
+     *
+     * **4.9 — CUMULATIVE BY RAM** (owner, 2026-09-17, replacing 4.8.0's "hide small above the
+     * gate"): *"If their phone can't handle the RAM, then we shouldn't offer that model to them,
+     * pretty much like we're already doing. If you can fit the medium model, you should also be
+     * able to see the small model based on your RAM. And if you can see v3 turbo, of course, you
+     * should see all three tiers, and you choose what you want."* So a CPU rung is in the lineup
+     * iff the device meets ITS OWN `minRamBytes` — `small-q8` at 0 always; `medium-q8` at
+     * `WhisperCatalog.MEDIUM_Q8_MIN_RAM_BYTES`; `ultra-q8` at `ULTRA_Q8_MIN_RAM_BYTES` (one
+     * constant per rung, the same number today, so turbo's can be raised alone). Under the floor
+     * a fresh install sees small alone; at or over it, all three in ladder order — small, medium,
+     * turbo — with the steer ([firstRunSteer], medium) lifted to the head by [steerFirst]. The
+     * 4.8.0 rule dropped small above the gate (*"we wanna discourage people from the [small]
+     * model"*); the 4.9 ruling is the later word and the steer is where the discouragement
+     * lives now: medium wears "Our pick", small is one card down.
      *
      *  - **An NPU-capable device is untouched.** When `WhisperCatalog.ONE_TIER_ID` is in the
      *    lineup, the 4.3 one-tier rule has already made it turbo plus installed ids; "if you have
-     *    the NPU … you shouldn't see any other models" was already true and this returns the
-     *    list as given. (The npu-only case — `npu` offered without turbo — is a device the
-     *    one-tier rule never narrowed; it gets the RAM rule like any other, with `npu` riding
-     *    through untouched because the rule only ever names Q8 rungs.)
-     *  - **Under the gate:** only [SMALLEST_TIER_ID] — "you get pushed to the smallest model".
-     *  - **At or over the gate:** [SMALLEST_TIER_ID] is dropped — "we wanna discourage people
-     *    from the [small] model" — so the choice is medium and turbo, in the lineup's own order
-     *    (on a fresh install the steer heads it; see [firstRunSteer] and, for the installed-small
-     *    case where it does not, [steerFirst]).
+     *    the NPU … you shouldn't see any other models" was already true, the owner re-ruled it
+     *    the same day (*"NPU tier detection still stays the same … they should absolutely get
+     *    the NPU tier — that's unmatched"*), and this returns the list as given. (The npu-only
+     *    case — `npu` offered without turbo — is a device the one-tier rule never narrowed; it
+     *    gets the RAM rule like any other, with `npu` riding through untouched because the rule
+     *    only ever names Q8 rungs.)
      *
-     * **The non-disturbance rule rides through both branches:** anything in [installedIds] keeps
-     * its card whatever the gate says, for the reason `WhisperCatalog.pickableFor`'s
-     * `alsoOfferedIds` exists — a model already on disk is never hidden from the user who
-     * downloaded it. Order is preserved from [lineup]; nothing is added that was not in it.
+     * **The non-disturbance rule rides through:** anything in [installedIds] keeps its card
+     * whatever the RAM says, for the reason `WhisperCatalog.pickableFor`'s `alsoOfferedIds`
+     * exists — a model already on disk is never hidden from the user who downloaded it. Order is
+     * preserved from [lineup]; nothing is added that was not in it. The floor read is the
+     * catalogue's own `isRecommendedForDevice` comparison (`>=`), so a card is in the flow's
+     * lineup on exactly the byte its "Recommended for your device" badge lights.
      *
      * @param totalRamBytes `WhisperModelManager.deviceTotalRamBytes()`, read once at flow level.
      */
@@ -360,12 +381,11 @@ object OnboardingLogic {
         if (com.whispereverywhere.model.WhisperCatalog.ONE_TIER_ID in lineup) return lineup
         // The rule names the CPU ladder — `WhisperCatalog.pickable`, the ungated rungs — and
         // nothing else: a gated npu-class id in the lineup (offered without turbo) is not a Q8
-        // rung and rides through both branches, so the steer that names it always has a card.
-        val cpuRungs = com.whispereverywhere.model.WhisperCatalog.pickable.map { it.id }.toSet()
-        return if (totalRamBytes < FIRST_RUN_RAM_GATE_BYTES) {
-            lineup.filter { it !in cpuRungs || it == SMALLEST_TIER_ID || it in installedIds }
-        } else {
-            lineup.filter { it != SMALLEST_TIER_ID || it in installedIds }
+        // rung and rides through, so the steer that names it always has a card.
+        val cpuRungs = com.whispereverywhere.model.WhisperCatalog.pickable.associateBy { it.id }
+        return lineup.filter { id ->
+            val rung = cpuRungs[id] ?: return@filter true
+            id in installedIds || totalRamBytes >= rung.minRamBytes
         }
     }
 
@@ -398,17 +418,16 @@ object OnboardingLogic {
      * steer, one badge" (post-4.8.0, 2026-09-17), applied on BOTH chooser surfaces.
      *
      * `ModelTierCopy.orderedForLanguageTagFor` already leads with ITS steer, the language/gate
-     * one, and on the guided flow the RAM cut leaves [FIRST_RUN_STEER_ABOVE_GATE_ID] at the head
-     * of a FRESH install's lineup by catalog order. The Settings picker keeps the whole ladder, so
-     * its head stayed `small-q8` while its steer became medium over the gate — a badge on the
-     * second card while the first wears nothing is the Bengali-review shape one axis over, so the
-     * picker lifts its steer explicitly. The flow has the same shape one state over: the
-     * non-disturbance rule in [firstRunLineup] keeps an installed `small-q8` on a big phone, at
-     * the head, while the steer is medium — and the flow is entered whenever the SELECTED tier is
-     * not on disk, which small can be. So the flow lifts too (the round after 4.8.0, review);
-     * `OnboardingLogicTest` walks both surfaces over every installed subset. Stable, so every
-     * other card keeps the order it had; a steer that is not in the lineup changes nothing;
-     * nothing is added or dropped.
+     * one (`small-q8`), and the Settings picker keeps the whole ladder, so its head stayed
+     * `small-q8` while its steer became medium over the gate — a badge on the second card while
+     * the first wears nothing is the Bengali-review shape one axis over, so the picker lifts its
+     * steer explicitly. The flow had the same shape one state over at 4.8.0 (an installed
+     * `small-q8` kept at the head by the non-disturbance rule while the steer was medium), so
+     * the flow lifts too (the round after 4.8.0, review) — and since 4.9's cumulative lineup
+     * keeps small on EVERY over-the-gate list, the flow's lift is the ordinary case rather than
+     * the edge one. `OnboardingLogicTest` walks both surfaces over every installed subset.
+     * Stable, so every other card keeps the order it had; a steer that is not in the lineup
+     * changes nothing; nothing is added or dropped.
      */
     fun steerFirst(lineup: List<String>, steerId: String): List<String> =
         lineup.sortedBy { if (it == steerId) 0 else 1 }
