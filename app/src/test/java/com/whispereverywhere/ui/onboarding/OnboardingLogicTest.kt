@@ -755,6 +755,171 @@ class OnboardingLogicTest {
         )
     }
 
+    // ---------------------------------------- the first-run RAM gate (4.8.0, owner 2026-09-17)
+    //
+    // "For NPU, we're good … you shouldn't see any other models because that's just v3 turbo.
+    // For other devices … I'd say we do four point five gigs minimum. If you have under that,
+    // then you get pushed to the smallest model; anything above, then you're gonna choose from
+    // the medium or v3 turbo." And: "we wanna discourage people from the [small] model."
+
+    private val gate = OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES
+    private val cpuLineup = ModelTierCopy.orderedForLanguageTagFor("en-US", emptySet())
+    private val cpuSteer = ModelTierCopy.steerIdForLanguageTagFor("en-US", emptySet())
+
+    @Test fun the_gate_is_the_owners_4_5_gb_and_is_the_same_number_the_medium_card_badges_on() {
+        assertEquals(4_500_000_000L, OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES)
+        // One fact, two readers: the card's "Recommended for your device" badge and the card's
+        // presence in the first-run lineup must answer the same question.
+        assertEquals(WhisperCatalog.byId("medium-q8")!!.minRamBytes, OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES)
+        // The fixture premise: the ungated CPU lineup is the three Q8 rungs, smallest first.
+        assertEquals(listOf("small-q8", "medium-q8", "ultra-q8"), cpuLineup)
+        assertEquals("small-q8", cpuSteer)
+    }
+
+    @Test fun under_the_gate_the_first_run_chooser_is_the_smallest_rung_alone() {
+        // "you get pushed to the smallest model" — a nominal 4 GB phone reports ~3.7e9.
+        assertEquals(listOf("small-q8"), OnboardingLogic.firstRunLineup(cpuLineup, 3_700_000_000L, emptySet()))
+        assertEquals(listOf("small-q8"), OnboardingLogic.firstRunLineup(cpuLineup, 0L, emptySet()))
+        assertEquals(listOf("small-q8"), OnboardingLogic.firstRunLineup(cpuLineup, gate - 1, emptySet()))
+    }
+
+    @Test fun under_the_gate_an_installed_larger_rung_keeps_its_card() {
+        // The non-disturbance rule rides through: a model already on disk is never hidden from
+        // the user who downloaded it, whatever the gate says. Lineup ORDER is preserved.
+        assertEquals(
+            listOf("small-q8", "medium-q8"),
+            OnboardingLogic.firstRunLineup(cpuLineup, 3_700_000_000L, setOf("medium-q8")),
+        )
+        assertEquals(
+            listOf("small-q8", "medium-q8", "ultra-q8"),
+            OnboardingLogic.firstRunLineup(cpuLineup, 3_700_000_000L, setOf("medium-q8", "ultra-q8")),
+        )
+    }
+
+    @Test fun over_the_gate_the_first_run_chooser_is_medium_and_turbo_in_lineup_order() {
+        // "anything above, then you're gonna choose from the medium or v3 turbo" — and "we wanna
+        // discourage people from the [small] model", so small is dropped. A nominal 6 GB phone
+        // reports ~5.6e9; the owner's tablet 12e9.
+        assertEquals(listOf("medium-q8", "ultra-q8"), OnboardingLogic.firstRunLineup(cpuLineup, 5_600_000_000L, emptySet()))
+        assertEquals(listOf("medium-q8", "ultra-q8"), OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, emptySet()))
+        // The steer heads it: medium is first in lineup order and medium is the steer above
+        // the gate, so the badge lands on the first card.
+        val over = OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, emptySet())
+        assertEquals(OnboardingLogic.firstRunSteer(over, cpuSteer, 12_000_000_000L), over.first())
+    }
+
+    @Test fun over_the_gate_an_installed_small_rung_keeps_its_card() {
+        // A big phone whose user already downloaded small-q8 (an upgrade from 4.7, or a decline
+        // recovery) still sees it — dropping a card for a model on disk is the disturbance the
+        // 4.3 rule forbids.
+        assertEquals(
+            listOf("small-q8", "medium-q8", "ultra-q8"),
+            OnboardingLogic.firstRunLineup(cpuLineup, 12_000_000_000L, setOf("small-q8")),
+        )
+    }
+
+    @Test fun the_boundary_at_exactly_the_gate_is_at_or_above() {
+        // ">= gate" is over, "gate - 1" is under — the same `>=` the catalogue's own
+        // isRecommendedForDevice uses, so the badge and the lineup flip on the same byte.
+        assertEquals(listOf("medium-q8", "ultra-q8"), OnboardingLogic.firstRunLineup(cpuLineup, gate, emptySet()))
+        assertEquals(listOf("small-q8"), OnboardingLogic.firstRunLineup(cpuLineup, gate - 1, emptySet()))
+        assertEquals("medium-q8", OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, gate))
+        assertEquals("small-q8", OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, gate - 1))
+        assertTrue(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("medium-q8")!!, gate))
+        assertFalse(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("medium-q8")!!, gate - 1))
+    }
+
+    @Test fun an_npu_capable_lineup_is_untouched_by_the_gate_in_either_direction() {
+        // "For NPU, we're good … you shouldn't see any other models because that's just v3
+        // turbo." Already true by the 4.3 one-tier rule; the RAM rule returns the list as given
+        // — at every RAM, and with an installed CPU tier riding alongside turbo.
+        val turboOnly = ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu", "npu-turbo"))
+        assertEquals(listOf("npu-turbo"), turboOnly)
+        for (ram in listOf(0L, 3_700_000_000L, gate - 1, gate, 12_000_000_000L, Long.MAX_VALUE)) {
+            assertEquals(turboOnly, OnboardingLogic.firstRunLineup(turboOnly, ram, emptySet()))
+        }
+        val turboPlusInstalled = ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu", "npu-turbo"), setOf("small-q8"))
+        assertTrue("npu-turbo" in turboPlusInstalled && "small-q8" in turboPlusInstalled)
+        assertEquals(turboPlusInstalled, OnboardingLogic.firstRunLineup(turboPlusInstalled, 0L, setOf("small-q8")))
+        assertEquals(turboPlusInstalled, OnboardingLogic.firstRunLineup(turboPlusInstalled, Long.MAX_VALUE, setOf("small-q8")))
+        // And the suspended lineup (the no-wedge escape restored the CPU ladder beside turbo)
+        // is likewise untouched: turbo is in it, so the one-tier clause returns it whole.
+        val suspended = ModelTierCopy.orderedForLanguageTagFor(
+            "en-US", setOf("npu", "npu-turbo"), OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true),
+        )
+        assertEquals(suspended, OnboardingLogic.firstRunLineup(suspended, 0L, emptySet()))
+    }
+
+    @Test fun the_steer_is_medium_over_the_gate_small_under_it_and_unchanged_for_npu_class_lineups() {
+        // Over the gate: MEDIUM — a controller ruling on the measurements (medium-q8 1,341 ms
+        // per commit at 0.31 of its floor; ultra-q8 4,849 ms at 0.99: no headroom for a slower
+        // SoC, and a RAM gate says nothing about speed). The constant is one obvious val.
+        assertEquals("medium-q8", OnboardingLogic.FIRST_RUN_STEER_ABOVE_GATE_ID)
+        assertEquals("medium-q8", OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, 5_600_000_000L))
+        assertEquals("medium-q8", OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, 12_000_000_000L))
+        // Under it: small.
+        assertEquals("small-q8", OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, 3_700_000_000L))
+        assertEquals("small-q8", OnboardingLogic.firstRunSteer(cpuLineup, cpuSteer, 0L))
+        // NPU-class lineups keep today's steer — turbo where offered, npu where offered alone —
+        // at every RAM.
+        val turboLineup = ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu", "npu-turbo"))
+        val turboSteer = ModelTierCopy.steerIdForLanguageTagFor("en-US", setOf("npu", "npu-turbo"))
+        assertEquals("npu-turbo", turboSteer)
+        val npuLineup = ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu"))
+        val npuSteer = ModelTierCopy.steerIdForLanguageTagFor("en-US", setOf("npu"))
+        assertEquals("npu", npuSteer)
+        for (ram in listOf(0L, gate - 1, gate, Long.MAX_VALUE)) {
+            assertEquals(turboSteer, OnboardingLogic.firstRunSteer(turboLineup, turboSteer, ram))
+            assertEquals(npuSteer, OnboardingLogic.firstRunSteer(npuLineup, npuSteer, ram))
+        }
+        // The steer is always a card in the filtered lineup — a badge on a card that is not on
+        // screen is the Bengali-review shape, one axis over. Every RAM, every lineup above.
+        for (ram in listOf(0L, 3_700_000_000L, gate - 1, gate, 5_600_000_000L, 12_000_000_000L)) {
+            for ((lineup, steer) in listOf(cpuLineup to cpuSteer, turboLineup to turboSteer, npuLineup to npuSteer)) {
+                val filtered = OnboardingLogic.firstRunLineup(lineup, ram, emptySet())
+                assertTrue(
+                    "steer must be on screen (ram=$ram, lineup=$lineup)",
+                    OnboardingLogic.firstRunSteer(filtered, steer, ram) in filtered,
+                )
+            }
+        }
+    }
+
+    @Test fun an_npu_only_lineup_keeps_its_npu_card_through_the_gate_and_cuts_only_the_cpu_ladder() {
+        // A device offered `npu` without turbo (a family with the small pack measured and the
+        // turbo pack not) is not narrowed by the one-tier rule, so the RAM rule applies to it —
+        // to its CPU RUNGS. The gated npu-class id is not a Q8 rung and rides through, so the
+        // steer that names it (`npu`, per L9) always has a card.
+        val npuLineup = ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu"))
+        assertTrue("npu" in npuLineup)
+        val under = OnboardingLogic.firstRunLineup(npuLineup, 3_700_000_000L, emptySet())
+        assertTrue("npu" in under)
+        assertTrue("small-q8" in under)
+        assertFalse("medium-q8" in under)
+        assertFalse("ultra-q8" in under)
+        val over = OnboardingLogic.firstRunLineup(npuLineup, 12_000_000_000L, emptySet())
+        assertTrue("npu" in over)
+        assertFalse("small-q8" in over)
+        assertTrue("medium-q8" in over && "ultra-q8" in over)
+    }
+
+    @Test fun the_gate_never_adds_a_card_and_never_reorders_one() {
+        // A permutation-preserving FILTER, nothing more: whatever comes out was in, in the same
+        // relative order. Walked over every RAM class and every installed subset of the ladder.
+        val rams = listOf(0L, 3_700_000_000L, gate - 1, gate, 5_600_000_000L, 12_000_000_000L, Long.MAX_VALUE)
+        val subsets = listOf(
+            emptySet(), setOf("small-q8"), setOf("medium-q8"), setOf("ultra-q8"),
+            setOf("small-q8", "medium-q8"), setOf("medium-q8", "ultra-q8"), cpuLineup.toSet(),
+        )
+        for (ram in rams) for (installed in subsets) {
+            val out = OnboardingLogic.firstRunLineup(cpuLineup, ram, installed)
+            assertTrue("subset (ram=$ram, installed=$installed)", cpuLineup.containsAll(out))
+            assertEquals("order kept (ram=$ram, installed=$installed)", cpuLineup.filter { it in out }, out)
+            assertTrue("never empty", out.isNotEmpty())
+            assertTrue("installed rungs always keep their card", out.containsAll(installed))
+        }
+    }
+
     // ---------------------------------------------------------------- engines gating
 
     @Test fun continue_unlocks_only_once_the_speech_model_is_ready() {

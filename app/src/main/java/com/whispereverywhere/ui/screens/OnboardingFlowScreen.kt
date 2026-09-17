@@ -832,8 +832,10 @@ private fun EnginesStep(
         Spacer(Modifier.height(16.dp))
         // 3.7 Workstream H: the steered tier first — English locale -> pro, everything else ->
         // multi; since 4.6 one steer for every locale, and since 4.7 that steer is `small-q8`
-        // (ModelTierCopy.steerIdForLanguageTag). A steer, not a lock: every card stays tappable
-        // and TIER_SWITCH_HINT below still promises the switch.
+        // (ModelTierCopy.steerIdForLanguageTag). Since 4.8.0 the CPU fleet's steer and lineup
+        // are then re-cut by the device's RAM (OnboardingLogic.firstRunLineup / firstRunSteer,
+        // below). A steer, not a lock: every card stays tappable and TIER_SWITCH_HINT below
+        // still promises the switch.
         //
         // 4.0/4.1: on a device that passes the NPU gate AND already holds a gated tier's own
         // context binaries, that tier joins the lineup — the answer is a SET of tier ids because
@@ -883,8 +885,27 @@ private fun EnginesStep(
         // device wedges the mandatory step behind one card Play will not deliver (F6 I-1).
         val alsoOfferedIds =
             OnboardingLogic.chooserAlsoOfferedIds(installedIds, oneTierDeliveryFailed)
-        val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
+        // 4.8.0: the device's RAM, read ONCE at flow level and off Main like the two producers
+        // above (`ActivityManager.getMemoryInfo` is a binder call). It feeds the owner's
+        // 2026-09-17 first-run rule below — under 4.5 GB the chooser is the smallest Q8 rung,
+        // over it the choice is medium and turbo — through the pure `firstRunLineup` /
+        // `firstRunSteer`, applied to the ordered lineup and the steer so the guard, the cards
+        // and the badge all see the SAME filtered list. An NPU-capable device is untouched by
+        // both (the 4.3 one-tier rule already made it turbo alone). The Settings picker
+        // deliberately does NOT apply this rule; see the comment at its lineup. Unkeyed on
+        // purpose — RAM is not a fact an install can change, unlike the two gate producers —
+        // and the initial value is 0, the fail-SAFE side of the gate: until the read lands the
+        // chooser shows the rung every device can run, and the revalidation guard below drops a
+        // pick whose card the answer then hides, exactly as it does for the gate's window.
+        val totalRamBytes by produceState(initialValue = 0L) {
+            value = withContext(Dispatchers.IO) {
+                WhisperEverywhereApp.getInstance().whisperModelManager.deviceTotalRamBytes()
+            }
+        }
         val lineup = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, alsoOfferedIds)
+            .let { OnboardingLogic.firstRunLineup(it, totalRamBytes, installedIds) }
+        val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
+            .let { OnboardingLogic.firstRunSteer(lineup, it, totalRamBytes) }
         // 4.3 fix round (I-3): THE LINEUP CAN SHRINK UNDER A PICK. Both producers above are
         // async — the gate's first read dlopens ~7.9 MiB of QNN — so a capable device renders
         // [pro, multi] for that window and then narrows to [npu-turbo]. A tap inside the window

@@ -112,14 +112,19 @@ class WhisperCatalogHelpersTest {
         // 4.7 — RAM thresholds after the Q8 ruling. `small-q8` is the floor for every device and
         // states none; `ultra-q8` is the one instrument left and states none (the flag is the
         // reason, not the device); the retired rows gate nothing. `medium-q8` is the one rung with
-        // a threshold, and it is PROVISIONAL: 5.5e9 is the repo's own `extreme` (medium.en)
-        // precedent — the same 24-layer medium, "genuine 6 GB-class after totalMem slack" —
-        // carried over pending the owner's weakest-device measurement, which is the open item.
+        // a threshold. 4.8.0: it is THE OWNER'S NUMBER — "four point five gigs minimum"
+        // (2026-09-17) — no longer 4.7's provisional 5.5e9 carried from the `extreme` precedent.
+        // 4.5e9 sits between a nominal 4 GB phone's totalMem (~3.7e9) and a 6 GB one's (~5.6e9).
         listOf("small-q8", "medium-q5", "ultra-q8", "large-v3").forEach {
             assertEquals("rung '$it' claims no RAM class", 0L, m(it).minRamBytes)
         }
-        assertEquals("medium-q8 is recommended above the extreme precedent's 6 GB-class threshold", 5_500_000_000L, m("medium-q8").minRamBytes)
-        assertEquals("...which IS the extreme precedent, literally", m("extreme").minRamBytes, m("medium-q8").minRamBytes)
+        assertEquals("medium-q8 is recommended above the owner's 4.5 GB", 4_500_000_000L, m("medium-q8").minRamBytes)
+        assertTrue("...and it no longer inherits the extreme precedent", m("extreme").minRamBytes != m("medium-q8").minRamBytes)
+        // ...and it is the SAME number the first-run gate reads, so the badge and the lineup agree.
+        assertEquals(
+            com.whispereverywhere.ui.onboarding.OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES,
+            m("medium-q8").minRamBytes,
+        )
     }
 
     @Test
@@ -199,12 +204,12 @@ class WhisperCatalogHelpersTest {
                 retired = true, instrument = false, minRam = 0L,
             ),
             // The same medium, ftype 2007 = Q8_0. Identical hyperparameters off the header;
-            // 1,341 ms median on the tablet. THE MEDIUM TIER, recommended above a provisional
-            // 5.5e9 (the `extreme` precedent — the owner's weakest-device run is the open item).
+            // 1,341 ms median on the tablet. THE MEDIUM TIER, recommended above the owner's
+            // 4.5e9 (4.8.0, ruling 2026-09-17; 4.7 carried a provisional 5.5e9).
             Rung(
                 "medium-q8", "Multilingual (medium, Q8_0)", "ggml-medium-q8_0.bin", 823_369_779L,
                 "42a1ffcbe4167d224232443396968db4d02d4e8e87e213d3ee2e03095dea6502", 80,
-                retired = false, instrument = false, minRam = 5_500_000_000L,
+                retired = false, instrument = false, minRam = 4_500_000_000L,
             ),
             // large-v3-turbo, 32 encoder layers at 1280, 4 text layers, n_vocab 51866, ftype
             // 2007 = Q8_0. 128-bin, like everything in the large-v3 family. Kept up with NO
@@ -271,23 +276,27 @@ class WhisperCatalogHelpersTest {
         // (5.5e9, genuine 6 GB-class after totalMem slack) and is still resolvable, so the `>=`
         // boundary is tested on a row that has one.
         //
-        // 4.7: the boundary has a LIVE subject again — `medium-q8`, the medium tier, recommended
-        // above the same 5.5e9 (the `extreme` precedent, provisional pending the owner's
-        // weakest-device run). It is the one PICKABLE rung with a threshold, so this is the row
-        // the chooser's "Recommended for your device" badge actually turns on.
-        listOf("extreme", "medium-q8").forEach { id ->
-            val model = WhisperCatalog.byId(id)!! // minRam 5_500_000_000
-            assertEquals(id, 5_500_000_000L, model.minRamBytes)
+        // 4.7: the boundary has a LIVE subject again — `medium-q8`, the medium tier. It is the
+        // one PICKABLE rung with a threshold, so this is the row the chooser's "Recommended for
+        // your device" badge actually turns on. 4.8.0: its threshold is the owner's 4.5e9, so the
+        // two rows now demonstrate the `>=` boundary at two different numbers — each at its own.
+        listOf("extreme" to 5_500_000_000L, "medium-q8" to 4_500_000_000L).forEach { (id, threshold) ->
+            val model = WhisperCatalog.byId(id)!!
+            assertEquals(id, threshold, model.minRamBytes)
             // just below -> not recommended
-            assertFalse("$id just below", WhisperCatalog.isRecommendedForDevice(model, 5_499_999_999L))
+            assertFalse("$id just below", WhisperCatalog.isRecommendedForDevice(model, threshold - 1))
             // exactly at threshold -> recommended (>=)
-            assertTrue("$id at the threshold", WhisperCatalog.isRecommendedForDevice(model, 5_500_000_000L))
+            assertTrue("$id at the threshold", WhisperCatalog.isRecommendedForDevice(model, threshold))
             // above -> recommended
             assertTrue("$id above", WhisperCatalog.isRecommendedForDevice(model, 12_000_000_000L))
         }
-        // The Tab S10+ the rung was measured on reports 12 GB; a 4 GB phone is not told it is the
-        // right choice for it, and `small-q8` is recommended there instead.
+        // The Tab S10+ the rung was measured on reports 12 GB; a nominal 4 GB phone (~3.7e9 as
+        // totalMem reports it) is not told it is the right choice for it, and `small-q8` is
+        // recommended there instead. A nominal 6 GB phone (~5.6e9) IS over the owner's gate —
+        // which is the class 4.7's 5.5e9 would ALSO have admitted, and 4.5e9 admits with room.
+        assertFalse(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("medium-q8")!!, 3_700_000_000L))
         assertFalse(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("medium-q8")!!, 4_000_000_000L))
+        assertTrue(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("medium-q8")!!, 5_600_000_000L))
         assertTrue(WhisperCatalog.isRecommendedForDevice(WhisperCatalog.byId("small-q8")!!, 4_000_000_000L))
     }
 

@@ -289,6 +289,101 @@ object OnboardingLogic {
         return reason != FETCH_CANCELLED_MESSAGE && reason != FETCH_BUSY_WITH_ANOTHER_MODEL
     }
 
+    // ------------------------------------------ the first-run RAM gate (4.8.0, owner 2026-09-17)
+
+    /**
+     * THE FIRST-RUN RAM GATE, in bytes as `ActivityManager.MemoryInfo.totalMem` reports them.
+     *
+     * Owner, 2026-09-17: *"I'd say we do four point five gigs minimum. If you have under that,
+     * then you get pushed to the smallest model; anything above, then you're gonna choose from
+     * the medium or v3 turbo."* `totalMem` under-reports physical RAM (a nominal 4 GB phone
+     * reports ~3.7e9, a 6 GB one ~5.6e9), so 4.5e9 separates exactly the two classes he named.
+     * It is the same number as `medium-q8.minRamBytes` — asserted equal in `OnboardingLogicTest`
+     * — so the card's "Recommended for your device" badge and the card's presence in the
+     * first-run lineup are one question with one answer. Change it in both places or the test
+     * says so.
+     */
+    const val FIRST_RUN_RAM_GATE_BYTES: Long = 4_500_000_000L
+
+    /**
+     * The smallest Q8 rung — what a device under the gate is pushed to, and what a device over
+     * it is not shown on first run. One name so the two branches below cannot name two rungs.
+     */
+    private const val SMALLEST_TIER_ID = "small-q8"
+
+    /**
+     * THE STEER ABOVE THE GATE — `medium-q8`, a CONTROLLER RULING on the measurements, and the
+     * one obvious value to flip if the owner rules otherwise.
+     *
+     * The owner's words rank the two ("v3 turbo being the most accurate and speed quality is
+     * right there with it") without choosing between them for the steer, and on his Tab S10+
+     * they feel the same because both keep up. The measurements say why they are not the same
+     * elsewhere (`docs/measurements/2026-09-17-tab-cpu-ladder.md`): `medium-q8` finalizes in
+     * 1,341 ms per commit, 0.31 of its floor; `ultra-q8` in 4,849 ms, 0.99 of its — turbo has
+     * NO headroom for a SoC slower than a Dimensity 9300+, or for thermal drift on that one, and
+     * a RAM gate says nothing about speed. A steer is the app's recommendation for a device it
+     * has not measured, so it goes to the rung with the margin; turbo stays on the card beside
+     * it, offered for its accuracy, one tap away.
+     */
+    const val FIRST_RUN_STEER_ABOVE_GATE_ID: String = "medium-q8"
+
+    /**
+     * The first-run chooser's lineup after the owner's 2026-09-17 device rule — the guided
+     * flow's ONE filter over `ModelTierCopy.orderedForLanguageTagFor`. The Settings picker does
+     * NOT apply it: the rule is about first-run choice, and a user who wants small Q8 on a big
+     * phone can still pick it there.
+     *
+     *  - **An NPU-capable device is untouched.** When `WhisperCatalog.ONE_TIER_ID` is in the
+     *    lineup, the 4.3 one-tier rule has already made it turbo plus installed ids; "if you have
+     *    the NPU … you shouldn't see any other models" was already true and this returns the
+     *    list as given. (The npu-only case — `npu` offered without turbo — is a device the
+     *    one-tier rule never narrowed; it gets the RAM rule like any other, with `npu` riding
+     *    through untouched because the rule only ever names Q8 rungs.)
+     *  - **Under the gate:** only [SMALLEST_TIER_ID] — "you get pushed to the smallest model".
+     *  - **At or over the gate:** [SMALLEST_TIER_ID] is dropped — "we wanna discourage people
+     *    from the [small] model" — so the choice is medium and turbo, in the lineup's own order
+     *    (the steer heads it; see [firstRunSteer]).
+     *
+     * **The non-disturbance rule rides through both branches:** anything in [installedIds] keeps
+     * its card whatever the gate says, for the reason `WhisperCatalog.pickableFor`'s
+     * `alsoOfferedIds` exists — a model already on disk is never hidden from the user who
+     * downloaded it. Order is preserved from [lineup]; nothing is added that was not in it.
+     *
+     * @param totalRamBytes `WhisperModelManager.deviceTotalRamBytes()`, read once at flow level.
+     */
+    fun firstRunLineup(
+        lineup: List<String>,
+        totalRamBytes: Long,
+        installedIds: Set<String>,
+    ): List<String> {
+        if (com.whispereverywhere.model.WhisperCatalog.ONE_TIER_ID in lineup) return lineup
+        // The rule names the CPU ladder — `WhisperCatalog.pickable`, the ungated rungs — and
+        // nothing else: a gated npu-class id in the lineup (offered without turbo) is not a Q8
+        // rung and rides through both branches, so the steer that names it always has a card.
+        val cpuRungs = com.whispereverywhere.model.WhisperCatalog.pickable.map { it.id }.toSet()
+        return if (totalRamBytes < FIRST_RUN_RAM_GATE_BYTES) {
+            lineup.filter { it !in cpuRungs || it == SMALLEST_TIER_ID || it in installedIds }
+        } else {
+            lineup.filter { it != SMALLEST_TIER_ID || it in installedIds }
+        }
+    }
+
+    /**
+     * The first-run steer after the same rule. NPU-class tiers keep today's answer — [cpuSteer]
+     * is `ModelTierCopy.steerIdForLanguageTagFor`'s, which already names turbo or `npu` where
+     * they are offered — and the CPU fleet steers by RAM: [FIRST_RUN_STEER_ABOVE_GATE_ID] at or
+     * over the gate, [SMALLEST_TIER_ID] under it. A steer, never a pick: the badge moves, the
+     * user still taps.
+     *
+     * The npu-class test is on the LINEUP, not on the steer string, so a lineup that carries
+     * `npu` (offered without turbo, where the CPU steer already became `npu`) keeps that answer
+     * whatever the RAM says.
+     */
+    fun firstRunSteer(lineup: List<String>, cpuSteer: String, totalRamBytes: Long): String {
+        if (com.whispereverywhere.model.WhisperCatalog.ONE_TIER_ID in lineup || "npu" in lineup) return cpuSteer
+        return if (totalRamBytes >= FIRST_RUN_RAM_GATE_BYTES) FIRST_RUN_STEER_ABOVE_GATE_ID else SMALLEST_TIER_ID
+    }
+
     /**
      * The tier pick, revalidated against the lineup actually on screen (4.3 fix round, I-3).
      *

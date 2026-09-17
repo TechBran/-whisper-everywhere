@@ -164,9 +164,12 @@ object ModelTierCopy {
         "medium-q8" to TierCopy(
             headline = "Sharper accuracy, larger download",
             badges = listOf("90+ languages", "823 MB"),
+            // 4.8.0: the threshold is the owner's 4.5 GB (was 4.7's provisional 5.5 GB). The
+            // number here and `medium-q8.minRamBytes` are one fact; ModelTierCopyTest holds them
+            // together.
             body = "Whisper medium at Q8_0: 24 encoder layers at 1024 dims against small's 12 " +
                 "at 768. Measured to keep up with margin on the owner's tablet; recommended " +
-                "where the device reports at least 5.5 GB of memory.",
+                "where the device reports at least 4.5 GB of memory.",
         ),
         "ultra-q8" to TierCopy(
             // The unscoped accuracy superlative moved here from `large-v3`'s card when that rung

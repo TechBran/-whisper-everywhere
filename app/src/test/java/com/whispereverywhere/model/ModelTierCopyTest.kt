@@ -126,7 +126,7 @@ class ModelTierCopyTest {
         assertEquals(
             "Whisper medium at Q8_0: 24 encoder layers at 1024 dims against small's 12 at 768. " +
                 "Measured to keep up with margin on the owner's tablet; recommended where the " +
-                "device reports at least 5.5 GB of memory.",
+                "device reports at least 4.5 GB of memory.",
             ModelTierCopy.forId("medium-q8")!!.body,
         )
         assertEquals("Highest accuracy, largest download", ModelTierCopy.forId("ultra-q8")!!.headline)
@@ -144,8 +144,10 @@ class ModelTierCopyTest {
             assertTrue("'$it' must scope its measured claim to the tablet", ModelTierCopy.forId(it)!!.body.contains("on the owner's tablet"))
         }
         assertTrue(ModelTierCopy.forId("ultra-q8")!!.body.lowercase().contains("on the owner's flagship tablet"))
-        assertEquals(5_500_000_000L, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
-        assertTrue(ModelTierCopy.forId("medium-q8")!!.body.contains("at least 5.5 GB"))
+        // 4.8.0: the owner's 4.5 GB (was 4.7's provisional 5.5 GB), on the row and on the card.
+        assertEquals(4_500_000_000L, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
+        assertTrue(ModelTierCopy.forId("medium-q8")!!.body.contains("at least 4.5 GB"))
+        assertFalse(ModelTierCopy.forId("medium-q8")!!.body.contains("5.5 GB"))
     }
 
     @Test fun retired_and_unknown_tiers_have_no_copy() {
@@ -516,13 +518,16 @@ class ModelTierCopyTest {
             offeredTiers.filter { !it.gated && it.minRamBytes > 0L }.map { it.id },
         )
         assertFalse(WhisperCatalog.byId("medium-q8")!!.instrument)
-        assertEquals(5_500_000_000L, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
+        assertEquals(4_500_000_000L, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
         // ...and its card states the threshold in the user's units, so the screen's RAM line and
         // the card's own sentence agree about why.
-        assertTrue(ModelTierCopy.forId("medium-q8")!!.body.contains("5.5 GB"))
-        // The retired precedent the number came from is still a resolvable row with the same value.
+        assertTrue(ModelTierCopy.forId("medium-q8")!!.body.contains("4.5 GB"))
+        // 4.8.0: the number is the owner's, not the retired `extreme` precedent's any more —
+        // that row is still resolvable and still 5.5e9, and the two no longer agree, which is
+        // the point: medium-q8's threshold was RULED, not inherited.
         assertTrue(WhisperCatalog.byId("extreme")!!.retired)
-        assertEquals(WhisperCatalog.byId("extreme")!!.minRamBytes, WhisperCatalog.byId("medium-q8")!!.minRamBytes)
+        assertEquals(5_500_000_000L, WhisperCatalog.byId("extreme")!!.minRamBytes)
+        assertTrue(WhisperCatalog.byId("extreme")!!.minRamBytes != WhisperCatalog.byId("medium-q8")!!.minRamBytes)
     }
 
     /**

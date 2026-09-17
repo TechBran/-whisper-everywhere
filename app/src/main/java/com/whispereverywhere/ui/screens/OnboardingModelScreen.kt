@@ -118,6 +118,13 @@ fun OnboardingModelScreen(
         }
     }
 
+    // 4.8.0: this picker is deliberately NOT filtered by the first-run RAM rule the guided flow
+    // applies (`OnboardingLogic.firstRunLineup` / `firstRunSteer`). The owner's ruling of
+    // 2026-09-17 is about FIRST-RUN choice — what a fresh install is pushed to or offered —
+    // and all three Q8 rungs stay selectable here: a user who wants small Q8 on a big phone can
+    // still pick it, and a user under the gate who wants medium can still read "High-end
+    // devices only" on its card and choose it anyway. ChooserSteerWiringPinTest holds that the
+    // rule is called on the flow and not here.
     val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
     val models = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, installedIds)
         .mapNotNull { WhisperCatalog.byId(it) }

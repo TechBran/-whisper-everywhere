@@ -464,16 +464,19 @@ object WhisperCatalog {
             // 1,341 ms per commit, worst 2,508 against an 8,000 ms floor;
             // `TierThroughputRecord.MEDIUM_Q8`), so it is no longer an instrument.
             //
-            // **The RAM threshold is PROVISIONAL.** 5.5e9 is this repo's own `extreme` (medium.en)
-            // precedent — the same 24-layer medium at Q5_0, gated at "genuine 6 GB-class hardware
-            // after ActivityManager.totalMem slack" since 2026-07-17 — carried over because an
-            // 823 MB model is a real fact about the device in the user's hand, unlike the
-            // instrument flag it replaces. It has NOT been measured against a weak device: the
-            // only measurement is a 12 GB flagship. **THE OPEN ITEM is the owner's weakest-device
-            // measurement**, which is what would move this number in either direction. Below it
-            // the rung stays selectable and the chooser says "High-end devices only", which is a
+            // **The RAM threshold is THE OWNER'S NUMBER, no longer provisional** (4.8.0, ruling
+            // 2026-09-17: *"I'd say we do four point five gigs minimum. If you have under that,
+            // then you get pushed to the smallest model; anything above, then you're gonna
+            // choose from the medium or v3 turbo."*). 4.7 carried 5.5e9 over from the `extreme`
+            // (medium.en) precedent pending exactly this call. 4.5e9 sits between what a nominal
+            // 4 GB phone reports to `ActivityManager.totalMem` (~3.7e9) and what a 6 GB one
+            // reports (~5.6e9), so it separates the two classes the owner named. It is the
+            // same constant the first-run gate reads (`OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES`,
+            // asserted equal in OnboardingLogicTest), so the badge on this card and the card's
+            // presence in the first-run lineup answer one question. Below it the rung stays
+            // selectable from Settings and the chooser says "High-end devices only", which is a
             // statement about RAM and is true.
-            minRamBytes = 5_500_000_000L,
+            minRamBytes = 4_500_000_000L,
         ),
         WhisperModel(
             id = "ultra",
@@ -869,7 +872,7 @@ object WhisperCatalog {
      * is offered without a throughput verdict that clears, and a card badged *"Recommended for
      * your device"* is the app claiming one. The RAM comparison is untouched for every other row,
      * boundary included (`>=`) — since 4.7 `medium-q8` is the live subject of that boundary
-     * (5.5e9, provisional), and `small-q8` at 0 is recommended everywhere.
+     * (4.5e9 since 4.8.0, the owner's number), and `small-q8` at 0 is recommended everywhere.
      */
     fun isRecommendedForDevice(model: WhisperModel, totalRamBytes: Long): Boolean =
         !model.instrument && totalRamBytes >= model.minRamBytes

@@ -606,6 +606,77 @@ class ChooserSteerWiringPinTest {
         }
     }
 
+    /**
+     * 4.8.0 — **THE FIRST-RUN RAM GATE IS WIRED ON THE FLOW AND NOT ON THE PICKER.** Owner ruling
+     * 2026-09-17: under 4.5 GB a fresh install is pushed to the smallest Q8 rung; over it the
+     * choice is medium and turbo; an NPU-capable device is untouched. `OnboardingLogicTest`
+     * executes the rule. What it cannot see is whether the guided flow asks it — on BOTH the
+     * lineup and the steer, with the SAME RAM read — and whether the Settings picker was
+     * accidentally given the same cut, which would take small Q8 away from a big-phone user who
+     * wants it (the rule is about first-run choice).
+     *
+     * **The mutations this closes:** the rule applied to the lineup but not the steer (a badge on
+     * a card the gate hid — the Bengali-review shape one axis over); the RAM read a second time
+     * for one of the two (two answers to one question); the read on Main (`getMemoryInfo` is a
+     * binder call; `produceState`'s block runs in the composition's context); and the picker
+     * filtered.
+     */
+    @Test
+    fun theFirstRunRamGateIsAppliedOnTheFlowToBothTheLineupAndTheSteer_andNotOnThePicker() {
+        // ONE RAM read, off Main, from the manager — the same source the RAM badge on the card
+        // reads (isRecommendedForDevice), so the badge and the lineup cannot disagree about the
+        // device. Unkeyed on purpose: RAM is not a fact an install can change.
+        assertEquals(
+            "the flow reads the device RAM once, off Main, from the manager",
+            1,
+            count(
+                flow,
+                block(
+                    "        val totalRamBytes by produceState(initialValue = 0L) {",
+                    "            value = withContext(Dispatchers.IO) {",
+                    "                WhisperEverywhereApp.getInstance().whisperModelManager.deviceTotalRamBytes()",
+                    "            }",
+                    "        }",
+                ),
+            ),
+        )
+        assertEquals("and reads it nowhere else on the flow", 1, liveLineCount(flow, "deviceTotalRamBytes()"))
+        // The lineup is the ORDERED list run through the rule, bound to the same `lineup` name
+        // the revalidation guard and the cards already share — so the guard sees the cut.
+        assertEquals(
+            "the lineup is the ordering rule's answer, cut by the first-run rule, under one name",
+            1,
+            count(
+                flow,
+                block(
+                    "        val lineup = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, alsoOfferedIds)",
+                    "            .let { OnboardingLogic.firstRunLineup(it, totalRamBytes, installedIds) }",
+                ),
+            ),
+        )
+        // The steer is the language/gate steer run through the SAME rule with the SAME RAM, and
+        // it is handed the FILTERED lineup so the npu-class clause reads what is on screen.
+        assertEquals(
+            "the steer is the steer rule's answer, cut by the first-run rule, over the filtered lineup",
+            1,
+            count(
+                flow,
+                block(
+                    "        val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)",
+                    "            .let { OnboardingLogic.firstRunSteer(lineup, it, totalRamBytes) }",
+                ),
+            ),
+        )
+        assertEquals("the lineup rule is called exactly once on the flow", 1, liveLineCount(flow, "OnboardingLogic.firstRunLineup("))
+        assertEquals("the steer rule is called exactly once on the flow", 1, liveLineCount(flow, "OnboardingLogic.firstRunSteer("))
+        // THE PICKER IS NOT FILTERED. All three Q8 rungs stay selectable from Settings; the
+        // owner's rule is about what a fresh install is offered, not what a user may choose.
+        assertEquals("the picker never applies the first-run lineup rule", 0, liveLineCount(picker, "firstRunLineup"))
+        assertEquals("the picker never applies the first-run steer rule", 0, liveLineCount(picker, "firstRunSteer"))
+        assertEquals("the picker never reads the RAM for a lineup decision", 0, liveLineCount(picker, "deviceTotalRamBytes"))
+        assertEquals("and says why, where the lineup is built", 1, count(picker, "deliberately NOT filtered by the first-run RAM rule"))
+    }
+
     @Test
     fun theSteerBadgeLeadsTheChipsOnTheSteeredCardOnly() {
         assertEquals(

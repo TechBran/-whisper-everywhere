@@ -498,7 +498,8 @@ object TierThroughputRecord {
     /**
      * **`medium-q8` — medium on the repack path, and it passed.** Byte-for-byte the same
      * hyperparameters as [MEDIUM_Q5] off the file's own ggml header, differing only in `ftype`.
-     * THE MEDIUM TIER since 4.7, recommended above a provisional 5.5 GB RAM threshold.
+     * THE MEDIUM TIER since 4.7, recommended above the owner's 4.5 GB RAM threshold (4.8.0; 4.7
+     * carried a provisional 5.5 GB).
      */
     val MEDIUM_Q8 = TierThroughput(
         tierId = "medium-q8",
