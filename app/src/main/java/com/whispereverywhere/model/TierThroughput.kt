@@ -559,8 +559,12 @@ object TierThroughputRecord {
                 "4,659. THE DUTY ARITHMETIC: the worst commit is 0.99 of the 8 000 ms floor — " +
                 "one long chunk (audio_ctx 756, 13.8 s of audio) came within 70 ms of the line " +
                 "past which the queue grows — and F/floor + m at the median is ~0.65 against " +
-                "the 0.70 rule, which is inside it by five points on a Dimensity 9300+ with " +
-                "nothing else running. The typed text stayed with the voice for the whole run, " +
+                "the 0.70 rule, which is inside it by five points on a Dimensity 9300+ — and " +
+                "that five points was measured under LOAD, not on an idle SoC: threads=4 for " +
+                "the finalizer, the English previewer armed beside it (2 threads, +169 MB " +
+                "concurrent), and the YouTube talk itself playing on the tablet as device audio " +
+                "through the app's screen-share consent. The typed text stayed with the voice " +
+                "for the whole run, " +
                 "so it is not RECOVERED_ONLY_IN_PAUSES and not NEVER_CAUGHT_UP; it is " +
                 "KEPT_UP_WITHOUT_MARGIN, and that does not clear production, because the margin " +
                 "that would survive a slower SoC, thermal throttling, or a run of long chunks is " +

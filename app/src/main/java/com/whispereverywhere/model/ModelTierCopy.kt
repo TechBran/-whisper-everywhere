@@ -10,7 +10,25 @@ package com.whispereverywhere.model
  * review): every offered tier states a size, a speed-vs-accuracy position, and its language
  * coverage as a badge — "English only" on every ENGLISH-scope tier, "90+ languages" on every
  * MULTILINGUAL tier. A card positions itself DIRECTLY or against a tier the same user can still
- * see, never against a retired one ([ModelTierCopyTest.no_offered_tier_names_a_retired_one]).
+ * see, and never by a retired tier's ID ([ModelTierCopyTest.no_offered_tier_names_a_retired_one]
+ * — the word-anchored id census). Since 4.7 that rule has three stated qualifications, each held
+ * by its own assertion rather than by this sentence:
+ *
+ *  * A Q8_0 card MAY name its retired Q5 twin by size and quantisation, saying "retired" — the
+ *    twins are one set of weights, and the Q5 file is still installed on the devices of everyone
+ *    who picked it, so "the retired 190 MB Q5_1 model" is how such a user finds out the 264 MB
+ *    card is the same model ([ModelTierCopyTest.every_offered_rung_is_the_q8_side_of_a_twin_whose_q5_side_is_retired]
+ *    requires it of `small-q8`, and forbids the twin's ID on the same card).
+ *  * The id census exempts `large-v3`, which is the retired rung's id AND the upstream checkpoint
+ *    family's name — `ultra-q8` is "Large-v3-turbo" and `npu-turbo` runs "Large-v3's own encoder".
+ *    What the rule is about is held for that rung by its badge instead: no offered card names the
+ *    retired rung's 1081 MB.
+ *  * `npu-turbo`'s body still compares itself to "the 190 MB Multilingual model", retired on
+ *    2026-09-17, VERBATIM: both halves of that claim were measured against those weights on the
+ *    Fold6 and owner-ruled, and its replacement (`small-q8`) has never been timed on an
+ *    NPU-capable device. Re-pointing the sentence would restate a measured claim about weights it
+ *    was not measured against; the open item is a Fold6 session that times `small-q8` beside turbo
+ *    (see the comment on that card).
  *
  * **4.6 — every offered rung is multilingual and the ENGLISH-scope badge rule is unreachable from
  * here.** Owner ruling 2026-09-13; the "English only" arm of that census now applies to no offered
@@ -130,9 +148,18 @@ object ModelTierCopy {
             // smallest download on the ladder, and whisper-small is the everyday-accuracy tier.
             headline = "Everyday accuracy, smallest download",
             badges = listOf("90+ languages", "264 MB"),
+            // What this body may NOT say is that its accuracy "matches" the Q5_1 model's. The
+            // measurement doc records wallMs only; Q8_0 and Q5_1 are two quantisations of the
+            // same weights and nothing in this repo has compared their transcripts. The owner's
+            // ruling names that comparison as the OPEN gate ("the rest of the testing now will
+            // be to prove the accuracy of the small and medium model"), and a card that
+            // pre-announced its result would be the app deciding a question the owner has
+            // reserved. So the card states the two checkable facts — same weights, Q8_0 — and
+            // stops; a user comparing "the 190 MB one I had" with this one can still see they
+            // are one model. The accuracy verdict, when it exists, is a document, not a guess.
             body = "Whisper small — the same weights as the retired 190 MB Q5_1 model, stored at " +
-                "Q8_0 — so its accuracy matches that model's. Measured to keep up with margin " +
-                "on the owner's tablet, and recommended on every device.",
+                "Q8_0. Measured to keep up with margin on the owner's tablet, and recommended " +
+                "on every device.",
         ),
         "medium-q8" to TierCopy(
             headline = "Sharper accuracy, larger download",

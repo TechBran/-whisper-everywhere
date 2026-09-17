@@ -117,9 +117,9 @@ class ModelTierCopyTest {
         // docs/measurements/2026-09-17-tab-cpu-ladder.md or a file's own ggml header.
         assertEquals("Everyday accuracy, smallest download", ModelTierCopy.forId("small-q8")!!.headline)
         assertEquals(
-            "Whisper small — the same weights as the retired 190 MB Q5_1 model, stored at Q8_0 " +
-                "— so its accuracy matches that model's. Measured to keep up with margin on the " +
-                "owner's tablet, and recommended on every device.",
+            "Whisper small — the same weights as the retired 190 MB Q5_1 model, stored at Q8_0. " +
+                "Measured to keep up with margin on the owner's tablet, and recommended on " +
+                "every device.",
             ModelTierCopy.forId("small-q8")!!.body,
         )
         assertEquals("Sharper accuracy, larger download", ModelTierCopy.forId("medium-q8")!!.headline)
@@ -454,11 +454,22 @@ class ModelTierCopyTest {
             )
         }
         // `small-q8`'s card names the retired twin by SIZE and quantisation ("the retired 190 MB
-        // Q5_1 model"), because that is the model every 4.6.0 production user is on and the
-        // sentence "its accuracy matches that model's" is the one they need — same weights.
+        // Q5_1 model"), because that is the model every 4.6.0 production user is on and "the
+        // same weights" is the sentence they need to recognise the 264 MB card as their model.
+        // This is the one stated exception to the header rule in ModelTierCopy (a retired tier
+        // named by size, never by id — the id is forbidden three assertions up).
         val small = ModelTierCopy.forId("small-q8")!!.body
         assertTrue(small.contains("190 MB") && small.contains("Q5_1") && small.contains("retired"))
         assertTrue(small.contains("the same weights"))
+        // What it may NOT say is that the two transcribe alike. The measurement doc records
+        // wallMs only, nothing in the repo compares Q8_0 and Q5_1 transcripts, and the owner has
+        // named that comparison as the open gate ("prove the accuracy of the small and medium
+        // model"). A card that announces a result the accuracy pass has not produced is the
+        // defect the review of 138be0b found; this pins its absence.
+        assertFalse(
+            "small-q8's card claims an accuracy equivalence no measurement supports",
+            Regex("accuracy (matches|is the same|is identical|equals)").containsMatchIn(small.lowercase()),
+        )
     }
 
     /**
