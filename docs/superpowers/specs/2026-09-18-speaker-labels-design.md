@@ -17,7 +17,7 @@
 | surface | one speaker heard | two or more heard |
 |---|---|---|
 | the transcript panel (the bubble's live window) | plain text, as today | a new paragraph at every speaker change, each starting `Speaker N:` — including the first paragraph, relabelled `Speaker 1:` the moment a second voice is confirmed (the panel's text is ours to rewrite) |
-| text typed into another app's field | as today | a new paragraph at every speaker change; **no labels** (the app appends into fields and never rewrites what is already there, so a retroactive `Speaker 1:` is impossible and a forward-only label would be lopsided) |
+| text typed into another app's field | as today | a new paragraph at every speaker change; **no labels** — the owner's ruling: a text field is not a transcript. (The 2026-09-18 code mapping showed the app types NOTHING mid-session — the whole transcript is injected once at stop — so labels there are possible but unwanted.) |
 | the clipboard copy and the saved transcript | as today | paragraph breaks always; `Speaker N:` labels **only when the new setting "Speaker labels in copied and saved text" is on** (default off) |
 | the live preview strip | untouched | untouched |
 | cloud sessions | untouched | untouched |
