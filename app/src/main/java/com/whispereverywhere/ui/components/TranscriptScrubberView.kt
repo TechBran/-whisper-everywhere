@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.widget.TextView
 import androidx.core.widget.doAfterTextChanged
 
@@ -35,7 +36,15 @@ import androidx.core.widget.doAfterTextChanged
  * drag / long-press-to-pin listener never sees a scrub — the same shape the resize handle and
  * the TTS pill's [TtsScrubberView] use. When the content fits, the view is INVISIBLE: it keeps
  * its slot in the layout (no re-measure of the panel) but receives no pointer events, so a
- * finger there reaches whatever is under it.
+ * finger there reaches whatever is under it. It is never GONE — its height, not its
+ * visibility, is what keeps a hidden strip's frame collapsed (see [onMeasure]).
+ *
+ * ### Its height is its TextView's
+ * This view sits in a [TranscriptScrubberFrame], which measures it EXACTLY to the bound
+ * TextView's height every pass ([TranscriptScrubberMath.scrubberHeight]); on its own it
+ * wants nothing. The bar is drawn from [trackTop] — the TextView's top when that lies below
+ * this view's top (the live strip's 4dp margin, which its scrubber does not carry so that a
+ * GONE strip leaves no 4dp of phantom frame) — to the bottom, which both views share.
  *
  * The geometry is [TranscriptScrubberMath]; this class is the View around it.
  */
@@ -44,7 +53,9 @@ class TranscriptScrubberView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : View(context, attrs) {
 
-    private var target: TextView? = null
+    /** The TextView this view mirrors; [TranscriptScrubberFrame] measures this view to it. */
+    var target: TextView? = null
+        private set
 
     // The mirrored model, refreshed by sync().
     private var contentHeight = 0
@@ -90,12 +101,13 @@ class TranscriptScrubberView @JvmOverloads constructor(
     }
 
     /**
-     * Wants NOTHING of its own. It sits `match_parent`-tall in a `wrap_content` FrameLayout whose
-     * size must come from the TextView beside it; FrameLayout measures every child once with the
-     * parent's AT_MOST spec before its match-parent re-measure, and a plain View answers AT_MOST
-     * with the whole available height — which would balloon the panel to the screen. Answering
-     * 0 unless the spec is EXACT leaves the wrapper the TextView's size, and the re-measure then
-     * hands this view that height exactly.
+     * Wants NOTHING of its own; its height is given. The frame measures every child once with
+     * the parent's AT_MOST spec, and a plain View answers AT_MOST with the whole available
+     * height — which would balloon the panel to the screen — so this view answers 0 unless the
+     * spec is EXACT. The EXACT spec comes from [TranscriptScrubberFrame], which measures this
+     * view a second time, to [TranscriptScrubberMath.scrubberHeight] of the TextView it just
+     * measured. (A plain FrameLayout would never do that for a lone child: its match-parent
+     * re-measure runs only for two or more, which is why the frame is a subclass.)
      */
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         setMeasuredDimension(
@@ -110,7 +122,11 @@ class TranscriptScrubberView @JvmOverloads constructor(
     }
 
     private val maxScroll: Int get() = TranscriptScrubberMath.maxScroll(contentHeight, viewHeight)
-    private val trackHeight: Float get() = height.toFloat()
+
+    /** Where the track starts: the TextView's top, when it lies below this view's own. */
+    private val trackTop: Float
+        get() = TranscriptScrubberMath.trackTop(target?.let { topMarginOf(it) } ?: 0, topMarginOf(this)).toFloat()
+    private val trackHeight: Float get() = (height - trackTop).coerceAtLeast(0f)
     private val thumbHeight: Float
         get() = TranscriptScrubberMath.thumbHeight(trackHeight, viewHeight, contentHeight, dp(MIN_THUMB_DP))
     private val thumbTop: Float
@@ -119,13 +135,14 @@ class TranscriptScrubberView @JvmOverloads constructor(
         )
 
     override fun onDraw(canvas: Canvas) {
-        if (TranscriptScrubberMath.fits(contentHeight, viewHeight) || height <= 0) return
+        if (TranscriptScrubberMath.fits(contentHeight, viewHeight) || trackHeight <= 0f) return
         val barW = dp(BAR_WIDTH_DP)
         val right = width - dp(BAR_INSET_DP)
         val left = right - barW
         val r = barW / 2f
-        canvas.drawRoundRect(left, 0f, right, trackHeight, r, r, trackPaint)
-        val top = thumbTop
+        val trackY = trackTop
+        canvas.drawRoundRect(left, trackY, right, trackY + trackHeight, r, r, trackPaint)
+        val top = trackY + thumbTop
         canvas.drawRoundRect(left, top, right, top + thumbHeight, r, r, thumbPaint)
     }
 
@@ -137,13 +154,14 @@ class TranscriptScrubberView @JvmOverloads constructor(
                 // Claim the gesture: the bubble's drag / long-press-to-pin never sees a scrub.
                 parent?.requestDisallowInterceptTouchEvent(true)
                 dragging = true
-                grabOffset = TranscriptScrubberMath.grabOffset(event.y, thumbTop, thumbHeight)
-                scrollToFinger(event.y)
+                val y = event.y - trackTop
+                grabOffset = TranscriptScrubberMath.grabOffset(y, thumbTop, thumbHeight)
+                scrollToFinger(y)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!dragging) return false
-                scrollToFinger(event.y)
+                scrollToFinger(event.y - trackTop)
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -156,7 +174,8 @@ class TranscriptScrubberView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    /** The one place this view scrolls its TextView — and only while [dragging]. */
+    /** The one place this view scrolls its TextView — and only while [dragging]. [fingerY] is
+     *  track-relative (the finger's y less [trackTop]). */
     private fun scrollToFinger(fingerY: Float) {
         val tv = target ?: return
         if (!dragging) return
@@ -179,5 +198,9 @@ class TranscriptScrubberView @JvmOverloads constructor(
         const val BAR_WIDTH_DP = 4f
         const val BAR_INSET_DP = 1f
         const val MIN_THUMB_DP = 24f
+
+        /** A child's top margin in its frame — the one geometry fact the frame and the view
+         *  share (the TextView's bottom is its margin plus its height). 0 when unset. */
+        fun topMarginOf(view: View): Int = (view.layoutParams as? ViewGroup.MarginLayoutParams)?.topMargin ?: 0
     }
 }

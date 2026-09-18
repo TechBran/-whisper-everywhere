@@ -24,8 +24,12 @@
 
         <!-- Wrapper so the resize handle can OVERLAY the transcript's top-right corner: the
              container is a vertical LinearLayout, which can't stack children. The transcript
-             view defines the panel width, so the wrapper's top-right is the panel's top-right. -->
-        <FrameLayout
+             view defines the panel width, so the wrapper's top-right is the panel's top-right.
+             A TranscriptScrubberFrame, not a plain FrameLayout (4.9.1): it measures the
+             scrubber below EXACTLY to the transcript view's height every pass — a plain frame
+             re-measures a lone child to its sibling's height never (only two or more
+             match_parent children get that), so the scrubber would be laid out 0px tall. -->
+        <com.whispereverywhere.ui.components.TranscriptScrubberFrame
             android:layout_width="wrap_content"
             android:layout_height="wrap_content">
 
@@ -55,12 +59,15 @@
 
             <!-- The committed text's grabbable scrollbar (4.9.1): a 12dp touch lane on the
                  panel's right edge, drawing the 4dp bar at its edge, starting BELOW the resize
-                 handle so the handle keeps its corner. INVISIBLE (no touches) when the text
-                 fits; the view decides that itself from the TextView it is bound to. -->
+                 handle so the handle keeps its corner. Its height is NOT its own — wrap_content
+                 here measures to nothing, and the frame then measures it to the transcript
+                 view's bottom (TranscriptScrubberMath.scrubberHeight: the view's height less
+                 this 28dp). INVISIBLE (no touches) when the text fits; the view decides that
+                 itself from the TextView it is bound to. -->
             <com.whispereverywhere.ui.components.TranscriptScrubberView
                 android:id="@+id/transcript_scrubber"
                 android:layout_width="12dp"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_gravity="top|end"
                 android:layout_marginTop="28dp"
                 android:visibility="invisible" />
@@ -80,7 +87,7 @@
                 android:alpha="1.0"
                 android:src="@drawable/ic_resize_handle"
                 android:contentDescription="Resize transcript window" />
-        </FrameLayout>
+        </com.whispereverywhere.ui.components.TranscriptScrubberFrame>
 
         <!--
           Live delta text — the word-for-word preview.
@@ -96,16 +103,20 @@
 
           The scrollbar is the SAME grabbable bar the committed text carries above (owner ruling
           2026-09-17; the 4.4 previewer panel's framework bar was "barely visible" and, like any
-          framework bar, took no touches): a TranscriptScrubberView beside the strip in the same
-          FrameLayout wrapper, this view's own scrollbars NONE. The strip KEEPS its 4dp top
-          margin (the scrubber carries the same, so it spans the text exactly): on the wrapper it
-          would survive a GONE strip as 4dp of phantom panel. The service still writes to the
-          TextView by id and the strip's own visibility (GONE / INVISIBLE / VISIBLE) still drives
-          the window's height — an INVISIBLE strip occupies its height in the wrapper exactly as
-          it did in the container, a GONE one collapses the wrapper to nothing. Pinned by
-          BubbleScrollbarPinTest.
+          framework bar, took no touches): a TranscriptScrubberView beside the strip in a
+          TranscriptScrubberFrame, this view's own scrollbars NONE. The strip KEEPS its 4dp top
+          margin and the scrubber carries NONE: a frame measures every non-GONE child's margins
+          into its height, and the scrubber is never GONE (INVISIBLE when it has nothing to
+          show), so a margin on it would outlive a GONE strip as 4dp of phantom panel. Instead
+          the frame measures the scrubber to the strip's bottom (its 4dp margin plus its
+          height; 0 when the strip is GONE) and the scrubber draws its bar from the strip's top,
+          4dp into itself. The service still writes to the TextView by id and the strip's own
+          visibility (GONE / INVISIBLE / VISIBLE) still drives the window's height — an INVISIBLE
+          strip occupies its height in the frame exactly as it did in the container, a GONE one
+          collapses the frame to nothing, because the only other child is then 0dp tall with no
+          margin. Pinned by BubbleScrollbarPinTest.
         -->
-        <FrameLayout
+        <com.whispereverywhere.ui.components.TranscriptScrubberFrame
             android:layout_width="wrap_content"
             android:layout_height="wrap_content">
 
@@ -125,12 +136,11 @@
             <com.whispereverywhere.ui.components.TranscriptScrubberView
                 android:id="@+id/delta_scrubber"
                 android:layout_width="12dp"
-                android:layout_height="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_gravity="top|end"
-                android:layout_marginTop="4dp"
                 android:visibility="invisible" />
 
-        </FrameLayout>
+        </com.whispereverywhere.ui.components.TranscriptScrubberFrame>
 
     </LinearLayout>
 

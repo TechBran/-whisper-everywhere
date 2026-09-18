@@ -51,6 +51,33 @@ class TranscriptScrubberMathTest {
         assertFalse(TranscriptScrubberMath.visible(textViewVisible = true, contentHeight = 0, viewHeight = 0))
     }
 
+    @Test fun the_scrubber_is_measured_to_meet_its_text_views_bottom_and_never_taller_than_the_text_view_makes_the_frame() {
+        // The live strip: 4dp margin (8px at 2.0) on the strip, none on its scrubber — the
+        // scrubber is the strip's margin plus its height, and starts at the frame's top.
+        assertEquals(248, TranscriptScrubberMath.scrubberHeight(targetGone = false, targetMeasuredHeight = 240, targetTopMargin = 8, ownTopMargin = 0))
+        // The committed text: no margin on the text, 28dp (56px) on its scrubber so the resize
+        // handle keeps its corner — the scrubber is the text's height less that.
+        assertEquals(184, TranscriptScrubberMath.scrubberHeight(targetGone = false, targetMeasuredHeight = 240, targetTopMargin = 0, ownTopMargin = 56))
+        // A GONE TextView is not measured (a stale measuredHeight) and has no bottom to meet.
+        assertEquals(0, TranscriptScrubberMath.scrubberHeight(targetGone = true, targetMeasuredHeight = 240, targetTopMargin = 8, ownTopMargin = 0))
+        // A text shorter than the scrubber's own margin (the pre-first-apply hint) is 0, not negative.
+        assertEquals(0, TranscriptScrubberMath.scrubberHeight(targetGone = false, targetMeasuredHeight = 40, targetTopMargin = 0, ownTopMargin = 56))
+        // THE FRAME INVARIANT: scrubber + its margin == text + its margin whenever the text is
+        // there, so the frame is exactly as tall as its TextView makes it; and with no margin of
+        // its own, a GONE text leaves the scrubber contributing 0 — the frame collapses.
+        for ((tv, tvMargin, own) in listOf(Triple(240, 8, 0), Triple(240, 0, 56), Triple(1000, 8, 0), Triple(56, 0, 56))) {
+            val h = TranscriptScrubberMath.scrubberHeight(false, tv, tvMargin, own)
+            assertEquals("scrubber ($tv, $tvMargin, $own)", tv + tvMargin, h + own)
+        }
+        assertEquals(0, TranscriptScrubberMath.scrubberHeight(true, 1000, 8, 0) + 0)
+    }
+
+    @Test fun the_track_starts_at_the_text_views_top_when_that_lies_below_the_scrubbers_own() {
+        assertEquals("the strip's 4dp margin, 8px", 8, TranscriptScrubberMath.trackTop(targetTopMargin = 8, ownTopMargin = 0))
+        assertEquals("the committed scrubber starts below its text: from 0", 0, TranscriptScrubberMath.trackTop(targetTopMargin = 0, ownTopMargin = 56))
+        assertEquals(0, TranscriptScrubberMath.trackTop(0, 0))
+    }
+
     @Test fun fraction_is_scroll_over_travel_clamped_and_zero_when_there_is_no_travel() {
         assertEquals(0f, TranscriptScrubberMath.fraction(0, maxScroll), 0f)
         assertEquals(0.5f, TranscriptScrubberMath.fraction(380, maxScroll), 0.0001f)

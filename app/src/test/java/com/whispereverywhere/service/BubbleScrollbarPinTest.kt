@@ -27,6 +27,13 @@ import org.junit.Test
  * bodies, and the constants read from the class. The visibility contract itself — the bar is
  * shown exactly when there is something to scroll — is `TranscriptScrubberMath.visible`, held
  * by `TranscriptScrubberMathTest`.
+ *
+ * The one thing 4.8.0's attributes gave for free and a custom view does not is a HEIGHT: a
+ * scrubber that is 0px tall is neither drawn nor hit, and a green suite that pinned only
+ * `match_parent` certified exactly that (the 99 review). So the pin here is the MECHANISM that
+ * gives the scrubber its height — the [TranscriptScrubberFrame] around each pair, re-measuring
+ * the scrubber EXACTLY to its TextView — and the geometry is `TranscriptScrubberMath
+ * .scrubberHeight`, held by `TranscriptScrubberMathTest`.
  */
 class BubbleScrollbarPinTest {
 
@@ -50,8 +57,10 @@ class BubbleScrollbarPinTest {
     private val serviceRaw: String by lazy { read("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt") }
     private val service: String by lazy { serviceRaw.replace(Regex("\\s+"), " ") }
     private val scrubberSource: String by lazy { read("src/main/java/com/whispereverywhere/ui/components/TranscriptScrubberView.kt") }
+    private val frameSource: String by lazy { read("src/main/java/com/whispereverywhere/ui/components/TranscriptScrubberFrame.kt") }
 
     private val SCRUBBER = "<com.whispereverywhere.ui.components.TranscriptScrubberView"
+    private val FRAME = "<com.whispereverywhere.ui.components.TranscriptScrubberFrame"
 
     /** The one element carrying [id], from its opening [tag] to its `/>`. */
     private fun element(id: String, tag: String): String {
@@ -78,13 +87,24 @@ class BubbleScrollbarPinTest {
         return value!!.removeSuffix("dp").toInt()
     }
 
-    /** The innermost `<FrameLayout … </FrameLayout>` around the element carrying [id]. */
+    /** The innermost TranscriptScrubberFrame element around the element carrying [id]. */
     private fun wrapperOf(id: String): String {
         val idAt = layout.indexOf("android:id=\"@+id/$id\"")
-        val open = layout.lastIndexOf("<FrameLayout", idAt)
-        val close = layout.indexOf("</FrameLayout>", idAt)
-        assertTrue("$id is not inside a FrameLayout", open >= 0 && close > idAt)
+        val open = layout.lastIndexOf(FRAME, idAt)
+        val close = layout.indexOf("</com.whispereverywhere.ui.components.TranscriptScrubberFrame>", idAt)
+        assertTrue("$id is not inside a TranscriptScrubberFrame", open >= 0 && close > idAt)
+        // No plain FrameLayout opens between the frame and the view: the frame IS its parent.
+        assertTrue("$id: a plain FrameLayout sits between it and its frame", layout.lastIndexOf("<FrameLayout", idAt) < open)
         return layout.substring(open, close)
+    }
+
+    /** The body of the one `override fun [name](` in [source], whitespace-normalised. */
+    private fun body(source: String, name: String): String {
+        val start = source.indexOf("override fun $name(")
+        assertTrue("no override fun $name", start >= 0)
+        val end = source.indexOf("\n    }\n", start)
+        assertTrue(end > start)
+        return source.substring(start, end).replace(Regex("\\s+"), " ")
     }
 
     @Test
@@ -103,24 +123,65 @@ class BubbleScrollbarPinTest {
     }
 
     @Test
-    fun eachTextViewHasItsOwnScrubberBesideItInTheSameWrapper() {
-        // A scrubber is a sibling in the SAME FrameLayout as its TextView — that is what puts it
-        // on the panel's right edge, `match_parent`-tall, without a layer the resize maths
-        // would have to know about.
+    fun eachTextViewHasItsOwnScrubberBesideItInATranscriptScrubberFrame() {
+        // A scrubber is a sibling of its TextView in a TranscriptScrubberFrame — the frame puts
+        // it on the panel's right edge without a layer the resize maths would have to know
+        // about, and (the next test) gives it the TextView's height.
         assertTrue(wrapperOf("transcription_edit_text").contains("android:id=\"@+id/transcript_scrubber\""))
         assertTrue(wrapperOf("transcription_delta_text").contains("android:id=\"@+id/delta_scrubber\""))
         assertEquals("exactly two scrubbers on the panel", 2, layout.split(SCRUBBER).size - 1)
+        assertEquals("exactly two frames on the panel", 2, layout.split(FRAME).size - 1)
         for ((name, s) in listOf("committed" to committedScrubber, "live" to liveScrubber)) {
-            assertEquals("$name scrubber: spans its TextView", "match_parent", attr(s, "layout_height"))
+            // NOT match_parent: a lone match_parent child of a wrap_content FrameLayout is measured
+            // ONCE, with an AT_MOST spec, and never re-measured to its sibling (FrameLayout does
+            // that for two or more only) — 0px, the 99 review's finding. The height is the
+            // frame's to give; wrap_content says the view claims none of its own.
+            assertEquals("$name scrubber: no height of its own", "wrap_content", attr(s, "layout_height"))
             assertEquals("$name scrubber: on the right edge", "top|end", attr(s, "layout_gravity"))
             assertTrue("$name scrubber: a grabbable lane, at least 10dp", dp(attr(s, "layout_width")) >= 10)
             // It starts out of the way and decides for itself when to appear (sync()).
             assertEquals("$name scrubber: starts hidden", "invisible", attr(s, "visibility"))
         }
-        // The strip keeps its own 4dp top margin (on the wrapper it would outlive a GONE strip
-        // as phantom panel), and its scrubber carries the same so the bar spans the text exactly.
-        assertEquals(attr(live, "layout_marginTop"), attr(liveScrubber, "layout_marginTop"))
+        // The strip keeps its own 4dp top margin and its scrubber carries NONE: a FrameLayout
+        // measures every non-GONE child's margins into its height, and the scrubber is never
+        // GONE (sync() chooses VISIBLE or INVISIBLE), so a margin on it would outlive a GONE
+        // strip as 4dp of phantom panel. With no margin and a 0 height (scrubberHeight of a
+        // GONE strip) the frame collapses to nothing, as the strip alone did in 4.9.0.
         assertEquals("4dp", attr(live, "layout_marginTop"))
+        assertNull("the strip's scrubber carries no margin of its own", attr(liveScrubber, "layout_marginTop"))
+        assertNull(attr(liveScrubber, "layout_margin"))
+        assertNull(attr(liveScrubber, "layout_marginBottom"))
+        assertEquals("the scrubber is never GONE: VISIBLE or INVISIBLE only",
+            1, scrubberSource.split("visibility = if (show) VISIBLE else INVISIBLE").size - 1)
+        assertFalse(scrubberSource.contains("visibility = GONE"))
+    }
+
+    @Test
+    fun theFrameMeasuresEachScrubberExactlyToItsTextViewEveryPass() {
+        // THE HEIGHT MECHANISM. The view itself answers 0 to any non-EXACT spec (the only answer
+        // that does not balloon the panel to the screen on the frame's first pass) …
+        val viewMeasure = body(scrubberSource, "onMeasure")
+        assertTrue(viewMeasure.contains("resolveSize(suggestedMinimumHeight, heightMeasureSpec)"))
+        assertFalse("no minimum height of its own", scrubberSource.contains("minimumHeight ="))
+        // … and the frame, AFTER super has measured the TextView (so its measuredHeight is
+        // fresh in this pass), measures every scrubber a second time, EXACTLY, to the height
+        // TranscriptScrubberMath.scrubberHeight computes from that TextView. Every pass, not
+        // once: View.measure caches a child whose spec is unchanged, and the scrubber's spec
+        // never changes on its own when the strip grows, shrinks or goes GONE.
+        val frameMeasure = body(frameSource, "onMeasure")
+        val superAt = frameMeasure.indexOf("super.onMeasure(widthMeasureSpec, heightMeasureSpec)")
+        val heightAt = frameMeasure.indexOf("val height = TranscriptScrubberMath.scrubberHeight( targetGone = target.visibility == GONE, targetMeasuredHeight = target.measuredHeight, targetTopMargin = TranscriptScrubberView.topMarginOf(target), ownTopMargin = TranscriptScrubberView.topMarginOf(scrubber), )")
+        val measureAt = frameMeasure.indexOf("scrubber.measure( MeasureSpec.makeMeasureSpec(scrubber.measuredWidth, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY), )")
+        assertTrue("super first", superAt >= 0)
+        assertTrue("the height from the maths, after super", heightAt > superAt)
+        assertTrue("the EXACT re-measure, after the height", measureAt > heightAt)
+        assertTrue("to the TextView the scrubber is BOUND to", frameMeasure.contains("val target = scrubber.target ?: continue"))
+        assertTrue(frameSource.contains(") : FrameLayout(context, attrs)"))
+        // The bar is drawn and grabbed from the TextView's top inside the view (the strip's 4dp
+        // margin, which its scrubber does not carry), never from 0 blindly.
+        assertTrue(scrubberSource.contains("TranscriptScrubberMath.trackTop("))
+        assertTrue(body(scrubberSource, "onDraw").contains("val trackY = trackTop"))
+        assertTrue(body(scrubberSource, "onTouchEvent").contains("val y = event.y - trackTop"))
     }
 
     @Test

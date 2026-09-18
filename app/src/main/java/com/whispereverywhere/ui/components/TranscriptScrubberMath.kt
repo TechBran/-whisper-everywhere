@@ -39,6 +39,29 @@ object TranscriptScrubberMath {
     fun visible(textViewVisible: Boolean, contentHeight: Int, viewHeight: Int): Boolean =
         textViewVisible && !fits(contentHeight, viewHeight)
 
+    /**
+     * THE SCRUBBER'S HEIGHT, decided by [TranscriptScrubberFrame] after it has measured the
+     * TextView: the scrubber's bottom meets the TextView's bottom. Both sit `top` in the frame,
+     * each below its own top margin, so the TextView's bottom is `targetTopMargin +
+     * targetMeasuredHeight` and the scrubber starts at `ownTopMargin`. A GONE TextView is not
+     * measured (its measuredHeight is stale) and has no bottom to meet: the scrubber is 0.
+     *
+     * The invariant the frame's height rests on: `scrubberHeight + ownTopMargin` never exceeds
+     * `targetTopMargin + targetMeasuredHeight`, so the scrubber never makes the frame taller
+     * than its TextView does — with a 0 own margin (the live strip's scrubber) a GONE TextView
+     * collapses the frame to nothing, exactly as the strip alone did before it had a scrubber.
+     */
+    fun scrubberHeight(targetGone: Boolean, targetMeasuredHeight: Int, targetTopMargin: Int, ownTopMargin: Int): Int =
+        if (targetGone) 0 else (targetTopMargin + targetMeasuredHeight - ownTopMargin).coerceAtLeast(0)
+
+    /**
+     * Where the track starts inside the scrubber: at the TextView's top when the TextView
+     * starts below the scrubber's top (the live strip's 4dp margin, which its scrubber does not
+     * carry), else at 0 (the committed scrubber starts 28dp BELOW its text, under the handle).
+     */
+    fun trackTop(targetTopMargin: Int, ownTopMargin: Int): Int =
+        (targetTopMargin - ownTopMargin).coerceAtLeast(0)
+
     fun fraction(scrollY: Int, maxScroll: Int): Float =
         if (maxScroll <= 0) 0f else (scrollY.toFloat() / maxScroll).coerceIn(0f, 1f)
 
