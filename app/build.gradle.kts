@@ -745,6 +745,14 @@ tasks.withType<Test>().configureEach {
         // mechanism surviving a whole fix round in a `@param` is that edit, observed.
         "src/main/java/com/whispereverywhere/transcription/stream/PreviewUnreachable.kt",
         "src/main/java/com/whispereverywhere/transcription/stream/PreviewAutoFetch.kt",
+        // (4.10 Task 5) The saved transcript's export. `TranscriptsExportPinTest` reads this
+        // screen as text because it is the one @Composable that decides whether the user's
+        // "Speaker labels in copied and saved text" switch is honoured — and every way of getting
+        // that wrong is a LITERAL edit that compiles to a byte-identical class: `labels = true`
+        // in place of the flag, the sidecar read dropped, the flag missing from the producer's
+        // keys, or the three buttons reading three different strings. Without this entry that
+        // edit is the one that leaves `:app:testDebugUnitTest` UP-TO-DATE.
+        "src/main/java/com/whispereverywhere/ui/screens/TranscriptsScreen.kt",
         // (4.5.0 Task 5) THE TWO DOCUMENTS THE CLEARANCE GATE LIVES IN — the only entries on this
         // list that are prose, and they are here for the list's stated reason: membership follows
         // what the tests READ. `StreamingPackClearanceTest` asserts that the acceptance sheet's

@@ -21,7 +21,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.transcription.TranscriptStore
+import com.whispereverywhere.transcription.speakers.SpeakerLabels
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
@@ -34,6 +36,9 @@ fun TranscriptsScreen(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val store = remember { TranscriptStore(File(context.filesDir, "transcripts")) }
+    // The export switch, live: see the detail dialog below for why it is read as a flow.
+    val labelsInExport by (context.applicationContext as WhisperEverywhereApp)
+        .preferencesManager.speakerLabelsInExportFlow.collectAsState()
     var refresh by remember { mutableStateOf(0) }
     val entries = remember(refresh) { store.list() }
     var selected by remember { mutableStateOf<TranscriptStore.Entry?>(null) }
@@ -102,10 +107,33 @@ fun TranscriptsScreen(onNavigateBack: () -> Unit) {
         // and a synchronous file read here would jank the dialog-open animation.
         // Suppression: the producer DOES assign `value`; the compose-runtime checker can't see
         // assignments that follow a suspend call in this lint version.
+        //
+        // (4.10 speaker labels) The switch is applied HERE, at export time, which is the whole
+        // reason the store keeps a speaker sidecar beside each multi-speaker transcript: a user
+        // who turns "Speaker labels in copied and saved text" on wants it to be true of the
+        // transcripts they already have. `labelsInExport` is a key of this producer, so flipping
+        // the switch while a dialog is open re-renders it — what the user sees is what copy and
+        // share will hand over, and the three buttons below all read this one string.
+        //
+        // `readRuns` answering non-null already certifies "two or more confirmed speakers"
+        // (TranscriptStore.readRuns), so MIN_CONFIRMED_SPEAKERS is the count and no second read
+        // of the sidecar is needed. A session with no sidecar — one voice, or recorded before
+        // 4.10 — falls through to the stored text, byte for byte as before.
         @Suppress("ProduceStateDoesNotAssignValue")
-        val fullText by produceState(initialValue = "", key1 = entry) {
+        val fullText by produceState(initialValue = "", key1 = entry, key2 = labelsInExport) {
             val text = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { store.read(entry) }.getOrDefault("")
+                runCatching {
+                    val runs = store.readRuns(entry)
+                    if (runs == null) {
+                        store.read(entry)
+                    } else {
+                        SpeakerLabels.render(
+                            runs = runs,
+                            mode = SpeakerLabels.Mode.Export(labels = labelsInExport),
+                            confirmedCount = SpeakerLabels.MIN_CONFIRMED_SPEAKERS,
+                        )
+                    }
+                }.getOrDefault("")
             }
             value = text
         }
