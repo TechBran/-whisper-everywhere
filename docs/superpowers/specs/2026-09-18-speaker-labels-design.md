@@ -44,12 +44,12 @@ Speaker numbers are per session and restart at 1 each session. A speaker who ret
 ### 3.3 Cost and where it runs
 - Embedding runs on the embedder's own thread, concurrently with the next chunk's whisper call. It never sits on the whisper thread, so the commit floor arithmetic (6 000 / 8 000 ms) is untouched and turbo's tight budget is unaffected.
 - Expected cost: tens of milliseconds per segment on a phone CPU for CAM++; a 15 s chunk with three segments is well under a quarter of a second. **The spike measures this on the Tab before any threshold is set.**
-- Memory: the model plus session state, roughly 30 MB resident while a session runs; released with the session like the previewer.
+- Memory: the model plus session state, roughly 40-60 MB resident while a session runs (the spike measures it); released with the session like the previewer.
 
 ### 3.4 The model
-- Candidate: 3D-Speaker **CAM++** (`3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx`, ~7 MB, from sherpa-onnx's speaker-embedding-models release). Language-independent speaker identity; the smallest option with a good VoxCeleb result.
+- Candidate: 3D-Speaker **CAM++** (`3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx`, **29.6 MB** — checked against the sherpa-onnx release on 2026-09-18, `Content-Length: 29596978`; an earlier draft said 7 MB and was wrong). Language-independent speaker identity; every candidate in the sherpa list is 24-37 MB, so size does not separate them — the spike does.
 - Fallbacks if the spike disagrees: WeSpeaker ResNet34 (~25 MB) or NeMo TitaNet-small (~26 MB).
-- **Delivery: bundled in the APK** (7 MB against a 121 MB APK). No download flow, no Play pack, no network dependency for a core behaviour — the previewer's fetch machinery is not reused for this.
+- **Delivery: bundled in the APK's assets** (about 30 MB against a 121 MB APK; the AAB's base module grows from ~124 MB to ~155 MB, under Play's 200 MB base limit). The shipped sherpa `SpeakerEmbeddingExtractor` constructor takes an `AssetManager`, i.e. it is built for exactly this. No download flow, no Play pack, no network dependency for a core behaviour — the previewer's fetch machinery is not reused. **Owner to confirm the 30 MB is acceptable in the base**; the alternative is an install-time asset pack, which Play delivers with the app but a sideload would lack.
 - **Licence: to be cleared through the same sheet as the preview packs before production** (the 3D-Speaker repository is Apache-2.0; the training data's terms are the item to check). The spike may run on the uncleared model; the production build may not.
 
 ### 3.5 What changes in the app (files)
@@ -74,6 +74,7 @@ Speaker numbers are per session and restart at 1 each session. A speaker who ret
 On the Tab S10+ and the Z Fold6: embedding cost per segment with the real chunk sizes; false-split and false-merge counts on (a) the TEDx talk (one voice: expect zero labels), (b) a two-person interview from YouTube, (c) a three-person podcast segment, (d) the owner dictating alone then with a second person in the room. Output: the two thresholds, the minimum lengths, and a go / no-go on CAM++.
 
 ## 7. Open for the owner
+0. The model is ~30 MB, not 7: bundle it in the base APK (proposed) or deliver it as an install-time Play pack.
 1. Default of "Detect speakers": on (proposed) or off.
 2. The label text: `Speaker 1:` (proposed) or `Speaker 1 —`.
 3. Whether the panel should also show a small marker at a speaker change while only one speaker has been confirmed (proposed: no — nothing until the second voice).
