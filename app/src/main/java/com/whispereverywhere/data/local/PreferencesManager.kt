@@ -509,8 +509,8 @@ class PreferencesManager(private val context: Context) {
      * just comes out as a big blob"*. Paragraph breaks at a speaker change are the fix, and a fix
      * behind a switch nobody finds is not delivered. ON is safe as a default because a
      * ONE-SPEAKER session is byte-for-byte today's output on every surface — the panel shows no
-     * label until a second voice is CONFIRMED (a segment of at least
-     * `SpeakerTracker.MIN_NEW_SPEAKER_SECONDS`), and a session that never confirms never renders a
+     * label until a second voice is CONFIRMED (`SpeakerTracker.CONFIRM_N` segments of at least
+     * `SpeakerTracker.MIN_OPEN_SECONDS`), and a session that never confirms never renders a
      * break either.
      *
      * Read PER SESSION at the tap (`FloatingBubbleService.startRecording`), so turning it off

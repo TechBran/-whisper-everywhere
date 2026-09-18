@@ -8,30 +8,55 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * [SpeakerTracker] — every branch of the three-band rule, on vectors whose similarities are
- * arithmetic rather than measured (4.10 Task 2).
+ * [SpeakerTracker] — every rule session 2 of `docs/measurements/2026-09-18-speaker-spike.md`
+ * settled, on vectors whose similarities are arithmetic rather than measured (4.10 Task 2).
  *
- * ### Why two dimensions
+ * ### Why synthetic vectors, and why THREE fixtures rather than one
  *
- * The bundled CAM++ emits 512 floats — `output_dim = 512` in the shipped graph's own annotation,
- * which the adapter's pin test asserts against the asset bytes; 192 is the CN-Celeb variant, not
- * the en/voxceleb model this repo bundles. Nothing in this class cares: every decision the tracker
- * makes is a function of ONE number per known speaker — the cosine against its centroid — so the
- * fixtures are unit vectors on a circle, `unit(deg)`, where `cos(a, b) = cos(a - b)` exactly. A
- * test written with plausible-looking 512-float arrays would assert the same branches while hiding
- * which similarity it was actually exercising, and "0.5-ish" is precisely the value the hysteresis
- * band exists to treat differently from 0.56.
+ * The bundled NeMo TitaNet-small emits 192 floats — `output_dim = 192` in the shipped graph's own
+ * annotation, re-derived from the asset bytes by the adapter's pin test. Nothing in this class
+ * cares: every decision the tracker makes is a function of ONE number per known speaker — the best
+ * cosine against its recent fingerprints — so the fixtures are chosen to make that number exact
+ * arithmetic. A test written with plausible-looking 192-float arrays would assert the same branches
+ * while hiding which similarity it was actually exercising, and "0.5-ish" is precisely the value
+ * the hysteresis band exists to treat differently from 0.52.
  *
- * ### The drift fixture, stated once
+ *  - **[unit]** — a unit vector at an angle on a circle, where `cos(a, b)` is exactly `cos(a - b)`.
+ *    Every band, every duration rule and the latch are written in degrees.
+ *  - **[tri]** — a sliding window of three axes, `e(k) + e(k+1) + e(k+2)`. Consecutive vectors sit
+ *    at 2/3 and vectors three apart at 0, which is what lets a speaker's recent set WALK — and
+ *    lets a probe reach the fingerprint that has just fallen out of it. 2-D cannot do that: on a
+ *    circle everything eventually comes back round.
+ *  - **[cone]** — five vectors at 75° from a shared axis, 60° apart around it. Their pairwise
+ *    similarity is 0.533 (so they chain into one speaker) while each is only 0.259 from the axis
+ *    itself and their centroid is 0.801 from it. That gap is the ONLY geometry in which the merge
+ *    rule can fire, and the reason is worth stating: a speaker whose fingerprints are all alike has
+ *    a centroid no further from a stranger than its members are, so a stranger that was far enough
+ *    to open a speaker is still far from the centroid. It takes a speaker spread across a
+ *    conversation for the merge to have anything to say.
  *
- * [theCentroidFollowsAVoiceThatDrifts] feeds ten vectors 6° apart. With `ema = 0.2` and
- * renormalisation the centroid LAGS — it lands at ~38.3° while the last input was at 60° — and the
- * probe at 70° is the whole point of the test: **0.342 against the original vector (below
- * `tNew`, i.e. a NEW speaker) and 0.851 against the drifted centroid (above `tSame`, i.e. the same
- * speaker)**. The same probe against a fresh tracker opens speaker 2, which is the control the
- * assertion needs to mean anything.
+ * ### The angles the [unit] tests are built on, once
+ *
+ * With `T_SAME = 0.50` and `T_NEW = 0.30`:
+ *
+ * | angle | cosine | band |
+ * |---|---|---|
+ * | 0-60° | 1.000-0.500 | the SAME speaker (the fingerprint is learned) |
+ * | 60.1-72.5° | 0.498-0.301 | the hysteresis band (nothing is learned) |
+ * | 73°+ | 0.292 and below | a NEW speaker |
+ *
+ * ### What is NOT tested here, and why
+ *
+ * The three dumped sessions' real fingerprints are not replayed: they are CAM++ vectors, they live
+ * outside the repo (`filesDir/speaker-spike`, pulled to the PC), and 512-float vectors cannot be
+ * fed to a 192-float model's tracker anyway. What the repo can hold instead is the SETTLEMENT —
+ * [theConstantsAreTheONESTheMeasurementDocSettled] pins all six numbers with the doc named as their
+ * source, so a future round that nudges one is making a deliberate edit against a measurement
+ * rather than drifting.
  */
 class SpeakerTrackerTest {
+
+    // ------------------------------------------------------------------ fixtures
 
     /** A unit vector at [deg] on the unit circle: `cos(unit(a), unit(b))` is exactly `cos(a - b)`. */
     private fun unit(deg: Double): FloatArray {
@@ -39,12 +64,66 @@ class SpeakerTrackerTest {
         return floatArrayOf(cos(r).toFloat(), sin(r).toFloat())
     }
 
-    /** A segment long enough to open a speaker — every branch that is not about duration uses it. */
+    /** The same circle, embedded in the model's real 192 dimensions. */
+    private fun unit192(deg: Double): FloatArray {
+        val r = Math.toRadians(deg)
+        return FloatArray(192).also { it[0] = cos(r).toFloat(); it[1] = sin(r).toFloat() }
+    }
+
+    /**
+     * A sliding three-axis window: `e(k) + e(k+1) + e(k+2)`, normalised by the tracker.
+     * `cos(tri(k), tri(k+1)) = 2/3`, `cos(tri(k), tri(k+2)) = 1/3`, and 0 from three apart.
+     */
+    private fun tri(k: Int, dim: Int = 8): FloatArray =
+        FloatArray(dim).also { for (j in k..k + 2) it[j] = 1f }
+
+    /** One axis, alone. `cos(axis(0), tri(0)) = 1/√3 = 0.577`; `cos(axis(0), tri(k>0)) = 0`. */
+    private fun axis(index: Int, dim: Int = 8): FloatArray =
+        FloatArray(dim).also { it[index] = 1f }
+
+    /**
+     * One of the five [CONE_PHI] vectors of the merge fixture: at 75° from axis 0, at [phi]
+     * around it in the plane of axes 1 and 2. Padded to [CONE_DIM] so the cap test has room.
+     */
+    private fun cone(phi: Double): FloatArray {
+        val t = Math.toRadians(75.0)
+        val p = Math.toRadians(phi)
+        return FloatArray(CONE_DIM).also {
+            it[0] = cos(t).toFloat()
+            it[1] = (sin(t) * cos(p)).toFloat()
+            it[2] = (sin(t) * sin(p)).toFloat()
+        }
+    }
+
+    /** The cone's axis — 0.259 from each of its five vectors, 0.801 from their centroid. */
+    private fun coneAxis(): FloatArray = axis(0, CONE_DIM)
+
+    /** A segment long enough to open a speaker, update one and earn credit. */
     private val longSeg = 2.0f
 
-    /** One of eight mutually orthogonal vectors, for the cap. */
+    /** A segment too short to do any of those three things — the doc's accepted limit. */
+    private val shortSeg = 1.4f
+
+    /** One of nine mutually orthogonal vectors, for the cap. */
     private fun basis(index: Int, dim: Int = 9): FloatArray =
         FloatArray(dim).also { it[index] = 1f }
+
+    /** Two qualifying segments of the same voice: what it takes to CONFIRM a speaker. */
+    private fun SpeakerTracker.confirm(deg: Double): Int {
+        assign(unit(deg), longSeg)
+        return assign(unit(deg), longSeg)
+    }
+
+    /** One CONFIRMED, widely spread speaker, plus one singleton that will be merged into it. */
+    private fun mergeFixture(): SpeakerTracker {
+        val tracker = SpeakerTracker()
+        for (phi in CONE_PHI) assertEquals("the cone chains into ONE speaker", 1, tracker.assign(cone(phi), longSeg))
+        assertEquals("…which is confirmed", 1, tracker.confirmedCount)
+        assertEquals("…and holds all five fingerprints", 1, tracker.speakerCount)
+        assertEquals("the axis is 0.259 from every one of them, so it OPENS", 2, tracker.assign(coneAxis(), longSeg))
+        assertEquals(0.259f, tracker.lastBestSimilarity, 0.002f)
+        return tracker
+    }
 
     // ------------------------------------------------------------------ the two easy ends
 
@@ -73,71 +152,360 @@ class SpeakerTrackerTest {
         assertEquals(1, tracker.currentSpeaker())
     }
 
+    // ------------------------------------------------------------------ the MAXIMUM over recent K
+
+    @Test fun aMatchIsTheBESTOfASpeakersRecentFingerprintsAndNotTheirAverage() {
+        // THE change that made session 2's numbers work, and the assertion that separates this
+        // implementation from the mean-centroid one it replaced.
+        //
+        // Speaker 1 holds 0°; speaker 2 opens at 80° (0.174 against speaker 1 — below T_NEW). The
+        // probe at 78° is 0.208 against speaker 1's only fingerprint and 0.999 against speaker 2's.
+        // A MAXIMUM answers speaker 2 on the strength of that 0.999; a mean of a one-vector set
+        // would answer the same thing for the wrong reason, which is why the similarity itself is
+        // asserted rather than only the id.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(2, tracker.assign(unit(80.0), longSeg))
+        assertEquals(2, tracker.assign(unit(78.0), longSeg))
+        assertEquals("the number it decided on is the BEST one, not an average", 0.999f, tracker.lastBestSimilarity, 0.002f)
+        assertEquals("and nobody new was invented", 2, tracker.speakerCount)
+    }
+
+    @Test fun aVoiceThatDRIFTSStaysOneSpeakerBecauseTheRecentSetFollowsIt() {
+        // Ten steps of 12°, each a confident match on the step before it (cos 12° = 0.978). The
+        // recent set ends up holding 72°..120° while the original 0° has long fallen out of it
+        // (RECENT_K is 5). The probe at 130° is 0.985 against the newest fingerprint and -0.643
+        // against where the voice started — one speaker, all the way, which the mean-centroid
+        // version also managed but only because the EMA happened to lag by the right amount.
+        val tracker = SpeakerTracker()
+        tracker.assign(unit(0.0), longSeg)
+        for (k in 1..10) {
+            assertEquals("the drift itself must stay one speaker", 1, tracker.assign(unit(12.0 * k), longSeg))
+        }
+        assertEquals(1, tracker.speakerCount)
+        assertEquals(1, tracker.assign(unit(130.0), longSeg))
+        assertEquals(0.985f, tracker.lastBestSimilarity, 0.002f)
+        assertEquals("still one voice", 1, tracker.speakerCount)
+    }
+
+    @Test fun theRecentSetHoldsFIVEFingerprintsAndTheSIXTHPushesTheOldestOut() {
+        // The window is what bounds how long a voice's past speaks for it, and it is asserted from
+        // both sides with the [tri] walk: each step is 2/3 against the one before it, so the whole
+        // chain lands in ONE speaker, and `axis(0)` is 0.577 against tri(0) and 0 against every
+        // later one — a probe that can only be answered by the fingerprint that opened the speaker.
+        val five = SpeakerTracker()
+        five.assign(tri(0), longSeg)
+        for (k in 1..4) assertEquals(1, five.assign(tri(k), longSeg))
+        assertEquals("five fingerprints, the oldest still among them", 1, five.assign(axis(0), longSeg))
+        assertEquals(0.577f, five.lastBestSimilarity, 0.002f)
+        assertEquals(1, five.speakerCount)
+
+        val six = SpeakerTracker()
+        six.assign(tri(0), longSeg)
+        for (k in 1..5) assertEquals(1, six.assign(tri(k), longSeg))
+        assertEquals("the sixth push evicted tri(0), and nothing else can answer", 2, six.assign(axis(0), longSeg))
+        assertEquals(0f, six.lastBestSimilarity, 0.002f)
+    }
+
     // ------------------------------------------------------------------ the band in the middle
 
     @Test fun aSegmentInsideTheHysteresisBandNeverFlipsTheLabelOnItsOwn() {
-        // cos(60°) = 0.5, which is >= tNew (0.45) and < tSame (0.55): the one region where the
+        // cos(66°) = 0.407, which is >= tNew (0.30) and < tSame (0.50): the one region where the
         // tracker is asked to decide and refuses. It answers the CURRENT speaker — not the nearest,
         // not a new one — because a borderline segment that opened a speaker would cascade: every
-        // later segment of the real voice would then be borderline against two centroids.
+        // later segment of the real voice would then be borderline against two speakers.
         val tracker = SpeakerTracker()
         assertEquals(1, tracker.assign(unit(0.0), longSeg))
-        assertEquals(1, tracker.assign(unit(60.0), longSeg))
+        assertEquals(1, tracker.assign(unit(66.0), longSeg))
         assertEquals("no speaker opened from the band", 1, tracker.speakerCount)
+        assertEquals(0.407f, tracker.lastBestSimilarity, 0.002f)
     }
 
-    @Test fun aSegmentInTheBandDoesNotMoveTheCentroidItWasAttributedTo() {
-        // The centroid moves only on a CONFIDENT match (>= tSame). This is the quiet half of the
-        // rule above: attributing a borderline segment to speaker 1 is a label decision, and
-        // letting it drag speaker 1's centroid 20 % of the way toward a voice we were not sure
-        // about is how one wrong label becomes a wrong speaker — every later segment of the real
-        // voice then reads as borderline too.
+    @Test fun aSegmentInTheBandDoesNotJoinTheRecentSetItWasAttributedTo() {
+        // The quiet half of the rule above, and the one that needs a probe to be visible at all.
+        // Attributing a borderline segment to speaker 1 is a label decision; letting its
+        // fingerprint into speaker 1's recent set is how one wrong label becomes a wrong speaker.
         //
-        // The probe is chosen to make the two implementations answer differently. After the band
-        // segment at 60° the centroid must still be at 0°, where 66° is cos 0.4067 — below tNew, a
-        // NEW speaker. Had the segment dragged the centroid to ~10.9° (0.8 * v0 + 0.2 * v60,
-        // renormalised), 66° would be cos 0.572 — above tSame, the SAME speaker.
+        // After the band segment at 66° the set must still hold only 0°, where 100° is cos -0.174
+        // — below tNew, a NEW speaker. Had the band segment joined the set, 100° would be 0.829
+        // against it: the SAME speaker, and the split would never have happened.
         val tracker = SpeakerTracker()
         assertEquals(1, tracker.assign(unit(0.0), longSeg))
-        assertEquals("the band segment lands on the current speaker", 1, tracker.assign(unit(60.0), longSeg))
-        assertEquals("…and left the centroid where it was", 2, tracker.assign(unit(66.0), longSeg))
+        assertEquals("the band segment lands on the current speaker", 1, tracker.assign(unit(66.0), longSeg))
+        assertEquals("…and never entered its recent set", 2, tracker.assign(unit(100.0), longSeg))
         assertEquals(2, tracker.speakerCount)
     }
 
-    // ------------------------------------------------------------------ duration
+    @Test fun theSameEdgeIsINCLUSIVEAndTheNewEdgeIsEXCLUSIVE() {
+        // Both edges, to a thousandth, and observed through what they LEARN rather than what they
+        // answer: inside the band and at `>= tSame` the tracker returns the same id, so the id
+        // alone cannot tell the two apart. The 100° probe can — it matches a set that took the
+        // segment in (0.829 against 60°) and opens a speaker against one that did not (-0.174
+        // against 0°).
+        val at = SpeakerTracker()
+        at.assign(unit(0.0), longSeg)
+        assertEquals(1, at.assign(unit(60.0), longSeg))
+        assertEquals("cos 60° is T_SAME to the last bit of a Float", 0.5f, at.lastBestSimilarity, 0f)
+        assertEquals("…and `>=` means it was LEARNED", 1, at.assign(unit(100.0), longSeg))
+        assertEquals(1, at.speakerCount)
+
+        val justAbove = SpeakerTracker()
+        justAbove.assign(unit(0.0), longSeg)
+        assertEquals(1, justAbove.assign(unit(60.1), longSeg))
+        assertEquals(0.498f, justAbove.lastBestSimilarity, 0.002f)
+        assertEquals("a tenth of a degree past the edge learns NOTHING", 2, justAbove.assign(unit(100.0), longSeg))
+
+        val justInside = SpeakerTracker()
+        justInside.assign(unit(0.0), longSeg)
+        assertEquals("0.3007 is still inside the band", 1, justInside.assign(unit(72.5), longSeg))
+        assertEquals(1, justInside.speakerCount)
+
+        val outside = SpeakerTracker()
+        outside.assign(unit(0.0), longSeg)
+        assertEquals("0.2924 is below T_NEW and opens a speaker", 2, outside.assign(unit(73.0), longSeg))
+    }
+
+    // ------------------------------------------------------------------ under 2.0 s
 
     @Test fun aShortSegmentFarFromEveryoneTakesTheCurrentSpeakerAndOpensNothing() {
-        // 0.8 s: below MIN_EMBED_SECONDS, so in the app it never reaches here at all — but the
-        // tracker is pure and must still answer. Orthogonal to the only known voice, which is the
-        // one input that WOULD open a speaker if duration were not a gate.
+        // 1.4 s, orthogonal to the only known voice — the one input that WOULD open a speaker if
+        // duration were not a gate. The owner's accepted limit, in one assertion: "an interruption
+        // shorter than two seconds is labelled as the current speaker".
         val tracker = SpeakerTracker()
         assertEquals(1, tracker.assign(unit(0.0), longSeg))
-        assertEquals(1, tracker.assign(unit(90.0), 0.8f))
+        assertEquals(1, tracker.assign(unit(90.0), shortSeg))
         assertEquals("a short segment can never open a speaker", 1, tracker.speakerCount)
     }
 
-    @Test fun aSegmentJustUnderTheNewSpeakerMinimumStillCannotOpenOne() {
-        // The boundary, both sides of it. 1.5 s is the spec's MIN_NEW_SPEAKER_SECONDS: a two-word
-        // interjection by a new voice must not open a speaker (§5), so the gate is >=, not >.
+    @Test fun aSegmentJustUnderTheOpenMinimumStillCannotOpenOneAndAtItCan() {
+        // The boundary, both sides of it. The gate is >=, not >.
         val below = SpeakerTracker()
         below.assign(unit(0.0), longSeg)
-        assertEquals(1, below.assign(unit(90.0), SpeakerTracker.MIN_NEW_SPEAKER_SECONDS - 0.01f))
+        assertEquals(1, below.assign(unit(90.0), SpeakerTracker.MIN_OPEN_SECONDS - 0.01f))
         assertEquals(1, below.speakerCount)
 
         val at = SpeakerTracker()
         at.assign(unit(0.0), longSeg)
-        assertEquals(2, at.assign(unit(90.0), SpeakerTracker.MIN_NEW_SPEAKER_SECONDS))
+        assertEquals(2, at.assign(unit(90.0), SpeakerTracker.MIN_OPEN_SECONDS))
         assertEquals(2, at.speakerCount)
     }
 
-    @Test fun theFirstSegmentOfASessionOpensSpeakerOneWhateverItsLength() {
-        // There is nobody for it to be confused with and nobody to inherit from. The duration gate
-        // is about not SPLITTING a session on a brief interjection; it cannot be about refusing to
-        // start one, because then a session whose every segment is short would have no speaker and
-        // the sink would have nothing to attribute text to.
+    @Test fun aShortSegmentNeverJOINSTheSpeakerItInheritsEither() {
+        // "never opens a speaker and never UPDATES one" — the second half, which is the half
+        // session 1's failure was actually about: a 1.0-1.1 s fingerprint taken over music went
+        // into a speaker's state and made later genuine segments of that voice look foreign.
+        //
+        // The short segment is at 90°, so it inherits speaker 1; if it had joined speaker 1's set,
+        // the 90° segment after it would match at 1.0 instead of opening speaker 2.
         val tracker = SpeakerTracker()
-        assertEquals(1, tracker.assign(unit(0.0), 0.4f))
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals("it inherits", 1, tracker.assign(unit(90.0), shortSeg))
+        assertEquals("…and taught speaker 1 nothing", 2, tracker.assign(unit(90.0), longSeg))
+    }
+
+    @Test fun aShortSegmentDoesNotCountTOWARDAConfirmation() {
+        // "CONFIRM_N = 2 qualifying segments", and a short one does not qualify. Speaker 1 opens on
+        // a 2 s segment and is then fed three 1.4 s segments of the same voice: still one
+        // qualifying segment, still unconfirmed, still no label anywhere.
+        val tracker = SpeakerTracker()
+        tracker.assign(unit(0.0), longSeg)
+        repeat(3) { tracker.assign(unit(0.0), shortSeg) }
+        assertEquals(0, tracker.confirmedCount)
+        // One 2 s segment of the same voice, and it is confirmed.
+        tracker.assign(unit(0.0), longSeg)
+        assertEquals(1, tracker.confirmedCount)
+    }
+
+    @Test fun theFirstSegmentOfASessionIsUNLABELLEDWhenItIsTooShortToOpenASpeaker() {
+        // The rule read strictly, and it REVERSES the first implementation, which opened speaker 1
+        // off any usable embedding whatsoever. 0 is the caller's "unlabelled" and the run inherits;
+        // inventing speaker 1 from four tenths of a second is exactly the claim the spike showed
+        // the model cannot support.
+        val tracker = SpeakerTracker()
+        assertEquals(0, tracker.assign(unit(0.0), 0.4f))
+        assertEquals("and nothing was opened", 0, tracker.speakerCount)
+        assertTrue("nor was a similarity measured — there was nobody to measure against", tracker.lastBestSimilarity.isNaN())
+        // …and the session still starts normally at the first segment that is long enough.
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+    }
+
+    // ------------------------------------------------------------------ confirmation
+
+    @Test fun aSpeakerIsConfirmedOnItsSecondQualifyingSegmentAndNotItsFirst() {
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals("one qualifying segment is not a person yet", 0, tracker.confirmedCount)
+        assertEquals(1, tracker.assign(unit(30.0), longSeg))
+        assertEquals(1, tracker.confirmedCount)
+    }
+
+    @Test fun aBandAssignmentIsNotEVIDENCEAndNeverConfirmsASpeaker() {
+        // The three cases the tracker was unsure about — the band, an over-cap guess, anything
+        // under 2 s — are not qualifying segments. Counting an "I don't know" as evidence of a
+        // person is how a wrong label becomes a wrong speaker for a whole session.
+        val tracker = SpeakerTracker()
+        tracker.assign(unit(0.0), longSeg)
+        repeat(4) { assertEquals(1, tracker.assign(unit(66.0), longSeg)) }
+        assertEquals("four band segments, and still no confirmation", 0, tracker.confirmedCount)
+        assertFalse(tracker.secondSpeakerConfirmed)
+    }
+
+    // ------------------------------------------------------------------ the latch
+
+    @Test fun theLatchIsTWOCONFIRMEDSpeakersAndNotMerelyTwoSpeakers() {
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertFalse("one speaker is never a confirmation", tracker.secondSpeakerConfirmed)
+
+        assertEquals(2, tracker.assign(unit(90.0), longSeg))
+        assertFalse("two speakers, one qualifying segment each: not yet", tracker.secondSpeakerConfirmed)
+
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertFalse("speaker 1 is confirmed; speaker 2 is not", tracker.secondSpeakerConfirmed)
+
+        assertEquals(2, tracker.assign(unit(90.0), longSeg))
+        assertTrue("two CONFIRMED speakers", tracker.secondSpeakerConfirmed)
+        assertEquals(2, tracker.confirmedCount)
+    }
+
+    @Test fun theLatchNeverUnflips() {
+        // A session that has shown labels cannot take them back: the panel was already rewritten
+        // and un-rewriting it would be the only thing on screen that moved backwards.
+        val tracker = SpeakerTracker()
+        tracker.confirm(0.0)
+        tracker.confirm(90.0)
+        assertTrue(tracker.secondSpeakerConfirmed)
+        repeat(5) { tracker.assign(unit(0.0), longSeg) }
+        assertTrue(tracker.secondSpeakerConfirmed)
+    }
+
+    // ------------------------------------------------------------------ the merge, and the remap
+
+    @Test fun anUnconfirmedSINGLETONInsideAConfirmedSpeakerIsMergedAtTheEndOfTheChunk() {
+        // Session 1's actual failure mode — "spurious speakers are singletons or near-singletons" —
+        // and the rule that answers it. The axis vector is 0.259 from every one of speaker 1's five
+        // fingerprints, so ONLINE it is a new voice and opening speaker 2 is the right call with
+        // the evidence available. At the end of the chunk the question is different: is this whole
+        // speaker a different person? Its centroid is 0.801 from speaker 1's, which is well inside
+        // T_SAME, and the answer is no.
+        val tracker = mergeFixture()
+        assertEquals(2, tracker.speakerCount)
+
+        val moved = tracker.endChunk()
+        assertEquals("speaker 2 was never a separate person", mapOf(2 to 1), moved)
+        assertEquals("…and is no longer live", 1, tracker.speakerCount)
+        assertEquals("…and the session's remap says so", mapOf(2 to 1), tracker.remap())
+        assertFalse("one voice, however many ids it briefly had, is not two", tracker.secondSpeakerConfirmed)
+    }
+
+    @Test fun aMergeMOVESTheFingerprintsSoTheEvidenceIsNotThrownAway() {
+        // The segment that proved the merge is the survivor's only evidence about that edge of the
+        // voice, so it moves across rather than being dropped. The probe is the same axis vector:
+        // if it moved, the similarity is 1.0; if it did not, the best speaker 1 can offer is the
+        // 0.259 it scored the first time. The ID is the same either way, which is why the number
+        // is what is asserted.
+        val tracker = mergeFixture()
+        tracker.endChunk()
+
+        assertEquals("the merged fingerprint now speaks for speaker 1", 1, tracker.assign(coneAxis(), longSeg))
+        assertEquals(1.0f, tracker.lastBestSimilarity, 0.002f)
+        assertEquals("no third speaker", 1, tracker.speakerCount)
+    }
+
+    @Test fun aCONFIRMEDSpeakerIsNeverMergedAwayHoweverCloseItIs() {
+        // Only unconfirmed speakers are absorbed, which is what keeps the remap one link deep and
+        // keeps a label that has been EARNED from evaporating. The same geometry as the merge test
+        // — 0.801 between the two centroids — except the axis speaker now holds the floor twice and
+        // is confirmed, and nothing moves.
+        val tracker = mergeFixture()
+        assertEquals("a second axis segment matches speaker 2 at 1.0", 2, tracker.assign(coneAxis(), longSeg))
+        assertEquals(2, tracker.confirmedCount)
+        assertTrue("…and two confirmed speakers is the latch", tracker.secondSpeakerConfirmed)
+
+        assertEquals("nothing gives way", emptyMap<Int, Int>(), tracker.endChunk())
+        assertEquals(2, tracker.speakerCount)
+        assertTrue(tracker.remap().isEmpty())
+    }
+
+    @Test fun anUnconfirmedSpeakerFARFromEveryConfirmedOneSurvivesTheMergePass() {
+        // The control every assertion above needs: the pass is not "absorb every singleton", it is
+        // "absorb a singleton that is within T_SAME of a confirmed centroid". Speaker 1 is
+        // confirmed on two identical fingerprints at 0°, so its centroid is 0° too; speaker 2 opens
+        // at 120° and is -0.5 from it.
+        val tracker = SpeakerTracker()
+        tracker.assign(unit(0.0), longSeg)
+        tracker.assign(unit(0.0), longSeg)
+        assertEquals(1, tracker.confirmedCount)
+        assertEquals(2, tracker.assign(unit(120.0), longSeg))
+        assertEquals(emptyMap<Int, Int>(), tracker.endChunk())
+        assertEquals("a genuinely different voice keeps its id", 2, tracker.speakerCount)
+        assertTrue(tracker.remap().isEmpty())
+    }
+
+    @Test fun nothingMergesUntilSomebodyIsCONFIRMED() {
+        // A merge needs an anchor. Two unconfirmed speakers stay two unconfirmed speakers: neither
+        // has earned the right to absorb the other, and picking one arbitrarily is how a session's
+        // very first paragraph gets the wrong name.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(2, tracker.assign(unit(90.0), longSeg))
+        assertEquals(0, tracker.confirmedCount)
+        assertEquals(emptyMap<Int, Int>(), tracker.endChunk())
+        assertEquals(2, tracker.speakerCount)
+    }
+
+    @Test fun anEmptyChunkAndAOneSpeakerSessionBothMergeNothingAndSaySo() {
+        val empty = SpeakerTracker()
+        assertEquals(emptyMap<Int, Int>(), empty.endChunk())
+
+        val lone = SpeakerTracker()
+        lone.confirm(0.0)
+        assertEquals("a confirmed speaker alone has nothing to absorb", emptyMap<Int, Int>(), lone.endChunk())
+        assertEquals(1, lone.speakerCount)
+        assertFalse(lone.secondSpeakerConfirmed)
+    }
+
+    @Test fun theCURRENTSpeakerFOLLOWSAMergeSoNothingCanInheritARetiredId() {
+        // The band and the short-segment rule both answer `currentSpeaker()`. If the current
+        // speaker were merged away and the field left pointing at it, the very next borderline
+        // segment would be labelled with an id that no longer belongs to anybody.
+        val tracker = mergeFixture()
+        assertEquals("the speaker about to be merged is the current one", 2, tracker.currentSpeaker())
+        tracker.endChunk()
+        assertEquals("…and is now the survivor", 1, tracker.currentSpeaker())
+        assertEquals("a short segment inherits the survivor", 1, tracker.assign(cone(30.0), shortSeg))
+    }
+
+    @Test fun anIdIsNEVERREUSEDSoARemapCanOnlyPointBackwards() {
+        // Ids are slots, issued in order, and a merged slot is retired rather than recycled. If the
+        // number were handed to the next new voice, a label already on screen would come to mean a
+        // different person — and the remap that was supposed to fix it would point the wrong way.
+        val tracker = mergeFixture()
+        assertEquals(mapOf(2 to 1), tracker.endChunk())
         assertEquals(1, tracker.speakerCount)
+
+        assertEquals("a genuinely new voice takes 3, not the retired 2", 3, tracker.assign(axis(5, CONE_DIM), longSeg))
+        assertEquals(2, tracker.speakerCount)
+    }
+
+    @Test fun endChunkReportsONLYThisChunksMergesWhileRemapAccumulatesTheSession() {
+        val tracker = mergeFixture()
+        assertEquals(mapOf(2 to 1), tracker.endChunk())
+
+        // Chunk 2: a genuinely new voice, nothing to absorb.
+        assertEquals(3, tracker.assign(axis(5, CONE_DIM), longSeg))
+        assertEquals("a chunk that moved nothing reports nothing", emptyMap<Int, Int>(), tracker.endChunk())
+        assertEquals("…and the session does not forget what chunk 1 moved", mapOf(2 to 1), tracker.remap())
+    }
+
+    @Test fun theRemapACallerGetsIsACOPYItCannotEditTheTrackerThrough() {
+        val tracker = mergeFixture()
+        tracker.endChunk()
+        val taken = tracker.remap()
+        assertEquals(mapOf(2 to 1), taken)
+        @Suppress("UNCHECKED_CAST")
+        (taken as? MutableMap<Int, Int>)?.clear()
+        assertEquals("the tracker still holds its own", mapOf(2 to 1), tracker.remap())
     }
 
     // ------------------------------------------------------------------ the cap
@@ -152,75 +520,43 @@ class SpeakerTrackerTest {
         // but nearest to speaker 3. The cap sends it to the CLOSEST known speaker — spec §3.2 —
         // never to the current one, because past the cap the tracker is a classifier with no
         // "none of the above" answer left.
-        val ninth = FloatArray(9).also { it[2] = 0.3f; it[8] = 1f }
-        assertEquals(3, tracker.assign(ninth, longSeg))
+        assertEquals(3, tracker.assign(ninth(), longSeg))
+        assertEquals(0.287f, tracker.lastBestSimilarity, 0.002f)
         assertEquals("the cap holds", 8, tracker.speakerCount)
     }
 
-    // ------------------------------------------------------------------ EMA drift
-
-    @Test fun theCentroidFollowsAVoiceThatDrifts() {
+    @Test fun anOverCapSegmentTeachesTheSpeakerItWasGuessedOntoNothing() {
+        // Past the cap the answer is a guess, and a guess must not become evidence: it neither
+        // joins the closest speaker's recent set nor counts toward its confirmation. Otherwise the
+        // ninth voice of a session slowly becomes the third one's definition of itself.
         val tracker = SpeakerTracker()
-        tracker.assign(unit(0.0), longSeg)
-        for (k in 1..10) {
-            assertEquals("the drift itself must stay one speaker", 1, tracker.assign(unit(6.0 * k), longSeg))
+        for (i in 0 until SpeakerTracker.MAX_SPEAKERS) tracker.assign(basis(i), longSeg)
+        assertEquals(0, tracker.confirmedCount)
+        repeat(3) { assertEquals(3, tracker.assign(ninth(), longSeg)) }
+        assertEquals("three over-cap guesses confirmed nobody", 0, tracker.confirmedCount)
+
+        // And speaker 3 never learned the 9th axis. The probe is 0.9999 against `ninth` and 0.270
+        // against the bare 3rd axis, so the SIMILARITY is what tells the two states apart — the id
+        // is 3 either way.
+        assertEquals(3, tracker.assign(nearlyNinth(), longSeg))
+        assertEquals("speaker 3 is still just its own axis", 0.270f, tracker.lastBestSimilarity, 0.003f)
+    }
+
+    @Test fun aMergeGIVESTheCapItsRoomBack() {
+        // The cap counts LIVE speakers, which is what makes absorbing a spurious singleton worth
+        // doing: it hands a genuine later voice the slot the singleton was occupying. Eight live
+        // speakers, one of them the mergeable singleton; after the pass a ninth voice OPENS.
+        val tracker = mergeFixture()
+        for (i in 3..8) {
+            assertEquals("e$i is orthogonal to everything so far", i, tracker.assign(axis(i, CONE_DIM), longSeg))
         }
-        assertEquals(1, tracker.speakerCount)
-        // 70° is 0.342 against the ORIGINAL vector — below tNew, i.e. a new speaker — and 0.851
-        // against the centroid the ten steps dragged to ~38.3°.
-        assertEquals(1, tracker.assign(unit(70.0), longSeg))
-        assertEquals("still one voice", 1, tracker.speakerCount)
-    }
+        assertEquals("the cap is full", 8, tracker.speakerCount)
 
-    @Test fun theSameProbeAgainstAnUndriftedCentroidOpensASecondSpeaker() {
-        // The control for the test above. Without it, "70° is speaker 1" is satisfied by a tracker
-        // that never opens a second speaker at all.
-        val tracker = SpeakerTracker()
-        tracker.assign(unit(0.0), longSeg)
-        assertEquals(2, tracker.assign(unit(70.0), longSeg))
-    }
-
-    // ------------------------------------------------------------------ the latch
-
-    @Test fun theSecondSpeakerIsConfirmedOnlyWhenBothHaveHeldTheFloorForTheMinimum() {
-        val tracker = SpeakerTracker()
-        tracker.assign(unit(0.0), 2.0f)
-        assertFalse("one speaker is never a confirmation", tracker.secondSpeakerConfirmed)
-
-        // A 1.2 s second voice: too short to open a speaker at all, so there is nothing to confirm.
-        assertEquals(1, tracker.assign(unit(90.0), 1.2f))
-        assertFalse(tracker.secondSpeakerConfirmed)
-
-        // 1.6 s: opens speaker 2, and speaker 1 already holds a 2.0 s segment.
-        assertEquals(2, tracker.assign(unit(90.0), 1.6f))
-        assertTrue("two speakers, each with a segment >= 1.5 s", tracker.secondSpeakerConfirmed)
-    }
-
-    @Test fun aSpeakerWhoseOnlySegmentsAreShortDoesNotConfirmTheLatch() {
-        // The rule read strictly: TWO speakers each with one segment >= MIN_NEW_SPEAKER_SECONDS.
-        // Speaker 1 here only ever held the floor for 1.1 s, so the panel stays label-free even
-        // though the tracker holds two speakers. That is the conservative direction: a label is a
-        // claim about who spoke, and one 1.1 s segment is not enough evidence to relabel a whole
-        // session's first paragraph.
-        val tracker = SpeakerTracker()
-        assertEquals(1, tracker.assign(unit(0.0), 1.1f))
-        assertEquals(2, tracker.assign(unit(90.0), 2.0f))
-        assertEquals(2, tracker.speakerCount)
-        assertFalse(tracker.secondSpeakerConfirmed)
-        // One long segment from speaker 1 and the latch flips.
-        assertEquals(1, tracker.assign(unit(0.0), 1.6f))
-        assertTrue(tracker.secondSpeakerConfirmed)
-    }
-
-    @Test fun theLatchNeverUnflips() {
-        // A session that has shown labels cannot take them back: the panel was already rewritten
-        // and un-rewriting it would be the only thing on screen that moved backwards.
-        val tracker = SpeakerTracker()
-        tracker.assign(unit(0.0), 2.0f)
-        tracker.assign(unit(90.0), 2.0f)
-        assertTrue(tracker.secondSpeakerConfirmed)
-        repeat(5) { tracker.assign(unit(0.0), 2.0f) }
-        assertTrue(tracker.secondSpeakerConfirmed)
+        assertEquals(mapOf(2 to 1), tracker.endChunk())
+        assertEquals(7, tracker.speakerCount)
+        // The room is real: a ninth distinct voice opens a NEW speaker, and takes the next id.
+        assertEquals(9, tracker.assign(axis(9, CONE_DIM), longSeg))
+        assertEquals(8, tracker.speakerCount)
     }
 
     // ------------------------------------------------------------------ unusable input
@@ -247,56 +583,76 @@ class SpeakerTrackerTest {
     @Test fun anEmbeddingOfTheWrongWidthIsUnusableRatherThanAnException() {
         // One session, one model, so this cannot happen — and if a future model swap ever makes it
         // happen, the failure must be a missing label and not a crash on the embedder's executor.
-        // 512 is the bundled model's real width; what makes it WRONG here is only that this
-        // tracker's centroid is 2-wide. The tracker compares against `centroids[0].size`, never
-        // against a constant, which is precisely the shape a mid-session model swap would take.
+        // The session below runs at the model's real 192 and is then handed a 512-wide vector,
+        // which is the width of the CAM++ graph this repo bundled until session 2 replaced it: the
+        // exact shape a mid-session swap would take. The tracker compares against the width it
+        // already holds, never against a constant.
         val tracker = SpeakerTracker()
-        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(1, tracker.assign(unit192(0.0), longSeg))
         assertEquals(1, tracker.assign(FloatArray(512) { 1f }, longSeg))
         assertEquals(1, tracker.speakerCount)
+        assertTrue("and nothing was measured against it", tracker.lastBestSimilarity.isNaN())
     }
 
     // ------------------------------------------------------------------ session boundaries
 
-    @Test fun resetClearsEverySpeakerTheNumberingAndTheLatch() {
-        val tracker = SpeakerTracker()
-        tracker.assign(unit(0.0), longSeg)
-        tracker.assign(unit(90.0), longSeg)
-        assertTrue(tracker.secondSpeakerConfirmed)
+    @Test fun resetClearsEverySpeakerTheNumberingTheMergesAndTheLatch() {
+        val tracker = mergeFixture()
+        tracker.endChunk()
+        assertEquals(mapOf(2 to 1), tracker.remap())
 
         tracker.reset()
         assertEquals(0, tracker.speakerCount)
+        assertEquals(0, tracker.confirmedCount)
         assertEquals(0, tracker.currentSpeaker())
         assertFalse(tracker.secondSpeakerConfirmed)
+        assertTrue("a merge from the last session cannot relabel this one", tracker.remap().isEmpty())
         // Numbering restarts at 1 for whoever speaks first next session — the voice that was
         // speaker 2 has no claim on the number 2.
         assertEquals(1, tracker.assign(unit(90.0), longSeg))
     }
 
+    @Test fun aResetAlsoForgetsTheWIDTHSoTheNextSessionMayRunADifferentModel() {
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        tracker.reset()
+        assertEquals("a 192-wide session after a 2-wide one", 1, tracker.assign(unit192(0.0), longSeg))
+        assertEquals(1, tracker.speakerCount)
+    }
+
     // ------------------------------------------------------------------ what the spike reads
 
     @Test fun theBestSimilarityIsPublishedForEveryDecisionThatMEASUREDOne() {
-        // 4.10 Task 3: this is the column plan Task 4 sets tSame/tNew from, so every band has to
-        // publish the number it decided on — including the two that do NOT move a centroid.
+        // This is the column the bands came from, so every band has to publish the number it
+        // decided on — including the ones that change nothing.
         val tracker = SpeakerTracker()
 
         // The FIRST speaker measured nothing: there was nobody to compare against.
         assertEquals(1, tracker.assign(unit(0.0), longSeg))
         assertTrue("no similarity exists for the first voice", tracker.lastBestSimilarity.isNaN())
 
-        // A confident match publishes its similarity (cos 20° = 0.940).
-        assertEquals(1, tracker.assign(unit(20.0), longSeg))
-        assertEquals(0.940f, tracker.lastBestSimilarity, 0.002f)
+        // A confident match publishes its similarity (cos 30° = 0.866).
+        assertEquals(1, tracker.assign(unit(30.0), longSeg))
+        assertEquals(0.866f, tracker.lastBestSimilarity, 0.002f)
 
-        // A new speaker: below tNew against everyone, so nothing was matched — but a similarity
-        // WAS measured, and it is the one that has to land in the distribution.
-        assertEquals(2, tracker.assign(unit(90.0), longSeg))
-        assertEquals("the reading that OPENED a speaker is the sharpest input of all", true, tracker.lastBestSimilarity < 0.45f)
+        // A new speaker: below tNew against every recent fingerprint, so nothing was matched — but
+        // a similarity WAS measured, and it is the one that has to land in the distribution.
+        assertEquals(2, tracker.assign(unit(120.0), longSeg))
+        assertEquals("the reading that OPENED a speaker is the sharpest input of all", 0f, tracker.lastBestSimilarity, 0.002f)
 
-        // The hysteresis band, the reading the band exists for (cos 60° = 0.5 against speaker 2).
+        // The hysteresis band: 186° is 0.407 against speaker 2's 120° fingerprint.
         val before = tracker.currentSpeaker()
-        assertEquals(before, tracker.assign(unit(150.0), longSeg))
-        assertEquals(0.5f, tracker.lastBestSimilarity, 0.06f)
+        assertEquals(before, tracker.assign(unit(186.0), longSeg))
+        assertEquals(0.407f, tracker.lastBestSimilarity, 0.002f)
+    }
+
+    @Test fun aSegmentTooShortToDECIDEStillPublishesTheSimilarityItMeasured() {
+        // The embedder was paid for this vector — MIN_EMBED_SECONDS is 1.0 s, below MIN_OPEN's
+        // 2.0 — and the reading is a row in the distribution even though the rule ignored it.
+        val tracker = SpeakerTracker()
+        tracker.assign(unit(0.0), longSeg)
+        assertEquals(1, tracker.assign(unit(30.0), shortSeg))
+        assertEquals(0.866f, tracker.lastBestSimilarity, 0.002f)
     }
 
     @Test fun anUnusableEmbeddingAndAResetBothPublishNOSimilarityRatherThanTheLastOne() {
@@ -315,16 +671,54 @@ class SpeakerTrackerTest {
         assertTrue("and a new session starts with nothing measured", tracker.lastBestSimilarity.isNaN())
     }
 
-    @Test fun theShippedThresholdsAreTheSpecsStartingPointUntilTheDeviceSessionSetsThem() {
-        // Spec §3.2: 0.55 / 0.45 for CAM++, "set by the spike (§6), not by this document". Task 4
-        // replaces these two numbers from the `best=` distribution the device session logs; this
-        // assertion is what makes that a deliberate edit rather than a drift.
+    // ------------------------------------------------------------------ the settlement
+
+    @Test fun theConstantsAreTheONESTheMeasurementDocSettled() {
+        // THE SOURCE OF ALL SIX: docs/measurements/2026-09-18-speaker-spike.md, "Session 2 — the
+        // fingerprint dump, and the offline model comparison". Three clips of exactly one, two and
+        // three speakers; 132 segments' fingerprints and audio pulled to the PC; five embedding
+        // models scored; the rules below are the ones that produced 1/2/3 in simulation on that
+        // data, and the band is the CENTRE of the twelve pairs that worked.
+        //
+        // The three dumped sessions themselves are NOT replayable here — those fingerprints are
+        // CAM++'s 512-float vectors and they live outside the repo — so this assertion is the
+        // repo's whole memory of the measurement. Every one of these numbers had a DIFFERENT value
+        // that same morning (0.55 / 0.45 / EMA 0.2 / 1.5 s), reasoned from the spec and wrong
+        // enough to turn one voice into five speakers. None of them may move again without a new
+        // measurement.
+        assertEquals("T_SAME", 0.50f, SpeakerTracker.T_SAME, 0f)
+        assertEquals("T_NEW", 0.30f, SpeakerTracker.T_NEW, 0f)
+        assertEquals("MIN_OPEN_SECONDS", 2.0f, SpeakerTracker.MIN_OPEN_SECONDS, 0f)
+        assertEquals("RECENT_K", 5, SpeakerTracker.RECENT_K)
+        assertEquals("CONFIRM_N", 2, SpeakerTracker.CONFIRM_N)
+        assertEquals("MAX_SPEAKERS", 8, SpeakerTracker.MAX_SPEAKERS)
+        // The embed floor is NOT one of the six: it stayed at 1.0 s, so that a 1-2 s segment is
+        // still fingerprinted and still lands in the spike's distribution even though it can
+        // decide nothing.
+        assertEquals("MIN_EMBED_SECONDS", 1.0f, SpeakerTracker.MIN_EMBED_SECONDS, 0f)
+
+        // …and a default-constructed tracker actually runs on them.
         val tracker = SpeakerTracker()
-        assertEquals(0.55f, tracker.tSame, 0f)
-        assertEquals(0.45f, tracker.tNew, 0f)
-        assertEquals(8, tracker.maxSpeakers)
-        assertEquals(0.2f, tracker.ema, 0f)
-        assertEquals(1.0f, SpeakerTracker.MIN_EMBED_SECONDS, 0f)
-        assertEquals(1.5f, SpeakerTracker.MIN_NEW_SPEAKER_SECONDS, 0f)
+        assertEquals(SpeakerTracker.T_SAME, tracker.tSame, 0f)
+        assertEquals(SpeakerTracker.T_NEW, tracker.tNew, 0f)
+        assertEquals(SpeakerTracker.RECENT_K, tracker.recentK)
+        assertEquals(SpeakerTracker.CONFIRM_N, tracker.confirmN)
+        assertEquals(SpeakerTracker.MAX_SPEAKERS, tracker.maxSpeakers)
+    }
+
+    // ------------------------------------------------------------------ shared fixtures' numbers
+
+    /** Mostly the 9th axis, nearest to speaker 3 at 0.287 — just under T_NEW. */
+    private fun ninth(): FloatArray = FloatArray(9).also { it[2] = 0.3f; it[8] = 1f }
+
+    /** 0.9999 against [ninth] and 0.270 against the bare 3rd axis: the discriminating probe. */
+    private fun nearlyNinth(): FloatArray = FloatArray(9).also { it[2] = 0.28f; it[8] = 1f }
+
+    private companion object {
+        /** The five positions of the [cone] fixture, 60° apart — pairwise 0.533, so they chain. */
+        val CONE_PHI = listOf(0.0, 60.0, 120.0, 180.0, 240.0)
+
+        /** Room for the cone (axes 0-2) plus seven more orthogonal voices, for the cap test. */
+        const val CONE_DIM = 12
     }
 }

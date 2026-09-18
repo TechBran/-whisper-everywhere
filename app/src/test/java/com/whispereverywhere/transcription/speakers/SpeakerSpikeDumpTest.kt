@@ -101,7 +101,8 @@ class SpeakerSpikeDumpTest {
                 "…and the header is written by the same formatter",
                 SpikeJson.header(
                     session = 1L, model = "m", dim = 192,
-                    tSame = 0.55f, tNew = 0.45f, minEmbed = 1.0f, minNew = 1.5f, cap = 8,
+                    tSame = 0.55f, tNew = 0.45f, minEmbed = 1.0f, minOpen = 2.0f,
+                    recentK = 5, confirmN = 2, cap = 8,
                 ).contains("\"tSame\":0.5500"),
             )
         } finally {
@@ -152,19 +153,23 @@ class SpeakerSpikeDumpTest {
 
     @Test
     fun theHeaderNamesTheModelTheWidthAndTheBandTheSessionActuallyRanUnder() {
-        // A tuning run against a jsonl whose band nobody recorded is a measurement of an unknown
-        // build, which is the one thing a spike cannot afford twice.
+        // A tuning run against a jsonl whose RULES nobody recorded is a measurement of an unknown
+        // build, which is the one thing a spike cannot afford twice — and session 2 changed four
+        // rules at once, so the band alone no longer identifies a build.
         assertEquals(
             "{\"session\":1737000000000,\"model\":\"speaker_titanet_small_16k.onnx\",\"dim\":192," +
-                "\"tSame\":0.5500,\"tNew\":0.4500,\"minEmbed\":1.0000,\"minNew\":1.5000,\"cap\":8}",
+                "\"tSame\":0.5000,\"tNew\":0.3000,\"minEmbed\":1.0000,\"minOpen\":2.0000," +
+                "\"recentK\":5,\"confirmN\":2,\"cap\":8}",
             SpikeJson.header(
                 session = 1_737_000_000_000L,
                 model = SpeakerSpike.MODEL_ASSET,
                 dim = 192,
-                tSame = 0.55f,
-                tNew = 0.45f,
+                tSame = SpeakerTracker.T_SAME,
+                tNew = SpeakerTracker.T_NEW,
                 minEmbed = SpeakerTracker.MIN_EMBED_SECONDS,
-                minNew = SpeakerTracker.MIN_NEW_SPEAKER_SECONDS,
+                minOpen = SpeakerTracker.MIN_OPEN_SECONDS,
+                recentK = SpeakerTracker.RECENT_K,
+                confirmN = SpeakerTracker.CONFIRM_N,
                 cap = SpeakerTracker.MAX_SPEAKERS,
             ),
         )
@@ -341,10 +346,12 @@ class SpeakerSpikeDumpTest {
     ) = SpeakerSpikeDump(
         dirs = SpeakerSpikeDirs(sessionStartMs = session, internalDir = internal, externalDir = external),
         model = SpeakerSpike.MODEL_ASSET,
-        tSame = 0.55f,
-        tNew = 0.45f,
+        tSame = SpeakerTracker.T_SAME,
+        tNew = SpeakerTracker.T_NEW,
         minEmbed = SpeakerTracker.MIN_EMBED_SECONDS,
-        minNew = SpeakerTracker.MIN_NEW_SPEAKER_SECONDS,
+        minOpen = SpeakerTracker.MIN_OPEN_SECONDS,
+        recentK = SpeakerTracker.RECENT_K,
+        confirmN = SpeakerTracker.CONFIRM_N,
         cap = SpeakerTracker.MAX_SPEAKERS,
         nowMs = now,
     )

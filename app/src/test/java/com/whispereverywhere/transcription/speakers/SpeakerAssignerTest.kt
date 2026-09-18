@@ -33,6 +33,9 @@ import kotlin.math.sin
  *  - **A short segment is never fingerprinted** ([SpeakerTracker.MIN_EMBED_SECONDS]) and inherits
  *    the label before it — spec §3.2 step 2. Embedding 0.4 s of audio does not fail, it answers a
  *    vector with no speaker in it, which is the worst of the three outcomes.
+ *  - **The merge pass runs once per chunk, after the loop**, and what it moved leaves on the same
+ *    callback. This class is the only object that knows where a chunk ends, which is why the
+ *    "after each chunk" of spike session 2 is a line HERE and a method on the tracker.
  *  - **A null embedding changes nothing.** The model may be missing, refused or corrupt; the
  *    session must then lose LABELS, never text and never a speaker id it already had.
  *  - **The slice comes from the ORIGINAL timeline and is clamped.** `origStart/origEnd` index the
@@ -51,6 +54,23 @@ class SpeakerAssignerTest {
         val r = Math.toRadians(deg)
         return floatArrayOf(cos(r).toFloat(), sin(r).toFloat())
     }
+
+    /**
+     * The tracker test's MERGE fixture, so the two files exercise the pass on the same geometry:
+     * five vectors at 75° from axis 0 and 60° apart around it, pairwise 0.533 (they chain into one
+     * speaker) but only 0.259 from the axis itself, whose centroid they sit 0.801 from.
+     */
+    private fun cone(phi: Double): FloatArray {
+        val t = Math.toRadians(75.0)
+        val p = Math.toRadians(phi)
+        return FloatArray(8).also {
+            it[0] = cos(t).toFloat()
+            it[1] = (sin(t) * cos(p)).toFloat()
+            it[2] = (sin(t) * sin(p)).toFloat()
+        }
+    }
+
+    private fun coneAxis(): FloatArray = FloatArray(8).also { it[0] = 1f }
 
     /** Samples enough for every segment any test here asks for. */
     private fun buffer(seconds: Float) = FloatArray((RATE * seconds).toInt()) { 0.1f }
@@ -251,25 +271,78 @@ class SpeakerAssignerTest {
 
     @Test
     fun theConfirmedFlagIsTheTrackersLatchAndNothingElse() {
-        // A 1.2 s second voice does NOT confirm (MIN_NEW_SPEAKER_SECONDS is 1.5), so it takes the
-        // current speaker's label; a 2 s one opens speaker 2 and latches. Spec §3.2 step 5.
+        // A 1.5 s second voice does NOT confirm — MIN_OPEN_SECONDS is 2.0, so it cannot even open
+        // a speaker and takes the current one's label. Spike session 2's rule, and the owner's
+        // accepted limit: an interruption shorter than two seconds is the current speaker.
         val shy = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
         val first = assignOneChunk(
             voices = shy,
             samples = buffer(8f),
-            vad = listOf(seg(0f, 2f), seg(3f, 4.2f)),
+            vad = listOf(seg(0f, 2f), seg(3f, 4.5f)),
         )
         assertEquals(listOf(1, 1), first?.ids)
-        assertFalse("a 1.2 s interjection opens nobody", first!!.confirmed)
+        assertFalse("a 1.5 s interjection opens nobody", first!!.confirmed)
 
-        val bold = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        // Two 2 s segments EACH: the latch is two CONFIRMED speakers now, not two speakers.
+        val bold = FakeVoices { index -> if (index % 2 == 0) unit(0.0) else unit(90.0) }
         val second = assignOneChunk(
             voices = bold,
+            samples = buffer(14f),
+            vad = listOf(seg(0f, 2f), seg(3f, 5f), seg(6f, 8f), seg(9f, 11f)),
+        )
+        assertEquals(listOf(1, 2, 1, 2), second?.ids)
+        assertTrue("both have held the floor twice", second!!.confirmed)
+
+        // …and one qualifying segment each is NOT enough, which is the half that changed.
+        val half = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val third = assignOneChunk(
+            voices = half,
             samples = buffer(8f),
             vad = listOf(seg(0f, 2f), seg(3f, 5f)),
         )
-        assertEquals(listOf(1, 2), second?.ids)
-        assertTrue(second!!.confirmed)
+        assertEquals(listOf(1, 2), third?.ids)
+        assertFalse("two speakers, one segment each: no label yet", third!!.confirmed)
+    }
+
+    // ------------------------------------------------------------------ the end-of-chunk merge
+
+    @Test
+    fun theEndOfChunkMergeRunsONCEPerChunkAndItsResultRidesOutOnTheSameCallback() {
+        // The refine half of spike session 2, and the only place in the app that knows where a
+        // chunk ENDS. The five cone segments chain into one confirmed speaker; the sixth — the
+        // cone's axis, 0.259 from every one of their fingerprints — opens speaker 2 online, which
+        // is the correct answer with the evidence a single segment carries. The pass then compares
+        // WHOLE speakers: speaker 2's centroid is 0.801 from speaker 1's, so it was never a
+        // separate person.
+        //
+        // The ids reported for THIS chunk still say 2, and that is deliberate: they were already
+        // emitted by the time the pass ran. `remaps` is how a reader puts them right.
+        val voices = FakeVoices { index -> if (index < CONE_PHI.size) cone(CONE_PHI[index]) else coneAxis() }
+        val assignment = assignOneChunk(
+            voices = voices,
+            samples = buffer(20f),
+            vad = listOf(seg(0f, 2f), seg(3f, 5f), seg(6f, 8f), seg(9f, 11f), seg(12f, 14f), seg(15f, 17f)),
+        )
+        assertEquals(6, voices.lengths.size)
+        assertEquals("online, the sixth segment was a new voice", listOf(1, 1, 1, 1, 1, 2), assignment?.ids)
+        assertEquals("…and the merge pass says it was not", mapOf(2 to 1), assignment?.remaps)
+        assertFalse("one voice is not two, whatever it was briefly called", assignment!!.confirmed)
+        // The diag line the device session reads carries it, once, at the end.
+        assertTrue(SpeakerDiag.line(assignment), SpeakerDiag.line(assignment).endsWith(" remaps=[2>1]"))
+    }
+
+    @Test
+    fun aChunkThatMERGEDNOTHINGCarriesAnEmptyMapAndNoRemapsFieldAtAll() {
+        // Almost every chunk. The field exists so the rare one can be read; a `remaps=[]` on all
+        // eighteen lines of a session would bury the one line worth grepping for.
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignOneChunk(
+            voices = voices,
+            samples = buffer(8f),
+            vad = listOf(seg(0f, 2f), seg(3f, 5f)),
+        )
+        assertEquals(emptyMap<Int, Int>(), assignment?.remaps)
+        assertFalse(SpeakerDiag.line(assignment!!), "remaps" in SpeakerDiag.line(assignment))
     }
 
     @Test
@@ -343,5 +416,8 @@ class SpeakerAssignerTest {
 
     private companion object {
         const val RATE = 16_000
+
+        /** The five positions of the [cone] fixture. */
+        val CONE_PHI = listOf(0.0, 60.0, 120.0, 180.0, 240.0)
     }
 }

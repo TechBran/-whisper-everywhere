@@ -162,13 +162,22 @@ data class SpikeFingerprint(
  *  - **`null`, never `NaN`, for a value that was not measured.** `best` is genuinely absent for the
  *    first speaker of a session (nobody to be compared with), and 0 is a real reading — two
  *    orthogonal voices. `NaN` is not JSON at all in the strict grammar.
- *  - **One header line first**, carrying the thresholds THIS session ran under, so a dump is
- *    self-describing: a tuning run against a jsonl whose band nobody recorded is a measurement of
- *    an unknown build.
+ *  - **One header line first**, carrying every RULE this session ran under — the band, the
+ *    open floor, the recent-fingerprint window, the confirm count, the cap — so a dump is
+ *    self-describing: a tuning run against a jsonl whose rules nobody recorded is a
+ *    measurement of an unknown build.
  */
 object SpikeJson {
 
-    /** The file's first line: what produced the rows below it. */
+    /**
+     * The file's first line: what produced the rows below it.
+     *
+     * Every RULE the session ran under, not only its two thresholds. Session 2 changed four of
+     * them at once — the open floor, the recent-fingerprint window, the confirm count and the
+     * band — so a header that carried the band alone would leave a dump indistinguishable from
+     * one taken under a different tracker, which is the one thing a tuning loop cannot recover
+     * from.
+     */
     fun header(
         session: Long,
         model: String,
@@ -176,7 +185,9 @@ object SpikeJson {
         tSame: Float,
         tNew: Float,
         minEmbed: Float,
-        minNew: Float,
+        minOpen: Float,
+        recentK: Int,
+        confirmN: Int,
         cap: Int,
     ): String = buildString {
         append("{\"session\":").append(session)
@@ -185,7 +196,9 @@ object SpikeJson {
         append(",\"tSame\":").append(num(tSame))
         append(",\"tNew\":").append(num(tNew))
         append(",\"minEmbed\":").append(num(minEmbed))
-        append(",\"minNew\":").append(num(minNew))
+        append(",\"minOpen\":").append(num(minOpen))
+        append(",\"recentK\":").append(recentK)
+        append(",\"confirmN\":").append(confirmN)
         append(",\"cap\":").append(cap)
         append('}')
     }
@@ -346,7 +359,9 @@ class SpeakerSpikeDump(
     private val tSame: Float,
     private val tNew: Float,
     private val minEmbed: Float,
-    private val minNew: Float,
+    private val minOpen: Float,
+    private val recentK: Int,
+    private val confirmN: Int,
     private val cap: Int,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
@@ -423,7 +438,9 @@ class SpeakerSpikeDump(
             tSame = tSame,
             tNew = tNew,
             minEmbed = minEmbed,
-            minNew = minNew,
+            minOpen = minOpen,
+            recentK = recentK,
+            confirmN = confirmN,
             cap = cap,
         )
         runCatching { primary?.write(header); primary?.write("\n") }

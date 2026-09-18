@@ -35,6 +35,7 @@ class SpeakerDiagTest {
         best: List<Float> = listOf(Float.NaN, 0.881f, 0.313f),
         durationsSec: List<Float> = listOf(3.24f, 1.06f, 2.4f),
         includesModelLoad: Boolean = false,
+        remaps: Map<Int, Int> = emptyMap(),
     ) = SpeakerAssignment(
         seq = seq,
         ids = ids,
@@ -45,6 +46,7 @@ class SpeakerDiagTest {
             durationsSec = durationsSec,
             includesModelLoad = includesModelLoad,
         ),
+        remaps = remaps,
     )
 
     @Test
@@ -93,8 +95,9 @@ class SpeakerDiagTest {
 
     @Test
     fun theOneChunkThatPaidTheModelLoadSaysSoSoItIsNotReadAsCamPlusBeingSlow() {
-        // The flag is LAST, after `confirmed=`, so anything reading the plan's eight fields
-        // positionally is unaffected by its existence.
+        // The flag is after `confirmed=`, so anything reading the plan's eight fields positionally
+        // is unaffected by its existence. It is last on every chunk that merged nothing, which is
+        // almost all of them; `remaps=` goes after it on the rest.
         assertTrue(SpeakerDiag.line(assignment(includesModelLoad = true)).endsWith(" load=1"))
         assertTrue(SpeakerDiag.line(assignment(includesModelLoad = false)).endsWith(" load=0"))
         assertTrue("confirmed= stays the eighth field", "confirmed=1 load=" in SpeakerDiag.line(assignment()))
@@ -131,5 +134,29 @@ class SpeakerDiagTest {
         for (field in fields.drop(1)) {
             assertTrue("every field is key=value: $field", field.count { it == '=' } == 1)
         }
+        // …and ten on a chunk that merged, with the same rule holding for the new column.
+        val merged = SpeakerDiag.line(assignment(remaps = mapOf(3 to 1, 5 to 2))).split(" ")
+        assertEquals(10, merged.size)
+        for (field in merged.drop(1)) {
+            assertTrue("every field is key=value: $field", field.count { it == '=' } == 1)
+        }
+    }
+
+    @Test
+    fun aMergeIsRenderedAsArrowsLASTAndOnlyOnTheChunksThatHadOne() {
+        // The refine half of spike session 2. `3>1` reads "everything already labelled speaker 3
+        // was speaker 1", which is the correction a reader has to apply to `ids=` on this line AND
+        // to earlier lines — so it has to be greppable and it has to be unambiguous about the
+        // direction. `>` rather than `->` because no column here contains a space or a dash, and
+        // `-` already means "not measured" in the `best=` column beside it.
+        val merged = SpeakerDiag.line(assignment(remaps = mapOf(3 to 1, 5 to 2)))
+        assertTrue(merged, merged.endsWith(" remaps=[3>1,5>2]"))
+        assertTrue("…and it comes after load=, so the plan's eight fields stay positional", "load=0 remaps=" in merged)
+
+        // Absent, not empty, on the overwhelming majority of chunks: eighteen `remaps=[]` per
+        // session would bury the one line worth reading.
+        val quiet = SpeakerDiag.line(assignment())
+        assertFalse(quiet, "remaps" in quiet)
+        assertTrue(quiet, quiet.endsWith(" load=0"))
     }
 }

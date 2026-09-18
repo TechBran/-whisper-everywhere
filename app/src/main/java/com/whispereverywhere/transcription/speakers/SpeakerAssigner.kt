@@ -20,14 +20,22 @@ import java.util.concurrent.Executors
  *
  *  1. **Shorter than [SpeakerTracker.MIN_EMBED_SECONDS]** — never fingerprinted. It inherits the
  *     label of the segment before it ([SpeakerTracker.currentSpeaker], which is 0 before anything
- *     has been assigned and therefore reads as "unlabelled"). Spec §3.2 step 2: CAM++ on a
+ *     has been assigned and therefore reads as "unlabelled"). Spec §3.2 step 2: an embedder on a
  *     fraction of a second does not fail, it answers a vector with no speaker in it, which is the
  *     worst of the three outcomes because it looks like an answer.
  *  2. **Fingerprinted, and the embedder answered** — [SpeakerTracker.assign] decides, and its
- *     three-band rule is where every judgement the user can see is made.
+ *     three-band rule is where every judgement the user can see is made. A segment between
+ *     [SpeakerTracker.MIN_EMBED_SECONDS] and [SpeakerTracker.MIN_OPEN_SECONDS] is still
+ *     fingerprinted and still measured, but it can only ever inherit: the cost buys a row in the
+ *     spike's distribution, not a decision.
  *  3. **Fingerprinted, and the embedder answered null** — the model is missing, refused, or
  *     native code threw. The label is left exactly where it was. A session on a device that
  *     cannot load the model loses LABELS, never text.
+ *
+ * And then, ONCE per chunk after all of them, [SpeakerTracker.endChunk] runs the merge pass and
+ * whatever it moved rides out on the same callback as `remaps`. That ordering is the design of
+ * spike session 2 — online, then refine — and this class is the only object that knows where a
+ * chunk ends.
  *
  * ### The slice is on the ORIGINAL timeline, and it is clamped
  *
@@ -203,10 +211,22 @@ class SpeakerAssigner(
         // completed chunk on disk, and those are the sessions worth reading.
         runCatching { dump?.flush() }
 
+        // THE REFINE HALF, and it runs HERE because "after each chunk" is a thing only this object
+        // knows (spike session 2). Every unconfirmed speaker that turns out to be within T_SAME of
+        // a confirmed one is absorbed into it, and the ids just reported in `ids` above for an
+        // absorbed speaker are now stale by exactly one map. They are not rewritten — this pass
+        // cannot reach the sink — they are PUBLISHED, on the same callback, in the same chunk, so
+        // that a reader which has already painted them can put them right. Empty for the
+        // overwhelming majority of chunks, which is why it is a map and not a flag.
+        val remaps = tracker.endChunk()
+
         onAssigned(
             SpeakerAssignment(
                 seq = seq,
                 ids = ids,
+                remaps = remaps,
+                // Read AFTER the merge pass: a chunk's verdict is the one that stands at the end
+                // of it, not the one that stood mid-loop.
                 confirmed = tracker.secondSpeakerConfirmed,
                 stats = SpeakerAssignStats(
                     embedMs = embedNs / 1_000_000L,
@@ -242,7 +262,9 @@ class SpeakerAssigner(
             tSame = tracker.tSame,
             tNew = tracker.tNew,
             minEmbed = SpeakerTracker.MIN_EMBED_SECONDS,
-            minNew = SpeakerTracker.MIN_NEW_SPEAKER_SECONDS,
+            minOpen = SpeakerTracker.MIN_OPEN_SECONDS,
+            recentK = tracker.recentK,
+            confirmN = tracker.confirmN,
             cap = tracker.maxSpeakers,
         )
         dump = built
@@ -272,9 +294,16 @@ class SpeakerAssigner(
  *        not be attributed at all (no fingerprint and no previous speaker to inherit from). A
  *        reader must treat 0 as "unlabelled", never as speaker 1 — spec §2 forbids a label on a
  *        session that has not earned one.
- * @param confirmed the tracker's per-session latch (spec §3.2 step 5): two speakers, each with a
- *        segment of at least [SpeakerTracker.MIN_NEW_SPEAKER_SECONDS]. Until it is true the panel
- *        shows no label at all and a one-speaker session is byte-for-byte today's output.
+ * @param remaps what the end-of-chunk merge pass changed, `merged id -> survivor id`, and empty
+ *        for almost every chunk. An entry says that an id in [ids] — possibly in an EARLIER
+ *        chunk's ids, which is the whole point — belongs to the survivor instead: the tracker
+ *        decided that speaker was never a separate person. The pass runs after the loop, so ids
+ *        and remaps in the SAME assignment can disagree; that is not a race, it is the
+ *        online-then-refine design, and the reader's job is to apply the map.
+ * @param confirmed the tracker's per-session latch (spike session 2): **two CONFIRMED speakers**,
+ *        each having held the floor for [SpeakerTracker.CONFIRM_N] segments of at least
+ *        [SpeakerTracker.MIN_OPEN_SECONDS]. Until it is true the panel shows no label at all and a
+ *        one-speaker session is byte-for-byte today's output.
  * @param stats the numbers the device session measures, one row per segment.
  *
  * There is NO text field, by design: see [SpeakerAssigner]'s KDoc.
@@ -284,6 +313,7 @@ data class SpeakerAssignment(
     val ids: List<Int>,
     val confirmed: Boolean,
     val stats: SpeakerAssignStats,
+    val remaps: Map<Int, Int> = emptyMap(),
 )
 
 /**

@@ -8,11 +8,17 @@ import java.util.Locale
  *
  * ```
  * speaker: seq=12 segs=3 embedMs=214 ids=[1,1,2] best=[-,0.88,0.31] dur=[3.2,1.1,2.4] confirmed=1 load=0
+ * speaker: seq=13 segs=2 embedMs=98 ids=[3,1] best=[0.41,0.92] dur=[2.6,3.1] confirmed=1 load=0 remaps=[3>1]
  * ```
+ *
+ * The second line is the shape a MERGE takes (spike session 2): the chunk reported speaker 3 and
+ * then the end-of-chunk pass decided speaker 3 was speaker 1 all along. `remaps=` appears only on
+ * the chunks where something moved — see the field's own comment below for why it is not always
+ * printed.
  *
  * It is a formatter with a test because the line is an INSTRUMENT, not a log. `T_SAME` / `T_NEW`
  * are set from the `best=` column of a real session (spec §3.2 step 3 defers them to the spike
- * deliberately), CAM++ passes or fails on `embedMs=`, and the false-split count comes from reading
+ * deliberately), the embedding model passes or fails on `embedMs=`, and the false-split count comes from reading
  * `ids=` against what the owner heard. A column that shifts, drops a row for the segments that
  * were never fingerprinted, or renders `0.31` as `0,31` on a device set to German is a device
  * session that has to be run again — and the owner's device sessions are the scarce resource in
@@ -30,7 +36,8 @@ import java.util.Locale
  *    a column that is about to become a threshold.
  *  - **`Locale.ROOT`**, because `String.format` without one takes the device's default and a
  *    comma decimal separator makes every number here unparseable.
- *  - **No spaces inside a column**, so one line splits into eight `key=value` fields.
+ *  - **No spaces inside a column**, so one line splits into nine `key=value` fields — ten on
+ *    the rare chunk that carries a `remaps=`.
  *  - **Not one character of transcript.** The type makes it unreachable: [SpeakerAssignment] has
  *    no text in it at all.
  *
@@ -62,6 +69,19 @@ object SpeakerDiag {
             // chunk is an unexplained outlier against the budget CAM++ is judged on, and the
             // adapter's own load line is stripped from the release build by R8.
             append(" load=").append(if (stats.includesModelLoad) 1 else 0)
+            // CONDITIONAL, and last of all. A merge is rare — most chunks move nothing — and a
+            // `remaps=[]` on every line would make the one thing worth grepping for invisible in
+            // eighteen lines of noise. When it IS there it is the correction to the `ids=` column
+            // printed beside it, and to earlier chunks' ids too, which is exactly the sequence a
+            // reader of these lines has to be able to reconstruct: `3>1` says the segments already
+            // labelled 3 were speaker 1 all along.
+            if (assignment.remaps.isNotEmpty()) {
+                append(" remaps=").append(
+                    assignment.remaps.entries.joinToString(separator = ",", prefix = "[", postfix = "]") {
+                        "${it.key}>${it.value}"
+                    }
+                )
+            }
         }
     }
 
