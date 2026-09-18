@@ -35,7 +35,28 @@ class SegmentOrderer(private val lostMarker: String = LOST_MARKER) {
      */
     private var hasEmittedText = false
 
-    data class Release(val text: String, val lostSegments: Int)
+    /**
+     * What one drain produced.
+     *
+     * [text] and [lostSegments] are the whole of the ordering contract and are untouched by 4.10.
+     * [seq] and [spans] are PASSENGERS on it, for the speaker labels: the sink needs to know which
+     * chunk the text came from, because its speaker ids arrive ~300 ms later keyed by that seq,
+     * and which stretches of it were which VAD segment.
+     *
+     * Both ride only when the drain released EXACTLY ONE non-blank text segment and no loss
+     * marker, and that condition is the honest one rather than a cautious one. A drain that
+     * concatenated two chunks, or spliced a "[…]" between them, produced a string that no single
+     * chunk's spans describe — and labelling it from one of them would put a speaker's name on
+     * another chunk's sentence. The condition is also never false where it matters: spans exist
+     * only for the on-device engine, whose `maxInFlight = 1` makes this a provable pass-through
+     * (results arrive with `seq == head`, so every release is one segment).
+     */
+    data class Release(
+        val text: String,
+        val lostSegments: Int,
+        val seq: Long = NO_SEQ,
+        val spans: List<com.whispereverywhere.transcription.speakers.SpeakerSpan>? = null,
+    )
 
     fun onResolved(seq: Long, outcome: SegmentOutcome): Release {
         // Late duplicate (a retry that timed out client-side but succeeded server-side) — dropping
@@ -71,12 +92,22 @@ class SegmentOrderer(private val lostMarker: String = LOST_MARKER) {
     private fun drain(): Release {
         val sb = StringBuilder()
         var lost = 0
+        // The 4.10 passengers: which chunk this release's text came from, and how many chunks
+        // contributed to it at all. See [Release] for why one is the only number that can carry
+        // spans.
+        var textSegments = 0
+        var spanSeq = NO_SEQ
+        var spans: List<com.whispereverywhere.transcription.speakers.SpeakerSpan>? = null
         while (true) {
+            val releasing = head
             val outcome = resolved.remove(head) ?: break
             head++
             when (outcome) {
                 is SegmentOutcome.Text -> {
                     if (outcome.text.isNotBlank()) {
+                        textSegments++
+                        spanSeq = releasing
+                        spans = outcome.spans
                         val tok = outcome.text.trim()
                         // Within-burst spacing is melt-proofed (punctuation attaches); the
                         // cross-call gate (a preceding loss marker from an earlier call) stays an
@@ -109,13 +140,23 @@ class SegmentOrderer(private val lostMarker: String = LOST_MARKER) {
                 }
             }
         }
-        return if (sb.isEmpty() && lost == 0) EMPTY else Release(sb.toString(), lost)
+        if (sb.isEmpty() && lost == 0) return EMPTY
+        val oneChunk = textSegments == 1 && lost == 0
+        return Release(
+            text = sb.toString(),
+            lostSegments = lost,
+            seq = if (oneChunk) spanSeq else NO_SEQ,
+            spans = if (oneChunk) spans else null,
+        )
     }
 
-    private companion object {
-        const val LOST_MARKER = "[…]"
-        val EMPTY = Release("", 0)
+    companion object {
+        /** [Release.seq] for a release no single chunk owns. Never a real seq (those start at 0). */
+        const val NO_SEQ: Long = -1L
+
+        private const val LOST_MARKER = "[…]"
+        private val EMPTY = Release("", 0)
         /** Internal marker for a seq that was skipped; never surfaced to callers. */
-        val SKIPPED = SegmentOutcome.Text("")
+        private val SKIPPED = SegmentOutcome.Text("")
     }
 }

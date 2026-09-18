@@ -157,10 +157,15 @@ class SpeakerWiringPinTest {
 
     @Test
     fun theOneDiagLinePerChunkGoesOutThroughNativeLoggingSoR8CannotStripIt() {
-        assertEquals(1, count(service, "WhisperNative.diag("))
+        // TWO native lines, and the second is the relabel's (Task 5) — one per SESSION, guarded by
+        // the latch's own "did it move" answer, which is why it is counted here beside the
+        // per-chunk one rather than left to drift into a third. Both go out through
+        // WhisperNative.diag because R8 strips every android.util.Log call from the release
+        // build, and the release build is the only one the owner can install.
+        assertEquals(2, count(service, "WhisperNative.diag("))
         at(startRecording, "WhisperNative.diag(SpeakerDiag.line(assignment))", "startRecording")
-        // And that is ALL the callback does in Task 3 — nothing is rendered yet.
-        assertEquals("no panel write from the speaker callback yet", 0, count(service, "SpeakerLabels"))
+        at(startRecording, "SpeakerDiag.relabelLine(", "startRecording")
+        assertEquals("the relabel line is emitted from exactly one place", 1, count(service, "SpeakerDiag.relabelLine("))
     }
 
     // ------------------------------------------------------------------ the engine seam

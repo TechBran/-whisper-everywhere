@@ -76,7 +76,7 @@ class AccessibilityOptionalDeliveryPinTest {
     }
 
     private val delivery: String by lazy {
-        memberBody(service, "    private fun deliverFinalTranscript(full: String) {")
+        memberBody(service, "    private fun deliverFinalTranscript(full: String, export: String) {")
     }
 
     @Test
@@ -130,6 +130,14 @@ class AccessibilityOptionalDeliveryPinTest {
         // (SESSION_BOUND, FINALIZE_FOCUS) and the three clipboard writes (FAILED fallback,
         // FINALIZE_FOCUS's copy, the target-less consolidated copy) are exactly the W2 set —
         // a site added or removed here changes the with-service behaviour and trips this.
+        //
+        // (4.10) The COUNTS are the contract and they have not moved; WHAT each site writes has.
+        // The injections take `full` — the sink's file, rendered in FIELD mode: paragraphs at
+        // speaker changes, never a label. The clipboard writes take `export` — the same runs with
+        // labels behind the user's switch. That split is why the two needles below name different
+        // arguments, and a site that wrote the wrong one of the two would put `Speaker 1:` into
+        // somebody's text field (or strip it from a copy the user asked to have it in) with every
+        // count in this file still green.
         assertEquals(
             "two injection sites, as before",
             2,
@@ -138,7 +146,7 @@ class AccessibilityOptionalDeliveryPinTest {
         assertEquals(
             "three clipboard writes, as before",
             3,
-            liveLines(delivery, "clip.setPrimaryClip(android.content.ClipData.newPlainText(\"Transcript\", full))").size,
+            liveLines(delivery, "clip.setPrimaryClip(android.content.ClipData.newPlainText(\"Transcript\", export))").size,
         )
         assertEquals(
             "the target-less branch is still the consolidated copy the service-off plan lands in",
@@ -158,7 +166,7 @@ class AccessibilityOptionalDeliveryPinTest {
         assertEquals(
             "and the arm writes the clipboard before it says so",
             1,
-            liveLines(arm, "clip.setPrimaryClip(android.content.ClipData.newPlainText(\"Transcript\", full))").size,
+            liveLines(arm, "clip.setPrimaryClip(android.content.ClipData.newPlainText(\"Transcript\", export))").size,
         )
         assertTrue(
             offsetOfLive(arm, "clip.setPrimaryClip(") <

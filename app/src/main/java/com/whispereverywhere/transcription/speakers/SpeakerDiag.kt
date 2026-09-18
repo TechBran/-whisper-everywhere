@@ -85,6 +85,30 @@ object SpeakerDiag {
         }
     }
 
+    /** What the relabel line is grepped for. */
+    const val RELABEL_PREFIX: String = "speaker-labels:"
+
+    /**
+     * THE RELABEL — one line per SESSION, not per chunk (plan Task 5):
+     *
+     * ```
+     * speaker-labels: confirmed=2 runs=14 relabelled=1
+     * ```
+     *
+     * It is emitted the moment the panel is rewritten with labels from the session's start, which
+     * happens exactly once (the latch never goes back), so a second one of these in a session's
+     * log is a bug and is meant to be visible as one. `relabelled=1` is therefore a constant and
+     * is here on purpose: it makes the line's meaning legible on its own, beside the
+     * `speaker: … confirmed=1` chunk lines that lead up to it.
+     *
+     * [confirmed] is the number the tracker's LATCH certifies — "two or more" — not a census; the
+     * per-segment ids are in the `speaker:` lines above it. [runs] is how many stretches of text
+     * the rewrite covered. **Numbers only**, like every line in this file: a run's text is user
+     * speech and never reaches a log.
+     */
+    fun relabelLine(confirmed: Int, runs: Int): String =
+        "$RELABEL_PREFIX confirmed=$confirmed runs=$runs relabelled=1"
+
     /** `[a,b,c]`, and `[]` for nothing — never a placeholder row for a chunk with no segments. */
     private fun <T> column(values: List<T>, render: (T) -> String): String =
         values.joinToString(separator = ",", prefix = "[", postfix = "]") { render(it) }

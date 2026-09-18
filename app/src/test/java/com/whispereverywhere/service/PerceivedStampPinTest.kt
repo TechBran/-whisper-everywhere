@@ -186,7 +186,7 @@ class PerceivedStampPinTest {
         // previewJob), so this stamp excludes one hop and one frame. Reading it ABOVE the call
         // would instead time the START of delivery — a much larger and much less honest error.
         // M11 is the mutant: the hoisted form compiles, runs, and emits a line for every segment.
-        val delivered = indexOfOrFail("                    deliverReleasedText(release.text)\n")
+        val delivered = indexOfOrFail("                    deliverReleasedText(release)\n")
         val stamped =
             indexOfOrFail("                        perceivedLatency.onVisible(seq, System.currentTimeMillis())")
         assertTrue("the visible stamp is read AFTER delivery returns", stamped > delivered)

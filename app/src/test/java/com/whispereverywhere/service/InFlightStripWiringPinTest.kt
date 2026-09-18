@@ -119,7 +119,10 @@ class InFlightStripWiringPinTest {
     }
 
     private val delivery: String by lazy {
-        body("    private fun deliverReleasedText(text: String) {", "\n    }\n")
+        body(
+            "    private fun deliverReleasedText(release: com.whispereverywhere.transcription.SegmentOrderer.Release) {",
+            "\n    }\n",
+        )
     }
 
     private val onDelta: String by lazy {
@@ -224,7 +227,7 @@ class InFlightStripWiringPinTest {
         // queue counts down in logcat while the user watches "Transcribing… (3 in queue)".
         //
         // NOTE, corrected at the G5 gate: the DECREMENT was never the fragile part. It lives
-        // inside the log call below and `deliverReleasedText`'s `if (text.isBlank()) return`
+        // inside the log call below and `deliverReleasedText`'s `if (release.text.isBlank()) return`
         // returns from that METHOD, not from this coroutine, so it always ran — before G5 and
         // after. What the ordering actually protects is the PAINTERS: neither may read a
         // pre-decrement depth. The test's name is kept because what it names — count down, repaint,
@@ -232,7 +235,7 @@ class InFlightStripWiringPinTest {
         val counted =
             indexOfOrFail(onResolved, "EndpointDiag.queueLine(segmentQueueDepth.onResolved(seq)),")
         val painted = indexOfOrFail(onResolved, "                    renderInFlightStrip()\n")
-        val delivered = indexOfOrFail(onResolved, "                    deliverReleasedText(release.text)\n")
+        val delivered = indexOfOrFail(onResolved, "                    deliverReleasedText(release)\n")
         assertTrue("the repaint reads the depth AFTER this seq has been taken out of it", counted < painted)
         // Delivery PAINTS TOO (its non-live branch calls the render), so the decrement has to
         // precede it as well or that paint shows a backlog one deeper than it is.

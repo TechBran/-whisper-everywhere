@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription
 
+import com.whispereverywhere.transcription.speakers.SpeakerSpan
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -104,5 +105,79 @@ class SegmentOrdererTest {
         val o = SegmentOrderer()
         o.onResolved(1, text("."))
         assertEquals("a.", o.onResolved(0, text("a")).text)
+    }
+
+    // --- 4.10: the speaker passengers ------------------------------------------
+    // The ordering contract above is untouched. What is added is that a release SAYS which chunk
+    // its text came from, and hands on that chunk's spans — but only when it is one chunk's text
+    // and nothing else, because a concatenated or marker-spliced string is a string no single
+    // chunk's spans describe.
+
+    private fun spanned(s: String, vararg spans: SpeakerSpan) =
+        SegmentOutcome.Text(s, spans = spans.toList())
+
+    @Test fun a_lone_text_segment_carries_its_seq_and_its_spans_through() {
+        val o = SegmentOrderer()
+        val release = o.onResolved(
+            0,
+            spanned("a b", SpeakerSpan(0, "a"), SpeakerSpan(1, "b")),
+        )
+        assertEquals("a b", release.text)
+        assertEquals(0L, release.seq)
+        assertEquals(listOf(SpeakerSpan(0, "a"), SpeakerSpan(1, "b")), release.spans)
+    }
+
+    @Test fun the_seq_carried_is_the_released_chunks_own_and_not_the_heads() {
+        val o = SegmentOrderer()
+        o.onResolved(0, SegmentOutcome.EmptyExpected)
+        val release = o.onResolved(1, spanned("late", SpeakerSpan(0, "late")))
+        assertEquals("a silent chunk ahead of it must not steal its identity", 1L, release.seq)
+    }
+
+    @Test fun a_chunk_with_no_spans_carries_none_and_still_names_itself() {
+        val o = SegmentOrderer()
+        val release = o.onResolved(0, text("plain"))
+        assertEquals(0L, release.seq)
+        assertEquals(null, release.spans)
+    }
+
+    @Test fun a_release_that_concatenated_two_chunks_carries_no_spans_at_all() {
+        // Two chunks in one string: the spans of either would describe half of it, and labelling
+        // the whole from one of them would put a speaker's name on the other chunk's sentence.
+        val o = SegmentOrderer()
+        o.onResolved(1, spanned("second", SpeakerSpan(0, "second")))
+        val release = o.onResolved(0, spanned("first", SpeakerSpan(0, "first")))
+        assertEquals("first second", release.text)
+        assertEquals(SegmentOrderer.NO_SEQ, release.seq)
+        assertEquals(null, release.spans)
+    }
+
+    @Test fun a_release_carrying_a_loss_marker_carries_no_spans() {
+        // The marker is text no chunk spoke: "[…]" is in the string and in none of the spans.
+        val o = SegmentOrderer()
+        o.onResolved(1, SegmentOutcome.Lost("offline"))
+        val release = o.onResolved(0, spanned("said", SpeakerSpan(0, "said")))
+        assertEquals(SegmentOrderer.NO_SEQ, release.seq)
+        assertEquals(null, release.spans)
+        assertEquals(1, release.lostSegments)
+    }
+
+    @Test fun an_empty_release_names_no_chunk() {
+        val o = SegmentOrderer()
+        val release = o.onResolved(1, spanned("held", SpeakerSpan(0, "held")))
+        assertEquals("", release.text)
+        assertEquals(SegmentOrderer.NO_SEQ, release.seq)
+        assertEquals(null, release.spans)
+    }
+
+    @Test fun a_flush_of_one_held_chunk_still_carries_its_spans() {
+        // The four flush() sites are how a session ends; a label must not be lost at the last
+        // chunk of every session just because it left through flush rather than onResolved.
+        val o = SegmentOrderer()
+        o.onResolved(1, spanned("held", SpeakerSpan(2, "held")))
+        val release = o.flush()
+        assertEquals("held", release.text)
+        assertEquals(1L, release.seq)
+        assertEquals(listOf(SpeakerSpan(2, "held")), release.spans)
     }
 }

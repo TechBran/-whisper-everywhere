@@ -1269,12 +1269,16 @@ class FloatingBubbleService : Service(),
     // more than one segment in flight.
     private var segmentOrderer = com.whispereverywhere.transcription.SegmentOrderer()
 
-    // Transcription history (text only — user decision 2026-07-17): per-session accumulator,
-    // persisted via TranscriptStore at finalize with rolling 14-day/10MB retention.
+    // Transcription history (text only — user decision 2026-07-17): persisted via TranscriptStore
+    // at finalize with rolling 14-day/10MB retention.
+    //
+    // (4.10) History's source is the SINK's runs, rendered at save time — the `sessionTranscript`
+    // StringBuilder that used to accumulate the same text in parallel is gone. One accumulator,
+    // one set of speaker ids: two would let the panel and the saved file disagree about where a
+    // speaker changed, which is exactly the divergence the export switch would then make visible.
     private val transcriptStore by lazy {
         com.whispereverywhere.transcription.TranscriptStore(java.io.File(filesDir, "transcripts"))
     }
-    private val sessionTranscript = StringBuilder()
     private var sessionStartMs = 0L
 
     /**
@@ -1336,7 +1340,7 @@ class FloatingBubbleService : Service(),
     // Every routing decision between startRecording and finalize reads THIS, never currentContext.
     // Corollary (intended): a session STARTED on a focused field keeps typing into that field
     // even if media begins mid-session and the source hands over mic→stream — the session types
-    // where the user aimed it; history accumulates via sessionTranscript in both modes.
+    // where the user aimed it; history accumulates in the sink's runs in both modes.
     private var sessionContext: BubbleContext = BubbleContext.NONE
 
     // TEXT_FIELD session whose FINAL write degraded to clipboard (document apps, dead targets):
@@ -2009,12 +2013,21 @@ class FloatingBubbleService : Service(),
         // finalize that already delivered, then IDLE) keeps the write once-only.
         if (currentState == BubbleState.RECORDING || currentState == BubbleState.FINALIZING) {
             runCatching {
-                deliverReleasedText(segmentOrderer.flush().text)
-                transcriptSink?.close()
-                val full = transcriptSink?.fullTextFile()?.readText()?.trim() ?: ""
+                deliverReleasedText(segmentOrderer.flush())
+                val sink = transcriptSink
+                sink?.close()
+                val full = sink?.fullTextFile()?.readText()?.trim() ?: ""
                 // Empty ⇒ either nothing was said or the finalize coroutine already detached the
                 // sink mid-read — either way, never claim finalDelivered with nothing delivered.
-                if (full.isNotEmpty()) deliverFinalTranscript(full)
+                if (full.isNotEmpty()) {
+                    deliverFinalTranscript(
+                        full = full,
+                        export = exportTranscript(
+                            runs = sink?.runs() ?: emptyList(),
+                            confirmedSpeakers = sink?.confirmedSpeakers ?: 0,
+                        ),
+                    )
+                }
             }
         }
         teardownRealtime()
@@ -4349,7 +4362,6 @@ class FloatingBubbleService : Service(),
         // "microphone for this session" once more.
         consentBudget.reset()
         consentExhaustedToastShown = false
-        sessionTranscript.setLength(0)
         // Per-session ordering state. MUST be recreated: the orderer drops any seq below its head,
         // and the engine restarts seq numbering at 0 in connect() — a reused orderer sitting at
         // head N would silently discard the whole next session.
@@ -4421,11 +4433,28 @@ class FloatingBubbleService : Service(),
             SpeakerAssigner(
                 voices = SpeakerEmbedder(app),
                 onAssigned = { assignment ->
-                    // Off the embed thread and onto Main: the callback is the seam this feature
-                    // will render from in Task 5, so it lands where the panel lives from the
-                    // start rather than being moved there later.
+                    // Off the embed thread and onto Main: the sink is Main-confined, like the
+                    // panel it feeds, and the ids arrive here AFTER this chunk's text has already
+                    // been delivered and painted (the embedding is deliberately behind the
+                    // delivery — spec §3.3).
                     serviceScope.launch(Dispatchers.Main) {
                         WhisperNative.diag(SpeakerDiag.line(assignment))
+                        val sink = transcriptSink ?: return@launch
+                        sink.assign(assignment.seq, assignment.ids, assignment.remaps)
+                        // THE RELABEL, and the one place in this app that rewrites text the user
+                        // has already read: the moment a second speaker is confirmed the panel is
+                        // re-rendered from the session's start WITH labels, first paragraph
+                        // included (spec §2 — "the panel's text is ours to rewrite"). The latch
+                        // is republished on every later chunk; setLabelsVisible answers whether
+                        // it actually moved, so the line below is once per session.
+                        if (assignment.confirmed && sink.setLabelsVisible(true)) {
+                            WhisperNative.diag(
+                                SpeakerDiag.relabelLine(
+                                    confirmed = sink.confirmedSpeakers,
+                                    runs = sink.runCount,
+                                ),
+                            )
+                        }
                     }
                 },
                 // (4.10 spike session 2) THE FINGERPRINT DUMP's destination, and it is the only
@@ -5021,7 +5050,7 @@ class FloatingBubbleService : Service(),
                         EndpointDiag.queueLine(segmentQueueDepth.onResolved(seq)),
                     )
                     renderInFlightStrip()
-                    deliverReleasedText(release.text)
+                    deliverReleasedText(release)
                     // The stamp is consumed ONLY on a non-blank release, and that gate is load
                     // bearing rather than cosmetic. Resolutions arrive OUT OF ORDER on cloud
                     // (CloudTranscriptionEngine runs Semaphore(3) and completes in network order),
@@ -5055,10 +5084,19 @@ class FloatingBubbleService : Service(),
                     // once-only against the finalize coroutine, which skips its own delivery
                     // when it wakes in ERROR state (its FINALIZING guard fails).
                     runCatching {
-                        deliverReleasedText(segmentOrderer.flush().text)
-                        transcriptSink?.close()
-                        val full = transcriptSink?.fullTextFile()?.readText()?.trim() ?: ""
-                        if (full.isNotEmpty()) deliverFinalTranscript(full)
+                        deliverReleasedText(segmentOrderer.flush())
+                        val sink = transcriptSink
+                        sink?.close()
+                        val full = sink?.fullTextFile()?.readText()?.trim() ?: ""
+                        if (full.isNotEmpty()) {
+                            deliverFinalTranscript(
+                                full = full,
+                                export = exportTranscript(
+                                    runs = sink?.runs() ?: emptyList(),
+                                    confirmedSpeakers = sink?.confirmedSpeakers ?: 0,
+                                ),
+                            )
+                        }
                     }
                     teardownRealtime()
                 }
@@ -5206,7 +5244,7 @@ class FloatingBubbleService : Service(),
             // here, at the end of a session. (Provably empty for the on-device engine, which
             // resolves in order.)
             val flushStartNs = System.nanoTime()
-            deliverReleasedText(segmentOrderer.flush().text)
+            deliverReleasedText(segmentOrderer.flush())
             android.util.Log.i(
                 "WE-DIAG",
                 "finalize-timing: orderer-flush=${(System.nanoTime() - flushStartNs) / 1_000_000}ms",
@@ -5224,13 +5262,23 @@ class FloatingBubbleService : Service(),
             val finishedSink = transcriptSink
             transcriptSink = null
             finishedSink?.close()
+            // (4.10) The runs, snapshotted ONCE — after close, so the field render on disk and
+            // these runs describe the same set of chunks, and as COPIES, so the export and the
+            // history save below cannot be moved under by a straggler's ids landing between them.
+            val sessionRuns = finishedSink?.runs() ?: emptyList()
+            val sessionConfirmedSpeakers = finishedSink?.confirmedSpeakers ?: 0
             val fullTranscript = finishedSink?.let { sink ->
                 withContext(Dispatchers.IO) { sink.fullTextFile().readText().trim() }
             } ?: ""
             if (currentState == BubbleState.FINALIZING) {
                 // Guarded like its two sibling callers (onDestroy, fatal onError): a delivery
                 // failure must never wedge the session in FINALIZING — teardown always runs.
-                runCatching { deliverFinalTranscript(fullTranscript) }
+                runCatching {
+                    deliverFinalTranscript(
+                        full = fullTranscript,
+                        export = exportTranscript(sessionRuns, sessionConfirmedSpeakers),
+                    )
+                }
                     .onFailure { android.util.Log.e("WE-DIAG", "final delivery threw", it) }
             }
             android.util.Log.i(
@@ -5292,10 +5340,26 @@ class FloatingBubbleService : Service(),
             // NOTE: history inherits the FINALIZE_TIMEOUT_MS bound above — a segment still
             // transcribing when the 300s drain times out is dropped from injection AND history
             // (pre-existing late-result semantics; the awaitIdle fence guarantees everything
-            // that completes in time IS in sessionTranscript before this persist).
-            if (sessionTranscript.isNotBlank()) {
+            // that completes in time IS in the sink's runs before this persist).
+            //
+            // (4.10) The saved .txt is the LABEL-FREE export render — paragraphs at every speaker
+            // change, never a `Speaker N:` — and the runs ride along beside it in a sidecar. The
+            // labels are therefore applied when the transcript is copied or shared rather than
+            // when it is written, which is the only way the switch can mean anything for the
+            // transcripts a user already has (PreferencesManager.speakerLabelsInExport).
+            val historyText = com.whispereverywhere.transcription.speakers.SpeakerLabels.render(
+                runs = sessionRuns,
+                mode = com.whispereverywhere.transcription.speakers.SpeakerLabels.Mode.Export(labels = false),
+                confirmedCount = sessionConfirmedSpeakers,
+            )
+            if (historyText.isNotBlank()) {
                 withContext(Dispatchers.IO) {
-                    transcriptStore.save(sessionStamp, sessionTranscript.toString())
+                    transcriptStore.save(
+                        startedAtMs = sessionStamp,
+                        text = historyText,
+                        runs = sessionRuns,
+                        confirmedSpeakers = sessionConfirmedSpeakers,
+                    )
                     transcriptStore.sweep()
                 }
             }
@@ -5348,7 +5412,7 @@ class FloatingBubbleService : Service(),
         // onError, and onDestroy. Held text is uniquely fragile: unlike per-segment injection it
         // accumulates finished work in RAM whose only exit is this call. Must run before the sink
         // is closed and before the injection session ends, or the released text has nowhere to go.
-        deliverReleasedText(segmentOrderer.flush().text)
+        deliverReleasedText(segmentOrderer.flush())
         previewJob?.cancel(); previewJob = null
         // The preview stays up through FINALIZING (live "still working" signal); EVERY teardown
         // path — normal drain end, error, start-failure, destroy — brings it down here.
@@ -5652,8 +5716,8 @@ class FloatingBubbleService : Service(),
      * in-order segment (preview sink + history) rather than a subset of that. Main
      * thread only.
      */
-    private fun deliverReleasedText(text: String) {
-        if (text.isBlank()) return
+    private fun deliverReleasedText(release: com.whispereverywhere.transcription.SegmentOrderer.Release) {
+        if (release.text.isBlank()) return
         sessionProducedText = true
         // The strip carried this utterance while it was in flight (live deltas); its resolved
         // text moves into the accumulating window via the sink below, so reset the strip for
@@ -5680,33 +5744,63 @@ class FloatingBubbleService : Service(),
             // label already reset it to the top and no delta ever reaches it.
             renderInFlightStrip()
         }
-        handleTranscriptionResult(text)
+        handleTranscriptionResult(release)
     }
 
     /**
      * Mid-session accumulation — and ONLY accumulation (W2 final-only commit). Every resolved
-     * segment lands in exactly two places, for EVERY session context: the bounded-memory sink
-     * (whose file is the transcript the final delivery reads) and sessionTranscript (history's
-     * source, persisted at finalize). NOTHING leaves the app until stopRecording's
-     * deliverFinalTranscript — no injection, no clipboard write, no caret pinning. FINALIZING
-     * counts as in-session: drain-released segments and orderer flushes land here too.
+     * segment lands in exactly ONE place now, for EVERY session context: the sink, whose runs are
+     * the transcript that the final delivery, the panel and history are all rendered from.
+     * NOTHING leaves the app until stopRecording's deliverFinalTranscript — no injection, no
+     * clipboard write, no caret pinning. FINALIZING counts as in-session: drain-released segments
+     * and orderer flushes land here too.
+     *
+     * (4.10) THE SPANS ARE GATED ON `speakerAssigner`, and that read is the structural form of the
+     * spec's "detection off changes nothing". The engine attaches spans to every local chunk
+     * regardless of the setting — it is cheap and it is the same geometry the diag line uses — so
+     * without this gate a user who turned detection off would still get runs, still get no ids,
+     * and still (correctly) get 4.9's output, but by accident rather than by construction. The
+     * assigner is non-null exactly when detection is on AND this is not a cloud session, which is
+     * the same pair of terms spec §2 and §4 name.
      */
-    private fun handleTranscriptionResult(text: String) {
+    private fun handleTranscriptionResult(release: com.whispereverywhere.transcription.SegmentOrderer.Release) {
+        val text = release.text
         android.util.Log.i("WE-DIAG", "handleResult: session=$sessionContext live=$currentContext len=${text.length}")
-        val historyTok = TextJoin.normalize(text)
-        if (historyTok.isEmpty()) return
-        if (sessionTranscript.isNotEmpty() && TextJoin.needsSpace(sessionTranscript, historyTok)) {
-            sessionTranscript.append(' ')
+        val sink = transcriptSink
+        if (sink == null) {
+            // A segment that resolved after the final read — past the 300 s drain fence. It is
+            // dropped rather than smuggled into history: the runs ARE history now, and a chunk
+            // appended to a transcript that has already been delivered and saved would make the
+            // saved file disagree with the words the user actually received.
+            android.util.Log.i("WE-DIAG", "late segment after the final read — dropped (${text.length} chars)")
+            return
         }
-        sessionTranscript.append(historyTok)
-        // The seq and the spans arrive one commit later (the orderer's Release carries them from
-        // the next task in this series); until then every chunk is one unassignable plain run,
-        // which is 4.9's behaviour exactly.
-        transcriptSink?.append(seq = 0L, spans = null, text = text)
-        if (transcriptSink == null) {
-            android.util.Log.i("WE-DIAG", "late segment after final read — kept in history only (${text.length} chars)")
-        }
+        sink.append(
+            seq = release.seq,
+            spans = if (speakerAssigner != null) release.spans else null,
+            text = text,
+        )
     }
+
+    /**
+     * What the clipboard and the saved transcript get: paragraph breaks at every speaker change,
+     * and `Speaker N:` labels only when the user has turned them on (spec §2, default off).
+     *
+     * The ONE export render site in this service, shared by all three delivery callers (finalize,
+     * the fatal-onError drain and onDestroy), and the pref is read HERE — at delivery — so the
+     * switch applies to the session being delivered rather than to whatever it was set to when
+     * recording began.
+     */
+    private fun exportTranscript(
+        runs: List<com.whispereverywhere.transcription.speakers.Run>,
+        confirmedSpeakers: Int,
+    ): String = com.whispereverywhere.transcription.speakers.SpeakerLabels.render(
+        runs = runs,
+        mode = com.whispereverywhere.transcription.speakers.SpeakerLabels.Mode.Export(
+            labels = app.preferencesManager.speakerLabelsInExport,
+        ),
+        confirmedCount = confirmedSpeakers,
+    )
 
     /**
      * The ONE external write of the session (W2 final-only commit). Called from stopRecording's
@@ -5714,8 +5808,25 @@ class FloatingBubbleService : Service(),
      * the SESSION_BOUND write must resolve the field captured at beginInjectionSession — or
      * best-effort from onDestroy. [finalDelivered] makes once-only hold even if destroy races
      * the finalize coroutine. Main thread.
+     *
+     * (4.10) TWO strings, because the two destinations are different surfaces of the spec's §2
+     * table and always were — the difference only became visible once a transcript could have
+     * paragraphs in it:
+     *  - [full] is what gets TYPED into another app's field: the sink's file, which `close()`
+     *    rendered in FIELD mode — breaks at speaker changes, never a label ("a text field is not
+     *    a transcript"). It stays the blank gate's input and the injection sites' argument, so
+     *    the delivered text is still, exactly as in W2, the sink's file and nothing else.
+     *  - [export] is what goes on the CLIPBOARD: the same runs with labels behind the user's
+     *    switch ([exportTranscript]).
+     *
+     * ONE case mixes them, and it is upstream of here: when `injectTextWithResult` degrades to
+     * CLIPBOARD_ONLY it has already put the string it was given — [full] — on the clipboard
+     * itself. That write is inside the accessibility service's paste strategy and cannot be
+     * handed a different string than the one it tried to type, so a field session that cannot be
+     * typed into gets the label-free text on the clipboard. Stated rather than hidden; the three
+     * clipboard writes THIS method performs all use [export].
      */
-    private fun deliverFinalTranscript(full: String) {
+    private fun deliverFinalTranscript(full: String, export: String) {
         if (finalDelivered) return
         finalDelivered = true
         // 4.3.3 (accessibility-optional-spec §4): the service-off read comes FIRST and reaches
@@ -5755,7 +5866,7 @@ class FloatingBubbleService : Service(),
                         sessionClipboardFallback = true
                         runCatching {
                             val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                            clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                            clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", export))
                         }
                         showToast("Can't type here — full transcript copied to clipboard")
                     }
@@ -5772,7 +5883,7 @@ class FloatingBubbleService : Service(),
                 WhisperAccessibilityService.endInjectionSession()
                 runCatching {
                     val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                    clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", export))
                 }
                 val injected = WhisperAccessibilityService.injectTextWithResult(full) ==
                     WhisperAccessibilityService.InjectionResult.SUCCESS
@@ -5788,7 +5899,7 @@ class FloatingBubbleService : Service(),
                 // because sessionClipboardFallback is only ever set BY deliverFinalTranscript.)
                 runCatching {
                     val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", full))
+                    clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", export))
                 }
                 showToast(
                     if (sessionContext == BubbleContext.TEXT_FIELD) "Full transcription copied to clipboard"

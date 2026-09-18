@@ -159,4 +159,26 @@ class SpeakerDiagTest {
         assertFalse(quiet, "remaps" in quiet)
         assertTrue(quiet, quiet.endsWith(" load=0"))
     }
+
+    // --- the relabel line (Task 5) ---------------------------------------------
+
+    @Test
+    fun theRelabelLineIsOnePerSessionAndCarriesNumbersOnly() {
+        assertEquals(
+            "speaker-labels: confirmed=2 runs=14 relabelled=1",
+            SpeakerDiag.relabelLine(confirmed = 2, runs = 14),
+        )
+        // Its own prefix, so a device session can grep the one panel rewrite apart from the
+        // eighteen per-chunk `speaker:` lines that led up to it — and `speaker:` is a PREFIX of
+        // `speaker-labels:`, so the two greps are not interchangeable and this is where that gets
+        // stated.
+        assertTrue(SpeakerDiag.relabelLine(2, 1).startsWith(SpeakerDiag.RELABEL_PREFIX))
+        assertEquals("speaker-labels:", SpeakerDiag.RELABEL_PREFIX)
+        // No spaces inside a field, like every line in this file: four tokens, three key=values.
+        val fields = SpeakerDiag.relabelLine(3, 200).split(" ")
+        assertEquals(4, fields.size)
+        for (field in fields.drop(1)) {
+            assertTrue("every field is key=value: $field", field.count { it == '=' } == 1)
+        }
+    }
 }
