@@ -36,8 +36,8 @@ import java.util.Locale
  *    a column that is about to become a threshold.
  *  - **`Locale.ROOT`**, because `String.format` without one takes the device's default and a
  *    comma decimal separator makes every number here unparseable.
- *  - **No spaces inside a column**, so one line splits into nine `key=value` fields — ten on
- *    the rare chunk that carries a `remaps=`.
+ *  - **No spaces inside a column**, so one line splits into the `speaker:` tag and eight
+ *    `key=value` fields — nine on the rare chunk that carries a `remaps=`.
  *  - **Not one character of transcript.** The type makes it unreachable: [SpeakerAssignment] has
  *    no text in it at all.
  *
