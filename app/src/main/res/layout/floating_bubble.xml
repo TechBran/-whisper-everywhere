@@ -61,14 +61,16 @@
             <!-- W3 resize handle: 28dp touch target, 45-degree double-arrow, visible whenever
                  the container is (resizing mid-dictation is the intended flow). Drag = resize,
                  long-press = reset to 280x120dp. It consumes its own gesture — child-first
-                 dispatch beats the root drag listener and its long-press-to-pin arming. -->
+                 dispatch beats the root drag listener and its long-press-to-pin arming.
+                 RED at full alpha (owner ruling 2026-09-17: "a color where we can actually see
+                 it. I say red") — the drawable carries the colour; see ic_resize_handle.xml. -->
             <ImageView
                 android:id="@+id/resize_handle"
                 android:layout_width="28dp"
                 android:layout_height="28dp"
                 android:layout_gravity="top|end"
                 android:padding="6dp"
-                android:alpha="0.7"
+                android:alpha="1.0"
                 android:src="@drawable/ic_resize_handle"
                 android:contentDescription="Resize transcript window" />
         </FrameLayout>
