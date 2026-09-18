@@ -5699,7 +5699,10 @@ class FloatingBubbleService : Service(),
             sessionTranscript.append(' ')
         }
         sessionTranscript.append(historyTok)
-        transcriptSink?.append(text)
+        // The seq and the spans arrive one commit later (the orderer's Release carries them from
+        // the next task in this series); until then every chunk is one unassignable plain run,
+        // which is 4.9's behaviour exactly.
+        transcriptSink?.append(seq = 0L, spans = null, text = text)
         if (transcriptSink == null) {
             android.util.Log.i("WE-DIAG", "late segment after final read — kept in history only (${text.length} chars)")
         }
