@@ -419,6 +419,24 @@ tasks.withType<Test>().configureEach {
         // and without this entry the task reports UP-TO-DATE and every one of those assertions
         // passes against the file as it used to be.
         "src/main/assets/whisper_vocab_turbo.json",
+        // (4.10 Task 2) The BUNDLED speaker model and the one file that loads it, and they join
+        // together because they are two halves of the same claim. The model is a 29.6 MB binary
+        // asset — an input to no compile task at all — and `SpeakerEmbedderPinTest` is the only
+        // reader of those bytes anywhere in this repo: its length and sha256 are what stands
+        // between the APK and the WeSpeaker/TitaNet fallbacks of a similar size that spec §3.4
+        // lists, or a copy some future round interrupted. Nothing on device can tell us which file
+        // shipped; the owner ruled the model is bundled precisely so there is no download step to
+        // notice a wrong one at.
+        //
+        // SpeakerEmbedder.kt is the other half, for the reason Q6 added NpuWhisperBackend.kt: no
+        // test may REFERENCE it (sherpa's SpeakerEmbeddingExtractor loads libsherpa-onnx-jni.so in
+        // its companion initialiser), so every assertion about it is a source-text assertion —
+        // literal counts on `provider = "cpu"` / `numThreads = 1`, the two load arms, and the
+        // digest the KDoc has to keep agreeing with the asset. All of those are comment-shaped
+        // mutations that compile to a byte-identical class, which is exactly the shape that leaves
+        // :app:testDebugUnitTest UP-TO-DATE with the pins green against the file as it used to be.
+        "src/main/assets/speaker_campplus_en_16k.onnx",
+        "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerEmbedder.kt",
         "src/main/java/com/whispereverywhere/npu/NpuAssetStage.kt",
         // (4.1 L3) NpuModelSpec.kt joins for the same reason L2 added NpuDecodePolicy.kt:
         // MelbankAssetTest now READS it, because the absence of a default on `melAsset` is a
