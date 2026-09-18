@@ -20,22 +20,54 @@ import java.util.Locale
  * and not by handing him a new build per threshold pair.
  *
  * That is what this file is for and the whole of what it is for: it writes the fingerprints out.
- * [SPEAKER_SPIKE] is the compile-time switch that makes it exist at all.
+ * [SPEAKER_SPIKE] is the compile-time switch that makes it exist at all, and
+ * `SpeakerSpikePinTest` is the reason it cannot be forgotten.
+ *
+ * ### The audio half stores speech, and the app's rule is that audio is never retained
+ *
+ * A jsonl of 512-float vectors is not recoverable audio. A WAV is. Item 5 of the spike's plan —
+ * *"if CAM++ still splits one voice after 1-4, try WeSpeaker ResNet34 / ERes2Net on the same
+ * dumped audio"* — needs the original slices, and there is no way to get a different model's
+ * embeddings out of this one's. So the audio dump exists, and it is:
+ *
+ *  - **off unless a file exists** ([AUDIO_FLAG], see [SpeakerSpikeDump]) — no preference, no
+ *    Settings row, nothing a user can turn on by accident and nothing they can leave on;
+ *  - **deleted with everything else** when detection is switched off, and after 24 h;
+ *  - **gone before 4.10.0 ships.** [SPEAKER_SPIKE] must be `false` by then, and the pin asserts
+ *    exactly that pairing rather than trusting anyone to remember it.
+ *
+ * **The standing warning, in the words the plan asked for it in.** The audio dump is a
+ * SPIKE-ONLY DIAGNOSTIC, off by default, and it STORES SPEECH AUDIO.
+ * In this app, audio is deliberately never retained — that is the promise the whole product
+ * rests on — so the mechanism
+ * must be removed or put behind explicit user consent before any production release.
+ * `SpeakerSpikePinTest` is the enforcement and this paragraph is the reason.
  */
 object SpeakerSpike {
 
     /**
      * TRUE while this is a spike build, and the guard on every line of dump machinery.
      *
-     * The release that ships speaker labels cannot also ship the dump — nothing in the app ever
-     * reads a dump back, and a diagnostic that works perfectly is exactly the kind of thing that
-     * ships by accident. Because it is a `const`, flipping it to `false` lets the compiler strip
-     * every guarded call rather than leaving dead-but-reachable file writers in the APK.
+     * `SpeakerSpikePinTest` asserts `!(SPEAKER_SPIKE && versionName == "4.10.0")`: the release that
+     * ships speaker labels cannot also ship the dump. Flipping this to `false` is what makes that
+     * test green — and because it is a `const`, flipping it lets the compiler strip every call
+     * below it rather than leaving dead-but-reachable file writers in the APK.
      */
     const val SPEAKER_SPIKE: Boolean = true
 
     /** The one directory name, under `filesDir` and under `getExternalFilesDir(null)` alike. */
     const val DIR_NAME: String = "speaker-spike"
+
+    /**
+     * The flag file whose mere EXISTENCE turns audio dumping on for a session.
+     *
+     * A file rather than a preference because of what the owner's devices actually are: he runs
+     * RELEASE builds off the internal track, `run-as` is unavailable on those, and there is no
+     * broadcast receiver worth adding to the manifest for a diagnostic. `getExternalFilesDir` is
+     * the one app-private directory `adb` can write without `run-as`, so the controller enables a
+     * session's audio dump with one `adb shell touch` and disables it with one `adb shell rm`.
+     */
+    const val AUDIO_FLAG: String = "DUMP_AUDIO"
 
     /** The model the fingerprints in a dump came from — the adapter's bundled asset, by name. */
     const val MODEL_ASSET: String = "speaker_campplus_en_16k.onnx"
@@ -49,12 +81,15 @@ object SpeakerSpike {
      */
     const val MAX_AGE_MS: Long = 24L * 60L * 60L * 1_000L
 
-    /** The extensions a sweep or a purge may delete. Never anything else in the directory. */
-    val DUMP_EXTENSIONS: List<String> = listOf("jsonl")
+    /** The two extensions a sweep or a purge may delete. Never the flag file, never anything else. */
+    val DUMP_EXTENSIONS: List<String> = listOf("jsonl", "wav")
 
     /**
-     * Deletes every dump file in [dirs] — both dirs, whatever their age. Anything else in the
-     * directory is left alone. Returns how many files went, for a caller that wants to say so.
+     * Deletes every dump file in [dirs] — both dirs, both extensions, whatever their age.
+     *
+     * The flag file is LEFT: it is the controller's switch, not a dump, and a purge that silently
+     * disarmed it would make the next session's missing audio look like a bug in the dumper.
+     * Returns how many files went, for a caller that wants to say so.
      */
     fun purge(vararg dirs: File?): Int {
         var gone = 0
@@ -81,8 +116,8 @@ object SpeakerSpike {
  *    against the build the owner actually heard;
  *  - [durSec] is the gate in changes 1 and 4 (*"short (< 2 s) … never open a speaker"*, *"two
  *    segments >= 2 s"*);
- *  - [origStart] / [origEnd] name the slice on the original timeline, which is where the audio
- *    the vector came from was.
+ *  - [origStart] / [origEnd] name the slice on the original timeline, which is what joins a row to
+ *    its WAV when the audio half is armed.
  *
  * **There is no text field, and there will not be one.** A fingerprint dump is not a transcript;
  * the assigner's callback has no text in it either ([SpeakerAssignment]), so a row here could not
@@ -170,12 +205,76 @@ object SpikeJson {
 }
 
 /**
+ * A float slice as a 16 kHz mono 16-bit PCM WAV — the ONE audio writer in the spike (item 5).
+ *
+ * 44-byte canonical header, little-endian throughout, `audioFormat = 1` (uncompressed PCM). Written
+ * by hand rather than through any library because the reader is `soundfile`/`librosa` on the PC and
+ * the only thing that can go wrong is arithmetic: a wrong `dataSize` truncates the tail, a wrong
+ * `byteRate` plays a voice at the wrong pitch, and either makes a second model's embeddings on this
+ * audio meaningless without being obviously broken.
+ *
+ * Samples arrive as the floats the embedder saw — mono, nominally in [-1, 1] — and are CLAMPED
+ * before scaling by 32_767. whisper's own buffers can carry a sample slightly past 1.0, and an
+ * unclamped `toInt()` on 1.00003 wraps a positive peak to a large negative sample: an audible click
+ * that a listener would attribute to the recording rather than to this function.
+ */
+object SpikeWav {
+
+    /** The canonical PCM header: 12-byte RIFF chunk, 24-byte `fmt `, 8-byte `data` preamble. */
+    const val HEADER_BYTES: Int = 44
+
+    const val BITS_PER_SAMPLE: Int = 16
+    const val CHANNELS: Int = 1
+
+    /** [pcm] at [sampleRate], mono, as a complete WAV file. */
+    fun mono16(pcm: FloatArray, sampleRate: Int = SpeakerAssigner.SAMPLE_RATE): ByteArray {
+        val bytesPerSample = BITS_PER_SAMPLE / 8
+        val dataBytes = pcm.size * bytesPerSample * CHANNELS
+        val out = ByteArray(HEADER_BYTES + dataBytes)
+        var at = 0
+
+        fun ascii(s: String) { for (c in s) out[at++] = c.code.toByte() }
+        fun le32(v: Int) {
+            out[at++] = (v and 0xFF).toByte()
+            out[at++] = ((v ushr 8) and 0xFF).toByte()
+            out[at++] = ((v ushr 16) and 0xFF).toByte()
+            out[at++] = ((v ushr 24) and 0xFF).toByte()
+        }
+        fun le16(v: Int) {
+            out[at++] = (v and 0xFF).toByte()
+            out[at++] = ((v ushr 8) and 0xFF).toByte()
+        }
+
+        ascii("RIFF")
+        // Everything after this field: the 4-byte "WAVE" tag plus both remaining chunks.
+        le32(HEADER_BYTES - 8 + dataBytes)
+        ascii("WAVE")
+        ascii("fmt ")
+        le32(16)                                              // PCM fmt chunk body size
+        le16(1)                                               // audioFormat: uncompressed PCM
+        le16(CHANNELS)
+        le32(sampleRate)
+        le32(sampleRate * CHANNELS * bytesPerSample)          // byteRate
+        le16(CHANNELS * bytesPerSample)                       // blockAlign
+        le16(BITS_PER_SAMPLE)
+        ascii("data")
+        le32(dataBytes)
+
+        for (sample in pcm) {
+            val clamped = if (sample.isFinite()) sample.coerceIn(-1f, 1f) else 0f
+            le16((clamped * 32_767f).toInt() and 0xFFFF)
+        }
+        return out
+    }
+}
+
+/**
  * Where ONE session's dump lives — the two directories and the session's own clock reading.
  *
  * [internalDir] is `filesDir/speaker-spike`, the dump's home. [externalDir] is
  * `getExternalFilesDir(null)/speaker-spike` or null when external storage is not mounted; it is
- * where the jsonl is MIRRORED — see [SpeakerSpikeDump] for why a mirror rather than one or the
- * other.
+ * where the flag file is looked for, where the WAVs go, and where the jsonl is MIRRORED — see
+ * [SpeakerSpikeDump] for why a mirror rather than one or the other.
  *
  * [sessionStartMs] names every file of the session and is the header's `session` field, so a pull
  * off the device sorts by session without any other index.
@@ -187,8 +286,8 @@ data class SpeakerSpikeDirs(
 )
 
 /**
- * ONE session's fingerprint dump on disk (4.10 speaker spike, session 2) — one jsonl line per
- * fingerprint, and not one character of anything else.
+ * ONE session's fingerprint dump on disk (4.10 speaker spike, session 2) — a jsonl of embeddings
+ * and, only behind the flag file, the audio they were computed from.
  *
  * ### Everything here runs on the `speaker-embed` executor
  *
@@ -196,10 +295,9 @@ data class SpeakerSpikeDirs(
  * runs on its single-thread `speaker-embed` executor, BELOW the chunk's text delivery — never on
  * Main and never on the whisper thread. That is not a convenience: a `flush()` on a session's only
  * embed thread is a few hundred microseconds and costs a label nothing, and the same flush on the
- * whisper thread would sit inside the commit floors spec §3.3 measured without it. No unit test
- * can observe a file write landing on the wrong thread of a service it cannot start, so the
- * confinement lives in [SpeakerAssigner]'s structure: only the body the executor runs names this
- * object at all.
+ * whisper thread would sit inside the commit floors spec §3.3 measured without it.
+ * `SpeakerSpikePinTest` pins the confinement as source, because no unit test can observe a file
+ * write happening on the wrong thread of a service it cannot start.
  *
  * Nothing here is synchronised, for the same reason [SpeakerTracker] is not: one instance per
  * session, one thread.
@@ -212,6 +310,17 @@ data class SpeakerSpikeDirs(
  * `adb shell run-as` cannot reach `filesDir` at all and a dump that existed only there could never
  * be pulled to the PC the tuning loop runs on. The mirror is best-effort in both directions — a
  * failure to open it, or to write one line to it, never touches the primary and never throws.
+ *
+ * ### The audio half is a file flag, and it is read ONCE per session
+ *
+ * `<externalDir>/DUMP_AUDIO` — see [SpeakerSpike.AUDIO_FLAG]. Its existence is read at [open] and
+ * held for the session, so a flag created or removed mid-session changes nothing until the next
+ * one: a dump whose audio starts appearing at chunk 9 is worse than one with none.
+ *
+ * This half is a SPIKE-ONLY DIAGNOSTIC, off by default, and it STORES SPEECH AUDIO.
+ * In this app, audio is deliberately never retained, so the mechanism
+ * must be removed or put behind explicit user consent before any production release —
+ * see [SpeakerSpike] for the whole of that argument.
  *
  * ### Ages out, and goes entirely when the switch goes
  *
@@ -235,18 +344,26 @@ class SpeakerSpikeDump(
     private var mirror: BufferedWriter? = null
     private var opened = false
 
+    /** Whether the flag file was present when this session opened. Read once, at [open]. */
+    var audioArmed: Boolean = false
+        private set
+
     /**
      * Writes one fingerprint. Opens the file — and sweeps the old dumps — on the first call, which
      * is what keeps a session that never fingerprints anything from creating a file at all.
      *
+     * [audio] is the ORIGINAL slice the embedder was handed. It is written as a WAV beside the
+     * jsonl only when [audioArmed]; otherwise it is ignored and nothing about it is retained.
+     *
      * Never throws. A dump is a diagnostic on a path whose text has already reached the user.
      */
-    fun write(record: SpikeFingerprint) {
+    fun write(record: SpikeFingerprint, audio: FloatArray?) {
         if (!SpeakerSpike.SPEAKER_SPIKE) return
         if (!opened) open(record.emb.size)
         val line = SpikeJson.line(record)
         runCatching { primary?.write(line); primary?.write("\n") }
         runCatching { mirror?.write(line); mirror?.write("\n") }
+        if (audioArmed && audio != null && audio.isNotEmpty()) writeWav(record, audio)
     }
 
     /**
@@ -280,6 +397,9 @@ class SpeakerSpikeDump(
         val external = dirs.externalDir
         runCatching { dirs.internalDir.mkdirs() }
         runCatching { external?.mkdirs() }
+        audioArmed = runCatching {
+            external != null && File(external, SpeakerSpike.AUDIO_FLAG).exists()
+        }.getOrDefault(false)
         sweep()
 
         val name = "${dirs.sessionStartMs}.jsonl"
@@ -304,9 +424,16 @@ class SpeakerSpikeDump(
         BufferedWriter(OutputStreamWriter(FileOutputStream(file, true), Charsets.UTF_8), BUFFER)
     }.getOrNull()
 
+    private fun writeWav(record: SpikeFingerprint, audio: FloatArray) {
+        val dir = dirs.externalDir ?: return
+        val file = File(dir, "${dirs.sessionStartMs}-${record.seq}-${record.seg}.wav")
+        runCatching { file.writeBytes(SpikeWav.mono16(audio)) }
+    }
+
     /**
-     * Deletes dumps older than [SpeakerSpike.MAX_AGE_MS] from both directories — never anything
-     * else in them, and never this session's own files, which do not exist yet when this runs.
+     * Deletes dumps older than [SpeakerSpike.MAX_AGE_MS] from both directories — never the flag
+     * file (it is the controller's switch, not a dump) and never this session's own files, which
+     * do not exist yet when this runs.
      */
     private fun sweep() {
         val cutoff = nowMs() - SpeakerSpike.MAX_AGE_MS

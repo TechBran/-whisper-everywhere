@@ -159,8 +159,9 @@ class SpeakerAssigner(
                 continue
             }
 
+            val slice = samples.copyOfRange(from, to)
             val startedNs = clockNs()
-            val embedding = voices.embed(samples.copyOfRange(from, to))
+            val embedding = voices.embed(slice)
             val segmentNs = clockNs() - startedNs
             embedNs += segmentNs
             hasEmbedded = true
@@ -193,6 +194,7 @@ class SpeakerAssigner(
                         embedMs = segmentNs / 1_000_000L,
                         emb = embedding,
                     ),
+                    slice,
                 )
             }
         }

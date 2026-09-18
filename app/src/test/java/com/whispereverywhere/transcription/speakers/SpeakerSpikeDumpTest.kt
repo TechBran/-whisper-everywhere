@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription.speakers
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,8 +9,8 @@ import java.io.File
 import java.util.Locale
 
 /**
- * THE SPIKE DUMP's FORMAT AND ITS FILES (4.10 spike session 2) — the jsonl line, the mirror,
- * the sweep and the purge.
+ * THE SPIKE DUMP's FORMATS AND ITS FILES (4.10 spike session 2) — the jsonl line, the WAV header,
+ * the flag, the sweep.
  *
  * These are instruments, and the reader is a Python tuning loop on the PC that will be handed
  * three sessions' worth of embeddings and asked to answer a question the owner cannot be asked
@@ -22,16 +23,11 @@ import java.util.Locale
  *    and a file of 512-float rows fails to parse at line 2 with a message about line 2.
  *  - **`NaN` in a JSON file.** `best` is genuinely absent for the first speaker of a session
  *    (nobody to be compared with) and NaN is not in the strict grammar. `null` is.
+ *  - **A wrong WAV header.** A wrong `dataSize` truncates the tail, a wrong `byteRate` shifts the
+ *    pitch: either makes WeSpeaker's embeddings on this audio (spike plan item 5) meaningless
+ *    without looking wrong.
  *  - **A transcript.** There is no text field and there cannot be one — the assertion is on the
  *    RENDERED line, not only on the type, because a future field would be added to both.
- *
- * The last section is a SOURCE pin, the `SpeakerWiringPinTest` way (whitespace-collapsed,
- * symbol-scoped needles inside their declaring bodies, never line numbers), because the two claims
- * it holds cannot be executed: that every line of this machinery sits behind the `SPEAKER_SPIKE`
- * compile-time constant, and that the writing happens on the `speaker-embed` executor and nowhere
- * else. A flush moved into `SpeakerAssigner.assign` — which is called on `LocalWhisperEngine`'s
- * native executor, the whisper thread — would put file I/O inside the commit floors spec §3.3
- * measured without it, and the only symptom would be a commit cadence that drifts on some devices.
  */
 class SpeakerSpikeDumpTest {
 
@@ -60,6 +56,18 @@ class SpeakerSpikeDumpTest {
         embedMs = embedMs,
         emb = emb,
     )
+
+    private fun le32(bytes: ByteArray, at: Int): Int =
+        (bytes[at].toInt() and 0xFF) or
+            ((bytes[at + 1].toInt() and 0xFF) shl 8) or
+            ((bytes[at + 2].toInt() and 0xFF) shl 16) or
+            ((bytes[at + 3].toInt() and 0xFF) shl 24)
+
+    private fun le16(bytes: ByteArray, at: Int): Int =
+        (bytes[at].toInt() and 0xFF) or ((bytes[at + 1].toInt() and 0xFF) shl 8)
+
+    private fun ascii(bytes: ByteArray, at: Int, length: Int) =
+        String(bytes, at, length, Charsets.US_ASCII)
 
     private fun tempDir(name: String): File {
         val dir = File(System.getProperty("java.io.tmpdir"), "we-spike-$name-${System.nanoTime()}")
@@ -160,6 +168,52 @@ class SpeakerSpikeDumpTest {
         )
     }
 
+    // ------------------------------------------------------------------ the WAV
+
+    @Test
+    fun theWavHeaderIsSixteenKilohertzMonoSixteenBitAndItsLengthsAgree() {
+        val pcm = floatArrayOf(0f, 0.5f, -0.5f, 1f)
+        val wav = SpikeWav.mono16(pcm)
+        assertEquals("44 bytes of header plus 2 per sample", SpikeWav.HEADER_BYTES + 8, wav.size)
+        assertEquals("RIFF", ascii(wav, 0, 4))
+        assertEquals("everything after this field", wav.size - 8, le32(wav, 4))
+        assertEquals("WAVE", ascii(wav, 8, 4))
+        assertEquals("fmt ", ascii(wav, 12, 4))
+        assertEquals("a PCM fmt body is 16 bytes", 16, le32(wav, 16))
+        assertEquals("audioFormat 1 = uncompressed PCM", 1, le16(wav, 20))
+        assertEquals("mono", 1, le16(wav, 22))
+        assertEquals(16_000, le32(wav, 24))
+        assertEquals("byteRate = rate * channels * 2", 32_000, le32(wav, 28))
+        assertEquals("blockAlign = channels * 2", 2, le16(wav, 32))
+        assertEquals(16, le16(wav, 34))
+        assertEquals("data", ascii(wav, 36, 4))
+        assertEquals("…and the data size is the one that follows it", 8, le32(wav, 40))
+    }
+
+    @Test
+    fun theSamplesAreSignedSixteenBitLittleEndianAndAPeakPastOneIsClampedNotWrapped() {
+        // whisper's buffers can carry a sample a hair past 1.0. An unclamped toInt() on 1.00003
+        // wraps a positive peak to a large NEGATIVE sample: an audible click a listener would
+        // blame on the recording rather than on this function.
+        val wav = SpikeWav.mono16(floatArrayOf(1f, -1f, 2f, -2f, 0f))
+        fun sample(i: Int) = le16(wav, SpikeWav.HEADER_BYTES + i * 2).toShort().toInt()
+        assertEquals(32_767, sample(0))
+        assertEquals(-32_767, sample(1))
+        assertEquals("clamped, not wrapped", 32_767, sample(2))
+        assertEquals("clamped, not wrapped", -32_767, sample(3))
+        assertEquals(0, sample(4))
+        // A non-finite sample is silence rather than a garbage peak.
+        assertEquals(0, le16(SpikeWav.mono16(floatArrayOf(Float.NaN)), SpikeWav.HEADER_BYTES).toShort().toInt())
+    }
+
+    @Test
+    fun anEmptySliceIsAValidHeaderWithNoData() {
+        val wav = SpikeWav.mono16(FloatArray(0))
+        assertEquals(SpikeWav.HEADER_BYTES, wav.size)
+        assertEquals(0, le32(wav, 40))
+        assertEquals("RIFF", ascii(wav, 0, 4))
+    }
+
     // ------------------------------------------------------------------ the files
 
     @Test
@@ -169,8 +223,8 @@ class SpeakerSpikeDumpTest {
         val dump = dumpInto(internal, external, session = 555L)
 
         assertFalse("nothing is created before the first fingerprint", File(internal, "555.jsonl").exists())
-        dump.write(record(seq = 1, seg = 0))
-        dump.write(record(seq = 1, seg = 1, best = Float.NaN))
+        dump.write(record(seq = 1, seg = 0), audio = floatArrayOf(0.1f, 0.2f))
+        dump.write(record(seq = 1, seg = 1, best = Float.NaN), audio = null)
         dump.flush()
         dump.close()
 
@@ -181,6 +235,37 @@ class SpeakerSpikeDumpTest {
             assertTrue(lines[1].startsWith("{\"seq\":1,\"seg\":0,"))
             assertTrue(lines[2].contains("\"best\":null"))
         }
+        assertFalse("no audio without the flag", external.listFiles()!!.any { it.extension == "wav" })
+    }
+
+    @Test
+    fun theWavsAppearOnlyWhenTheFlagFileIsThereAndAreNamedSessionSeqSeg() {
+        val internal = tempDir("internal")
+        val external = tempDir("external")
+        File(external, SpeakerSpike.AUDIO_FLAG).writeText("")
+        val dump = dumpInto(internal, external, session = 777L)
+        dump.write(record(seq = 4, seg = 2), audio = floatArrayOf(0.25f, -0.25f))
+        dump.close()
+
+        assertTrue("the flag arms the session", dump.audioArmed)
+        val wav = File(external, "777-4-2.wav")
+        assertTrue("the slice is beside the jsonl the tuner pulls", wav.isFile)
+        assertArrayEquals(SpikeWav.mono16(floatArrayOf(0.25f, -0.25f)), wav.readBytes())
+        assertFalse("audio never goes to the internal dir", File(internal, "777-4-2.wav").exists())
+    }
+
+    @Test
+    fun theFlagIsReadONCEPerSessionSoAudioNeverStartsAppearingAtChunkNine() {
+        val internal = tempDir("internal")
+        val external = tempDir("external")
+        val dump = dumpInto(internal, external, session = 888L)
+        dump.write(record(seq = 1, seg = 0), audio = floatArrayOf(0.5f))
+        // The controller touches the flag mid-session: nothing changes until the NEXT session.
+        File(external, SpeakerSpike.AUDIO_FLAG).writeText("")
+        dump.write(record(seq = 2, seg = 0), audio = floatArrayOf(0.5f))
+        dump.close()
+        assertFalse(dump.audioArmed)
+        assertEquals(0, external.listFiles()!!.count { it.extension == "wav" })
     }
 
     @Test
@@ -193,43 +278,45 @@ class SpeakerSpikeDumpTest {
 
         val old = File(internal, "1.jsonl").apply { writeText("x"); setLastModified(stale) }
         val recent = File(internal, "2.jsonl").apply { writeText("x"); setLastModified(fresh) }
-        val oldMirror = File(external, "1.jsonl").apply { writeText("x"); setLastModified(stale) }
-        val stranger = File(external, "notes.txt").apply { writeText("x"); setLastModified(stale) }
+        val oldWav = File(external, "1-0-0.wav").apply { writeText("x"); setLastModified(stale) }
+        val flag = File(external, SpeakerSpike.AUDIO_FLAG).apply { writeText(""); setLastModified(stale) }
 
         dumpInto(internal, external, session = 999L, now = { now })
-            .write(record())
+            .write(record(), audio = null)
 
         assertFalse("a stale jsonl goes", old.exists())
-        assertFalse("…in the mirror too", oldMirror.exists())
+        assertFalse("a stale wav goes", oldWav.exists())
         assertTrue("one inside the window stays", recent.exists())
-        assertTrue("a file that is not a dump is never swept, whatever its age", stranger.exists())
+        assertTrue("the controller's switch is not a dump and is never swept", flag.exists())
         assertTrue("…and this session's own file was written", File(internal, "999.jsonl").isFile)
     }
 
     @Test
-    fun turningDetectionOffPurgesEveryDumpInBothDirsAndLeavesAnythingElseAlone() {
+    fun turningDetectionOffPurgesEveryDumpInBothDirsAndLeavesTheFlagAndAnythingElseAlone() {
         val internal = tempDir("internal")
         val external = tempDir("external")
         File(internal, "1.jsonl").writeText("x")
         File(external, "1.jsonl").writeText("x")
-        File(external, "2.jsonl").writeText("x")
+        File(external, "1-0-0.wav").writeText("x")
+        val flag = File(external, SpeakerSpike.AUDIO_FLAG).apply { writeText("") }
         val stranger = File(external, "notes.txt").apply { writeText("x") }
 
         assertEquals(3, SpeakerSpike.purge(internal, external))
         assertEquals(0, internal.listFiles()!!.size)
-        assertTrue("a purge deletes dumps, and only dumps", stranger.exists())
+        assertTrue(flag.exists())
+        assertTrue("a purge deletes dumps, not a directory", stranger.exists())
         assertEquals("…and it is idempotent", 0, SpeakerSpike.purge(internal, external))
         assertEquals("…and survives a null external dir", 0, SpeakerSpike.purge(internal, null))
     }
 
     @Test
-    fun aSessionWithNoExternalDirStillWritesItsJsonlToTheDumpsHome() {
-        // getExternalFilesDir returns null on an unmounted volume, which is an ordinary state: the
-        // mirror is simply absent and the primary carries the session on its own.
+    fun aSessionWithNoExternalDirStillWritesItsJsonlAndNoAudioAtAll() {
+        // getExternalFilesDir returns null on an unmounted volume, which is an ordinary state.
         val internal = tempDir("internal")
         val dump = dumpInto(internal, null, session = 1_234L)
-        dump.write(record())
+        dump.write(record(), audio = floatArrayOf(0.5f, 0.5f))
         dump.close()
+        assertFalse("the flag cannot be found, so audio is off", dump.audioArmed)
         assertEquals(2, File(internal, "1234.jsonl").readLines().size)
         assertEquals(1, internal.listFiles()!!.size)
     }
@@ -259,134 +346,4 @@ class SpeakerSpikeDumpTest {
         cap = SpeakerTracker.MAX_SPEAKERS,
         nowMs = now,
     )
-
-    // ------------------------------------------------------------------ the source pins
-
-    private fun source(relative: String): File {
-        var dir: File? = File(System.getProperty("user.dir")!!).absoluteFile
-        while (dir != null) {
-            for (candidate in listOf(File(dir, relative), File(dir, "app/$relative"))) {
-                if (candidate.isFile) return candidate
-            }
-            dir = dir.parentFile
-        }
-        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
-    }
-
-    private fun collapsed(relative: String) =
-        source(relative).readText().replace("\r\n", "\n").replace(Regex("\\s+"), " ")
-
-    private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
-
-    private fun at(haystack: String, needle: String, what: String): Int {
-        val i = haystack.indexOf(needle)
-        assertTrue("missing from $what: <<$needle>>", i >= 0)
-        return i
-    }
-
-    private fun between(haystack: String, from: String, to: String, what: String): String {
-        val start = at(haystack, from, what)
-        val end = haystack.indexOf(to, start)
-        assertTrue("the end of <<$from>> moved in $what", end > start)
-        return haystack.substring(start, end)
-    }
-
-    private val spike by lazy { collapsed(SPIKE) }
-    private val store by lazy { collapsed(STORE) }
-    private val assigner by lazy { collapsed(ASSIGNER) }
-
-    @Test
-    fun theWriterRunsOnTheSpeakerEmbedExecutorAndNowhereElse() {
-        // `fingerprint` is the body the executor runs (the assigner's own "on the embed thread"
-        // section), and both the per-row write and the per-chunk flush are inside it.
-        val onTheEmbedThread = between(assigner, "private fun fingerprint(", "private var hasEmbedded", ASSIGNER)
-        assertTrue("the row is written there", onTheEmbedThread.contains("spikeDump()?.write("))
-        assertTrue("\u2026and the chunk is flushed there", onTheEmbedThread.contains("dump?.flush()"))
-        assertEquals("ONE write site in the whole assigner", 1, count(assigner, "spikeDump()?.write("))
-        assertEquals("ONE flush site", 1, count(assigner, "dump?.flush()"))
-
-        // `assign` may only QUEUE: it is called on LocalWhisperEngine's native executor, which is
-        // the whisper thread, and spec 3.3's commit floors were measured with no file I/O on it.
-        val queueOnly = between(
-            assigner,
-            "fun assign(seq: Long, samples: FloatArray, vad: List<VadSeg>) {",
-            "* Ends this assigner.",
-            ASSIGNER,
-        )
-        assertEquals("assign() never touches the dump", 0, count(queueOnly, "dump"))
-        assertEquals("\u2026it only hands the chunk over", 1, count(queueOnly, "executor.execute {"))
-
-        // The close is queued on the SAME executor, so it can never run underneath a write: the
-        // last chunk of a session is already queued behind the user's stop tap.
-        val release = between(assigner, "fun release() {", "// ---", ASSIGNER)
-        val queued = at(release, "executor.execute {", "release()")
-        val closed = at(release, "dump?.close()", "release()")
-        assertTrue("the close is INSIDE the queued task", queued < closed)
-        assertTrue("\u2026and the executor is shut down after it is queued", release.indexOf("executor.shutdown()") > closed)
-    }
-
-    @Test
-    fun nothingInTheWriterEverHopsToMainOrSpawnsAThreadOfItsOwn() {
-        // The one exception is the purge, whose caller is a Settings tap on Main; it lives in the
-        // store, not in the writer, and says so by naming its thread.
-        for (symbol in listOf("Handler", "Looper", "Dispatchers", "runOnUiThread", "Thread(")) {
-            assertEquals("SpeakerSpike.kt must not mention $symbol", 0, count(spike, symbol))
-        }
-        assertEquals("the purge's own thread, and only that one", 1, count(store, "Thread("))
-        assertTrue(store.contains("\"speaker-spike-purge\""))
-    }
-
-    @Test
-    fun theWriterHalfIsPureJavaIoSoTheJvmSuiteCanTestEveryRuleInIt() {
-        // Android lives in SpeakerSpikeStore alone: the two directories, and nothing with a rule.
-        assertEquals(0, count(spike, "import android."))
-        assertEquals(0, count(spike, "Context"))
-        assertEquals("\u2026and the assigner stays as pure as its own pin test says", 0, count(assigner, "import android."))
-        assertTrue(store.contains("import android.content.Context"))
-    }
-
-    @Test
-    fun everyEntryIntoTheDumpIsBehindOneCompileTimeConstant() {
-        assertTrue("the writer itself", spike.contains("if (!SpeakerSpike.SPEAKER_SPIKE) return"))
-        assertTrue("the assigner's lazy build", assigner.contains("if (!SpeakerSpike.SPEAKER_SPIKE) return null"))
-        assertTrue("the session's destination", collapsed(SERVICE).contains("spike = if (SpeakerSpike.SPEAKER_SPIKE) {"))
-        assertTrue(
-            "and the purge on the settings tap",
-            collapsed(PREFS).contains("if (!value && SpeakerSpike.SPEAKER_SPIKE) SpeakerSpikeStore.purgeAsync(context)"),
-        )
-        assertTrue(
-            "it is a `const`, which is what lets the compiler remove the guarded branches rather " +
-                "than merely not take them",
-            spike.contains("const val SPEAKER_SPIKE: Boolean = "),
-        )
-    }
-
-    @Test
-    fun aWriteCanNeverThrowOnTheSessionsOnlyEmbedThread() {
-        // An exception escaping a task there costs the session its embed thread, for a LABEL, on a
-        // path whose text has already been delivered. Every file operation is wrapped.
-        assertTrue(spike.contains("runCatching { primary?.write(line); primary?.write(\"\\n\") }"))
-        assertTrue(spike.contains("runCatching { file.delete() }"))
-        assertTrue(assigner.contains("runCatching { dump?.flush() }"))
-        assertTrue(assigner.contains("runCatching { dump?.close() }"))
-    }
-
-    @Test
-    fun theDumpsFilesAreDeclaredInputsOfTheTestTask() {
-        // Every pin above is an ORDER, ZERO-count or literal claim \u2014 the shape that compiles to a
-        // byte-identical class, so without these entries the one edit each pin exists to catch is
-        // the one that leaves :app:testDebugUnitTest UP-TO-DATE.
-        val buildFile = collapsed("build.gradle.kts")
-        for (path in listOf(SPIKE, STORE, ASSIGNER, SERVICE, PREFS)) {
-            assertTrue("app/build.gradle.kts must list \"$path\" in sourcePinnedInputs", buildFile.contains("\"$path\""))
-        }
-    }
-
-    private companion object {
-        const val SPIKE = "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerSpike.kt"
-        const val STORE = "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerSpikeStore.kt"
-        const val ASSIGNER = "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerAssigner.kt"
-        const val SERVICE = "src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt"
-        const val PREFS = "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt"
-    }
 }

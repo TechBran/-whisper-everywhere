@@ -463,12 +463,14 @@ tasks.withType<Test>().configureEach {
         // class and leaves :app:testDebugUnitTest UP-TO-DATE.
         "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerAssigner.kt",
         "src/main/java/com/whispereverywhere/transcription/stream/PreviewTeeEngine.kt",
-        // (4.10 spike session 2) THE DUMP's two files, by this list's stated rule — membership
-        // follows what the tests READ. `SpeakerSpikeDumpTest` reads them as text for the claims
-        // no execution can reach: that the writer is confined to the `speaker-embed` executor's
-        // own body, and that the whole mechanism sits behind the `SPEAKER_SPIKE` compile-time
-        // constant. Both are ORDER and ZERO-count claims, which is the shape that compiles to a
-        // byte-identical class and would otherwise leave :app:testDebugUnitTest UP-TO-DATE.
+        // (4.10 spike session 2) THE DUMP's two files, by this list's stated rule.
+        // `SpeakerSpikePinTest` reads both as text, and every pin on them is the shape that
+        // compiles to a byte-identical class: that the writer is confined to the `speaker-embed`
+        // executor's own body (no unit test can watch a file write land on the wrong thread of a
+        // service it cannot start), that the audio half is guarded by the `SPEAKER_SPIKE`
+        // compile-time constant everywhere it appears, and that the KDoc carries the standing
+        // warning about storing speech audio. Without these entries the one edit each of those
+        // pins exists to catch is the one that leaves :app:testDebugUnitTest UP-TO-DATE.
         "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerSpike.kt",
         "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerSpikeStore.kt",
         "src/main/java/com/whispereverywhere/npu/NpuAssetStage.kt",
