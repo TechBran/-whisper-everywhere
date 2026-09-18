@@ -463,6 +463,14 @@ tasks.withType<Test>().configureEach {
         // class and leaves :app:testDebugUnitTest UP-TO-DATE.
         "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerAssigner.kt",
         "src/main/java/com/whispereverywhere/transcription/stream/PreviewTeeEngine.kt",
+        // (4.10 spike session 2) THE DUMP's two files, by this list's stated rule — membership
+        // follows what the tests READ. `SpeakerSpikeDumpTest` reads them as text for the claims
+        // no execution can reach: that the writer is confined to the `speaker-embed` executor's
+        // own body, and that the whole mechanism sits behind the `SPEAKER_SPIKE` compile-time
+        // constant. Both are ORDER and ZERO-count claims, which is the shape that compiles to a
+        // byte-identical class and would otherwise leave :app:testDebugUnitTest UP-TO-DATE.
+        "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerSpike.kt",
+        "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerSpikeStore.kt",
         "src/main/java/com/whispereverywhere/npu/NpuAssetStage.kt",
         // (4.1 L3) NpuModelSpec.kt joins for the same reason L2 added NpuDecodePolicy.kt:
         // MelbankAssetTest now READS it, because the absence of a default on `melAsset` is a

@@ -56,6 +56,8 @@ import com.whispereverywhere.transcription.cloud.SttProviderFactory
 import com.whispereverywhere.transcription.speakers.SpeakerAssigner
 import com.whispereverywhere.transcription.speakers.SpeakerDiag
 import com.whispereverywhere.transcription.speakers.SpeakerEmbedder
+import com.whispereverywhere.transcription.speakers.SpeakerSpike
+import com.whispereverywhere.transcription.speakers.SpeakerSpikeStore
 import com.whispereverywhere.ui.components.BarWaveformView
 import com.whispereverywhere.util.StreamingAudioRecorder
 import com.whispereverywhere.whisper.WhisperNative
@@ -4425,6 +4427,21 @@ class FloatingBubbleService : Service(),
                     serviceScope.launch(Dispatchers.Main) {
                         WhisperNative.diag(SpeakerDiag.line(assignment))
                     }
+                },
+                // (4.10 spike session 2) THE FINGERPRINT DUMP's destination, and it is the only
+                // new thing this session does: session 1 settled CAM++'s cost and lost its
+                // quality — "no single pair of thresholds separates them" — so the five changes
+                // the numbers ask for are tried OFFLINE, on the PC, against embeddings dumped
+                // from the three sessions the owner already ran, instead of one build per
+                // candidate band. Resolving the directories is two `File` constructions and no
+                // I/O; the file is created on the embed thread at the first fingerprint, and
+                // never at all for a session that fingerprints nothing. `SpeakerSpike
+                // .SPEAKER_SPIKE` is the compile-time gate, and `SpeakerSpikePinTest` is why it
+                // cannot reach 4.10.0 still true.
+                spike = if (SpeakerSpike.SPEAKER_SPIKE) {
+                    SpeakerSpikeStore.dirs(app, System.currentTimeMillis())
+                } else {
+                    null
                 },
             )
         } else {

@@ -60,6 +60,16 @@ import java.util.concurrent.Executors
  * could forget. `FloatingBubbleService` builds it at session start and releases it in
  * `teardownRealtime` — the convergence point of every session exit — and re-points the cached
  * engine at it every session, including at null (`SpeakerWiringPinTest`).
+ *
+ * ### The spike dump (4.10 spike session 2)
+ *
+ * [spike] non-null adds ONE thing to the loop below: every fingerprint that produced a vector is
+ * appended to a jsonl, on this thread, flushed per chunk. It exists because the spike's first
+ * session settled the cost question and lost the quality one — *"no single pair of thresholds
+ * separates them"* — and the five changes that answer it are to be tried offline on dumped
+ * embeddings rather than on the owner, one build per threshold pair. [SpeakerSpikeDump] carries
+ * every rule about the files; this class only decides WHEN a row exists, and a row exists exactly
+ * when a segment was fingerprinted and the embedder answered. Null is the shipping shape.
  */
 class SpeakerAssigner(
     private val voices: VoicePrints,
@@ -69,6 +79,12 @@ class SpeakerAssigner(
     private val clockNs: () -> Long = System::nanoTime,
     private val executor: ExecutorService =
         Executors.newSingleThreadExecutor { runnable -> Thread(runnable, THREAD_NAME) },
+    /**
+     * The spike dump's destination, or null for no dump at all (4.10 spike session 2). The dump
+     * itself is built on the embed thread at the first fingerprint, from THIS assigner's tracker,
+     * so its header can never describe a band the session did not run under.
+     */
+    private val spike: SpeakerSpikeDirs? = null,
 ) {
 
     /**
@@ -96,9 +112,19 @@ class SpeakerAssigner(
      * Ends this assigner. The model is freed on the embed thread — after any work already queued,
      * so a release can never run underneath an in-flight `compute` — and the executor stops.
      * Safe to call twice; safe to call with work outstanding.
+     *
+     * The spike dump is closed in the SAME task, on the same thread that wrote every line of it:
+     * the last chunk of a session is queued behind the stop tap, so closing the file anywhere else
+     * would close it under a write that has not happened yet.
      */
     fun release() {
-        runCatching { executor.execute { runCatching { voices.release() } } }
+        runCatching {
+            executor.execute {
+                runCatching { voices.release() }
+                runCatching { dump?.close() }
+                dump = null
+            }
+        }
         runCatching { executor.shutdown() }
     }
 
@@ -118,7 +144,7 @@ class SpeakerAssigner(
         // the only build the owner can install.
         val paidTheLoad = !hasEmbedded
 
-        for (segment in vad) {
+        for ((index, segment) in vad.withIndex()) {
             val from = segment.origStart.coerceIn(0, samples.size)
             val to = segment.origEnd.coerceIn(from, samples.size)
             val seconds = (to - from) / SAMPLE_RATE.toFloat()
@@ -135,7 +161,8 @@ class SpeakerAssigner(
 
             val startedNs = clockNs()
             val embedding = voices.embed(samples.copyOfRange(from, to))
-            embedNs += clockNs() - startedNs
+            val segmentNs = clockNs() - startedNs
+            embedNs += segmentNs
             hasEmbedded = true
 
             if (embedding == null) {
@@ -145,10 +172,34 @@ class SpeakerAssigner(
             } else {
                 // Fate 2: the tracker decides. `lastBestSimilarity` is read immediately after,
                 // on this thread, which is the only place it is defined to mean anything.
-                ids += tracker.assign(embedding, seconds)
-                best += tracker.lastBestSimilarity
+                val id = tracker.assign(embedding, seconds)
+                val similarity = tracker.lastBestSimilarity
+                ids += id
+                best += similarity
+                // The spike's row, and the ONLY place one is written: a vector exists, so the
+                // offline tuner can re-decide this segment. It is written AFTER the tracker has
+                // spoken, because `assigned`, `best` and `confirmed` are the shipped build's
+                // verdict on this fingerprint and a candidate rule is scored against them.
+                spikeDump()?.write(
+                    SpikeFingerprint(
+                        seq = seq,
+                        seg = index,
+                        durSec = seconds,
+                        origStart = from,
+                        origEnd = to,
+                        assigned = id,
+                        best = similarity,
+                        confirmed = tracker.secondSpeakerConfirmed,
+                        embedMs = segmentNs / 1_000_000L,
+                        emb = embedding,
+                    ),
+                )
             }
         }
+
+        // Per chunk, not per line: a crash, an OOM kill or a battery death must still leave every
+        // completed chunk on disk, and those are the sessions worth reading.
+        runCatching { dump?.flush() }
 
         onAssigned(
             SpeakerAssignment(
@@ -167,6 +218,34 @@ class SpeakerAssigner(
 
     /** Set by the first [VoicePrints.embed] of this assigner's life. Embed thread only. */
     private var hasEmbedded = false
+
+    /**
+     * This session's spike dump, or null when [spike] is null. Embed thread only, like everything
+     * else in this half of the file.
+     */
+    private var dump: SpeakerSpikeDump? = null
+
+    /**
+     * The dump, built on FIRST use so that a session which never fingerprints anything never
+     * touches the filesystem — and built HERE rather than at the construction site because the
+     * header has to carry this tracker's own band, not the defaults a caller assumed.
+     */
+    private fun spikeDump(): SpeakerSpikeDump? {
+        if (!SpeakerSpike.SPEAKER_SPIKE) return null
+        dump?.let { return it }
+        val dirs = spike ?: return null
+        val built = SpeakerSpikeDump(
+            dirs = dirs,
+            model = SpeakerSpike.MODEL_ASSET,
+            tSame = tracker.tSame,
+            tNew = tracker.tNew,
+            minEmbed = SpeakerTracker.MIN_EMBED_SECONDS,
+            minNew = SpeakerTracker.MIN_NEW_SPEAKER_SECONDS,
+            cap = tracker.maxSpeakers,
+        )
+        dump = built
+        return built
+    }
 
     companion object {
         /**

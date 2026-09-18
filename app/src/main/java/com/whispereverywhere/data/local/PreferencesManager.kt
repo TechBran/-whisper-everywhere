@@ -6,6 +6,8 @@ import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.BubbleColours
 import com.whispereverywhere.service.ResizeMath
+import com.whispereverywhere.transcription.speakers.SpeakerSpike
+import com.whispereverywhere.transcription.speakers.SpeakerSpikeStore
 import com.whispereverywhere.tts.ttsCloudVoiceKey
 import java.io.File
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -524,6 +526,15 @@ class PreferencesManager(private val context: Context) {
         set(value) {
             prefs.edit().putBoolean(KEY_DETECT_SPEAKERS, value).apply()
             _detectSpeakers.value = value
+            // (4.10 spike session 2) Turning detection OFF takes the fingerprint dump with it,
+            // every file of it, immediately — not at the next session, which a user who just
+            // turned the feature off may never start. Nothing in the app ever reads a dump back,
+            // so there is nothing to lose and no reason to keep speech-derived data one tap
+            // longer than the feature that produced it. Off the Main thread
+            // (`SpeakerSpikeStore.purgeAsync`) because this setter runs under a finger and a
+            // session's WAVs can be hundreds of files. Inert on a non-spike build: the whole
+            // mechanism is behind `SpeakerSpike.SPEAKER_SPIKE`.
+            if (!value && SpeakerSpike.SPEAKER_SPIKE) SpeakerSpikeStore.purgeAsync(context)
         }
 
     /**
