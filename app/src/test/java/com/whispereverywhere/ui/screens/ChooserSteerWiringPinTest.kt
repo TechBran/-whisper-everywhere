@@ -587,9 +587,13 @@ class ChooserSteerWiringPinTest {
         )
         // The same badge, worded identically, and gated on that verdict alone (instruments are
         // never recommended, so they are never badged — that is the catalogue's rule, not a
-        // second one here).
+        // second one here). 4.9: the wording is "Fits your device" — a RAM fit, which lights on
+        // every rung whose floor the device meets, turbo included — never "Recommended": the
+        // recommendation is the steer's "Our pick", and a chip that lit on a card whose own body
+        // tells the device to expect the typed text to fall behind could not say "recommended".
         listOf(flow, picker).forEach { src ->
-            assertEquals(1, count(src, "\"Recommended for your device\""))
+            assertEquals(1, count(src, "\"Fits your device\""))
+            assertEquals("the RAM chip may not call itself a recommendation", 0, count(src, "\"Recommended for your device\""))
             assertEquals(1, count(src, "if (recommended) {"))
             // The same note, verbatim, and only when the rung has a RAM floor the device is under.
             assertEquals(1, count(src, "val ramGated = model.minRamBytes > 0L"))

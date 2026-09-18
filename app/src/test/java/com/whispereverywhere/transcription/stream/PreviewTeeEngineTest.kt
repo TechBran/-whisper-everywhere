@@ -80,11 +80,17 @@ class PreviewTeeEngineTest {
         private var held: (() -> Unit)? = null
         /** (4.9) The real engine's `open()` finding no recognizer: report it at open. */
         var unavailableAtOpen = false
+        /** The real `open()` is a posted task: hold its report so a later session can be armed first. */
+        var deferUnavailable = false
+        private var heldUnavailable: (() -> Unit)? = null
         override fun open(onPartial: (String) -> Unit, onUnavailable: () -> Unit) {
             this.onPartial = onPartial
             order += "preview.open"
-            if (unavailableAtOpen) onUnavailable()
+            if (unavailableAtOpen) {
+                if (deferUnavailable) heldUnavailable = onUnavailable else onUnavailable()
+            }
         }
+        fun fireHeldUnavailable() { heldUnavailable!!.invoke(); heldUnavailable = null }
         override fun sendAudio(pcm: ByteArray) { audio += pcm; order += "preview" }
         override fun commit(seq: Long, retainMs: Long, onFrozen: (Long, String) -> Unit) {
             commits += seq to retainMs
@@ -244,6 +250,47 @@ class PreviewTeeEngineTest {
         preview.unavailableAtOpen = true
         tee.connect("en", Owner())
         assertEquals(listOf(tee, tee), unavailable)
+    }
+
+    /**
+     * (4.9 review) TAP-STOP-TAP-START: a stale report from session 1's `open` must not flip
+     * session 2's pass-through. `open()` is a FIFO-deferred task on the real engine, so its
+     * "cannot open" can land after the tee has been closed and reconnected for the next session;
+     * `passThrough` is one field across sessions, so without a generation check that late report
+     * would silence session 2's healthy previewer and tell the owner a live session has no
+     * preview. Pinned: the late report is dropped — the switch stays off, the composer keeps the
+     * strip, whisper's deltas stay swallowed, and the owner is not told. And a report from the
+     * CURRENT session's open still lands, so the check discriminates sessions, not reports.
+     */
+    @Test fun aStaleUnavailableReportFromAPreviousSessionsOpenDoesNotFlipTheNextSession() {
+        preview.unavailableAtOpen = true
+        preview.deferUnavailable = true
+        connected()                                                  // session 1: open posts, report held
+        assertFalse(tee.previewUnavailable)
+        tee.close()                                                  // tap-stop
+        preview.unavailableAtOpen = false
+        val second = Owner()
+        tee.connect("en", second)                                    // tap-start: session 2 opens fine
+        preview.fireHeldUnavailable()                                // session 1's report lands late
+        assertFalse("session 1's stale report must not flip session 2's pass-through", tee.previewUnavailable)
+        assertTrue("and the owner is not told about a session that is over", unavailable.isEmpty())
+        local.delta(" Hello")
+        assertTrue("session 2's composer still owns the strip: whisper's deltas are swallowed", second.deltas.isEmpty())
+        preview.partial("hello")
+        assertEquals(listOf("hello"), second.deltas)
+
+        // The check is about the SESSION, not the lateness: a deferred report from the current
+        // session's own open still switches it.
+        tee.close()
+        preview.unavailableAtOpen = true
+        val third = Owner()
+        tee.connect("en", third)
+        assertFalse("held, not yet reported", tee.previewUnavailable)
+        preview.fireHeldUnavailable()
+        assertTrue(tee.previewUnavailable)
+        assertEquals(listOf(tee), unavailable)
+        local.delta(" Third")
+        assertEquals(listOf(" Third"), third.deltas)
     }
 
     /**

@@ -351,7 +351,7 @@ class WhisperCatalogHelpersTest {
         everyRam.forEach { ram ->
             assertFalse(
                 "an instrument was recommended at $ram bytes of RAM — no card may be badged " +
-                    "'Recommended for your device' for a rung whose throughput nobody has measured",
+                    "'Fits your device' for a rung whose throughput nobody has measured",
                 WhisperCatalog.isRecommendedForDevice(instrument, ram),
             )
         }
@@ -406,7 +406,7 @@ class WhisperCatalogHelpersTest {
      *
      * A new rung that forgets the flag fires here, which is the alarm worth having: the failure
      * mode is silent and its blast radius is a production user handed a 1 GB download badged
-     * *"Recommended for your device"* on the strength of nothing.
+     * *"Fits your device"* on the strength of nothing.
      */
     @Test fun the_instrument_set_is_exactly_the_pickable_rungs_whose_verdict_does_not_clear() {
         assertEquals(

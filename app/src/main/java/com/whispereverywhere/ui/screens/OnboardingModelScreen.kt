@@ -775,7 +775,13 @@ private fun ModelTierCard(
                     TierBadge(text = ModelTierCopy.FIRST_RUN_STEER_BADGE, color = Primary)
                 }
                 if (recommended) {
-                    TierBadge(text = "Recommended for your device", color = Success)
+                    // 4.9: the chip says the device FITS the rung, not that the rung is
+                    // recommended — it is a RAM fit (`isRecommendedForDevice` answers by the
+                    // rung's floor alone) and
+                    // lights on every rung the device can carry, turbo included, whose own body
+                    // tells a less-capable device to expect the typed text to fall behind. The
+                    // recommendation is the steer's chip above, and only that one.
+                    TierBadge(text = "Fits your device", color = Success)
                 }
             }
 

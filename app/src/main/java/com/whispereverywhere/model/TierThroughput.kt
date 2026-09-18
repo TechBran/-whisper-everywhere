@@ -264,7 +264,9 @@ sealed interface ThroughputVerdict {
      */
     data class OwnerRuling(val on: String, val by: String, val words: String) {
         init {
-            require(on.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) { "an owner ruling must carry the ISO date it was made on, not '$on'" }
+            // A real calendar date, parsed as ISO-8601 — not a `\d{4}-\d{2}-\d{2}` shape, which
+            // would accept "9999-99-99" and call it a day the ruling was made on.
+            require(runCatching { java.time.LocalDate.parse(on) }.isSuccess) { "an owner ruling must carry the ISO date it was made on, not '$on'" }
             require(by.isNotBlank()) { "an owner ruling nobody signed is not a ruling" }
             require(!Regex("\\bthe owner\\b").containsMatchIn(by.lowercase())) { "'the owner' is not a name" }
             require(words.isNotBlank()) { "an owner ruling with no words is not a ruling" }
@@ -638,15 +640,17 @@ object TierThroughputRecord {
 
     /**
      * **`ultra-q8` — turbo on the repack path: it kept up, with NO margin.** [ULTRA]'s own encoder
-     * and 4-layer decoder at 874 MB. THE OPTIONAL TOP RUNG since 4.7 — offered for its accuracy
-     * on the owner's words, never recommended — and the one instrument left through 4.8, because
-     * this verdict did not clear on its number.
+     * and 4-layer decoder at 874 MB. From 4.7 through 4.8 it WAS the optional top rung — offered
+     * for its accuracy on the owner's words, never recommended — and the one instrument left,
+     * because this verdict did not clear on its number.
      *
-     * **4.9 — it clears on the owner's ruling, recorded here beside the number.** The measurement
-     * below is byte-for-byte 4.7's: median 4,849, worst 7,930 against 8,000, KEPT_UP_WITHOUT_MARGIN.
-     * What is new is the `ownerRuling` field — his decision of 2026-09-17, after dictating on the
-     * rung himself, in his words. The two sit side by side on purpose: a promotion decision reads
-     * the 0.99 AND the sentence that accepted it.
+     * **4.9 — it clears on the owner's ruling, recorded here beside the number, and it is an
+     * ORDINARY RUNG offered by RAM** (`WhisperCatalog.ULTRA_Q8_MIN_RAM_BYTES`), no longer an
+     * instrument. The measurement below is byte-for-byte 4.7's: median 4,849, worst 7,930 against
+     * 8,000, KEPT_UP_WITHOUT_MARGIN — the measured outcome is unchanged and does not clear on its
+     * own. What is new is the `ownerRuling` field — his decision of 2026-09-17, after dictating on
+     * the rung himself, in his words. The two sit side by side on purpose: a promotion decision
+     * reads the 0.99 AND the sentence that accepted it.
      */
     val ULTRA_Q8 = TierThroughput(
         tierId = "ultra-q8",
@@ -676,12 +680,17 @@ object TierThroughputRecord {
                 "through the app's screen-share consent. The typed text stayed with the voice " +
                 "for the whole run, " +
                 "so it is not RECOVERED_ONLY_IN_PAUSES and not NEVER_CAUGHT_UP; it is " +
-                "KEPT_UP_WITHOUT_MARGIN, and that does not clear production, because the margin " +
-                "that would survive a slower SoC, thermal throttling, or a run of long chunks is " +
-                "not there. Offered as the optional top rung on the owner's ruling (\"it's " +
-                "doable, it's actually workable\"), not advocated. CAVEATS: one device, a " +
-                "flagship — on anything slower this rung is expected to fall behind; one talk; " +
-                "previewer armed throughout",
+                "KEPT_UP_WITHOUT_MARGIN. That outcome is unchanged and does not clear on its " +
+                "own, because the margin that would survive a slower SoC, thermal throttling, " +
+                "or a run of long chunks is not there; the row CLEARS on the owner ruling " +
+                "recorded beside it (`ownerRuling`: Brandon Slacum, 2026-09-17 — \"we " +
+                "definitely wanna keep that one … six to maybe nine second drain time, which " +
+                "is totally manageable and doable\"). Since 4.9.0 it is an ordinary rung " +
+                "offered by RAM (WhisperCatalog.ULTRA_Q8_MIN_RAM_BYTES), no longer an " +
+                "instrument; from 4.7 through 4.8 it was the optional top rung, offered on his " +
+                "earlier words (\"it's doable, it's actually workable\") and not advocated. " +
+                "CAVEATS: one device, a flagship — on anything slower this rung is expected to " +
+                "fall behind, which its card says; one talk; previewer armed throughout",
             // 4.9 — THE RULING. Recorded, not paraphrased; the number above is untouched.
             ownerRuling = ThroughputVerdict.OwnerRuling(
                 on = "2026-09-17",

@@ -776,7 +776,7 @@ class OnboardingLogicTest {
 
     @Test fun the_gate_is_the_owners_4_5_gb_and_is_the_same_number_the_medium_card_badges_on() {
         assertEquals(4_500_000_000L, OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES)
-        // One fact, two readers: the card's "Recommended for your device" badge and the card's
+        // One fact, two readers: the card's "Fits your device" badge and the card's
         // presence in the first-run lineup must answer the same question.
         assertEquals(WhisperCatalog.byId("medium-q8")!!.minRamBytes, OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES)
         // 4.9: turbo carries a floor of its own, one constant per rung so it can be raised

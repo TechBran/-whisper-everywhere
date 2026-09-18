@@ -1026,10 +1026,11 @@ private fun EnginesStep(
  * One selectable tier card rendering [ModelTierCopy] — the same copy Settings' picker shows.
  *
  * 4.7 — the RAM rule too, with the same helper and the same wording as `OnboardingModelScreen`'s
- * `ModelTierCard`: the *Recommended for your device* badge when [WhisperCatalog.isRecommendedForDevice]
+ * `ModelTierCard`: the *Fits your device* badge when [WhisperCatalog.isRecommendedForDevice]
  * answers true for this device (it answers false for an instrument at every RAM, so an
  * instrument is never badged — since 4.9 no rung is one, so every CPU card the cumulative
- * lineup shows is badged and only the steer wears "Our pick"), and the *High-end devices only*
+ * lineup shows is badged and only the steer wears "Our pick"; the badge says "fits", not
+ * "recommended", because it is a RAM fit that lights on turbo too), and the *High-end devices only*
  * note ONLY when the rung has a RAM floor and this device reports less than it — which, since
  * the 4.9 lineup is cut by that same floor, no fresh-install card on THIS surface can render;
  * the Settings picker, unfiltered, still does. Before this the guided flow rendered
@@ -1124,7 +1125,9 @@ private fun TierChoiceCard(
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 Text(
-                                    text = "Recommended for your device",
+                                    // 4.9: a RAM fit, not a recommendation — see the picker's
+                                    // TierBadge call; the steer's "Our pick" is the recommendation.
+                                    text = "Fits your device",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Success,
                                     fontWeight = FontWeight.Bold,

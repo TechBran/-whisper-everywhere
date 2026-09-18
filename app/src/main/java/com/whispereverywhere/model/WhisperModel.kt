@@ -81,7 +81,8 @@ data class WhisperModel(
      * every device with no RAM threshold hiding it (running a heavy model on a modest phone and
      * finding where it breaks IS the experiment), it downloads like any other ggml rung, and
      * [WhisperCatalog.isRecommendedForDevice] answers **false for it at every RAM** so no card is
-     * ever badged *"Recommended for your device"*. It is also never [WhisperCatalog.DEFAULT_MODEL_ID]
+     * ever badged with the RAM chip (*"Fits your device"* since 4.9; *"Recommended for your
+     * device"* before). It is also never [WhisperCatalog.DEFAULT_MODEL_ID]
      * and never a [ModelMigration] target.
      *
      * Orthogonal to all three flags beside it, and the distinction is the point: [retired] means
@@ -270,7 +271,7 @@ object WhisperCatalog {
      * `medium-q8`'s RAM floor — THE OWNER'S NUMBER (4.8.0, ruling 2026-09-17: *"I'd say we do
      * four point five gigs minimum"*). It is the same constant the first-run gate reads
      * (`OnboardingLogic.FIRST_RUN_RAM_GATE_BYTES`, asserted equal in OnboardingLogicTest), so the
-     * card's "Recommended for your device" badge and the card's presence in the first-run lineup
+     * card's "Fits your device" badge and the card's presence in the first-run lineup
      * answer one question. `ActivityManager.totalMem` under-reports physical RAM: a nominal 4 GB
      * phone reports ~3.7e9 and a 6 GB one ~5.6e9, so 4.5e9 separates exactly the two classes he
      * named.
@@ -281,14 +282,15 @@ object WhisperCatalog {
      * `ultra-q8`'s RAM floor (4.9.0) — ONE CONSTANT OF ITS OWN, equal to [MEDIUM_Q8_MIN_RAM_BYTES]
      * today, so the owner can raise turbo's alone without touching medium's.
      *
-     * A CONTROLLER RULING on the number: the owner gave no separate figure for turbo — his
-     * lineup rule was *"if you can see v3 turbo, of course, you should see all three tiers"*,
-     * i.e. the rung whose floor a device meets and every rung under it — and turbo's resident
-     * set is not larger than medium's: large-v3-turbo has a 4-layer decoder against medium's 24,
-     * so its cross-attention KV cache is ≈ 31 MB against medium's ≈ 151 MB, and the files are
-     * 874 MB against 823 MB. Nothing in the app's own memory model puts turbo above medium, so
-     * the two floors are one number — and two constants, because "one number today" is not a
-     * rule that says they must stay one.
+     * A CONTROLLER RULING on the number, PENDING THE OWNER'S WORD: he gave no separate figure
+     * for turbo — his lineup rule was *"if you can see v3 turbo, of course, you should see all
+     * three tiers"*, i.e. the rung whose floor a device meets and every rung under it — and
+     * turbo's resident set is comparable to medium's, not smaller: the file is 51 MB LARGER
+     * (874 MB against 823), while the decoder's cross-attention cache is smaller (≈ 31 MB
+     * against ≈ 151 MB — 4 text layers against 24). Neither figure puts turbo clearly above or
+     * below medium in the app's own memory model, so the two floors are one number until the
+     * owner rules otherwise — and two constants, because "one number today" is not a rule that
+     * says they must stay one.
      */
     const val ULTRA_Q8_MIN_RAM_BYTES: Long = 4_500_000_000L
 
@@ -413,10 +415,11 @@ object WhisperCatalog {
         // **The owner's ruling, same day:** *"Q8 for everything." — "Q5 is definitely off the
         // table."* — *"We're only testing on models that we're actually gonna use."* So the ladder
         // is now THREE pickable rungs, every one Q8_0: `small-q8` is the floor for every device
-        // and the default; `medium-q8` is the medium tier, recommended above a RAM threshold;
-        // `ultra-q8` is an OPTIONAL top rung — *"if people really want that higher quality
-        // accuracy … it's doable, it's actually workable"* — offered, never advocated, because it
-        // kept up on a flagship with no margin. The four Q5 rows (`multi`, `medium-q5`, `ultra`,
+        // and the default; `medium-q8` is the medium tier, steered to above a RAM threshold;
+        // `ultra-q8` WAS, from 4.7 through 4.8, an OPTIONAL top rung — *"if people really want
+        // that higher quality accuracy … it's doable, it's actually workable"* — offered, never
+        // advocated, because it kept up on a flagship with no margin (4.9 makes it an ordinary
+        // rung offered by RAM; see below). The four Q5 rows (`multi`, `medium-q5`, `ultra`,
         // `large-v3`) are RETIRED — hidden from the chooser, untouched for anyone who has one —
         // and the two Q5_0 rungs the session never timed (`ultra`, `large-v3`) were retired
         // unmeasured by the same ruling.
@@ -590,7 +593,9 @@ object WhisperCatalog {
             // pickable rungs whose verdict does not clear, and this one now clears), and the rung
             // carries a RAM floor like medium's ([ULTRA_Q8_MIN_RAM_BYTES], its own constant):
             // `isRecommendedForDevice` answers by RAM, so on a device that meets the floor it is
-            // badged "Recommended for your device" like its two siblings, and only the steer
+            // badged "Fits your device" like its two siblings — a RAM fit, not a recommendation,
+            // which is why the chip does not say "Recommended": this card's own body tells a
+            // less-capable device to expect the typed text to fall behind — and only the steer
             // carries "Our pick". Under the floor the Settings picker shows the RAM note and the
             // guided flow does not show the card at all (`OnboardingLogic.firstRunLineup`). Still
             // never the default and never a migration target — those name the rung with the

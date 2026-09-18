@@ -119,8 +119,10 @@ class ModelTierCopyTest {
         // 4.9 — THE HEADLINES ARE THE OWNER'S WORDS (2026-09-17: "For small, we say fast —
         // fastest, less accurate. Medium: balanced speed and accuracy. V3 turbo: highest
         // accuracy, slightly slower than both other tiers."), with ONE amended by controller
-        // ruling: turbo's "slightly" is not a word the doc supports (4,849 ms per commit against
-        // 1,341 is 3.6×; his own felt drain was six to nine seconds against one to two), so the
+        // ruling: turbo's "slightly" is not a word the doc supports (the doc's medians: 4,849 ms
+        // per commit is 3.6× medium's 1,341 and 4.0× small's 1,217 — over three times either;
+        // his own reported drain on turbo was six to nine seconds, against the doc's 1.2-1.3 s
+        // per-commit medians for the other two — the doc's figure, not one he reported), so the
         // card says "slower than the other two" and carries his report in the body as his
         // report, dated, on his tablet. Read together they are a ladder: fastest / balanced /
         // highest accuracy.
@@ -133,11 +135,15 @@ class ModelTierCopyTest {
             ModelTierCopy.forId("small-q8")!!.body,
         )
         assertEquals("Balanced speed and accuracy", ModelTierCopy.forId("medium-q8")!!.headline)
+        // Medium's body, word by word: "about a tenth slower than small" states the doc's 10%
+        // in the direction the numbers run; "a more accurate model" is what whisper's size
+        // order earns (no transcript comparison exists to earn "much"); "Offered where" is a
+        // RAM fit, because the recommendation is the steer's "Our pick".
         assertEquals(
             "Whisper medium at Q8_0: 24 encoder layers at 1024 dims against small's 12 at 768. " +
-                "Within a tenth of small's speed on the owner's tablet (1,341 ms per commit " +
-                "against 1,217, measured 2026-09-17), and a much more accurate model. " +
-                "Recommended where the device reports at least 4.5 GB of memory.",
+                "About a tenth slower than small on the owner's tablet (1,341 ms per commit " +
+                "against 1,217, measured 2026-09-17), and a more accurate model. " +
+                "Offered where the device reports at least 4.5 GB of memory.",
             ModelTierCopy.forId("medium-q8")!!.body,
         )
         assertEquals("Highest accuracy, slower than the other two", ModelTierCopy.forId("ultra-q8")!!.headline)
@@ -148,17 +154,28 @@ class ModelTierCopyTest {
                 "2026-09-17), where it kept up with no margin to spare; his own report the " +
                 "same day, after dictating on it: a six to nine second drain, \"totally " +
                 "manageable and doable\". On a less capable device expect the typed text to " +
-                "fall behind — a smaller Whisper is the fix. Recommended where the device " +
+                "fall behind — a smaller Whisper is the fix. Offered where the device " +
                 "reports at least 4.5 GB of memory.",
             ModelTierCopy.forId("ultra-q8")!!.body,
         )
+        // Neither RAM-floored card RECOMMENDS itself on RAM: the floor is a fit ("Offered
+        // where"), and turbo's own body tells a less-capable device to expect the typed text
+        // to fall behind — a card cannot say that and "Recommended" in one breath. The
+        // recommendation is the steer's chip alone.
+        listOf("medium-q8", "ultra-q8").forEach {
+            val body = ModelTierCopy.forId(it)!!.body
+            assertTrue("'$it' states its RAM floor as a fit", body.contains("Offered where the device reports at least 4.5 GB of memory."))
+            assertFalse("'$it' recommends itself on RAM", body.lowercase().contains("recommended where"))
+        }
         // The three headlines read as a ladder: each names its axis in the owner's vocabulary.
         assertTrue(ModelTierCopy.forId("small-q8")!!.headline.startsWith("Fastest"))
         assertTrue(ModelTierCopy.forId("medium-q8")!!.headline.startsWith("Balanced"))
         assertTrue(ModelTierCopy.forId("ultra-q8")!!.headline.startsWith("Highest accuracy"))
         assertFalse(
-            "turbo's card may not say 'slightly' — the measurement is 3.6× per commit and the " +
-                "owner's own drain was six to nine seconds; restoring the word is his call, one word",
+            "turbo's card may not say 'slightly' — the doc's medians are 3.6× medium and 4.0× " +
+                "small per commit, and the owner's own reported drain was six to nine seconds " +
+                "(against the doc's 1.2-1.3 s medians for the other two); restoring the word is " +
+                "his call, one word",
             ModelTierCopy.forId("ultra-q8")!!.headline.lowercase().contains("slightly"),
         )
         // Every body cites the measurement: the tablet AND the date of the doc it is checkable
@@ -694,8 +711,10 @@ class ModelTierCopyTest {
         // so is the Settings picker's. Language decides none of those, so the ONE chip must not
         // say "language" (the retired "Best match for your language" is deleted, not kept: no
         // surface could truthfully show it since 4.6); and it must not say "device" either,
-        // because the green RAM chip ("Recommended for your device") already does, with a
-        // reason the user can check. Reason-neutral, and distinct from both.
+        // because the green RAM chip ("Fits your device" — a RAM fit, on every rung whose
+        // floor the device meets) already does, with a reason the user can check. Nor may it
+        // say "recommended": the RAM chip is not a recommendation, and this one is the only
+        // chip that is. Reason-neutral, and distinct from both.
         assertEquals("Our pick", ModelTierCopy.FIRST_RUN_STEER_BADGE)
         listOf("language", "device", "faster", "fastest", "quicker", "instant", "recommended").forEach {
             assertFalse(

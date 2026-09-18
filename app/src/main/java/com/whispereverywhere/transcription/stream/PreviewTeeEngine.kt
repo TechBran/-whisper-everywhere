@@ -62,9 +62,10 @@ class PreviewTeeEngine(
      * (4.9) Invoked ONCE per session, with this tee, on the previewer's executor, the moment the
      * previewer reports it cannot open for the session — AFTER [passThrough] is set, so an owner
      * that reads the tee back sees the switch already made. Never invoked for a session whose
-     * previewer opened. The owner should compare the argument with the engine it currently holds:
-     * `open()` is a posted task, so a stale session's report can land after the next session has
-     * been armed.
+     * previewer opened, and never for a session that has since been closed: `open()` is a posted
+     * task, so a stale session's report can land after the next session has been armed, and the
+     * tee drops it (see [connect]'s generation check) — the owner's own comparison of the
+     * argument with the engine it currently holds stays as the second line of defence.
      */
     private val onUnavailable: (PreviewTeeEngine) -> Unit = {},
 ) : TranscriptionEngine {
@@ -80,16 +81,30 @@ class PreviewTeeEngine(
      */
     @Volatile private var passThrough = false
 
+    /**
+     * THE SESSION GENERATION (4.9 review): incremented by every [connect]. `open()`'s report is a
+     * FIFO-deferred task, so on tap-stop-tap-start a report from session N's open can arrive
+     * after session N+1 has connected; the task captures the generation it was posted under and
+     * a report whose generation is not the current one is dropped — it may neither flip the
+     * next session's [passThrough] nor tell the owner about a session that is already over.
+     * This is the tee-side twin of the identity check the service does at `onPreviewUnavailable`.
+     */
+    @Volatile private var generation = 0
+
     /** (4.9) True from the previewer's "cannot open" report until the next [connect]. */
     val previewUnavailable: Boolean get() = passThrough
 
     override fun connect(language: String?, listener: TranscriptionEngine.Listener) {
         this.listener = listener
         passThrough = false
+        val mine = ++generation
         synchronized(composerLock) { composer.reset() }
         preview.open(
             onPartial = { partial -> emit { composer.onPartial(partial) } },
             onUnavailable = {
+                // A previous session's open reporting late: ignore it — the session it is about
+                // is over, and this one opens on its own merits.
+                if (mine != generation) return@open
                 passThrough = true
                 onUnavailable(this)
             },

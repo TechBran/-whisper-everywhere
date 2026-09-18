@@ -220,13 +220,18 @@ class TierThroughputTest {
             WhisperCatalog.instruments.map { it.id },
             notClearing,
         )
-        // And since 4.9 that set is EMPTY: the optional top rung still kept up without margin —
-        // the outcome is pinned — and clears on the owner's ruling recorded beside it.
+        // And since 4.9 that set is EMPTY: turbo (4.7's optional top rung, an ordinary rung
+        // since 4.9) still kept up without margin — the outcome is pinned — and clears on the
+        // owner's ruling recorded beside it, which its own reading says in the present tense.
         assertEquals(emptyList<String>(), WhisperCatalog.instruments.map { it.id })
         val ultra = TierThroughputRecord.forTier("ultra-q8")!!.verdict as ThroughputVerdict.Measured
         assertEquals(KeepUp.KEPT_UP_WITHOUT_MARGIN, ultra.measurement.outcome)
         assertNotNull("ultra-q8 clears on a RULING, and the ruling must be on the row", ultra.ownerRuling)
         assertTrue(ultra.clearsProduction)
+        assertTrue("the reading says the outcome does not clear on its own", ultra.because.contains("does not clear on its own"))
+        assertTrue("the reading names the ruling that clears it", ultra.because.contains("CLEARS on the owner ruling") && ultra.because.contains("Brandon Slacum, 2026-09-17"))
+        assertTrue("the reading says what the rung is now", ultra.because.contains("ordinary rung offered by RAM"))
+        assertFalse("the reading no longer says, in the present tense, that turbo does not clear production", ultra.because.contains("does not clear production"))
         // The default is a measured rung that clears on its NUMBER, and so is the medium tier —
         // neither needs a ruling, and neither has one.
         listOf(WhisperCatalog.DEFAULT_MODEL_ID, "medium-q8").forEach {
@@ -248,7 +253,8 @@ class TierThroughputTest {
      * 2026-09-17, in his words; (2) removing it from `ultra-q8`'s row makes that row — and only
      * that row — stop clearing, and the gate over the real ladder go back to Overreached on the
      * switch entry that depended on it; (3) a ruling with a blank `by` or `words`, a `by` of "the
-     * owner", or a non-ISO date is refused at construction — the clearance record's `grantedBy`
+     * owner", or a date that is not a real ISO-8601 calendar date (the shape alone is not enough:
+     * "9999-99-99" is refused) is refused at construction — the clearance record's `grantedBy`
      * rule, one axis over: a decision nobody is named for is a decision nobody can be asked about.
      */
     @Test fun an_owner_ruling_clears_only_the_row_it_is_recorded_on_and_must_be_signed_and_dated() {
@@ -311,6 +317,10 @@ class TierThroughputTest {
             Triple("", "Brandon Slacum", "words"),
             Triple("yesterday", "Brandon Slacum", "words"),
             Triple("17/09/2026", "Brandon Slacum", "words"),
+            // The right SHAPE and not a date at all: the field is parsed as ISO-8601, not
+            // matched against `\d{4}-\d{2}-\d{2}`.
+            Triple("9999-99-99", "Brandon Slacum", "words"),
+            Triple("2026-02-30", "Brandon Slacum", "words"),
         ).forEach { (on, by, words) ->
             try {
                 ThroughputVerdict.OwnerRuling(on = on, by = by, words = words)

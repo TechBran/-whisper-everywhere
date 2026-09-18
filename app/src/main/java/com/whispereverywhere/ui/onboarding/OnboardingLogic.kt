@@ -299,7 +299,7 @@ object OnboardingLogic {
      * the medium or v3 turbo."* `totalMem` under-reports physical RAM (a nominal 4 GB phone
      * reports ~3.7e9, a 6 GB one ~5.6e9), so 4.5e9 separates exactly the two classes he named.
      * It is the same number as `medium-q8.minRamBytes` — asserted equal in `OnboardingLogicTest`
-     * — so the card's "Recommended for your device" badge and the card's presence in the
+     * — so the card's "Fits your device" badge and the card's presence in the
      * first-run lineup are one question with one answer. Change it in both places or the test
      * says so.
      *
@@ -369,7 +369,7 @@ object OnboardingLogic {
      * exists — a model already on disk is never hidden from the user who downloaded it. Order is
      * preserved from [lineup]; nothing is added that was not in it. The floor read is the
      * catalogue's own `isRecommendedForDevice` comparison (`>=`), so a card is in the flow's
-     * lineup on exactly the byte its "Recommended for your device" badge lights.
+     * lineup on exactly the byte its "Fits your device" badge lights.
      *
      * @param totalRamBytes `WhisperModelManager.deviceTotalRamBytes()`, read once at flow level.
      */

@@ -49,8 +49,10 @@ package com.whispereverywhere.model
  * turbo: highest accuracy, slightly slower than both other tiers."* The three headlines are those
  * words, made true — and one of them is amended, by controller ruling, where the measurement does
  * not support the word: turbo's card says *"slower than the other two"*, not *"slightly slower"*,
- * because 4,849 ms per commit against 1,341 and 1,217 is 3.6×, and the owner's own felt drain on
- * the tablet (*"six to maybe nine second"*) against roughly one to two is not "slightly". His
+ * because the doc's medians put 4,849 ms per commit at 3.6× medium's 1,341 and 4.0× small's
+ * 1,217 — over three times either — and the owner's own report of turbo's drain on the tablet
+ * (*"six to maybe nine second"*, his words) sits against the doc's 1.2-1.3 s per-commit medians
+ * for the other two (the doc's numbers, not a figure he reported). That is not "slightly". His
  * report is on the card as HIS report, dated, on his tablet — which is the honest version of his
  * sentence. If he wants "slightly" back it is one word.
  *
@@ -193,24 +195,31 @@ object ModelTierCopy {
         ),
         "medium-q8" to TierCopy(
             // The owner's words, verbatim: "Medium: balanced speed and accuracy." On the tablet
-            // it lands within a tenth of small's speed for a model with twice the layers.
+            // it lands about a tenth slower than small for a model with twice the layers.
             headline = "Balanced speed and accuracy",
             badges = listOf("90+ languages", "823 MB"),
             // 4.8.0: the threshold is the owner's 4.5 GB (was 4.7's provisional 5.5 GB). The
             // number here and `medium-q8.minRamBytes` are one fact; ModelTierCopyTest holds them
-            // together. "Within a tenth" is the doc's own reading (1,341 vs 1,217: 10%).
+            // together. "About a tenth slower" is the doc's own reading (1,341 vs 1,217: 10%),
+            // stated in the direction the numbers run — "within a tenth of small's speed" read
+            // as if it might be the faster of the two. "A more accurate model", not "much":
+            // whisper's size order earns the comparative, and no transcript comparison exists
+            // in this repo to earn the intensifier. "Offered where", not "Recommended where":
+            // the RAM floor is a fit, and the recommendation is the steer's "Our pick".
             body = "Whisper medium at Q8_0: 24 encoder layers at 1024 dims against small's 12 " +
-                "at 768. Within a tenth of small's speed on the owner's tablet (1,341 ms per " +
-                "commit against 1,217, measured 2026-09-17), and a much more accurate model. " +
-                "Recommended where the device reports at least 4.5 GB of memory.",
+                "at 768. About a tenth slower than small on the owner's tablet (1,341 ms per " +
+                "commit against 1,217, measured 2026-09-17), and a more accurate model. " +
+                "Offered where the device reports at least 4.5 GB of memory.",
         ),
         "ultra-q8" to TierCopy(
             // The owner's words were "highest accuracy, slightly slower than both other tiers".
-            // CONTROLLER RULING on one word: the doc says 3.6× per commit (4,849 against 1,341)
-            // and the owner's own felt drain is six to nine seconds against roughly one to two,
-            // so "slightly" is not a sentence the measurement supports. "Slower than the other
-            // two" is; his report goes in the body as HIS report, dated, on his tablet. If he
-            // wants "slightly" back it is one word.
+            // CONTROLLER RULING on one word: the doc's medians put 4,849 ms per commit at 3.6×
+            // medium's 1,341 and 4.0× small's 1,217 (over three times either), and the owner's
+            // own report of turbo's drain — six to nine seconds, his words — sits against the
+            // doc's 1.2-1.3 s per-commit medians for the other two (the doc's numbers; he
+            // reported no figure for those). So "slightly" is not a sentence the measurement
+            // supports. "Slower than the other two" is; his report goes in the body as HIS
+            // report, dated, on his tablet. If he wants "slightly" back it is one word.
             //
             // The unscoped accuracy superlative moved here from `large-v3`'s card when that rung
             // was retired; `exactly_one_card_claims_the_top_of_the_accuracy_order` holds that
@@ -221,14 +230,17 @@ object ModelTierCopy {
             // not an instrument), but the measured shape of the risk stays in the card's own
             // words — "no margin", the fall-behind caution and the remedy — because 0.99 of the
             // floor on a flagship is still what the doc says, and a user on a slower phone is
-            // owed that sentence before they download 874 MB.
+            // owed that sentence before they download 874 MB. "Offered where", not
+            // "Recommended where": a card that tells a less-capable device to expect the typed
+            // text to fall behind cannot recommend itself on RAM alone — the floor is a fit,
+            // and the recommendation is the steer's "Our pick".
             body = "Large-v3-turbo at Q8_0 — large-v3's own 32-layer encoder with a 4-layer " +
                 "decoder: the most accurate model on this ladder. Slower than the other two " +
                 "on the owner's tablet (4,849 ms per commit against 1,217 and 1,341, measured " +
                 "2026-09-17), where it kept up with no margin to spare; his own report the " +
                 "same day, after dictating on it: a six to nine second drain, \"totally " +
                 "manageable and doable\". On a less capable device expect the typed text to " +
-                "fall behind — a smaller Whisper is the fix. Recommended where the device " +
+                "fall behind — a smaller Whisper is the fix. Offered where the device " +
                 "reports at least 4.5 GB of memory.",
         ),
         // 4.0: the gated tier. Only devices that pass the SoC gate AND have both context binaries
@@ -489,9 +501,10 @@ object ModelTierCopy {
      * of that rule is language why the card is steered: over the 4.5 GB gate it is `medium-q8`
      * by RAM and throughput margin, under it `small-q8` by RAM, and on an NPU-capable device the
      * chip. The card already carries the reason where there is one to read — the RAM chip
-     * ("Recommended for your device"), the body's RAM sentence, the NPU tier's own copy — so this
-     * chip says only what is true on every branch: this is the app's pick, and the user still
-     * taps.
+     * ("Fits your device": a RAM fit, not a recommendation — it lights on every rung whose
+     * floor the device meets, turbo included, so it cannot be the recommendation; this chip
+     * is), the body's RAM sentence, the NPU tier's own copy — so this chip says only what is
+     * true on every branch: this is the app's pick, and the user still taps.
      *
      * **The retired chip, "Best match for your language" (3.7 `STEER_BADGE`), is deleted, not
      * kept.** It named a reason — "Default" alone never explained why this card and not the other
