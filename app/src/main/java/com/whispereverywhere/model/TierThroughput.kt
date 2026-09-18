@@ -568,7 +568,9 @@ object TierThroughputRecord {
      * **`medium-q8` — medium on the repack path, and it passed.** Byte-for-byte the same
      * hyperparameters as [MEDIUM_Q5] off the file's own ggml header, differing only in `ftype`.
      * THE MEDIUM TIER since 4.7, recommended above the owner's 4.5 GB RAM threshold (4.8.0; 4.7
-     * carried a provisional 5.5 GB).
+     * carried a provisional 5.5 GB). Paced on the 6 000 ms MULTI row since 4.9.0 by the owner's
+     * ruling (on versionCode 95, where it was measured, and through 4.8.x, it paced at 8 000 —
+     * see `because`).
      */
     val MEDIUM_Q8 = TierThroughput(
         tierId = "medium-q8",
@@ -577,7 +579,12 @@ object TierThroughputRecord {
                 device = "Galaxy Tab S10+ (SM-X828U, Dimensity 9300+)",
                 // Median wallMs 1,341 over n=38 chunks — the largest sample of the five.
                 finalizeSeconds = 1.341,
-                commitFloorMs = 8_000L,
+                // The row this rung is paced on in CommitCadencePolicy since 4.9.0 — the MULTI
+                // row, 6 000 ms, by the owner's ruling of 2026-09-17 ("six seconds for medium,
+                // since I can handle it"). On versionCode 95, the build the sample was taken on,
+                // and through 4.8.x, it paced at 8 000 (the LARGE row via `else`, where 4.6 put
+                // every instrument); `because` gives both readings.
+                commitFloorMs = 6_000L,
                 previewerArmed = true,
                 outcome = KeepUp.KEPT_UP,
                 measuredOn = "2026-09-17",
@@ -588,10 +595,20 @@ object TierThroughputRecord {
                     "threads=4; English previewer ARMED",
             ),
             because = "n=38 chunks: median wallMs 1,341, mean 1,470, worst 2,508, ctx=512 median " +
-                "1,140. THE DUTY ARITHMETIC: worst commit 0.31 of the 8 000 ms floor; F/floor + m " +
-                "~0.21 at the median against the 0.70 rule — clears with margin, and lands within " +
-                "10% of small-q8 (1,217) on this tablet despite 24 layers at 1024 against 12 at " +
-                "768. The typed text stayed with the voice throughout: KEPT_UP. CAVEATS, accepted " +
+                "1,140. THE DUTY ARITHMETIC, at the 6 000 ms MULTI row this rung is paced on " +
+                "since 4.9.0: the worst commit is 0.42 of the floor and F/floor + m is ~0.26 " +
+                "(1.341/6 + 0.04) at the median against the 0.70 rule — clears with margin. ON " +
+                "THE BUILD IT WAS MEASURED ON (versionCode 95), and through 4.8.x, the app paced " +
+                "it at 8 000 ms — the LARGE row via `else`, where 4.6 placed every instrument — " +
+                "and the worst commit was 0.31 of that floor (~0.21 duty), which is the reading " +
+                "the measurement doc's table carries. The move to 6 000 is an OWNER RULING of " +
+                "2026-09-17, made after Brandon Slacum tested medium Q8 on his tablet (\"six " +
+                "seconds for medium, since I can handle it\"; the arithmetic is on " +
+                "CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS), so this row carries the " +
+                "floor the rung is paced at now and TierThroughputTest holds it equal to the " +
+                "policy table. It lands within 10% of small-q8 (1,217) on this tablet despite " +
+                "24 layers at 1024 against 12 at 768. The typed text stayed with the voice " +
+                "throughout: KEPT_UP. CAVEATS, accepted " +
                 "not resolved: ONE device, a 12 GB flagship — the RAM threshold this rung is " +
                 "recommended above (4.5e9) is the owner's ruling of 2026-09-17, NOT a " +
                 "measurement, and the owner's weakest-device run is the open item; ONE talk; " +

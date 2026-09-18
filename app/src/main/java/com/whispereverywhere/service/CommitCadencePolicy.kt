@@ -60,8 +60,17 @@ import com.whispereverywhere.audio.Endpointer
  *   that evidence: on 95 it paced on this LARGE row via `else`, where its worst commit (1.99 s)
  *   was 0.25 of the floor; at 6 000 the worst is 0.33 of the floor and F/floor + m is ~0.24
  *   (1.22/6 + 0.04) against the 0.70 rule. The arithmetic and the reason are on
- *   [MIN_COMMIT_INTERVAL_MULTI_MS]. `medium-q8` and `ultra-q8` STAY on this row: medium's floor
- *   is a separate ruling the owner has not made, and ultra kept up with no margin here.
+ *   [MIN_COMMIT_INTERVAL_MULTI_MS]. `medium-q8` and `ultra-q8` STAYED on this row through 4.8.x:
+ *   medium's floor was a separate ruling the owner had not made, and ultra kept up with no
+ *   margin here.
+ * - **4.9.0 (2026-09-17): the owner made medium's ruling, and a SECOND row moved.** `medium-q8`
+ *   takes the MULTI row (6 000 ms) on his words after testing medium Q8 on his tablet — *"six
+ *   seconds for medium, since I can handle it"*. The evidence is the same doc: F = 1.341 s
+ *   median, 2.508 s worst, so at 6 000 the worst commit is 0.42 of the floor and F/floor + m is
+ *   ~0.26 (1.341/6 + 0.04) against the 0.70 rule (on 95's 8 000 row: 0.31 / ~0.21). The
+ *   arithmetic is on [MIN_COMMIT_INTERVAL_MULTI_MS]. `ultra-q8` STAYS on this LARGE row by the
+ *   owner's same-day ruling — *"keep it the way it is"* — and the number agrees: its worst commit
+ *   on the Tab was 7 930 ms, so 7 000 is not supported.
  *   `multi` keeps its 6 000 row: it is retired, not uninstalled, and its users are still paced.
  * - cloud batch: every commit is one HTTP POST (Semaphore(3) in flight, shed at 24). Same
  *   reasoning that made the 4 s first cap LOCAL-only.
@@ -160,9 +169,18 @@ object CommitCadencePolicy {
      * (where 4.6 put every instrument), and its worst commit was 0.25 of that floor; leaving it
      * there would have handed every fresh install a slower minimum cadence than the 4.3.x default
      * (`multi`, this row) on a model 2.2x faster per commit. `TierThroughputRecord.SMALL_Q8`
-     * carries this floor and `TierThroughputTest` holds it equal to this table. medium-q8 and
-     * ultra-q8 are NOT on this row: medium's floor is a separate ruling the owner has not made,
-     * and ultra kept up with no margin at 8 000.
+     * carries this floor and `TierThroughputTest` holds it equal to this table.
+     *
+     * **medium-q8 joined this row in 4.9.0 — an OWNER RULING (2026-09-17).** Through 4.8.x it paced
+     * on the 8 000 ms LARGE row via `else`, because its floor was a separate ruling the owner had
+     * not made; he made it after testing medium Q8 on his tablet: *"six seconds for medium, since
+     * I can handle it."* The evidence, from the same doc: F = 1.341 s median, 2.508 s worst on the
+     * Tab S10+. At this 6 000 ms floor its worst commit is 0.42 of the floor and `F/floor + m` is
+     * ~0.26 (1.341/6 + 0.04) against the 0.70 rule — cleared with room (on the 8 000 row it was
+     * 0.31 / ~0.21). `TierThroughputRecord.MEDIUM_Q8` carries this floor and `TierThroughputTest`
+     * holds it equal to this table. ultra-q8 is NOT on this row, by the owner's same-day ruling
+     * ("keep it the way it is"), and the number agrees: its worst Tab commit was 7 930 ms, so even
+     * 7 000 is not supported.
      */
     const val MIN_COMMIT_INTERVAL_MULTI_MS = 6_000L
 
@@ -285,9 +303,17 @@ object CommitCadencePolicy {
             // so at 6 000 its worst commit is 0.33 of the floor and F/floor + m is ~0.24 against
             // the 0.70 rule. On versionCode 95 it paced on the LARGE row via `else`, and leaving
             // it there would hand every fresh install a slower minimum cadence than the 4.3.x
-            // default on a 2.2x faster model. `medium-q8` and `ultra-q8` stay on the LARGE row —
-            // medium's floor is a separate ruling the owner has not made.
-            "pro", "multi", "small-q8" -> MIN_COMMIT_INTERVAL_MULTI_MS
+            // default on a 2.2x faster model.
+            //
+            // `medium-q8` JOINED this row in 4.9.0 — an OWNER RULING (2026-09-17), made after he
+            // tested medium Q8 on his tablet: "six seconds for medium, since I can handle it".
+            // Measured F = 1.341 s median / 2.508 s worst on the Tab S10+ (the same doc), so at
+            // 6 000 its worst commit is 0.42 of the floor and F/floor + m is ~0.26 against the
+            // 0.70 rule. Through 4.8.x it paced on the LARGE row via `else`, medium's floor being
+            // a separate ruling the owner had not yet made. `ultra-q8` STAYS on the LARGE row by
+            // his same-day ruling ("keep it the way it is") — its worst Tab commit was 7 930 ms,
+            // so 7 000 is not supported either.
+            "pro", "multi", "small-q8", "medium-q8" -> MIN_COMMIT_INTERVAL_MULTI_MS
             "extreme", "ultra" -> MIN_COMMIT_INTERVAL_LARGE_MS
             else -> MIN_COMMIT_INTERVAL_LARGE_MS
         }

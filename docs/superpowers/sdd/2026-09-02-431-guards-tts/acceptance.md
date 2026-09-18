@@ -1253,7 +1253,7 @@ running for that reason alone.
 | Multilingual small **Q5_1** (the default) | 190 MB | **6 000 ms** |
 | small **Q8_0** | 264 MB | 8 000 ms on 95, where it was measured; **6 000 ms** since 4.7.0 |
 | medium **Q5_0** | 539 MB | 8 000 ms |
-| medium **Q8_0** | 823 MB | 8 000 ms |
+| medium **Q8_0** | 823 MB | 8 000 ms on 95, where it was measured, and through 4.8.x; **6 000 ms** since 4.9.0 (owner ruling) |
 | turbo **Q5_0** (`ultra`) | 574 MB | 8 000 ms |
 | turbo **Q8_0** | 874 MB | 8 000 ms |
 | large-v3 **Q5_0** | 1081 MB | 8 000 ms |
@@ -1341,8 +1341,11 @@ AN3. **medium Q5_0 — 539 MB, 8 000 ms floor.** The multilingual medium this ap
     `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
     `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP`
 
-AN4. **medium Q8_0 — 823 MB, 8 000 ms floor.** The same medium at a different quantisation —
-    identical depth, dims and vocabulary off the files' own headers. **AN9 is this row's purpose.**
+AN4. **medium Q8_0 — 823 MB, 8 000 ms floor on 95 (where it was measured) and through 4.8.x, 6 000 ms since 4.9.0.**
+    The owner's ruling of 2026-09-17, after testing medium Q8 on his tablet: *"six seconds for
+    medium, since I can handle it"* (worst commit 2,508 ms = 0.42 of 6 000 ms). The same medium at a
+    different quantisation — identical depth, dims and vocabulary off the files' own headers.
+    **AN9 is this row's purpose.**
     `OFF: gap@30s ____ s  gap@5min ____ s  drain ____ s  max queue depth seen ____`
     `ON:  gap@30s ____ s  gap@5min ____ s  drain ____ s`
     `[ ] KEPT UP   [ ] FELL BEHIND, RECOVERED IN PAUSES   [ ] NEVER CAUGHT UP`
@@ -1386,8 +1389,9 @@ AN8. **small Q5_1 against small Q8_0, on the SAME device (AN1 vs AN2) — THE QU
     `[ ] Q8_0 is faster — the repack path is real  [ ] no difference  [ ] Q8_0 is slower`
 
 AN9. **medium Q5_0 against medium Q8_0 (AN3 vs AN4) — whether the repack path rescues a rung that
-    otherwise fails.** The cleaner of the two comparisons: both sit on the 8 000 ms floor, so there
-    is no floor confound at all. If AN3 loses and AN4 keeps up, the app has a multilingual medium it
+    otherwise fails.** The cleaner of the two comparisons: both sat on the 8 000 ms floor as run on
+    95 (AN4 moved to 6 000 ms in 4.9.0, after this comparison was made), so there was no floor
+    confound at all. If AN3 loses and AN4 keeps up, the app has a multilingual medium it
     can offer — and that is the single most valuable outcome this session can produce.
     `Q5_0 drain ____ s   Q8_0 drain ____ s   device ____________`
     `[ ] Q8_0 rescues it  [ ] both fail  [ ] both keep up  [ ] Q8_0 is worse`

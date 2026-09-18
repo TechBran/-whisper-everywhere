@@ -190,13 +190,19 @@ class CommitCadencePolicyTest {
         // 6 s MULTI row — the controller's ruling on the reviewers' finding, with the arithmetic
         // on MIN_COMMIT_INTERVAL_MULTI_MS: same whisper-small weights as `multi`, the 4.7
         // default, worst commit 1,993 ms = 0.33 of 6 000, F/floor + m ~0.24. `medium-q8` and
-        // `ultra-q8` stay on the LARGE row (medium's floor is a separate ruling the owner has
-        // not made); the retired Q5 rungs stay where they were. Pinned per rung in
+        // `ultra-q8` stayed on the LARGE row through 4.8.x (medium's floor was a separate ruling
+        // the owner had not made); the retired Q5 rungs stay where they were.
+        //
+        // 4.9.0: the owner made medium's ruling after testing medium Q8 on his tablet ("six
+        // seconds for medium, since I can handle it"), and `medium-q8` MOVED to the 6 s MULTI
+        // row: worst commit 2,508 ms = 0.42 of 6 000, F/floor + m ~0.26. `ultra-q8` STAYS on the
+        // LARGE row by his same-day ruling ("keep it the way it is"); its worst Tab commit was
+        // 7,930 ms, so 7 000 is not supported. Pinned per rung in
         // theQ8LadderIsPacedOnTheRowsItWasRuledOnto.
         val expected = mapOf(
             "eco" to 1_200L, "base" to 1_200L, "pro" to 6_000L,
             "multi" to 6_000L, "extreme" to 8_000L, "ultra" to 8_000L,
-            "small-q8" to 6_000L, "medium-q5" to 8_000L, "medium-q8" to 8_000L,
+            "small-q8" to 6_000L, "medium-q5" to 8_000L, "medium-q8" to 6_000L,
             "ultra-q8" to 8_000L, "large-v3" to 8_000L,
             "npu" to 1_200L, "npu-turbo" to 2_000L,
         )
@@ -218,16 +224,33 @@ class CommitCadencePolicyTest {
         // ladder.md), so at 6 000 its worst commit is 0.33 of the floor and F/floor + m is ~0.24
         // against the 0.70 rule. On versionCode 95 it paced at 8 000 via `else`, which would have
         // handed every fresh install a slower minimum cadence than the 4.3.x default (`multi`,
-        // 6 000) on a model 2.2x faster per commit. `medium-q8` and `ultra-q8` STAY on the LARGE
-        // row: medium's floor is a separate ruling the owner has not made, and ultra kept up
-        // with no margin at 8 000.
+        // 6 000) on a model 2.2x faster per commit. `medium-q8` and `ultra-q8` STAYED on the
+        // LARGE row through 4.8.x: medium's floor was a separate ruling the owner had not made,
+        // and ultra kept up with no margin at 8 000.
+        //
+        // 4.9.0 — the owner's ruling on medium (2026-09-17, after testing medium Q8 on his
+        // tablet: "six seconds for medium, since I can handle it"). `medium-q8` takes the 6 000
+        // MULTI row: measured F = 1.341 s median / 2.508 s worst on the same Tab, so the worst
+        // commit is 0.42 of the floor and F/floor + m is ~0.26 against the 0.70 rule. `ultra-q8`
+        // STAYS at 8 000 by his same-day ruling ("keep it the way it is"), and the number agrees:
+        // its worst Tab commit was 7,930 ms, so 7 000 is not supported.
         assertEquals(6_000L, CommitCadencePolicy.minCommitIntervalMs("small-q8", isCloudBatch = false))
-        assertEquals(8_000L, CommitCadencePolicy.minCommitIntervalMs("medium-q8", isCloudBatch = false))
+        assertEquals(6_000L, CommitCadencePolicy.minCommitIntervalMs("medium-q8", isCloudBatch = false))
         assertEquals(8_000L, CommitCadencePolicy.minCommitIntervalMs("ultra-q8", isCloudBatch = false))
         assertEquals(
             "small-q8 takes multi's row because it IS multi's weights at Q8_0 — not its own new number",
             CommitCadencePolicy.minCommitIntervalMs("multi", isCloudBatch = false),
             CommitCadencePolicy.minCommitIntervalMs("small-q8", isCloudBatch = false),
+        )
+        assertEquals(
+            "medium-q8 takes the MULTI row by the owner's ruling — not its own new number",
+            CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS,
+            CommitCadencePolicy.minCommitIntervalMs("medium-q8", isCloudBatch = false),
+        )
+        assertEquals(
+            "ultra-q8 stays on the LARGE row: 'keep it the way it is', and its worst commit was 7,930 ms",
+            CommitCadencePolicy.MIN_COMMIT_INTERVAL_LARGE_MS,
+            CommitCadencePolicy.minCommitIntervalMs("ultra-q8", isCloudBatch = false),
         )
     }
 
@@ -530,8 +553,9 @@ class CommitCadencePolicyTest {
             // 4.6: each new rung's SLOW floor is its fast floor, which is what "the governor is
             // inert by construction on every row but npu-turbo" means — those rows are duty-
             // derived already, so depth 2 has nothing left to buy back. 4.7.0 moved `small-q8` to
-            // the MULTI row (see everyCatalogTierIsNamedExplicitly); its slow floor moved with it.
-            "small-q8" to 6_000L, "medium-q5" to 8_000L, "medium-q8" to 8_000L,
+            // the MULTI row and 4.9.0 moved `medium-q8` there on the owner's ruling (see
+            // everyCatalogTierIsNamedExplicitly); their slow floors moved with them.
+            "small-q8" to 6_000L, "medium-q5" to 8_000L, "medium-q8" to 6_000L,
             "ultra-q8" to 8_000L, "large-v3" to 8_000L,
         )
         assertEquals(

@@ -391,7 +391,10 @@ class TierThroughputTest {
             // also the floor the doc's table computes its duty against; on versionCode 95 it
             // paced at 8 000 — its `because` carries both readings.
             Expected("small-q8", 1_217L, "1,993", 6_000L, KeepUp.KEPT_UP, "07:15"),
-            Expected("medium-q8", 1_341L, "2,508", 8_000L, KeepUp.KEPT_UP, "07:04"),
+            // medium-q8's floor is the one it is paced on SINCE 4.9.0 (the MULTI row, by the
+            // owner's ruling); on versionCode 95 and through 4.8.x it paced at 8 000, which is
+            // the reading the doc's table carries — its `because` gives both.
+            Expected("medium-q8", 1_341L, "2,508", 6_000L, KeepUp.KEPT_UP, "07:04"),
             Expected("ultra-q8", 4_849L, "7,930", 8_000L, KeepUp.KEPT_UP_WITHOUT_MARGIN, "06:54"),
             Expected("medium-q5", 9_294L, "11,782", 8_000L, KeepUp.NEVER_CAUGHT_UP, "08:30"),
         ).forEach { e ->
@@ -442,6 +445,9 @@ class TierThroughputTest {
      * not inherited.** 4.7.0 made exactly that move for `small-q8` — onto the 6 000 ms MULTI row,
      * by controller ruling — and this test is why its row was re-read at 6 000 (worst 1,993 ms =
      * 0.33 of the floor, F/floor + m ~0.24) rather than carried over from the 8 000 reading.
+     * 4.9.0 made the same move for `medium-q8`, by the OWNER's ruling ("six seconds for medium,
+     * since I can handle it"), and its row was re-read the same way (worst 2,508 ms = 0.42 of
+     * 6 000, F/floor + m ~0.26).
      */
     @Test fun every_measurement_is_pinned_to_the_commit_floor_it_was_measured_at() {
         TierThroughputRecord.RECORD.forEach { row ->
@@ -466,6 +472,22 @@ class TierThroughputTest {
         assertTrue("small-q8's reading must give the 6 000 ms reading", small.because.contains("6 000"))
         assertTrue("small-q8's reading must record the 8 000 ms floor it was measured under", small.because.contains("8 000"))
         assertTrue("small-q8's reading must name the build that paced it at 8 000", small.because.contains("versionCode 95"))
+        // The second such row (4.9.0): `medium-q8` paced at 8 000 on 95 and through 4.8.x (worst
+        // 0.31, the reading the doc's table carries); since 4.9.0 the app paces it at 6 000 on the
+        // owner's ruling. Its row carries the floor it is paced at now and gives both readings.
+        val medium = TierThroughputRecord.forTier("medium-q8")!!.verdict as ThroughputVerdict.Measured
+        assertEquals(6_000L, medium.measurement.commitFloorMs)
+        assertEquals(CommitCadencePolicy.MIN_COMMIT_INTERVAL_MULTI_MS, medium.measurement.commitFloorMs)
+        assertTrue("medium-q8's reading must give the 6 000 ms reading", medium.because.contains("6 000"))
+        assertTrue("medium-q8's reading must record the 8 000 ms floor it was measured under", medium.because.contains("8 000"))
+        assertTrue("medium-q8's reading must name the build that paced it at 8 000", medium.because.contains("versionCode 95"))
+        assertTrue("medium-q8's move is the OWNER's ruling, in his words", medium.because.contains("six seconds for medium, since I can handle it"))
+        assertTrue("medium-q8's reading must give the 6 000 ms worst-commit ratio", medium.because.contains("0.42"))
+        // ultra-q8 did NOT move: the owner's same-day ruling was "keep it the way it is", and its
+        // worst commit (7,930 ms) would not support 7 000 either.
+        val ultra = TierThroughputRecord.forTier("ultra-q8")!!.verdict as ThroughputVerdict.Measured
+        assertEquals(8_000L, ultra.measurement.commitFloorMs)
+        assertEquals(CommitCadencePolicy.MIN_COMMIT_INTERVAL_LARGE_MS, ultra.measurement.commitFloorMs)
     }
 
     /**
