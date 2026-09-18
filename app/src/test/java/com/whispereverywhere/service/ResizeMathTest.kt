@@ -1,6 +1,7 @@
 package com.whispereverywhere.service
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -90,6 +91,58 @@ class ResizeMathTest {
         assertEquals(320f, r.widthDp, 0.001f)
         assertEquals(160f, r.heightDp, 0.001f)
         assertEquals(-105, r.windowDyPx)
+    }
+
+    // ---- The axis lock (4.9.1, owner 2026-09-17: "moving up should resize and lock the window
+    // vertically, and the same horizontally, and moving in combination should of course also
+    // work"). Evaluated against the TOTAL drag from the start point on every call.
+
+    @Test fun a_clearly_vertical_drag_holds_the_width_at_its_start() {
+        // 105px up with a 20px wobble sideways: 105 >= 2.5 * 20, so the width does not move.
+        val r = resize(20f, -105f)
+        assertEquals(280f, r.widthDp, 0f)
+        assertEquals(160f, r.heightDp, 0.001f)
+        assertEquals(-105, r.windowDyPx)
+    }
+
+    @Test fun a_clearly_horizontal_drag_holds_the_height_and_the_window_does_NOT_walk() {
+        // 105px right with a 20px wobble up: 105 >= 2.5 * 20, so the height holds — and with it
+        // windowDyPx is exactly 0. This is the bug's other half: with the height unchanged there
+        // is no compensation, so a width-only resize can never drag the window up the screen.
+        val r = resize(105f, -20f)
+        assertEquals(320f, r.widthDp, 0.001f)
+        assertEquals(120f, r.heightDp, 0f)
+        assertEquals(0, r.windowDyPx)
+    }
+
+    @Test fun a_drag_between_the_locks_is_a_diagonal_and_both_axes_move() {
+        // 105px right, 60px up: 105 < 2.5 * 60 and 60 < 2.5 * 105 — neither axis dominates.
+        val r = resize(105f, -60f)
+        assertEquals(320f, r.widthDp, 0.001f)
+        assertEquals(120f + 60f / density, r.heightDp, 0.001f)
+        assertEquals(-60, r.windowDyPx)
+    }
+
+    @Test fun the_ratio_boundary_is_inclusive_on_the_locking_side() {
+        // Exactly 2.5x: |dx| = 100, |dy| = 40. The lock engages AT the ratio, so this is
+        // width-only; one pixel more of dy and it is a diagonal.
+        val atRatio = resize(100f, -40f)
+        assertEquals(120f, atRatio.heightDp, 0f)
+        assertEquals(0, atRatio.windowDyPx)
+        val justPast = resize(100f, -41f)
+        assertTrue("41px of dy must register once |dx| < 2.5 * |dy|", justPast.heightDp > 120f)
+        assertEquals(-41, justPast.windowDyPx)
+    }
+
+    @Test fun the_lock_is_symmetric_for_the_vertical_side_of_the_boundary() {
+        val atRatio = resize(40f, -100f)
+        assertEquals(280f, atRatio.widthDp, 0f)
+        val justPast = resize(41f, -100f)
+        assertTrue("41px of dx must register once |dy| < 2.5 * |dx|", justPast.widthDp > 280f)
+    }
+
+    @Test fun the_ratio_is_the_documented_two_and_a_half() {
+        assertEquals(2.5f, ResizeMath.AXIS_LOCK_RATIO, 0f)
     }
 
     @Test fun a_tiny_screen_whose_max_is_below_MIN_never_throws_and_pins_to_MIN() {

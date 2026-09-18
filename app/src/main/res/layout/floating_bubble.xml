@@ -29,8 +29,11 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content">
 
-            <!-- Read-only text for finalized transcription chunks. Width + max height are
-                 RUNTIME-OWNED (applyPreviewSize); 280dp is only the pre-first-apply default.
+            <!-- Read-only text for finalized transcription chunks. Width + height are
+                 RUNTIME-OWNED (applyPreviewSize); 280dp is only the pre-first-apply default and
+                 the height is set EXACTLY there (4.9.1) — not as a ceiling — so the panel is the
+                 chosen size whether or not the text fills it. wrap_content here is the
+                 pre-first-apply state only.
 
                  The scrollbar is PERSISTENT and VISIBLE (owner ruling 2026-09-17, the 96 tablet
                  session: "that scrolling bar is very useful so people know that they can
@@ -51,7 +54,6 @@
                 android:scrollbarTrackVertical="@drawable/bubble_scrollbar_track"
                 android:textColor="#FFFFFF"
                 android:textSize="14sp"
-                android:minHeight="20dp"
                 android:hint="Listening..."
                 android:textColorHint="#99FFFFFF"
                 android:gravity="top|start" />

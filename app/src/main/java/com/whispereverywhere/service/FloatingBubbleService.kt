@@ -2611,8 +2611,26 @@ class FloatingBubbleService : Service(),
      * Apply the persisted (or, mid-resize, the in-flight) preview panel size to both transcript
      * views. dp -> px against the CURRENT displayMetrics and re-clamped to the CURRENT screen on
      * every call, so a stale/corrupt pref or a rotation can never produce an off-screen or
-     * zero-size panel. Runtime owns the panel's width and max height; the XML 280dp width is only
-     * the pre-first-apply default and android:maxHeight was removed from the layout entirely.
+     * zero-size panel. Runtime owns the committed panel's width AND height; the XML 280dp width
+     * is only the pre-first-apply default and the layout states no height at all.
+     *
+     * ### The height is EXACT, not a ceiling (4.9.1)
+     *
+     * Through 4.9.0 this set `maxHeight` on a `wrap_content` TextView, so the panel was the
+     * chosen height only when the text FILLED it. [handleResizeTouch] compensates `params.y` by
+     * the height change so the top edge follows the finger — correct when the view grows, but on
+     * a short panel (a session's first words, after [showSessionPreview] clears the text) the
+     * view did not grow and the compensation ran alone: the whole window walked up and down under
+     * the finger. That is the owner's "while transcribing it wants to drag the window around"
+     * (2026-09-17). The height goes on `layoutParams.height` now, so the panel IS the chosen size
+     * empty or full, and the compensation always has the growth it is compensating for.
+     *
+     * `layoutParams.height` rather than `minHeight`+`maxHeight`: it is the same fact as the width
+     * on the same object; the TextView's EXACTLY-measured height means `transcriptionEditText
+     * .height` in [showSessionPreview]'s scroll-to-newest maths reads the panel height with no
+     * measure-pass ambiguity; and `gravity=top|start` and the hint are TextView attributes that
+     * neither route touches. The live-delta strip keeps its own `wrap_content` + `maxLines=5`
+     * behaviour (it is not part of heightDp); only its width follows.
      */
     private fun applyPreviewSize(
         widthDp: Float = app.preferencesManager.bubbleTextWidthDp,
@@ -2625,8 +2643,10 @@ class FloatingBubbleService : Service(),
             .coerceAtLeast(ResizeMath.MIN_HEIGHT_DP)
         val widthPx = (widthDp.coerceIn(ResizeMath.MIN_WIDTH_DP, maxW) * dm.density).toInt()
         val heightPx = (heightDp.coerceIn(ResizeMath.MIN_HEIGHT_DP, maxH) * dm.density).toInt()
-        transcriptionEditText.layoutParams = transcriptionEditText.layoutParams.apply { width = widthPx }
-        transcriptionEditText.maxHeight = heightPx
+        transcriptionEditText.layoutParams = transcriptionEditText.layoutParams.apply {
+            width = widthPx
+            height = heightPx
+        }
         transcriptionDeltaText.layoutParams = transcriptionDeltaText.layoutParams.apply { width = widthPx }
     }
 
@@ -2775,6 +2795,9 @@ class FloatingBubbleService : Service(),
      * persist on ACTION_UP (size AND the moved y, exactly like the root drag-end persists
      * position); long-press without a drag resets to the 280x120dp defaults. Pin locks POSITION,
      * not size — resizing while pinned is allowed, and its y-compensation is part of resizing.
+     * The axis lock (a clearly vertical drag holds the width, a clearly horizontal one holds the
+     * height and moves the window not at all) lives in [ResizeMath.resize], which sees the total
+     * drag from the start point on every move.
      */
     private fun handleResizeTouch(event: MotionEvent): Boolean {
         when (event.action) {
