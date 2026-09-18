@@ -605,6 +605,40 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastWhisperSegments(
 }
 
 // ---------------------------------------------------------------------------------------------
+// 4.10 Task 3: ONE DIAGNOSTIC LINE FROM KOTLIN, THROUGH HERE, SO IT SURVIVES THE RELEASE BUILD.
+//
+// This is the strangest export in the file and the reason is R8. app/proguard-rules.pro strips
+// EVERY android.util.Log call from the release build ("Release log hygiene",
+// -assumenosideeffects on all five levels), and the build the owner runs a device session on is
+// the release build — a local debug build cannot even be installed over the Play copy. Native
+// __android_log_print is untouched by R8, which that same comment block already states. So a
+// Kotlin measurement that has to be read off a real device goes out through this function; every
+// other WE-DIAG line in Kotlin is development-time only and correctly disappears.
+//
+// The ONE caller is FloatingBubbleService's speaker callback (plan Task 3's spike, one line per
+// committed chunk). It is deliberately not a general-purpose logger: nothing here filters, rate
+// limits or inspects the string, so the discipline that transcript content never reaches a log
+// stays where it belongs — at the call site, whose input is SpeakerAssignment, a type with no
+// text in it at all.
+//
+// Reachable from Main, so nothing here may block or throw: a null jstring, or a
+// GetStringUTFChars that fails (it can, on OOM, with an exception pending), returns quietly.
+// ---------------------------------------------------------------------------------------------
+extern "C" JNIEXPORT void JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_diag(
+        JNIEnv *env, jobject /* this */, jstring line) {
+    if (line == nullptr) {
+        return;
+    }
+    const char *chars = env->GetStringUTFChars(line, nullptr);
+    if (chars == nullptr) {
+        return;
+    }
+    LOGDIAG("%s", chars);
+    env->ReleaseStringUTFChars(line, chars);
+}
+
+// ---------------------------------------------------------------------------------------------
 // 4.0 NPU tier (Task Q2): the mel export.
 //
 // The NPU encoder's input_features tensor is ufixed16 [1,melBins,3000] - the tier's own mel band

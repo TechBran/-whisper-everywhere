@@ -15,6 +15,7 @@ import java.nio.ByteBuffer
  *   - lastVadSegments() / lastWhisperSegments() -> the 4.10 segment geometry of the last
  *     transcribeRaw: where each speech segment sat in the raw audio, and which bytes of the
  *     returned text came out of it. NOT diagnostics — the speaker pipeline reads both.
+ *   - diag()             -> __android_log_print: the one Kotlin diagnostic that has to survive R8
  *
  * The returned Long is an opaque native pointer handle owned by the caller
  * (LocalWhisperEngine caches it). Never dereference it in Kotlin.
@@ -299,6 +300,28 @@ object WhisperNative {
      * the-gate contract as [lastVadSegments].
      */
     external fun lastWhisperSegments(): IntArray
+
+    /**
+     * Writes one line to logcat under the house `WE-DIAG` tag **through native logging**, so that
+     * it survives the RELEASE build (4.10 Task 3).
+     *
+     * It exists because of R8 and for no other reason. `app/proguard-rules.pro` strips every
+     * `android.util.Log` call from release ("Release log hygiene"), and release is the only build
+     * the owner can run a device session on — a local build can never install over the Play copy.
+     * `__android_log_print` is untouched by R8, so a Kotlin MEASUREMENT that has to be read off a
+     * real device comes out here. Every other `WE-DIAG` line in Kotlin is development-time only
+     * and correctly disappears from the store build; this is not a licence to move them here.
+     *
+     * The one caller is the speaker spike's per-chunk line (`SpeakerDiag`, emitted from
+     * `FloatingBubbleService`). NOTHING is filtered, truncated or inspected on the way through —
+     * the rule that transcript content never reaches a log stays at the call site, whose input is
+     * a `SpeakerAssignment`, a type that carries no text at all. Do not hand this a string built
+     * from user speech.
+     *
+     * Safe on any thread, including Main: the native side returns quietly on a null string or a
+     * failed `GetStringUTFChars` and never blocks.
+     */
+    external fun diag(line: String)
 
     /**
      * Loads **only the mel filterbank** from a ggml whisper model and returns a context that can do

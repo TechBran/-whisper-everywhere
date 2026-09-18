@@ -273,6 +273,48 @@ class SpeakerTrackerTest {
         assertEquals(1, tracker.assign(unit(90.0), longSeg))
     }
 
+    // ------------------------------------------------------------------ what the spike reads
+
+    @Test fun theBestSimilarityIsPublishedForEveryDecisionThatMEASUREDOne() {
+        // 4.10 Task 3: this is the column plan Task 4 sets tSame/tNew from, so every band has to
+        // publish the number it decided on — including the two that do NOT move a centroid.
+        val tracker = SpeakerTracker()
+
+        // The FIRST speaker measured nothing: there was nobody to compare against.
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertTrue("no similarity exists for the first voice", tracker.lastBestSimilarity.isNaN())
+
+        // A confident match publishes its similarity (cos 20° = 0.940).
+        assertEquals(1, tracker.assign(unit(20.0), longSeg))
+        assertEquals(0.940f, tracker.lastBestSimilarity, 0.002f)
+
+        // A new speaker: below tNew against everyone, so nothing was matched — but a similarity
+        // WAS measured, and it is the one that has to land in the distribution.
+        assertEquals(2, tracker.assign(unit(90.0), longSeg))
+        assertEquals("the reading that OPENED a speaker is the sharpest input of all", true, tracker.lastBestSimilarity < 0.45f)
+
+        // The hysteresis band, the reading the band exists for (cos 60° = 0.5 against speaker 2).
+        val before = tracker.currentSpeaker()
+        assertEquals(before, tracker.assign(unit(150.0), longSeg))
+        assertEquals(0.5f, tracker.lastBestSimilarity, 0.06f)
+    }
+
+    @Test fun anUnusableEmbeddingAndAResetBothPublishNOSimilarityRatherThanTheLastOne() {
+        // A stale number here would be read as a real measurement of the segment that produced
+        // it — the one failure mode a `best=` column cannot survive.
+        val tracker = SpeakerTracker()
+        tracker.assign(unit(0.0), longSeg)
+        tracker.assign(unit(10.0), longSeg)
+        assertFalse(tracker.lastBestSimilarity.isNaN())
+
+        tracker.assign(FloatArray(2), longSeg) // all-zero: not normalisable
+        assertTrue("an unusable embedding measured nothing", tracker.lastBestSimilarity.isNaN())
+
+        tracker.assign(unit(10.0), longSeg)
+        tracker.reset()
+        assertTrue("and a new session starts with nothing measured", tracker.lastBestSimilarity.isNaN())
+    }
+
     @Test fun theShippedThresholdsAreTheSpecsStartingPointUntilTheDeviceSessionSetsThem() {
         // Spec §3.2: 0.55 / 0.45 for CAM++, "set by the spike (§6), not by this document". Task 4
         // replaces these two numbers from the `best=` distribution the device session logs; this

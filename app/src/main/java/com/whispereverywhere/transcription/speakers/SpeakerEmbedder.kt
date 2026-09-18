@@ -10,6 +10,11 @@ import com.whispereverywhere.npu.NpuAssetStage
  * THE ONE ADAPTER over sherpa's speaker-embedding extractor (sherpa-onnx 1.13.7) — a slice of PCM
  * in, a 512-float voice fingerprint out, `null` on every failure (4.10 Task 2, spec §3.2 step 2).
  *
+ * It is the production [VoicePrints] (4.10 Task 3): that interface is the seam
+ * [SpeakerAssigner] — which owns every decision about which samples are fingerprinted and what
+ * becomes of the answer — is unit-tested through, precisely because nothing may reference THIS
+ * class from a test (see "Why no test may name this class" below).
+ *
  * ### The model, and why it is an asset
  *
  * 3D-Speaker **CAM++**, `speaker_campplus_en_16k.onnx`: 29_596_978 bytes, sha256
@@ -79,7 +84,7 @@ import com.whispereverywhere.npu.NpuAssetStage
  * The `Log` lines here are stripped from the release build by R8, so what the device session reads
  * is the assigner's one `WhisperNative.diag` line per chunk (plan Task 3), not these.
  */
-class SpeakerEmbedder(private val app: Application) {
+class SpeakerEmbedder(private val app: Application) : VoicePrints {
 
     private var extractor: SpeakerEmbeddingExtractor? = null
 
@@ -91,7 +96,7 @@ class SpeakerEmbedder(private val app: Application) {
      * in [-1, 1] at [sampleRate]. Returns the embedding, or null if the model is unavailable, the
      * stream never became ready, or anything at all threw.
      */
-    fun embed(pcm: FloatArray, sampleRate: Int = 16_000): FloatArray? {
+    override fun embed(pcm: FloatArray, sampleRate: Int): FloatArray? {
         if (pcm.isEmpty()) return null
         val loaded = extractor() ?: return null
         return try {
@@ -111,7 +116,7 @@ class SpeakerEmbedder(private val app: Application) {
     }
 
     /** Frees the resident model. Called at session teardown; safe to call twice. */
-    fun release() {
+    override fun release() {
         val loaded = extractor ?: return
         extractor = null
         runCatching { loaded.release() }

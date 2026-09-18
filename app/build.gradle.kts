@@ -437,6 +437,17 @@ tasks.withType<Test>().configureEach {
         // :app:testDebugUnitTest UP-TO-DATE with the pins green against the file as it used to be.
         "src/main/assets/speaker_campplus_en_16k.onnx",
         "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerEmbedder.kt",
+        // (4.10 Task 3) The ASSIGNER and the PREVIEW TEE, by this list's stated rule — membership
+        // follows what the tests READ. `SpeakerWiringPinTest` reads both as text: the assigner for
+        // its executor NAME (a device trace and a logcat thread column are read by it) and for the
+        // zero-counts that keep it pure — no `import android.`, no sherpa, no reference to the
+        // adapter — and the tee for the negative half of the spec's untouched-preview ruling
+        // (§2, §4), where the assertion is that a whole package NEVER names the speaker pipeline.
+        // A zero-count over comments is satisfied by a comment, so the mutation each of those
+        // pins exists to catch is exactly the comment-shaped one that compiles to a byte-identical
+        // class and leaves :app:testDebugUnitTest UP-TO-DATE.
+        "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerAssigner.kt",
+        "src/main/java/com/whispereverywhere/transcription/stream/PreviewTeeEngine.kt",
         "src/main/java/com/whispereverywhere/npu/NpuAssetStage.kt",
         // (4.1 L3) NpuModelSpec.kt joins for the same reason L2 added NpuDecodePolicy.kt:
         // MelbankAssetTest now READS it, because the absence of a default on `melAsset` is a

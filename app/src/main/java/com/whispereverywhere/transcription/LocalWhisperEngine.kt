@@ -2,6 +2,7 @@ package com.whispereverywhere.transcription
 
 import android.util.Log
 import com.whispereverywhere.audio.EndpointerTuning
+import com.whispereverywhere.transcription.speakers.SpeakerAssigner
 import com.whispereverywhere.transcription.speakers.SpeakerSpans
 import com.whispereverywhere.util.AudioMath
 import com.whispereverywhere.util.RetryPolicy
@@ -100,6 +101,30 @@ class LocalWhisperEngine(
 
     @Volatile private var listener: TranscriptionEngine.Listener? = null
     @Volatile private var language: String? = null
+
+    /**
+     * THIS SESSION'S SPEAKER ASSIGNER, or null when there is none (4.10 Task 3, spec §3.2).
+     *
+     * The service owns the lifecycle and this engine owns the one thing the service cannot reach:
+     * the chunk's raw samples. They exist inside [runSegment], on the native executor, for the
+     * length of one transcribe — the buffer the VAD's `origStart`/`origEnd` bounds index, and the
+     * only audio in the process where a speaker's own voice is unstitched. Copying it across the
+     * service seam to be sliced there would mean shipping 30 s of PCM per commit to produce a
+     * paragraph break; instead nothing new crosses the seam at all and the assigner is handed
+     * samples where they already are.
+     *
+     * **A `var`, set per session, and re-pointed even when the answer is null.** The service
+     * caches ONE engine across sessions (`warmLocalEngine` — it owns the native context), so an
+     * engine left holding the previous session's assigner would fingerprint a new session's
+     * voices into the old session's numbering, which is the spec's *"speaker numbers restart at 1
+     * each session"* broken with every unit test still green. `SpeakerWiringPinTest` pins both
+     * halves: the re-point at session start and the detach at teardown, in that order.
+     *
+     * Null is the ordinary case and is every pre-4.10 behaviour exactly: speaker detection off,
+     * a cloud session, or a backend that publishes no geometry.
+     */
+    @Volatile
+    var speakerAssigner: SpeakerAssigner? = null
 
     /**
      * Session-scoped language pin (3.6.0 Workstream B). Auto-language sessions only: once the
@@ -420,6 +445,12 @@ class LocalWhisperEngine(
         // D (3.6.0): true once at least one preview delta was forwarded for THIS segment, so
         // the strip is cleared exactly when something was put on it — and never otherwise.
         var streamedPreview = false
+        // 4.10 Task 3: the chunk's own samples, kept reachable for the speaker pass at the bottom
+        // of this function. Hoisted rather than re-decoded: `AudioMath.pcm16ToFloat(pcm)` a second
+        // time would allocate another 30 s buffer per commit, and a re-decode is also a second
+        // chance to disagree with the buffer the native VAD bounds were measured against. Null for
+        // every branch where whisper never ran.
+        var chunkSamples: FloatArray? = null
         val outcome: SegmentOutcome = try {
             val ctx = ctxPtr
             if (ctx == 0L) {
@@ -431,7 +462,7 @@ class LocalWhisperEngine(
                 if (listener === myListener) myListener.onError("Speech model not loaded")
                 SegmentOutcome.Lost(NO_MODEL)
             } else {
-                val samples = AudioMath.pcm16ToFloat(pcm)
+                val samples = AudioMath.pcm16ToFloat(pcm).also { chunkSamples = it }
                 // B (3.6.0) / L7 (4.1): an explicit language passes through untouched under
                 // BOTH arms — the ruling's absolute half. A per-utterance backend (the live NPU
                 // tier, where detect is ~4.5 ms against a ~405 ms encode) is handed `lang`
@@ -590,6 +621,28 @@ class LocalWhisperEngine(
             SegmentOutcome.Lost(TRANSCRIBE_FAILED)
         }
         resolve(seq, outcome, clearPreview = streamedPreview, myListener)
+        // ===================== 4.10 Task 3 — THE SPEAKER PASS, AND IT IS LAST =====================
+        // BELOW the delivery, deliberately and structurally. Everything above this line is the
+        // user's text reaching the user; this is a paragraph break and a label, and spec §3.3's
+        // whole cost argument is that the commit floors (6 000 / 8 000 ms) were measured with this
+        // thread doing whisper's work and nothing else. `assign` only queues — it returns before
+        // the first sample is read, on the assigner's own `speaker-embed` thread — so even here
+        // the cost to this thread is one submission. `SpeakerWiringPinTest` pins the order, the
+        // single call site, and that this engine never blocks on that executor.
+        //
+        // Three guards, one for each way this can be wrong:
+        //  - a null assigner is the ordinary case (detection off, cloud, or a session with none);
+        //  - `listener === myListener` is the SAME stale-session guard the resolution path uses: a
+        //    dead session's late segment must never feed the new session's tracker, which is the
+        //    one way a speaker's number could carry across the session boundary;
+        //  - a null `vad` means no geometry (cloud, the NPU tier while it is live, or a chunk the
+        //    VAD found no speech in), and spec §2 forbids reading that as one speaker.
+        val assigner = speakerAssigner
+        if (assigner != null && listener === myListener) {
+            val vad = (outcome as? SegmentOutcome.Text)?.vad
+            val samples = chunkSamples
+            if (vad != null && samples != null) assigner.assign(seq, samples, vad)
+        }
     }
 
     /**

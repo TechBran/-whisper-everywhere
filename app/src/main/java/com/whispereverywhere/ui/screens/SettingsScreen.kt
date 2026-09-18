@@ -167,6 +167,10 @@ fun SettingsScreen(
     val vibrationEnabled by app.preferencesManager.vibrationEnabled.collectAsState()
     val bubbleAlwaysOn by app.preferencesManager.bubbleAlwaysOn.collectAsState()
     val preferDeviceAudio by app.preferencesManager.preferDeviceAudio.collectAsState()
+    // (4.10) The two speaker switches, read reactively for the same reason every other row here
+    // is: the row has to redraw on the tap that changed it.
+    val detectSpeakers by app.preferencesManager.detectSpeakersFlow.collectAsState()
+    val speakerLabelsInExport by app.preferencesManager.speakerLabelsInExportFlow.collectAsState()
 
     // Bump to force a re-read of installed-model / disk-usage after a delete or when
     // returning from the model-onboarding flow.
@@ -737,6 +741,34 @@ fun SettingsScreen(
                         "permission the first time",
                     checked = preferDeviceAudio,
                     onCheckedChange = { app.preferencesManager.setPreferDeviceAudio(it) }
+                )
+                // (4.10) THE TWO SPEAKER ROWS, and the split between them is the owner's ruling
+                // rather than a UI convenience: the first is about the SHAPE of the transcript
+                // (paragraphs at a speaker change — "right now the text just comes out as a big
+                // blob"), the second is about whether the LABELS follow the text out of the app
+                // ("no need for that unless we see fit"). The first defaults on, the second off.
+                //
+                // The captions carry the whole of spec §2's table, because these rows are the
+                // only place a user ever learns it: labels appear in the transcript window once a
+                // second voice is heard, a text field gets paragraphs and never labels, and the
+                // export switch names BOTH of its destinations. `PreferencesSpeakerSettingsTest`
+                // pins the sentences for that reason.
+                SettingsSwitchItem(
+                    icon = Icons.Filled.RecordVoiceOver,
+                    title = "Detect speakers",
+                    subtitle = "Splits the transcript into paragraphs when a different person " +
+                        "speaks; shows Speaker labels in the transcript window " +
+                        "once a second voice is heard",
+                    checked = detectSpeakers,
+                    onCheckedChange = { app.preferencesManager.detectSpeakers = it }
+                )
+                SettingsSwitchItem(
+                    icon = Icons.Filled.ContentCopy,
+                    title = "Speaker labels in copied and saved text",
+                    subtitle = "Off: paragraphs only. " +
+                        "On: each paragraph starts with Speaker 1, Speaker 2 …",
+                    checked = speakerLabelsInExport,
+                    onCheckedChange = { app.preferencesManager.speakerLabelsInExport = it }
                 )
                 SettingsSwitchItem(
                     icon = Icons.Filled.Vibration,

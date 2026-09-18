@@ -70,6 +70,24 @@ class SpeakerTracker(
 
     private var current = 0
     private var latched = false
+    private var lastBest = Float.NaN
+
+    /**
+     * The cosine similarity the LAST [assign] weighed its decision against — the closest known
+     * speaker's — or `NaN` when no similarity was measured: an unusable embedding, or the first
+     * speaker of a session, who has nobody to be compared with.
+     *
+     * It exists for ONE reader, and that reader is why it is a property and not a return value:
+     * the 4.10 device session sets [tSame] and [tNew] from the distribution of this number over a
+     * real conversation (spec §3.2 step 3 defers both thresholds to the spike deliberately), so
+     * the value has to leave this object without changing [assign]'s signature under the tests
+     * that already pin it. `NaN` rather than 0 because 0 is a real reading — two orthogonal
+     * voices — and the column this feeds is about to become a threshold.
+     *
+     * Valid only immediately after an [assign] on the same thread, like every one-slot diagnostic
+     * in this app. [reset] clears it.
+     */
+    val lastBestSimilarity: Float get() = lastBest
 
     /** How many speakers this session has opened. Never above [maxSpeakers]. */
     val speakerCount: Int get() = centroids.size
@@ -94,6 +112,10 @@ class SpeakerTracker(
      * Returns 0 only when the embedding is unusable and no speaker has been assigned yet.
      */
     fun assign(embedding: FloatArray, durationSec: Float): Int {
+        // Cleared FIRST, so [lastBestSimilarity] can never describe a previous call: every early
+        // return below is a decision taken WITHOUT measuring a similarity, and the spike's
+        // `best=` column has to say so rather than repeat the last real number it saw.
+        lastBest = Float.NaN
         val v = normalised(embedding) ?: return current
         if (centroids.isEmpty()) return open(v, durationSec)
         if (v.size != centroids[0].size) return current
@@ -107,6 +129,7 @@ class SpeakerTracker(
                 best = i
             }
         }
+        lastBest = bestSimilarity
 
         val id: Int = when {
             bestSimilarity >= tSame -> {
@@ -133,6 +156,7 @@ class SpeakerTracker(
         heldTheFloor.clear()
         current = 0
         latched = false
+        lastBest = Float.NaN
     }
 
     // ------------------------------------------------------------------ internals

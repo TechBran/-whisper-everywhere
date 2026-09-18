@@ -501,6 +501,59 @@ class PreferencesManager(private val context: Context) {
         }
 
     /**
+     * 4.10 — SPEAKER DETECTION, DEFAULT ON (spec §7 item 1, taken as proposed).
+     *
+     * The owner's complaint is the shape of the output, not a missing option: *"right now the text
+     * just comes out as a big blob"*. Paragraph breaks at a speaker change are the fix, and a fix
+     * behind a switch nobody finds is not delivered. ON is safe as a default because a
+     * ONE-SPEAKER session is byte-for-byte today's output on every surface — the panel shows no
+     * label until a second voice is CONFIRMED (a segment of at least
+     * `SpeakerTracker.MIN_NEW_SPEAKER_SECONDS`), and a session that never confirms never renders a
+     * break either.
+     *
+     * Read PER SESSION at the tap (`FloatingBubbleService.startRecording`), so turning it off
+     * restores 4.9's output exactly from the next recording, and the ~40-60 MB the embedder holds
+     * resident is never loaded at all for a user who turned it off. Cloud sessions ignore it
+     * entirely (spec §2, §4: they behave exactly as today).
+     */
+    private val _detectSpeakers = MutableStateFlow(prefs.getBoolean(KEY_DETECT_SPEAKERS, DETECT_SPEAKERS_DEFAULT))
+    val detectSpeakersFlow: StateFlow<Boolean> = _detectSpeakers.asStateFlow()
+
+    var detectSpeakers: Boolean
+        get() = _detectSpeakers.value
+        set(value) {
+            prefs.edit().putBoolean(KEY_DETECT_SPEAKERS, value).apply()
+            _detectSpeakers.value = value
+        }
+
+    /**
+     * 4.10 — `Speaker N:` LABELS IN COPIED AND SAVED TEXT, DEFAULT OFF (spec §2, owner's ruling:
+     * *"when we copy it out, no need for that unless we see fit — maybe a setting where speaker
+     * labels go to the copied text or the saved text … if someone flips the toggle on, then they
+     * get the speaker labels"*).
+     *
+     * OFF is the default because the clipboard and the saved transcript are what LEAVES the app,
+     * and their shape must not change under a user who did not ask for it. Paragraph breaks at a
+     * speaker change appear there regardless — they are the feature; the labels are the opinion.
+     *
+     * It never affects text typed into another app's field: a text field is not a transcript
+     * (spec §2, the owner's ruling), so that surface gets paragraphs and never labels whatever
+     * this reads. And it is applied at EXPORT time rather than at save time, which is why the
+     * saved transcript keeps its speaker boundaries beside it: a user who flips this on wants it
+     * to be true of the transcripts they already have.
+     */
+    private val _speakerLabelsInExport =
+        MutableStateFlow(prefs.getBoolean(KEY_SPEAKER_LABELS_IN_EXPORT, SPEAKER_LABELS_IN_EXPORT_DEFAULT))
+    val speakerLabelsInExportFlow: StateFlow<Boolean> = _speakerLabelsInExport.asStateFlow()
+
+    var speakerLabelsInExport: Boolean
+        get() = _speakerLabelsInExport.value
+        set(value) {
+            prefs.edit().putBoolean(KEY_SPEAKER_LABELS_IN_EXPORT, value).apply()
+            _speakerLabelsInExport.value = value
+        }
+
+    /**
      * 4.5.1 — THE BUBBLE'S THREE USER-OWNED PRESENTATION FACTS (owner ruling 2026-09-12:
      * *"users can change the colour of their live words and of their transcribed committed words
      * as well … and maybe even the clarity of the black bubble background"*).
@@ -694,6 +747,22 @@ class PreferencesManager(private val context: Context) {
         const val BUBBLE_ALWAYS_ON_DEFAULT: Boolean = false
 
         /**
+         * "Detect speakers": ON for everyone (4.10, spec §7 item 1). Named rather than written as
+         * a literal inside the `getBoolean` call so the ruling has one home a test can assert
+         * against — see [detectSpeakers] for why ON is safe.
+         *
+         * No backfill, and it needs none: unlike [BUBBLE_ALWAYS_ON_DEFAULT] this setting has never
+         * shipped, so there is no install anywhere with a different expectation of it.
+         */
+        const val DETECT_SPEAKERS_DEFAULT: Boolean = true
+
+        /**
+         * "Speaker labels in copied and saved text": OFF (4.10, spec §2). The clipboard and the
+         * saved file are what leaves the app; see [speakerLabelsInExport].
+         */
+        const val SPEAKER_LABELS_IN_EXPORT_DEFAULT: Boolean = false
+
+        /**
          * THE DEFAULT-FLIP RULE, pure: what to write under the always-on key ONCE, at construction,
          * before the flow reads it — or `null` to write nothing.
          *
@@ -800,6 +869,8 @@ class PreferencesManager(private val context: Context) {
         private const val KEY_STT_LIVE_MODE_GEMINI = "stt_live_mode_gemini"
         /** The previewer's switch (4.4.0, R3: default on). Read in exactly one place. */
         private const val KEY_LOCAL_PREVIEW_ENABLED = "local_preview_enabled"
+        private const val KEY_DETECT_SPEAKERS = "detect_speakers"
+        private const val KEY_SPEAKER_LABELS_IN_EXPORT = "speaker_labels_in_export"
         // (4.5.1 Task 2) The bubble's three user-owned presentation facts. Int keys: two ARGB
         // colours and one percent. Every rule about the VALUES lives in BubbleColours.
         private const val KEY_BUBBLE_LIVE_COLOUR = "bubble_live_colour"

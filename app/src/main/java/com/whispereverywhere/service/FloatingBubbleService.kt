@@ -53,8 +53,12 @@ import com.whispereverywhere.transcription.TranscriptionEngine
 import com.whispereverywhere.transcription.cloud.CloudTranscriptionEngine
 import com.whispereverywhere.transcription.cloud.FallbackTranscriptionEngine
 import com.whispereverywhere.transcription.cloud.SttProviderFactory
+import com.whispereverywhere.transcription.speakers.SpeakerAssigner
+import com.whispereverywhere.transcription.speakers.SpeakerDiag
+import com.whispereverywhere.transcription.speakers.SpeakerEmbedder
 import com.whispereverywhere.ui.components.BarWaveformView
 import com.whispereverywhere.util.StreamingAudioRecorder
+import com.whispereverywhere.whisper.WhisperNative
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1022,6 +1026,14 @@ class FloatingBubbleService : Service(),
     // The on-device engine, ALWAYS reachable independently of whatever composite engine the user's
     // provider choice produced.
     private var localEngine: LocalWhisperEngine? = null
+
+    // (4.10 Task 3) THIS SESSION'S SPEAKER PASS — the `speaker-embed` executor, sherpa's ~40-60 MB
+    // embedding model and the session's SpeakerTracker, all inside one object. Main-confined like
+    // localEngine, and unlike it NOT reused across sessions: the tracker's numbering is per
+    // session by spec (§2), so a new session gets a new object rather than a reset call some later
+    // path could forget. Null whenever the session has no speaker pass — detection off, or a
+    // cloud session, which spec §2/§4 leave exactly as they are.
+    private var speakerAssigner: SpeakerAssigner? = null
 
     // 4.4.0: THE RESIDENT PREVIEWER (spec §4.1 step 1, §7.4) — the sherpa recognizer and its own
     // executor, Main-confined like localEngine. Built lazily by warmStreamingPreview() when the
@@ -4379,6 +4391,48 @@ class FloatingBubbleService : Service(),
         // (onTrimMemory) or on service destroy (onDestroy), not at the end of each recording.
         val baseEngine: TranscriptionEngine = resolveTranscriptionEngine()
 
+        // ===================== 4.10 Task 3 — THE SPEAKER PASS's SESSION =====================
+        // ONE assigner per session, built here and released in teardownRealtime — the convergence
+        // point of every session exit. Its SpeakerTracker is born with it, which is what makes the
+        // spec's "speaker numbers are per session and restart at 1 each session" (§2) a property
+        // of the object graph instead of a reset site somebody has to remember.
+        //
+        // TWO terms in the gate. The user's switch, read HERE and per session, so turning it off
+        // restores 4.9's output from the next recording and never loads the model at all. And
+        // "this is not a cloud session": a cloud session's local engine is its FALLBACK, and
+        // fingerprinting those segments would be new CPU work inside the one kind of session spec
+        // §2 and §4 say behaves exactly as today.
+        //
+        // The re-point below is UNCONDITIONAL, and that is the load-bearing half. warmLocalEngine
+        // caches ONE engine across sessions because it owns the native context, so an engine left
+        // holding the previous session's assigner would fingerprint this session's voices into the
+        // old session's numbering — with every unit test still green. Assigning `speakers` (null
+        // included) on every path is what closes that.
+        //
+        // NOTHING IS RENDERED BY THIS YET. Task 3 is the spike: the callback emits ONE line per
+        // committed chunk and plan Task 4 reads those lines on the Tab to set the tracker's two
+        // thresholds and to pass or fail CAM++. The line goes out through WhisperNative.diag —
+        // native logging — because R8 strips every android.util.Log call from the release build
+        // (proguard-rules.pro, "Release log hygiene") and the release build is the only one that
+        // can be installed on the owner's devices.
+        val speakers = if (app.preferencesManager.detectSpeakers && cloudWrapper == null) {
+            SpeakerAssigner(
+                voices = SpeakerEmbedder(app),
+                onAssigned = { assignment ->
+                    // Off the embed thread and onto Main: the callback is the seam this feature
+                    // will render from in Task 5, so it lands where the panel lives from the
+                    // start rather than being moved there later.
+                    serviceScope.launch(Dispatchers.Main) {
+                        WhisperNative.diag(SpeakerDiag.line(assignment))
+                    }
+                },
+            )
+        } else {
+            null
+        }
+        speakerAssigner = speakers
+        localEngine?.speakerAssigner = speakers
+
         // Honest CONNECTING (3.6.0, Workstream E3): a cold local engine is about to pay the ~7 s
         // model load inside CONNECTING — name the wait. The engine itself reports which branch
         // its connect() will take (isWarm(), the same check connect() runs — a surfaced flag,
@@ -5287,6 +5341,18 @@ class FloatingBubbleService : Service(),
         // the re-measure has run. Harmless when nothing moved: reclampNow() no-ops on equality.
         bubbleView.post { reclampNow() }
         transcriptSink?.close(); transcriptSink = null
+        // (4.10 Task 3) THE SPEAKER PASS goes down with the session, and the ORDER is the whole of
+        // it. The ENGINE is detached FIRST: the native executor can still be inside a transcribe
+        // when the user taps stop, and that segment resolves afterwards — with the field already
+        // null it hands its samples to nothing, instead of racing an executor that is shutting
+        // down. Then the assigner releases, which frees sherpa's ~40-60 MB (spec §3.3) on its own
+        // thread behind whatever it had queued, and takes this session's SpeakerTracker with it.
+        //
+        // This is the ONE release site, and one site here is every exit path: normal drain end,
+        // recorder-start failure, connect-time fatal and onDestroy all converge on this function.
+        localEngine?.speakerAssigner = null
+        speakerAssigner?.release()
+        speakerAssigner = null
         WhisperAccessibilityService.endInjectionSession()
         // Detach the session listener but KEEP the engine + its loaded native context so the next
         // recording reuses it (no multi-hundred-MB reload per session). Full release (context +
