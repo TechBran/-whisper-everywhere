@@ -13,12 +13,14 @@ import kotlin.math.sin
  *
  * ### Why two dimensions
  *
- * CAM++ emits 192 floats; nothing in this class cares. Every decision the tracker makes is a
- * function of ONE number per known speaker — the cosine against its centroid — so the fixtures are
- * unit vectors on a circle, `unit(deg)`, where `cos(a, b) = cos(a - b)` exactly. A test written
- * with plausible-looking 192-float arrays would assert the same branches while hiding which
- * similarity it was actually exercising, and "0.5-ish" is precisely the value the hysteresis band
- * exists to treat differently from 0.56.
+ * The bundled CAM++ emits 512 floats — `output_dim = 512` in the shipped graph's own annotation,
+ * which the adapter's pin test asserts against the asset bytes; 192 is the CN-Celeb variant, not
+ * the en/voxceleb model this repo bundles. Nothing in this class cares: every decision the tracker
+ * makes is a function of ONE number per known speaker — the cosine against its centroid — so the
+ * fixtures are unit vectors on a circle, `unit(deg)`, where `cos(a, b) = cos(a - b)` exactly. A
+ * test written with plausible-looking 512-float arrays would assert the same branches while hiding
+ * which similarity it was actually exercising, and "0.5-ish" is precisely the value the hysteresis
+ * band exists to treat differently from 0.56.
  *
  * ### The drift fixture, stated once
  *
@@ -245,9 +247,12 @@ class SpeakerTrackerTest {
     @Test fun anEmbeddingOfTheWrongWidthIsUnusableRatherThanAnException() {
         // One session, one model, so this cannot happen — and if a future model swap ever makes it
         // happen, the failure must be a missing label and not a crash on the embedder's executor.
+        // 512 is the bundled model's real width; what makes it WRONG here is only that this
+        // tracker's centroid is 2-wide. The tracker compares against `centroids[0].size`, never
+        // against a constant, which is precisely the shape a mid-session model swap would take.
         val tracker = SpeakerTracker()
         assertEquals(1, tracker.assign(unit(0.0), longSeg))
-        assertEquals(1, tracker.assign(FloatArray(192) { 1f }, longSeg))
+        assertEquals(1, tracker.assign(FloatArray(512) { 1f }, longSeg))
         assertEquals(1, tracker.speakerCount)
     }
 

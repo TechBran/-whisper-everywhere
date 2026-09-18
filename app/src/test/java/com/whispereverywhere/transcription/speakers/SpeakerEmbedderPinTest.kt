@@ -1,6 +1,7 @@
 package com.whispereverywhere.transcription.speakers
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -74,6 +75,16 @@ class SpeakerEmbedderPinTest {
     private val code: String by lazy { adapter.substringAfter(CLASS) }
 
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
+
+    /** First index of an ASCII [needle] in [haystack], or -1 — the graph is bytes, not text. */
+    private fun indexOf(haystack: ByteArray, needle: String): Int {
+        val pattern = needle.toByteArray(Charsets.US_ASCII)
+        outer@ for (start in 0..haystack.size - pattern.size) {
+            for (i in pattern.indices) if (haystack[start + i] != pattern[i]) continue@outer
+            return start
+        }
+        return -1
+    }
 
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
@@ -210,6 +221,38 @@ class SpeakerEmbedderPinTest {
     }
 
     @Test
+    fun theDocumentedEmbeddingWidthIsTheOneTheShippedGraphAnnounces() {
+        // The one number about this model that nothing at runtime reads, and that nothing at
+        // runtime can therefore correct: SpeakerTracker measures every embedding against
+        // `centroids[0].size`, never against a constant, so a wrong width in the adapter's KDoc is
+        // invisible on device and still wrong for everything that is sized from it — the spike's
+        // diag line, the per-segment cost, spec §3.3's 40-60 MB budget. It said 192 (the CN-Celeb
+        // CAM++, same architecture, different model) while this file's graph says 512. So the
+        // documented width is re-derived here from the asset's own `metadata_props`, which means a
+        // model swap — the spike may reach for WeSpeaker, §3.4 — cannot update the digest above
+        // and leave the paragraph behind.
+        val bytes = source("src/main/assets/$ASSET_NAME").readBytes()
+        val key = indexOf(bytes, "output_dim")
+        assertTrue("the graph must carry an output_dim annotation to be pinned against", key >= 0)
+        val annotation = String(bytes, key, minOf(24, bytes.size - key), Charsets.ISO_8859_1)
+        assertTrue(
+            "the shipped graph's own output_dim must be $EMBEDDING_DIM. Found near the key: " +
+                annotation.filter { it.isLetterOrDigit() || it == '_' },
+            Regex("output_dim.{0,4}$EMBEDDING_DIM").containsMatchIn(annotation),
+        )
+        assertTrue(
+            "…and the adapter's KDoc must state that same width — it is the sentence the device " +
+                "spike and plan Task 3 read to size the embedding",
+            "$EMBEDDING_DIM-float" in doc,
+        )
+        assertFalse(
+            "…and must not describe the fingerprint as 192 floats again: that is the CN-Celeb " +
+                "CAM++, not the en/voxceleb model this repo bundles",
+            "192-float" in doc,
+        )
+    }
+
+    @Test
     fun theAdapterAndTheModelAreDeclaredInputsOfTheTestTask() {
         // D5, the stale-evidence hazard, in both of its shapes at once. The adapter is a plain
         // Kotlin file whose pins above are KDoc-phrase and literal-count assertions, so a
@@ -234,5 +277,8 @@ class SpeakerEmbedderPinTest {
         const val ASSET_NAME = "speaker_campplus_en_16k.onnx"
         const val ASSET_BYTES = 29_596_978L
         const val ASSET_SHA256 = "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b"
+
+        /** The graph's own `output_dim`. Asserted against the asset bytes, not taken on trust. */
+        const val EMBEDDING_DIM = 512
     }
 }

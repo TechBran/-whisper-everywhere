@@ -8,7 +8,7 @@ import com.whispereverywhere.npu.NpuAssetStage
 
 /**
  * THE ONE ADAPTER over sherpa's speaker-embedding extractor (sherpa-onnx 1.13.7) — a slice of PCM
- * in, a 192-float voice fingerprint out, `null` on every failure (4.10 Task 2, spec §3.2 step 2).
+ * in, a 512-float voice fingerprint out, `null` on every failure (4.10 Task 2, spec §3.2 step 2).
  *
  * ### The model, and why it is an asset
  *
@@ -22,6 +22,21 @@ import com.whispereverywhere.npu.NpuAssetStage
  *
  * Its licence clearance is a PRODUCTION gate, not a build gate (spec §3.4): the spike may run on
  * the uncleared model, the store build may not.
+ *
+ * ### 512 floats wide — read off the graph, not off the family name
+ *
+ * The shipped graph's output `embedding` has shape `[*, 512]`, its input `x` is `[N, T, 80]`
+ * (80-bin fbank), and its ONNX `metadata_props` carry `output_dim = 512` beside
+ * `url = modelscope.cn/models/iic/speech_campplus_sv_en_voxceleb_16k`. **512, not 192**: 192 is the
+ * CN-Celeb CAM++ — the same architecture, a different model — and the two are easy to read as
+ * interchangeable; this KDoc said 192 until 4.10 Task 2's fix round checked the bytes that ship.
+ * Nothing at runtime depends on the number ([SpeakerTracker] measures every embedding against
+ * `centroids[0].size`, never against a constant), which is exactly why a wrong one could sit here
+ * unnoticed: the readers are people and plans — the spike's diag line, the per-segment cost, spec
+ * §3.3's 40-60 MB resident budget. So it is held from two sides instead.
+ * `SpeakerEmbedderPinTest.theDocumentedEmbeddingWidthIsTheOneTheShippedGraphAnnounces` re-derives
+ * it from the asset's own annotation, so swapping the model cannot leave this paragraph behind, and
+ * both load arms log `dim()` so the device session reads the width off the loader too.
  *
  * ### Two ways in, in this order
  *
