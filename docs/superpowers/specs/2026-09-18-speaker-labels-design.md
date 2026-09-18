@@ -32,7 +32,7 @@ Speaker numbers are per session and restart at 1 each session. A speaker who ret
 
 ### 3.2 The pipeline, per committed chunk
 1. **Segments.** The JNI returns, beside the text, the VAD segment boundaries (start/end sample in the trimmed timeline) and whisper's per-segment `(t0, t1, text)`.
-2. **Fingerprints.** For each VAD segment of at least `MIN_EMBED_SECONDS` (1.0 s), a `SpeakerEmbedder` (sherpa `SpeakerEmbeddingExtractor`, its own single-thread executor, one model resident per session) produces an embedding vector. Segments shorter than that inherit the label of the segment before them.
+2. **Fingerprints.** For each VAD segment a `SpeakerEmbedder` (sherpa `SpeakerEmbeddingExtractor`, its own single-thread executor, one model resident per session) produces an embedding vector. Segments shorter than `MIN_OPEN_SECONDS` (2.0 s) inherit the current speaker; only longer ones can open or update a speaker.
 3. **Matching — `SpeakerTracker` (pure Kotlin, no Android, unit-tested).** Cosine similarity of the embedding against each known speaker's running centroid:
    - best similarity ≥ `T_SAME` → that speaker; the centroid moves toward the new embedding (EMA, weight 0.2);
    - best similarity < `T_NEW` → a new speaker, if fewer than `MAX_SPEAKERS` (8) are known and the segment is at least `MIN_NEW_SPEAKER_SECONDS` (1.5 s) — otherwise the closest known speaker;
@@ -46,11 +46,12 @@ Speaker numbers are per session and restart at 1 each session. A speaker who ret
 - Expected cost: tens of milliseconds per segment on a phone CPU for CAM++; a 15 s chunk with three segments is well under a quarter of a second. **The spike measures this on the Tab before any threshold is set.**
 - Memory: the model plus session state, roughly 40-60 MB resident while a session runs (the spike measures it); released with the session like the previewer.
 
-### 3.4 The model
-- Candidate: 3D-Speaker **CAM++** (`3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx`, **29.6 MB** — checked against the sherpa-onnx release on 2026-09-18, `Content-Length: 29596978`; an earlier draft said 7 MB and was wrong). Language-independent speaker identity; every candidate in the sherpa list is 24-37 MB, so size does not separate them — the spike does.
-- Fallbacks if the spike disagrees: WeSpeaker ResNet34 (~25 MB) or NeMo TitaNet-small (~26 MB).
-- **Delivery: bundled in the APK's assets** (about 30 MB against a 121 MB APK; the AAB's base module grows from ~124 MB to ~155 MB, under Play's 200 MB base limit). The shipped sherpa `SpeakerEmbeddingExtractor` constructor takes an `AssetManager`, i.e. it is built for exactly this. No download flow, no Play pack, no network dependency for a core behaviour — the previewer's fetch machinery is not reused. **Owner ruled 2026-09-18: bundle it.** An automatic onboarding download is the fallback only if bundling proves impossible; an install-time asset pack is not used.
-- **Licence: to be cleared through the same sheet as the preview packs before production** (the 3D-Speaker repository is Apache-2.0; the training data's terms are the item to check). The spike may run on the uncleared model; the production build may not.
+### 3.4 The model — decided 2026-09-18 by the spike (docs/measurements/2026-09-18-speaker-spike.md)
+- **NVIDIA NeMo TitaNet-small** (`nemo_en_titanet_small.onnx`, bundled as `app/src/main/assets/speaker_titanet_small_16k.onnx`, 40,257,283 B, sha256 `ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e`, 192-dim embeddings). Of five models tried on 132 saved segments it was the one whose online tracker recovered exactly one, two and three speakers across a wide band, and the device confirmed it (session 3).
+- The first candidate, 3D-Speaker CAM++ VoxCeleb, was rejected on evidence: on this audio path the same voice scored 0.04-0.87 against itself and no threshold recovered the speaker counts.
+- **Delivery: bundled in the APK's assets, uncompressed** (owner ruling; `androidResources.noCompress` names onnx). The base module grows by ~40 MB, under Play's 200 MB limit.
+- **Licence: CC-BY-4.0.** The attribution line for NVIDIA NeMo TitaNet-small is owed in `oss_licenses.html` before production (pinned as "still owed" until written); the clearance-sheet row is the production gate.
+- The tracker's constants: `MIN_OPEN_SECONDS 2.0` (open and update), `RECENT_K 5` (max-similarity match), `T_SAME 0.50 / T_NEW 0.30`, `CONFIRM_N 2`, cap 8, per-session numbering.
 
 ### 3.5 What changes in the app (files)
 - `app/src/main/cpp/whisper_jni.cpp`: return VAD segment boundaries and whisper segment timestamps beside the text (one struct, one JNI call; the diag line unchanged).

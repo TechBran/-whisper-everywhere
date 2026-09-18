@@ -44,3 +44,17 @@ ERes2Net and TitaNet agree on 100 % of segment pairs in both multi-speaker sessi
 **Decision: TitaNet-small** (`nemo_en_titanet_small.onnx`, 40,257,283 B, sha256 ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e, CC-BY-4.0 — attribution goes into the OSS notices; the clearance sheet row is a production gate). Tracker rules that made it work, all verified in simulation on this data: a segment shorter than 2.0 s never opens a speaker and never updates one (it inherits the current speaker); matching is the maximum similarity over a speaker's last five fingerprints, not a running mean; a speaker is confirmed after two qualifying segments; after each chunk, an unconfirmed speaker whose centroid is within T_SAME of a confirmed one is merged into it. Band: **T_SAME 0.50, T_NEW 0.30** (the centre of the working region). Cost on the PC equals CAM++'s (48 ms per fingerprint), so the tablet's 130-300 ms per fingerprint carries over.
 
 **Known limit, accepted by the owner ("if we can detect that, great; if not, we'll live with it"):** an interruption shorter than two seconds is labelled as the current speaker.
+
+## Session 3 — TitaNet-small on the device (2026-09-18 18:44-19:1x, the same three clips as session 2)
+
+Build 04dbd88..daccdbf (TitaNet-small bundled; the six tracker rules; band 0.50/0.30). Device audio, no audio dump. The device's own fingerprints (jsonl mirror) scored per session:
+
+| clip | fingerprints | speakers opened | confirmed | notes |
+|---|---|---|---|---|
+| one voice | 23 | 1 | 1 | every fingerprint on Speaker 1; same-voice similarity min 0.59, median 0.85 |
+| two voices | 38 | 3 | 2 | ids 1 (27) and 2 (10) alternate in conversational blocks; id 3 is one 4.2 s segment the owner identified as an advertisement that started mid-clip — a real third voice, left unconfirmed because it never got a second segment |
+| three voices | 65 | 3 | 3 | ids 1 (21), 2 (12), 3 (32); a retrospective three-way clustering of the same fingerprints agrees with the online assignment on 86 % of pairs |
+
+No spurious speaker opened in any session; the merge step never fired and was not needed. Embedding cost on the tablet ~290 ms per chunk (median) on the embedder's own thread.
+
+**Verdict: the pipeline is ready for the labels.** Spec §3.4 is corrected to name TitaNet-small; the tracker constants are the ones committed in a9f0972.
