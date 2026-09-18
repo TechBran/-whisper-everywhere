@@ -12,6 +12,9 @@ import java.nio.ByteBuffer
  *   - free()             -> whisper_free()
  *   - vadProbe*()        -> a dedicated streaming Silero VAD context (3.7 endpointing; see below)
  *   - lastSegmentStats() -> the 3.7 Workstream F cost counters for the last transcribeRaw (diagnostics only)
+ *   - lastVadSegments() / lastWhisperSegments() -> the 4.10 segment geometry of the last
+ *     transcribeRaw: where each speech segment sat in the raw audio, and which bytes of the
+ *     returned text came out of it. NOT diagnostics — the speaker pipeline reads both.
  *
  * The returned Long is an opaque native pointer handle owned by the caller
  * (LocalWhisperEngine caches it). Never dereference it in Kotlin.
@@ -248,6 +251,54 @@ object WhisperNative {
      * Diagnostics only — never read for a decision.
      */
     external fun lastSegmentStats(): IntArray
+
+    /**
+     * The VAD speech segments of the LAST [transcribeRaw] on this thread, four ints each, in chunk
+     * order: `[origStart, origEnd, trimmedStart, trimmedEnd]`, all in SAMPLES at 16 kHz (4.10
+     * speaker labels).
+     *
+     * - `origStart` / `origEnd` index the `samples` array that was passed IN. That is the buffer a
+     *   speaker embedder must slice: the stitched buffer whisper saw has 100 ms of injected
+     *   silence between segments and does not outlive the call.
+     * - `trimmedStart` / `trimmedEnd` index that stitched buffer, which is the timeline
+     *   [lastWhisperSegments]' centiseconds are measured on. Matching the two arrays — which
+     *   decoded text came out of which stretch of real audio — is what makes a speaker label
+     *   possible, and it is done in Kotlin.
+     *
+     * EMPTY means no VAD ran on this call (no model path, an init failure, a segmentation failure)
+     * or it found no speech at all. Empty is not an error and must not be read as one speaker.
+     *
+     * The sub-1.1 s zero-pad is appended AFTER the stitch and is not represented here, so a
+     * whisper segment may carry a `t1` past the last `trimmedEnd`; that tail belongs to the last
+     * VAD segment.
+     *
+     * PROCESS-GLOBAL and ONE CALL BEHIND, exactly like [lastSegmentStats]: this describes the LAST
+     * transcribeRaw in the process, not a ctx and not a chunk you can name. Read it on the thread
+     * that just ran the transcribe, while that thread still holds NativeComputeGate. Read off-gate
+     * it returns a self-consistent snapshot of the WRONG chunk, and nothing about the numbers
+     * looks wrong. Unlike [lastSegmentStats] this IS read for a decision, which is exactly why the
+     * gate discipline matters more here, not less.
+     */
+    external fun lastVadSegments(): IntArray
+
+    /**
+     * The decoded segments of the LAST [transcribeRaw] on this thread, four ints each, in text
+     * order: `[t0cs, t1cs, byteStart, byteEnd]` (4.10 speaker labels).
+     *
+     * `t0cs` / `t1cs` are centiseconds on the TRIMMED timeline — the audio whisper_full actually
+     * saw, i.e. the `trimmed` halves of [lastVadSegments]. `byteStart` / `byteEnd` are offsets
+     * into the `ByteArray` the matching [transcribeRaw] returned, so a caller can cut that text
+     * into per-segment slices.
+     *
+     * BYTES, not characters, and that is load-bearing: [transcribeRaw] returns raw UTF-8 because
+     * NewStringUTF aborts on 4-byte sequences, and a `String` index computed after the decode
+     * cannot be mapped back to a native offset when a code point spans one to four bytes. Slice
+     * the bytes, then decode each slice.
+     *
+     * EMPTY means whisper produced no segments. Same PROCESS-GLOBAL, one-call-behind, read-inside-
+     * the-gate contract as [lastVadSegments].
+     */
+    external fun lastWhisperSegments(): IntArray
 
     /**
      * Loads **only the mel filterbank** from a ggml whisper model and returns a context that can do

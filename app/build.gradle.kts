@@ -364,9 +364,18 @@ android {
 // does not exist. That default is the whole hazard the parameter was added to remove (a turbo
 // prompt built out of whisper-small's ids puts the model in the wrong TASK), so the one mutation
 // this list has to guarantee re-runs the pin is a one-character addition to that line.
+// (4.10 Task 0) WhisperNative.kt joins, and it is overdue: NativeSegmentStatsContractTest and
+// NativeVadSourceContractTest have both been READING it as source for the Kotlin half of a
+// prose-only contract, and SegmentGeometryPinTest now reads it for a third. Those two classes pin
+// KDoc PHRASES — "PROCESS-GLOBAL", "inside the gate", the blocking-width sentence — and a KDoc edit
+// is the purest comment-shaped mutation there is: it compiles to a byte-identical class, so without
+// this entry deleting the sentence that tells Workstream C/D how to read these statics leaves
+// `:app:testDebugUnitTest` UP-TO-DATE and every phrase assertion passing against the documentation
+// as it used to be. Exactly the shape Q7a measured.
 tasks.withType<Test>().configureEach {
     inputs.files(
         "src/main/cpp/whisper_jni.cpp",
+        "src/main/java/com/whispereverywhere/whisper/WhisperNative.kt",
         "src/main/cpp/whisper.cpp/src/whisper.cpp",
         "src/main/cpp/whisper.cpp/include/whisper.h",
         "src/main/cpp/qnn_asr.cpp",

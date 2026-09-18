@@ -150,6 +150,23 @@ static std::atomic<int>       g_last_ctx_frames{0};
 static std::atomic<int>       g_last_vad_in{0};
 static std::atomic<int>       g_last_vad_out{0};
 
+// 4.10 speaker labels: the SEGMENT GEOMETRY of the LAST transcribeRaw — see lastVadSegments and
+// lastWhisperSegments below. Same process-global shape as the three counters above, and for the
+// same reason (one transcribe at a time, serialised process-wide by NativeComputeGate), but NOT
+// diagnostics: the speaker pipeline slices the original pcm by the first array and cuts the text
+// into runs by the second, so a wrong number here is a wrong SPEAKER in the user's transcript.
+//
+// A std::vector cannot be an atomic, so the discipline the counters buy with std::atomic<int> is
+// bought here with a mutex instead. The hazard is identical and already documented above: the
+// WRITES all happen inside NativeComputeGate, but the two exports are their own JNI entry points
+// and nothing in the type system forces their caller onto the writing thread. For an int that
+// mistake costs a stale reading; for a vector being cleared under a reader it is undefined
+// behaviour, so the lock is the cheaper of the two prices. It is taken for a handful of
+// push_backs per chunk and never around anything that blocks.
+static std::mutex             g_geom_mutex;
+static std::vector<jint>      g_last_vad_segments;      // [origS0, origS1, trimS0, trimS1] * n
+static std::vector<jint>      g_last_whisper_segments;  // [t0cs, t1cs, byteStart, byteEnd] * n
+
 // Filters [pcm] down to speech-only (with 100 ms inter-segment gaps, mirroring whisper_full's
 // own VAD assembly). Returns false when VAD is unavailable (caller proceeds unfiltered). On
 // success pcm holds the filtered audio — possibly EMPTY when no speech at all was detected.
@@ -212,6 +229,10 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
     constexpr int kGapSamples = 1600; // 100 ms of silence between stitched segments
     std::vector<float> filtered;
     filtered.reserve(pcm.size());
+    // 4.10: the geometry lock spans the whole stitch loop rather than each push, so a reader can
+    // never see a half-built segment list. Nested INSIDE g_vad_mutex, which this function already
+    // holds for its whole body; nothing anywhere takes these two in the other order.
+    std::unique_lock<std::mutex> geom(g_geom_mutex);
     for (int i = 0; i < nseg; ++i) {
         // t0/t1 are centiseconds -> samples at 16 kHz = cs * 160.
         auto s0 = static_cast<int64_t>(whisper_vad_segments_get_segment_t0(segs, i)) * 160;
@@ -219,9 +240,20 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
         if (s0 < 0) s0 = 0;
         if (s1 > static_cast<int64_t>(pcm.size())) s1 = static_cast<int64_t>(pcm.size());
         if (s1 <= s0) continue;
+        // 4.10 speaker labels: this segment's bounds on BOTH timelines, recorded here because this
+        // is the only place both exist. [s0, s1) indexes the caller's RAW chunk — the audio the
+        // embedder must fingerprint, since the stitched buffer has 100 ms of injected silence in
+        // it and is about to be swapped away entirely. trimS0/filtered.size() index the stitched
+        // buffer, which is the timeline whisper's own segment timestamps come back on. One
+        // statement per segment, four ints, in the order the Kotlin reader unpacks them.
+        const auto trimS0 = static_cast<jint>(filtered.size());
         filtered.insert(filtered.end(), pcm.begin() + s0, pcm.begin() + s1);
+        for (const jint v : {static_cast<jint>(s0), static_cast<jint>(s1), trimS0,
+                             static_cast<jint>(filtered.size())})
+            g_last_vad_segments.push_back(v);
         if (i + 1 < nseg) filtered.insert(filtered.end(), kGapSamples, 0.0f);
     }
+    geom.unlock();
     whisper_vad_free_segments(segs);
 
     // BEFORE the swap below, and that ordering is the whole contract: afterwards pcm IS the
@@ -514,6 +546,64 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastSegmentStats(
     return out;
 }
 
+// One jint vector out across the boundary. Shared by the two geometry exports below so the
+// NewIntArray/SetIntArrayRegion pair — and the null-on-OOM behaviour the caller has to live with
+// — is written once for both. The caller holds g_geom_mutex.
+static jintArray we_int_vector(JNIEnv *env, const std::vector<jint> &v) {
+    jintArray out = env->NewIntArray(static_cast<jsize>(v.size()));
+    // nullptr means the allocation failed and a JNI exception is pending. Kotlin sees null; that
+    // is the caller's problem to guard, not an all-zero reading fabricated here.
+    if (out != nullptr && !v.empty()) {
+        env->SetIntArrayRegion(out, 0, static_cast<jsize>(v.size()), v.data());
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------------------------
+// 4.10 speaker labels: the SEGMENT GEOMETRY of the last transcribeRaw — the two arrays the speaker
+// pipeline is built on. Unlike lastSegmentStats above, these are NOT diagnostics: what they say
+// decides which seconds of audio get fingerprinted and where a paragraph break lands in the text
+// the user reads.
+//
+// lastVadSegments: four ints per VAD speech segment, in chunk order —
+//   [origStart, origEnd, trimmedStart, trimmedEnd], all in SAMPLES at 16 kHz.
+// The orig pair indexes the RAW samples the caller passed in; that is the buffer the embedder must
+// slice, because the stitched buffer carries 100 ms of injected silence between segments and does
+// not survive the call. The trimmed pair indexes the stitched buffer whisper_full actually saw,
+// which is the timeline lastWhisperSegments' centiseconds are measured on. EMPTY means the VAD did
+// not run (no model path, init failure, segmentation failure) or found no speech at all.
+//
+// lastWhisperSegments: four ints per decoded segment, in text order —
+//   [t0cs, t1cs, byteStart, byteEnd], centiseconds on the trimmed timeline and byte offsets into
+// the ByteArray transcribeRaw returned. Bytes rather than characters because the Kotlin side
+// decodes UTF-8 and a code point is one to four bytes: a character index computed after the
+// decode cannot be mapped back, and transcribeRaw returns bytes for its own reasons anyway.
+//
+// PROCESS-GLOBAL and ONE CALL BEHIND, exactly like lastSegmentStats: they describe the LAST
+// transcribeRaw in this process, not a ctx and not a particular chunk. Read them on the thread
+// that just ran the transcribe, while it still holds NativeComputeGate, or the arrays a second
+// transcribe has already overwritten are what comes back. The g_geom_mutex held below buys
+// consistency, never freshness — a snapshot taken off-gate is internally coherent and about the
+// wrong chunk, and nothing in it would look wrong.
+//
+// The zero-pad transcribeRaw applies to sub-1.1 s audio is NOT represented here: it is appended
+// after the stitch, so a whisper segment can carry a t1 beyond the last trimmedEnd. That tail
+// belongs to the last VAD segment, and saying so is the Kotlin side's job.
+// ---------------------------------------------------------------------------------------------
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_lastVadSegments(
+        JNIEnv *env, jobject /* this */) {
+    std::lock_guard<std::mutex> geom(g_geom_mutex);
+    return we_int_vector(env, g_last_vad_segments);
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_lastWhisperSegments(
+        JNIEnv *env, jobject /* this */) {
+    std::lock_guard<std::mutex> geom(g_geom_mutex);
+    return we_int_vector(env, g_last_whisper_segments);
+}
+
 // ---------------------------------------------------------------------------------------------
 // 4.0 NPU tier (Task Q2): the mel export.
 //
@@ -787,6 +877,17 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
     g_last_ctx_frames.store(0, std::memory_order_relaxed);
     g_last_vad_in.store(0, std::memory_order_relaxed);
     g_last_vad_out.store(0, std::memory_order_relaxed);
+    // 4.10 speaker labels: the segment geometry is reset by the same rule and for a sharper
+    // consequence. An empty array means "this call produced no geometry" — and it means that only
+    // because the clear sits above every return. Left stale, the previous chunk's sample bounds
+    // would be applied to THIS chunk's audio, so the embedder would fingerprint seconds of sound
+    // that are not in the commit and the tracker would be told about a voice that never spoke in
+    // it. A new early return must go BELOW these lines, never above them.
+    {
+        std::lock_guard<std::mutex> geom(g_geom_mutex);
+        g_last_vad_segments.clear();
+        g_last_whisper_segments.clear();
+    }
 
     auto emptyResult = [env]() { return env->NewByteArray(0); };
     auto *ctx = reinterpret_cast<whisper_context *>(ctxPtr);
@@ -972,7 +1073,24 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
     for (int i = 0; i < nSeg; ++i) {
         const char *seg = whisper_full_get_segment_text(ctx, i);
         if (seg != nullptr) {
+            // 4.10 speaker labels: this segment's timestamps and its BYTE RANGE in the result,
+            // captured around the append because that is the only moment both are knowable.
+            // byteStart/byteEnd index the ByteArray this call is about to return, so the Kotlin
+            // side can cut the text into runs without re-deriving anything from the string it
+            // decodes — the decode is what would lose the mapping, since a UTF-8 code point spans
+            // one to four bytes and a Kotlin Char index is neither. t0/t1 are centiseconds on the
+            // TRIMMED timeline (what whisper_full saw), which is the timeline the trimmed halves
+            // of lastVadSegments are measured on; matching the two is Kotlin's job.
+            // A segment whose text pointer is null contributes no bytes and is skipped here too,
+            // so the array never carries an entry that owns no text.
+            const jint t0cs = static_cast<jint>(whisper_full_get_segment_t0(ctx, i));
+            const jint t1cs = static_cast<jint>(whisper_full_get_segment_t1(ctx, i));
+            const jint byteStart = static_cast<jint>(result.size());
             result += seg;
+            const jint byteEnd = static_cast<jint>(result.size());
+            std::lock_guard<std::mutex> geom(g_geom_mutex);
+            for (const jint v : {t0cs, t1cs, byteStart, byteEnd})
+                g_last_whisper_segments.push_back(v);
         }
     }
     // Return raw UTF-8 bytes, decoded to String on the Kotlin side. NewStringUTF expects
