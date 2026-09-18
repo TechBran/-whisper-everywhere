@@ -373,8 +373,13 @@ class ModelTierCopyTest {
      * unscoped where the user reads it), and never in the same sentence as an absolute scope.
      * What stays forbidden, and is the reason the rule exists: the ABSOLUTE — "fastest" about
      * every device, or about the device in the user's hand ("this device"), which the app has
-     * not measured. See [SPEED_CLAIM_WORDS] for the vocabulary and for the three words that are
-     * deliberately not in it.
+     * not measured. The absolute is a SHAPE, [ABSOLUTE_SCOPE] — any quantifier or deictic before
+     * a device noun, any bare plural device noun, "everywhere" — not a phrase list, because the
+     * list this test carried until the 4.9.1 review passed "Quick on any phone"; and the rank is
+     * [speedSuperlativeIn], which knows "the most responsive" as well as "fastest".
+     * [the_cpu_body_guard_catches_the_phrasings_its_kdoc_forbids] pins both against probes. See
+     * [SPEED_CLAIM_WORDS] for the vocabulary and for the three words that are deliberately not
+     * in it.
      *
      * **The requiring half.** `npu` and `npu-turbo` are gated tiers whose speed was measured on
      * our own devices (encode 1.78 s fixed per commit on the Fold6 against Multilingual's 2.3 s;
@@ -387,7 +392,6 @@ class ModelTierCopyTest {
         // Guard the census's own reach: if the ladder ever loses its CPU rows, this test must not
         // pass by iterating nothing.
         assertEquals("the CPU ladder is not three rungs any more", 3, cpuRungs.size)
-        val absoluteScopes = listOf("every device", "any device", "all devices", "everywhere", "this device", "your device", "your phone", "this phone")
         cpuRungs.forEach { model ->
             val copy = ModelTierCopy.forId(model.id)!!
             // The displayName rides on the same card (OnboardingModelScreen.kt:686), above the
@@ -406,31 +410,29 @@ class ModelTierCopyTest {
             // CPU card may state is the headline's, backed by the KDoc's citation.
             val bodySentences = copy.body.split(". ").map { it.lowercase() }
             bodySentences.forEach { sentence ->
-                val ranks = SPEED_CLAIM_WORDS.any { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(sentence) }
-                SPEED_SUPERLATIVES.forEach { word ->
-                    assertFalse(
-                        "CPU rung '${model.id}' ranks speed with '$word' in its BODY: <<$sentence>>. " +
-                            "The rank is the headline's, and the measurement behind it is cited " +
-                            "in the KDoc beside the card, not on it",
-                        Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(sentence),
-                    )
-                }
-                // And NEVER the absolute, in any sentence: a speed word beside "every device" or
-                // "this device" is a claim about hardware nobody has measured.
-                absoluteScopes.forEach { scope ->
-                    assertFalse(
-                        "CPU rung '${model.id}' makes an absolute speed claim: <<$sentence>> pairs " +
-                            "a speed word with '$scope'",
-                        ranks && sentence.contains(scope),
-                    )
-                }
+                assertNull(
+                    "CPU rung '${model.id}' ranks speed with '${speedSuperlativeIn(sentence)}' in its BODY: " +
+                        "<<$sentence>>. The rank is the headline's, and the measurement behind it is " +
+                        "cited in the KDoc beside the card, not on it",
+                    speedSuperlativeIn(sentence),
+                )
+                // And NEVER the absolute, in any sentence: a speed word beside "every device",
+                // "any phone", "phones" or "this device" is a claim about hardware nobody has
+                // measured. The scope is a SHAPE ([ABSOLUTE_SCOPE]), not a list of phrases —
+                // `the_cpu_body_guard_catches_the_phrasings_its_kdoc_forbids` pins its reach.
+                assertFalse(
+                    "CPU rung '${model.id}' makes an absolute speed claim: <<$sentence>> pairs a " +
+                        "speed word with '${ABSOLUTE_SCOPE.find(sentence)?.value}'",
+                    isAbsoluteSpeedClaim(sentence),
+                )
             }
             // The headline's rank is legal because it is pinned exactly and the KDoc beside the
             // card cites the measurement (`the_evidence_lives_in_the_kdoc_beside_each_card`) —
             // and it may not itself claim a scope it has not earned.
-            absoluteScopes.forEach { scope ->
-                assertFalse("CPU rung '${model.id}' headline claims '$scope'", copy.headline.lowercase().contains(scope))
-            }
+            assertFalse(
+                "CPU rung '${model.id}' headline claims '${ABSOLUTE_SCOPE.find(copy.headline.lowercase())?.value}'",
+                ABSOLUTE_SCOPE.containsMatchIn(copy.headline.lowercase()),
+            )
         }
         // The rank the three headlines state is the DOC'S order (1,217 < 1,341 < 4,849 ms per
         // commit, docs/measurements/2026-09-17-tab-cpu-ladder.md): small is the one card that
@@ -454,6 +456,47 @@ class ModelTierCopyTest {
                 listOf("fastest", "faster").any { (copy.headline + " " + copy.body).lowercase().contains(it) },
             )
         }
+    }
+
+    /**
+     * **The guard above reaches as far as its own KDoc says it does.** The 4.9.1 review found
+     * that after the tablet-scope requirement left the CPU bodies (correctly — the scope moved
+     * into the KDoc beside each card) the absolute-scope check was a fixed eight-phrase list, and
+     * every one of these probes shipped green through it while the rule's KDoc promised they
+     * were forbidden. So the predicates are pinned against the probes themselves — the census's
+     * reach is under test, not only the five bodies that happen to be on the ladder today.
+     */
+    @Test fun the_cpu_body_guard_catches_the_phrasings_its_kdoc_forbids() {
+        // Absolute scopes: a speed word beside any way of saying "on hardware in general" or "on
+        // the hardware in your hand".
+        listOf(
+            "quick on any phone", "fast on every phone", "fast on all phones", "snappy on phones",
+            "quick on most devices", "responsive on this tablet", "fast everywhere", "quick anywhere",
+            "quick on your phone", "fast on a phone", "quick enough for the phone", "snappy on this device",
+            "fast on every device", "quick on any device", "fast on all devices", "quick on your device",
+        ).forEach { probe ->
+            assertTrue("<<$probe>> is an absolute speed claim and must be caught", isAbsoluteSpeedClaim(probe))
+        }
+        // Superlatives: the one-word forms and the "most X" shape that dodges them.
+        listOf("the most responsive one", "the fastest", "the quickest of the three", "least sluggish", "the most rapid", "the swiftest").forEach { probe ->
+            assertNotNull("<<$probe>> ranks speed and must be caught", speedSuperlativeIn(probe))
+        }
+        // And the owner's plain copy passes: a speed word with no scope and no rank, a scope
+        // with no speed word, and a wait described without a speed word at all.
+        listOf(
+            "quick to respond and fine for everyday notes",
+            "more accurate than the light one and still quick",
+            "fits every device",
+            "it takes longer to catch up after you stop talking, so give it a moment",
+            "needs at least 4.5 gb of memory.",
+        ).forEach { probe ->
+            assertFalse("<<$probe>> is the owner's copy and makes no absolute speed claim", isAbsoluteSpeedClaim(probe))
+            assertNull("<<$probe>> is the owner's copy and ranks nothing", speedSuperlativeIn(probe))
+        }
+        // The probe in the brief — "fastest on any phone" on a CPU card — is caught TWICE, by
+        // the rank and by the scope, so neither check is carrying the other.
+        assertNotNull(speedSuperlativeIn("fastest on any phone"))
+        assertTrue(isAbsoluteSpeedClaim("fastest on any phone"))
     }
 
     /**
@@ -601,8 +644,9 @@ class ModelTierCopyTest {
         // and the owner has named that comparison as the open gate ("prove the accuracy of the
         // small and medium model"). A card that announces a result the accuracy pass has not
         // produced is the defect the review of 138be0b found; this pins its absence — on
-        // small's card and on `npu`'s, which since 4.9.1 says "the same model as the light one"
-        // (a fact about the weights) and must never say "the same accuracy".
+        // small's card and on `npu`'s, whose KDoc carries the same-weights fact (the card itself
+        // names no other model since the 4.9.1 review — see the block beside it) and which must
+        // never say "the same accuracy".
         listOf("small-q8", "npu").forEach { id ->
             assertFalse(
                 "$id's card claims an accuracy equivalence no measurement supports",
@@ -1217,21 +1261,36 @@ class ModelTierCopyTest {
 
     @Test fun the_npu_body_is_our_own_tier_on_this_device_and_claims_no_absolute() {
         val copy = ModelTierCopy.forId("npu")!!
-        // 4.9.1: plain words, SAME two claims at the SAME scope as 4.0's "Runs on your phone's
-        // AI chip. Same model as Multilingual, much faster on this device." — the same-weights
-        // fact (now against the light one, `small-q8`, whisper-small at Q8_0: a fact about the
-        // checkpoint, not a measurement) and the measured, comparative, device-scoped speed
-        // claim, byte-identical. "Fastest" stays in the headline where it was owner-approved
-        // and does not join the body; the measured comparand (the 190 MB Q5_1 twin on the
-        // Fold6) is in the KDoc beside the card.
-        assertEquals(
-            "Runs on this phone's AI chip — the same model as the light one, much faster on this device.",
-            copy.body,
-        )
-        // The comparison is OUR tier, and the claim is scoped to the hardware in the user's hand —
-        // the two things that make "much faster" a statement someone could check.
-        assertTrue(copy.body.contains("the light one"))
+        // 4.9.1: plain words, 4.0's shape ("Runs on your phone's AI chip. Same model as
+        // Multilingual, much faster on this device.") with the retired comparand's name gone and
+        // the measured, comparative, device-scoped speed claim byte-identical. "Fastest" stays
+        // in the headline where it was owner-approved and does not join the body; the measured
+        // comparand (the 190 MB Q5_1 twin on the Fold6) is in the KDoc beside the card.
+        //
+        // The body names NO OTHER MODEL. The first 4.9.1 draft read "the same model as the light
+        // one, much faster on this device", and the review found what that juxtaposition does: it
+        // re-points the measured claim at `small-q8` — a model on the same screen that has never
+        // been timed on an NPU-capable device, and that the repo's own numbers project to be the
+        // FASTER of the two on the Fold6 (the KDoc beside the card walks the arithmetic). The 4.7
+        // controller ruling forbade exactly that re-pointing; a sentence can do it by shape as
+        // well as by name, so the same-weights fact lives in the KDoc and not beside the speed
+        // claim.
+        assertEquals("Runs on this phone's AI chip, much faster on this device.", copy.body)
+        // The claim is scoped to the hardware in the user's hand, and the comparand it was
+        // measured against is recorded beside the card — the two things that make "much faster"
+        // a statement someone could check.
         assertTrue(copy.body.contains("much faster on this device"))
+        listOf("the light one", "small", "light model", "the all-rounder", "the most accurate one").forEach { other ->
+            assertFalse(
+                "npu's body names another card (<<$other>>) beside its speed claim — that re-points " +
+                    "a measurement made against the retired Q5_1 twin at weights it was never made " +
+                    "against, until a Fold6 session times small-q8 beside the NPU tiers",
+                copy.body.lowercase().contains(other),
+            )
+        }
+        val npuKdoc = cardSource("npu")
+        assertTrue("npu's KDoc keeps the same-weights fact the card no longer states", npuKdoc.contains("whisper-small's weights") && npuKdoc.contains("Q8_0"))
+        assertTrue("npu's KDoc says why the card names no comparand", npuKdoc.contains("re-points") && npuKdoc.contains("never been timed on an NPU-capable device"))
         assertFalse("the body may not promote the comparative to a superlative", copy.body.lowercase().contains("fastest"))
         val kdoc = cardSource("npu")
         assertTrue("npu's KDoc keeps the 4.0 body verbatim", kdoc.contains("Same model as Multilingual, much faster on this"))
@@ -1310,29 +1369,45 @@ class ModelTierCopyTest {
         val copy = ModelTierCopy.forId("npu-turbo")!!
         // 4.6 T2: "The most accurate model this app ships" became "The most accurate model that
         // runs there" — the same claim with its real subject restored, because `large-v3` was
-        // offered and outranked turbo. 4.7 retired `large-v3`, so the claim is true of the app
-        // again; 4.9.1 says it plainly ("our most accurate model") and the sentence STILL
-        // carries the AI-chip scope, so `exactly_one_card_claims_the_top_of_the_accuracy_order`
-        // reads it as scoped and `ultra-q8` stays the one unscoped claimant. The speed half is
-        // byte-identical to 4.6's: "the fastest on this device". The measured comparand ("ahead
-        // of the 190 MB Multilingual model on both counts") is in the KDoc beside the card,
-        // VERBATIM, per the 4.7 controller ruling — the plain body names no comparand, which is
-        // neither the re-pointing that ruling forbade nor a deletion of the measured claim.
+        // offered and outranked turbo. 4.9.1 keeps 4.6 T2's sentence — the scope is the SET the
+        // superlative ranks against (the models that run on the chip), stated in the clause
+        // that carries the superlative — so `exactly_one_card_claims_the_top_of_the_accuracy_order`
+        // reads it as scoped and `ultra-q8` stays the one unscoped claimant. The first 4.9.1
+        // draft said "our most accurate model" and the review caught it: an app-wide claim
+        // beside `ultra-q8`'s "The most accurate one." on the same screen (a turbo device with
+        // ultra-q8 installed, or the CPU tiers joining via `chooserAlsoOfferedIds` after a
+        // delivery failure) — two cards claiming the top in plain words, held off the census
+        // only because the em-dash joined the claim to "AI chip" in one `. `-split sentence.
+        // `sentencesOf` now splits at the dash as well, so the clause has to carry its own scope.
+        // The speed half is byte-identical to 4.6's: "the fastest on this device". The measured
+        // comparand ("ahead of the 190 MB Multilingual model on both counts") is in the KDoc
+        // beside the card, VERBATIM, per the 4.7 controller ruling — the plain body names no
+        // comparand, which is neither the re-pointing that ruling forbade nor a deletion of the
+        // measured claim.
         assertEquals(
-            "Runs on this phone's AI chip — our most accurate model, and the fastest " +
+            "Runs on this phone's AI chip — the most accurate model that runs there, and the fastest " +
                 "on this device. The best choice on this device.",
             copy.body,
         )
-        // The scope is a word, and the word has to be in the SAME sentence as the superlative:
-        // without it the sentence is a second unscoped claimant.
+        // The scope is a word, and the word has to be in the SAME clause as the superlative:
+        // without it the clause is a second unscoped claimant.
         val accuracySentences = sentencesOf(copy).filter { SUPERLATIVE.containsMatchIn(it) && ACCURACY_WORD.containsMatchIn(it) }
-        assertEquals("the headline and the body's first sentence both rank accuracy, scoped", 2, accuracySentences.size)
+        assertEquals("the headline and the body's accuracy clause both rank accuracy, scoped", 2, accuracySentences.size)
         accuracySentences.forEach { sentence ->
-            assertTrue("turbo's accuracy superlative must carry its scope in its own sentence: <<$sentence>>", ACCURACY_SCOPE_MARKERS.any { sentence.contains(it) })
+            assertTrue("turbo's accuracy superlative must carry its scope in its own clause: <<$sentence>>", ACCURACY_SCOPE_MARKERS.any { sentence.contains(it) })
         }
+        // And the scope has to be a SET, not a place: the accuracy clause names the models it
+        // is ranked against ("that runs there"), not just where this one runs.
+        val accuracyClause = accuracySentences.first { it != copy.headline.lowercase() }
+        assertTrue("turbo's accuracy clause must name the set it ranks against: <<$accuracyClause>>", accuracyClause.contains("that runs there"))
         assertFalse(
             "the card claims the app-wide accuracy top in the old unscoped words",
             copy.body.contains("most accurate model this app ships"),
+        )
+        assertFalse(
+            "the card claims the app-wide accuracy top in the first 4.9.1 draft's words — " +
+                "ultra-q8's card says 'The most accurate one.' on the same screen",
+            copy.body.lowercase().contains("our most accurate"),
         )
         // The speed claim is scoped to "this device", like the npu card's — never an absolute.
         assertTrue(copy.body.contains("the fastest on this device"))
@@ -1564,9 +1639,41 @@ class ModelTierCopyTest {
         /**
          * 4.9.1 — the subset a CPU BODY may never use. A plain speed word ("quick") is the
          * owner's plain copy; a superlative is a RANK, and the only rank a CPU card states is
-         * its headline's, whose measurement is cited in the KDoc beside the card.
+         * its headline's, whose measurement is cited in the KDoc beside the card. The one-word
+         * forms are listed; the periphrastic ones ("the most responsive", "least sluggish") are
+         * [SPEED_SUPERLATIVE_PHRASE], so a speed word that has no "-est" cannot rank by adding
+         * "most" (the 4.9.1 review's probe).
          */
         val SPEED_SUPERLATIVES = listOf("fastest", "quickest", "slowest", "swiftest")
+        val SPEED_SUPERLATIVE_PHRASE = Regex(
+            "\\b(most|least)\\s+(" + SPEED_CLAIM_WORDS.joinToString("|") { Regex.escape(it) } + ")\\b",
+        )
+
+        /** The speed superlative a sentence carries — a listed word or a "most X" phrase — or null. */
+        fun speedSuperlativeIn(sentence: String): String? =
+            SPEED_SUPERLATIVES.firstOrNull { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(sentence) }
+                ?: SPEED_SUPERLATIVE_PHRASE.find(sentence)?.value
+
+        /**
+         * **The ABSOLUTE scope a CPU speed word may never share a sentence with** — a claim about
+         * hardware nobody has measured. It is a SHAPE, not a phrase list, because the 4.9.1
+         * review found the list ("every device", "any device", "all devices", "everywhere",
+         * "this device", "your device", "your phone", "this phone") let through the phrasings the
+         * rule's own KDoc forbids: "Quick on any phone", "Fast on every phone", "Snappy on
+         * phones". So: any quantifier or deictic before a device noun, any bare plural device
+         * noun, and the two adverbs. "Fits every device" on small's card is not caught — that
+         * sentence carries no speed word, and the RAM fit IS true of every device.
+         */
+        val ABSOLUTE_SCOPE = Regex(
+            "\\b(every|any|all|each|this|that|these|those|your|most|a|an|the)\\s+(phone|device|tablet|handset|hardware)s?\\b" +
+                "|\\b(phones|devices|tablets|handsets)\\b" +
+                "|\\b(everywhere|anywhere)\\b",
+        )
+
+        /** A speed word and an absolute scope in the same sentence: the claim the rule forbids. */
+        fun isAbsoluteSpeedClaim(sentence: String): Boolean =
+            SPEED_CLAIM_WORDS.any { Regex("\\b" + Regex.escape(it) + "\\b").containsMatchIn(sentence) } &&
+                ABSOLUTE_SCOPE.containsMatchIn(sentence)
 
         /**
          * 4.9.1 — the vocabulary no rendered body may carry, because the owner ruled the cards
@@ -1613,14 +1720,18 @@ class ModelTierCopyTest {
         }
 
         /**
-         * A card's claims, one per sentence — the headline plus the body split at sentence ends,
-         * lowercased. Per-SENTENCE and not per-card on purpose: a scope named in one sentence does
-         * not license an unscoped superlative in the next one, and turbo's card is exactly that
-         * shape (the AI chip is named in its first sentence, the accuracy claim lives in its
-         * second, and the second has to carry its own scope).
+         * A card's claims, one per sentence — the headline plus the body split at sentence ends
+         * AND at em-dashes, lowercased. Per-SENTENCE and not per-card on purpose: a scope named
+         * in one sentence does not license an unscoped superlative in the next one, and turbo's
+         * card is exactly that shape (the AI chip is named in its opening clause, the accuracy
+         * claim lives in the clause after the dash, and that clause has to carry its own scope).
+         * The dash split is the 4.9.1 review's: "Runs on this phone's AI chip — our most accurate
+         * model" passed the census as one sentence because the opener's "AI chip" counted as the
+         * claim's scope, when it only names where the model RUNS, not the set it is ranked
+         * against.
          */
         fun sentencesOf(copy: ModelTierCopy.TierCopy): List<String> =
-            (listOf(copy.headline) + copy.body.split(". ")).map { it.lowercase() }
+            (listOf(copy.headline) + copy.body.split(". ").flatMap { it.split(" — ") }).map { it.lowercase() }
 
         /** Superlative forms only — a COMPARATIVE ("sharper accuracy") claims no top. */
         val SUPERLATIVE = Regex("\\b(best|highest|most|sharpest|top)\\b")

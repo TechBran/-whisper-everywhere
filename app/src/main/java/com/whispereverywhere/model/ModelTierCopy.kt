@@ -96,9 +96,11 @@ package com.whispereverywhere.model
  *    least 4.5 GB of memory."); small's still ends "Fits every device."; no body anywhere says
  *    "Recommended" — the recommendation is the steer chip's word alone.
  *  * The two NPU cards keep their measured, owner-ruled claims at EXACTLY the scope they had —
- *    "much faster on this device" on `npu` (a comparison to our own CPU tier, never an absolute),
- *    "the fastest on this device" and an AI-chip-scoped accuracy superlative on `npu-turbo` —
- *    and the comparands the measurements were made against are in the KDoc, not the body.
+ *    "much faster on this device" on `npu` (measured against our own retired CPU tier, never an
+ *    absolute, and the body names NO other model: naming one beside the speed claim re-points
+ *    the measurement, see that card), "the fastest on this device" and 4.6 T2's chip-scoped
+ *    accuracy superlative ("the most accurate model that runs there") on `npu-turbo` — and the
+ *    comparands the measurements were made against are in the KDoc, not the body.
  */
 object ModelTierCopy {
 
@@ -324,22 +326,38 @@ object ModelTierCopy {
             //   Measured on the Fold6: encode 1.78 s fixed per commit on the Hexagon against the
             //   190 MB Multilingual model's 2.3 s on the CPU (docs/measurements, 2026-09-02) —
             //   whisper-small's weights (w8a16) against the same weights at Q5_1.
-            // 4.9.1 keeps BOTH claims at EXACTLY their scope, in plain words. "The same model as
-            // the light one" is the same-weights fact: `npu` carries whisper-small's weights and
-            // `small-q8` is those weights at Q8_0 — a fact about the checkpoint, not a
-            // measurement, so it needs no timing to be true. It is NOT "the same accuracy": the
-            // w8a16 conversion and the Q8_0 file have never had their transcripts compared, and
-            // the small-q8 rule above (no accuracy equivalence a measurement does not support)
-            // applies here too. "Much faster on this device" is the measured, comparative claim
-            // the card has carried since 4.0 — scoped to the device in the user's hand, never an
-            // absolute, and "fastest" stays in the HEADLINE where it was owner-approved (3.7/4.0)
-            // rather than joining the body. The measured comparand was the Q5_1 twin, and
-            // `small-q8` has never been timed on an NPU-capable device (its only measurement is
-            // the Tab S10+, which has no Hexagon), which is why the body names no comparand for
-            // the speed half: the open item is a Fold6 session that times `small-q8` beside
-            // the two NPU tiers.
-            body = "Runs on this phone's AI chip — the same model as the light one, " +
-                "much faster on this device.",
+            // 4.9.1 keeps the measured claim at EXACTLY its scope, in plain words. "Much faster on
+            // this device" is the comparative claim the card has carried since 4.0 — scoped to
+            // the device in the user's hand, never an absolute, and "fastest" stays in the
+            // HEADLINE where it was owner-approved (3.7/4.0) rather than joining the body.
+            //
+            // **THE BODY NAMES NO COMPARAND, AND NAMES NO OTHER MODEL EITHER — the review of the
+            // first 4.9.1 draft is why.** That draft read "the same model as the light one, much
+            // faster on this device", and the juxtaposition re-points the measured claim: any
+            // reader takes it as "much faster than the light one", i.e. than `small-q8`, on a
+            // screen where `small-q8` is one card away (`WhisperCatalog.pickableFor` lists it
+            // beside this card on every device offered `npu` without turbo). The measurement was
+            // against the 190 MB Q5_1 twin (above), and `small-q8` — the same weights at Q8_0 —
+            // has never been timed on an NPU-capable device: its only measurement is the Tab
+            // S10+, which has no Hexagon. The repo's own numbers project that comparison the
+            // OTHER way: Q8_0 sits on ggml's i8mm repack path and small Q8 ran 2.2x faster than
+            // Q5_1 per commit on the Tab (1,217 vs 2,618 ms, docs/measurements/2026-09-17-tab-
+            // cpu-ladder.md), and the Tab measured 1.14-1.30x slower than the Fold6 on one chunk
+            // (docs/superpowers/research/2026-09-13-cpu-tier-upgrade.md §0.1), so `small-q8` on
+            // the Fold6 projects to
+            // roughly 0.9-1.1 s per commit against the Hexagon's fixed 1.78 s encode — the
+            // AI-chip tier would be the SLOWER of the two. That is the re-pointing the 4.7
+            // controller ruling forbade ("re-pointing the comparison ... would restate a measured
+            // claim about weights it was not measured against"), reached by sentence shape
+            // rather than by a name. So the same-weights fact (`npu` carries whisper-small's
+            // weights; `small-q8` is those weights at Q8_0 — true of the checkpoint, no timing
+            // needed) lives HERE and not on the card, and the speed sentence stands alone in
+            // 4.0's shape with the retired comparand's name gone. It is still NOT "the same
+            // accuracy" anywhere: the w8a16 conversion and the Q8_0 file have never had their
+            // transcripts compared, and the small-q8 rule above applies. The open item is
+            // unchanged: a Fold6 session that times `small-q8` beside the two NPU tiers, after
+            // which this body may name what it beats — or the headline may have to move.
+            body = "Runs on this phone's AI chip, much faster on this device.",
         ),
         // 4.1 wrote this card as "Best quality, slower" against the OTHER NPU card, back when no
         // WER existed for any w8a16 variant and the two NPU tiers were offered side by side. Both
@@ -402,19 +420,25 @@ object ModelTierCopy {
             //   against the 190 MB Multilingual model's 2.3 s (docs/measurements, 2026-09-02)
             //   and ~6 s per 17.6 s chunk on the Tab S10+ (2026-09-09). Owner ruling 2026-09-10:
             //   "it's actually the fastest one we have and most accurate".
-            // 4.9.1 keeps BOTH claims at EXACTLY their scope, in plain words. "Our most accurate
-            // model" is true again since 4.7 (large-v3, the one checkpoint that outranked it,
-            // is retired, and `ultra-q8` is this same large-v3-turbo on the CPU), and the
-            // sentence still carries the AI-chip scope, so it is not a second unscoped claimant
-            // beside `ultra-q8`'s "The most accurate one" —
-            // `exactly_one_card_claims_the_top_of_the_accuracy_order` reads the scope per
-            // sentence. "The fastest on this device" is byte-identical to 4.6's speed half:
-            // measured twice, owner-ruled, scoped to the device in the user's hand, never an
-            // absolute. "The best choice on this device" is the steer — turbo HEADS the steer
-            // wherever it is offered (`steerIdForLanguageTagFor`, the owner's pick) — stated
-            // where the user reads it.
-            body = "Runs on this phone's AI chip — our most accurate model, and the fastest " +
-                "on this device. The best choice on this device.",
+            // 4.9.1 keeps BOTH claims at EXACTLY their scope, in plain words. The accuracy half
+            // is 4.6 T2's own sentence, "the most accurate model that runs there": the SET it
+            // ranks against is the models on the AI chip, stated in the clause that carries the
+            // superlative, not borrowed from the opener. The first 4.9.1 draft said "our most
+            // accurate model" — an app-wide claim — and the review caught it: `ultra-q8`'s body
+            // is "The most accurate one." and the two cards render together whenever a turbo
+            // device has `ultra-q8` installed or the CPU tiers join through
+            // `OnboardingLogic.chooserAlsoOfferedIds` after a delivery failure, so that draft put
+            // two cards in front of one user each claiming the top in plain words — the defect
+            // class `exactly_one_card_claims_the_top_of_the_accuracy_order` exists to catch
+            // (the checkpoint tie with `ultra-q8`, the same large-v3-turbo on the CPU, makes it
+            // not-false, and the census still passed only because the em-dash joined the claim to
+            // "AI chip" in one sentence; the census now splits on the dash too). "The fastest on
+            // this device" is byte-identical to 4.6's speed half: measured twice, owner-ruled,
+            // scoped to the device in the user's hand, never an absolute. "The best choice on
+            // this device" is the steer — turbo HEADS the steer wherever it is offered
+            // (`steerIdForLanguageTagFor`, the owner's pick) — stated where the user reads it.
+            body = "Runs on this phone's AI chip — the most accurate model that runs there, " +
+                "and the fastest on this device. The best choice on this device.",
         ),
     )
 
