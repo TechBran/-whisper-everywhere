@@ -120,6 +120,21 @@ android {
         }
     }
 
+    // The bundled speaker-embedding model (speaker_campplus_en_16k.onnx, 29.6 MB) must stay
+
+    // STORED, not deflated: sherpa-onnx opens assets through the AssetManager, and a
+
+    // compressed asset cannot be mapped or read as a file. The .bin assets ride the
+
+    // same rule. (4.10 speaker labels, Task 2 review finding.)
+
+    androidResources {
+
+        noCompress += listOf("onnx", "bin")
+
+    }
+
+
     buildTypes {
         release {
             isMinifyEnabled = true

@@ -281,4 +281,17 @@ class SpeakerEmbedderPinTest {
         /** The graph's own `output_dim`. Asserted against the asset bytes, not taken on trust. */
         const val EMBEDDING_DIM = 512
     }
+
+    /**
+     * The final whole-branch review of 2026-09-18 found the 29.6 MB asset undeclared, so AAPT2
+     * would have DEFLATED it: sherpa opens assets through the AssetManager, and a compressed
+     * asset can be neither mapped nor read as a file. The rule lives in app/build.gradle.kts and
+     * this pin reads it there.
+     */
+    @Test
+    fun theModelAssetIsStoredUncompressed() {
+        val gradle = text("build.gradle.kts")
+        val block = gradle.substringAfter("androidResources {", "").substringBefore("}")
+        assertTrue("androidResources.noCompress must name onnx", block.contains("noCompress") && block.contains("\"onnx\""))
+    }
 }
