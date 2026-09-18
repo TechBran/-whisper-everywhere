@@ -164,3 +164,63 @@
 08:20:14 pid=19127 finalize: wallMs=2931 audio_ctx=512 threads=4 audioMs=1100 segments=1   (microphone session / process warm-up; not part of any rung's sample)
 08:20:31 pid=19127 finalize: wallMs=863 audio_ctx=512 threads=4 audioMs=1460 segments=1   (microphone session / process warm-up; not part of any rung's sample)
 ```
+
+## Evening runs the same day - turbo Q8 in the owner's own use, and it fell behind
+
+The owner dictated on `ultra-q8` three more times on the same tablet on the evening of 2026-09-17 (his own YouTube-over-device-audio sessions; captured with `adb logcat -v time -s WE-DIAG ggml whisper_jni`; the `loading model from ggml-large-v3-turbo-q8_0.bin` line at 19:29:28 identifies the model for every line below). Same build (versionCode 97), threads=4, previewer armed. Battery at 55-58 %, thermal status 0 throughout; the third run was plugged into the charger about a minute in. He reported the two power states "didn't feel any different", and the numbers agree: all three runs were in the falling-behind regime.
+
+| run | power | commits | wallMs median | mean | worst | ctx=512 median | over the 8,000 ms floor | audio median | audio max |
+|---|---|---|---|---|---|---|---|---|---|
+| 19:57-19:59 | on battery (56%) | 13 | 7,225 | 7,804 | 13,583 | 5,085 | 6 of 13 | 10.9 s | 15.1 s |
+| 20:00-20:02 | on battery | 9 | 7,784 | 7,802 | 12,580 | 6,065 | 4 of 9 | 10.4 s | 14.9 s |
+| 20:04-20:07 | charger connected at 20:05:48, one minute into the run | 10 | 10,776 | 9,118 | 13,794 | 5,270 | 6 of 10 | 15.0 s | 15.1 s |
+
+**Reading.** Against the morning ladder run (median 4,849, worst 7,930, 0 of 24 over the floor, chunks 8-14 s), the evening commits were 1.5-2x slower, half of them exceeded the 8,000 ms pacing floor, and the chunks pinned at the endpointer's 15 s cap - the signature of a queue that has fallen behind and is feeding itself (longer chunks cost more, so each commit lands later). The short (ctx=512) chunks alone ran 10-30 % slower than in the morning, so the tablet was genuinely slower this evening and turbo had no headroom to absorb it. The charger did not recover the third run because it was already saturated. What the owner experiences as fast is the streaming previewer (0.4 s behind the voice); the committed text in these runs arrived 8-14 s per chunk behind. **Consequence for the record:** the morning's 0.99 was turbo's BEST case on this tablet, not its typical one. The owner's ruling to ship turbo as an offered tier stands ("we definitely wanna keep that one"; "this will be the best for long form video that you want accurate"); the card says "slower than the other two" and warns that the typed text can fall behind, and this section is why.
+
+
+### 19:57:21-19:59:50, on battery (56%)
+
+```
+19:57:21 finalize: wallMs=3922 audio_ctx=512 threads=4 audioMs=1100 segments=1
+19:57:43 finalize: wallMs=10737 audio_ctx=816 threads=4 audioMs=15058 segments=8
+19:57:58 finalize: wallMs=10817 audio_ctx=814 threads=4 audioMs=15008 segments=5
+19:58:04 finalize: wallMs=6684 audio_ctx=610 threads=4 audioMs=10930 segments=2
+19:58:18 finalize: wallMs=8176 audio_ctx=688 threads=4 audioMs=12480 segments=6
+19:58:24 finalize: wallMs=5037 audio_ctx=512 threads=4 audioMs=8650 segments=1
+19:58:34 finalize: wallMs=5678 audio_ctx=538 threads=4 audioMs=9480 segments=5
+19:58:49 finalize: wallMs=8120 audio_ctx=689 threads=4 audioMs=12510 segments=4
+19:58:55 finalize: wallMs=5237 audio_ctx=515 threads=4 audioMs=9038 segments=3
+19:59:09 finalize: wallMs=7225 audio_ctx=636 threads=4 audioMs=11450 segments=3
+19:59:16 finalize: wallMs=5134 audio_ctx=512 threads=4 audioMs=8410 segments=4
+19:59:37 finalize: wallMs=11103 audio_ctx=814 threads=4 audioMs=15008 segments=7
+19:59:50 finalize: wallMs=13583 audio_ctx=512 threads=4 audioMs=8688 segments=2
+```
+
+### 20:00:56-20:02:29, on battery
+
+```
+20:00:56 finalize: wallMs=3687 audio_ctx=512 threads=4 audioMs=1496 segments=2
+20:01:14 finalize: wallMs=8190 audio_ctx=700 threads=4 audioMs=12720 segments=4
+20:01:31 finalize: wallMs=10252 audio_ctx=802 threads=4 audioMs=14778 segments=3
+20:01:37 finalize: wallMs=5793 audio_ctx=536 threads=4 audioMs=9450 segments=2
+20:01:58 finalize: wallMs=12580 audio_ctx=810 threads=4 audioMs=14938 segments=4
+20:02:07 finalize: wallMs=9256 audio_ctx=700 threads=4 audioMs=12730 segments=2
+20:02:16 finalize: wallMs=7784 audio_ctx=583 threads=4 audioMs=10386 segments=2
+20:02:23 finalize: wallMs=6619 audio_ctx=512 threads=4 audioMs=8670 segments=2
+20:02:29 finalize: wallMs=6065 audio_ctx=512 threads=4 audioMs=2506 segments=1
+```
+
+### 20:04:54-20:07:12, charger connected at 20:05:48, one minute into the run
+
+```
+20:04:54 finalize: wallMs=3659 audio_ctx=512 threads=4 audioMs=1100 segments=1
+20:05:16 finalize: wallMs=10805 audio_ctx=814 threads=4 audioMs=15008 segments=4
+20:05:31 finalize: wallMs=10747 audio_ctx=814 threads=4 audioMs=15008 segments=3
+20:05:47 finalize: wallMs=11323 audio_ctx=818 threads=4 audioMs=15098 segments=3
+20:05:53 finalize: wallMs=6241 audio_ctx=512 threads=4 audioMs=2368 segments=4
+20:06:11 finalize: wallMs=4326 audio_ctx=512 threads=4 audioMs=1270 segments=1
+20:06:33 finalize: wallMs=11298 audio_ctx=814 threads=4 audioMs=15008 segments=10
+20:06:50 finalize: wallMs=12779 audio_ctx=814 threads=4 audioMs=15008 segments=6
+20:07:06 finalize: wallMs=13794 audio_ctx=819 threads=4 audioMs=15108 segments=9
+20:07:12 finalize: wallMs=6214 audio_ctx=512 threads=4 audioMs=7150 segments=3
+```

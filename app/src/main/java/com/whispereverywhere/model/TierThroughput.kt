@@ -690,7 +690,16 @@ object TierThroughputRecord {
                 "instrument; from 4.7 through 4.8 it was the optional top rung, offered on his " +
                 "earlier words (\"it's doable, it's actually workable\") and not advocated. " +
                 "CAVEATS: one device, a flagship — on anything slower this rung is expected to " +
-                "fall behind, which its card says; one talk; previewer armed throughout",
+                "fall behind, which its card says; one talk; previewer armed throughout. " +
+                "THE SECOND DATA POINT, same day, same tablet: the owner's own three evening " +
+                "sessions on this rung (docs/measurements/2026-09-17-tab-cpu-ladder.md, " +
+                "\"Evening runs\"; battery 55-58 %, then the charger; thermal status 0) fell " +
+                "BEHIND — medians 7,225 / 7,784 / 10,776 ms, worst 13,794, sixteen of thirty-two " +
+                "commits over the 8 000 ms floor, chunks pinned at the endpointer's 15 s cap — " +
+                "so the morning's 0.99 was this rung's best case on this tablet, not its typical " +
+                "one. The outcome above is left as measured in the morning run; the evening runs " +
+                "are why the card's fall-behind sentence is not a caveat but the expected " +
+                "behaviour in long use, and the owner shipped it knowing that",
             // 4.9 — THE RULING. Recorded, not paraphrased; the number above is untouched.
             ownerRuling = ThroughputVerdict.OwnerRuling(
                 on = "2026-09-17",
