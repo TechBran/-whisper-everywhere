@@ -127,12 +127,22 @@ class ModelTierCopyTest {
         // report, dated, on his tablet. Read together they are a ladder: fastest / balanced /
         // highest accuracy.
         assertEquals("Fastest, less accurate", ModelTierCopy.forId("small-q8")!!.headline)
+        // Small's last sentence is "Fits every device", not "Recommended on every device" (4.9
+        // review): over the 4.5 GB gate the steer is medium, so on that device small renders one
+        // card under "Our pick" — a body calling itself the recommendation there contradicts
+        // the chip above it. The RAM floor is a fit (small's is 0, so it fits every device); the
+        // recommendation is the steer's chip alone, the same rule medium's and turbo's "Offered
+        // where" sentences follow.
         assertEquals(
             "Whisper small at Q8_0 — the same weights as the retired 190 MB Q5_1 model. The " +
                 "fastest of the three on the owner's tablet and the least accurate: 1,217 ms " +
                 "per commit against medium's 1,341 and turbo's 4,849, measured 2026-09-17. " +
-                "Recommended on every device.",
+                "Fits every device.",
             ModelTierCopy.forId("small-q8")!!.body,
+        )
+        assertFalse(
+            "no CPU card may call itself the recommendation — that is the steer chip's word",
+            ModelTierCopy.forId("small-q8")!!.body.contains("Recommended"),
         )
         assertEquals("Balanced speed and accuracy", ModelTierCopy.forId("medium-q8")!!.headline)
         // Medium's body, word by word: "about a tenth slower than small" states the doc's 10%

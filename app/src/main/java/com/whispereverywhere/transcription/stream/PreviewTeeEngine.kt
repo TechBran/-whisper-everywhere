@@ -62,10 +62,12 @@ class PreviewTeeEngine(
      * (4.9) Invoked ONCE per session, with this tee, on the previewer's executor, the moment the
      * previewer reports it cannot open for the session — AFTER [passThrough] is set, so an owner
      * that reads the tee back sees the switch already made. Never invoked for a session whose
-     * previewer opened, and never for a session that has since been closed: `open()` is a posted
-     * task, so a stale session's report can land after the next session has been armed, and the
-     * tee drops it (see [connect]'s generation check) — the owner's own comparison of the
-     * argument with the engine it currently holds stays as the second line of defence.
+     * previewer opened, and never for a session that has since been closed — whether or not a
+     * next one has started: `open()` is a posted task, so a stale session's report can land
+     * after [close] alone (tap-stop, no tap-start) or after the next session has been armed, and
+     * the tee drops it either way (see [connect]'s generation check; [close] advances the
+     * generation too, which is what makes the first case hold) — the owner's own comparison of
+     * the argument with the engine it currently holds stays as the second line of defence.
      */
     private val onUnavailable: (PreviewTeeEngine) -> Unit = {},
 ) : TranscriptionEngine {
@@ -82,12 +84,18 @@ class PreviewTeeEngine(
     @Volatile private var passThrough = false
 
     /**
-     * THE SESSION GENERATION (4.9 review): incremented by every [connect]. `open()`'s report is a
-     * FIFO-deferred task, so on tap-stop-tap-start a report from session N's open can arrive
-     * after session N+1 has connected; the task captures the generation it was posted under and
-     * a report whose generation is not the current one is dropped — it may neither flip the
-     * next session's [passThrough] nor tell the owner about a session that is already over.
-     * This is the tee-side twin of the identity check the service does at `onPreviewUnavailable`.
+     * THE SESSION GENERATION (4.9 review): incremented by every [connect] AND every [close].
+     * `open()`'s report is a FIFO-deferred task, so a report from session N's open can arrive
+     * after session N+1 has connected (tap-stop-tap-start) — or after N's own `close` with no
+     * session behind it (tap-stop alone; the second review's case). The task captures the
+     * generation it was posted under and a report whose generation is not the current one is
+     * dropped — it may neither flip the next session's [passThrough] nor tell the owner about a
+     * session that is already over. [close] has to advance it as well as [connect]: with only
+     * [connect] counting, a session closed and not reconnected still matched, and its late report
+     * flipped the switch on a dead tee and told the owner (who logs it) about a session that was
+     * over. This is the tee-side twin of the identity check the service does at
+     * `onPreviewUnavailable` — which cannot catch the tap-stop-alone case either, because the
+     * service re-points its engine only at the next session's arm, not at stop.
      */
     @Volatile private var generation = 0
 
@@ -133,6 +141,9 @@ class PreviewTeeEngine(
     }
 
     override fun close() {
+        // The session is over from here: a deferred `open` report for it is stale from this line,
+        // whether or not another session ever connects (see [generation]).
+        generation++
         preview.close()
         local.close()
         listener = null

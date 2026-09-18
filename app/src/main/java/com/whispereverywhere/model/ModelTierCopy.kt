@@ -187,11 +187,16 @@ object ModelTierCopy {
             // states the checkable facts — same weights, Q8_0, the three numbers from the doc —
             // and a user comparing "the 190 MB one I had" with this one can still see they are
             // one model. "The least accurate" ranks the checkpoint, which whisper's own size
-            // order entitles it to; it is not a claim about the Q5_1 twin.
+            // order entitles it to; it is not a claim about the Q5_1 twin. "Fits every device",
+            // not "Recommended on every device" (4.9 review): this rung's RAM floor is 0, so it
+            // FITS every device — but over the 4.5 GB gate the app's steer is medium, and a card
+            // one rung under "Our pick" may not call itself the recommendation on that same
+            // screen. The recommendation is the steer's chip alone; the RAM floor is a fit, on
+            // every card alike.
             body = "Whisper small at Q8_0 — the same weights as the retired 190 MB Q5_1 model. " +
                 "The fastest of the three on the owner's tablet and the least accurate: " +
                 "1,217 ms per commit against medium's 1,341 and turbo's 4,849, measured " +
-                "2026-09-17. Recommended on every device.",
+                "2026-09-17. Fits every device.",
         ),
         "medium-q8" to TierCopy(
             // The owner's words, verbatim: "Medium: balanced speed and accuracy." On the tablet

@@ -294,6 +294,53 @@ class PreviewTeeEngineTest {
     }
 
     /**
+     * (4.9 review, second pass) TAP-STOP WITH NO TAP-START: the same stale report landing after
+     * `close()` ALONE, with no next session behind it. The first pass counted generations only in
+     * `connect`, so a session closed and never reconnected still matched its own held report:
+     * the switch flipped on a dead tee and the owner was told — through `onUnavailable` — about
+     * a session that was over, and the service accepted it, because it re-points its engine
+     * only at the next session's arm, never at stop (FloatingBubbleService `onPreviewUnavailable`
+     * compares against `transcriptionEngine`, nulled only in `onDestroy`), so it cleared the
+     * flag and logged a stream-unavailable line for nothing. The hook's KDoc says "never for a
+     * session that has since been closed"; this is the case that makes the sentence true.
+     * Pinned: `close()` advances the generation, the late report is dropped, the switch stays
+     * off, and the owner hears nothing. And the tee is still an ordinary tee for the next
+     * session — its own open, its own report, one for one.
+     */
+    @Test fun aStaleUnavailableReportLandingAfterCloseWithNoNextSessionIsDroppedToo() {
+        preview.unavailableAtOpen = true
+        preview.deferUnavailable = true
+        connected()                                                  // session 1: open posts, report held
+        assertFalse(tee.previewUnavailable)
+        tee.close()                                                  // tap-stop — and no tap-start
+        assertEquals(1, owner.closedCalls)
+        preview.fireHeldUnavailable()                                // session 1's report lands after its close
+        assertFalse("a closed session's late report must not flip the switch on a dead tee", tee.previewUnavailable)
+        assertTrue("and the owner is not told about a session that is over", unavailable.isEmpty())
+
+        // The next session, whenever it comes, is decided by its OWN open: healthy here, so the
+        // composer owns the strip and no report is made...
+        preview.unavailableAtOpen = false
+        val second = Owner()
+        tee.connect("en", second)
+        assertFalse(tee.previewUnavailable)
+        local.delta(" Hello")
+        assertTrue("session 2's composer owns the strip: whisper's deltas are swallowed", second.deltas.isEmpty())
+        preview.partial("hello")
+        assertEquals(listOf("hello"), second.deltas)
+        assertTrue(unavailable.isEmpty())
+
+        // ...and a session whose own held report lands while it is still open still switches.
+        tee.close()
+        preview.unavailableAtOpen = true
+        val third = Owner()
+        tee.connect("en", third)
+        preview.fireHeldUnavailable()
+        assertTrue(tee.previewUnavailable)
+        assertEquals("one report, for the one session whose previewer could not open", listOf(tee), unavailable)
+    }
+
+    /**
      * (4.9) The same fact over the REAL engine on a held FIFO, in the exact production order the
      * 4.8.1 gate creates: a warm is posted, the tee connects behind it (open posts behind the warm),
      * chunks arrive, the load THROWS on the FIFO, `open()` finds no recognizer and reports it, and
