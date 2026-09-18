@@ -175,6 +175,16 @@ import org.junit.Test
  * receives it — the tablet on 97, production on 86 — sees a new code and re-arms on first launch,
  * exactly as on every bump (below).
  *
+ * **versionCode 99 = 4.9.1 — a PATCH, and the name says what it is.** 98 went out as 4.9.0 on
+ * 2026-09-17, uploaded by the owner, so it is spent: Play refuses a second upload at the same code.
+ * 99 changes no model, no pack and no payload; it is the transcript window, on the owner's report
+ * from his tablet the same day. The panel is its chosen height whether or not the text fills it
+ * (the resize that "wants to drag the window around" was a height applied as a ceiling on a
+ * wrap_content view, so a short panel got the window's y-compensation without the growth), a
+ * resize drag locks to its axis, the handle is red and opaque, and the scrollbar beside each
+ * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
+ * one. Every bump still re-arms GpuPolicy's canary latches (below).
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -195,15 +205,15 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_9_0_at_version_code_98() {
+    fun release_identity_is_4_9_1_at_version_code_99() {
         assertEquals(
-            "versionName must be 4.9.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.9.0",
+            "versionName must be 4.9.1 for this release (app/build.gradle.kts defaultConfig)",
+            "4.9.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 98 for this release (app/build.gradle.kts defaultConfig)",
-            98,
+            "versionCode must be 99 for this release (app/build.gradle.kts defaultConfig)",
+            99,
             BuildConfig.VERSION_CODE,
         )
     }
