@@ -151,6 +151,27 @@ data class NativeSegmentStats(
     val vadOutSamples: Int,
 )
 
+/**
+ * The SEGMENT GEOMETRY of one completed transcribe (4.10 speaker labels), read back through the
+ * backend seam: where each VAD speech segment sat in the raw chunk and in the stitched buffer
+ * whisper saw, and which bytes of the returned text came out of each decoded segment.
+ *
+ * The two `IntArray`s are the native flattenings, four ints per segment, unparsed — see
+ * [com.whispereverywhere.whisper.WhisperNative.lastVadSegments] and `lastWhisperSegments` for the
+ * field order, and `SpeakerSpans` for the parse. They stay raw here so this type is a pure
+ * snapshot with no rules of its own: the one thing it guarantees is that BOTH arrays came out of
+ * the SAME transcribe, which is the guarantee two separate seam members could not make.
+ *
+ * UNLIKE [NativeSegmentStats], AN EMPTY ARRAY IS A MEANINGFUL READING, not a missing one: an empty
+ * [vadSegments] says the VAD did not run or found no speech, and per the spec that must never be
+ * read as one speaker. "No geometry at all" is a NULL from [WhisperBackend.lastGeometry].
+ *
+ * Deliberately NOT a data class: `equals` on a data class holding arrays compares them by
+ * REFERENCE, so two snapshots with identical numbers would compare unequal and a test written
+ * against `assertEquals` would pass or fail for reasons that have nothing to do with the geometry.
+ */
+class SegmentGeometry(val vadSegments: IntArray, val whisperSegments: IntArray)
+
 /** Thin seam over the native layer so the engine can be tested without JNI. */
 interface WhisperBackend {
     fun load(modelPath: String): Long
@@ -256,6 +277,31 @@ interface WhisperBackend {
      * same single native-executor thread. Diagnostics only.
      */
     fun lastSegmentStats(ctx: Long): NativeSegmentStats? = null
+
+    /**
+     * The [SegmentGeometry] of the LAST transcribe THIS backend ran on [ctx], or null when the
+     * backend has none (4.10 speaker labels).
+     *
+     * A new member with a default BODY, for the reason the two-arg [load]'s KDoc records at
+     * length: a default parameter value would help callers and leave every implementor's override
+     * un-overriding. Default null, so every existing backend and every test fake keeps its 4.9
+     * behaviour byte for byte and the engine attaches no spans for it.
+     *
+     * NULL AND AN EMPTY `vadSegments` ARE DIFFERENT ANSWERS, and the difference is the whole
+     * reason this is nullable rather than a pair of always-present arrays:
+     *  - null — this backend has no geometry (no native VAD filter ran under it at all: the NPU
+     *    tier while it is live, the cloud engines, every fake).
+     *  - a non-null snapshot with an EMPTY `vadSegments` — a native transcribe ran and the VAD
+     *    produced no segments (no model path, an init failure, or genuinely no speech).
+     * Both mean "no spans", but only the second says a VAD ran, and the spike's diagnostics need
+     * to tell them apart. Neither may be read as one speaker.
+     *
+     * Called by [LocalWhisperEngine.runSegment] immediately after its transcribe returns, on the
+     * same single native-executor thread, exactly like [lastSegmentStats]. **Unlike
+     * [lastSegmentStats] this is read FOR A DECISION** — it decides which words carry which
+     * speaker's label — so the snapshot discipline behind it matters more here, not less.
+     */
+    fun lastGeometry(ctx: Long): SegmentGeometry? = null
 
     fun release(ctx: Long)
 }
@@ -423,6 +469,19 @@ object WhisperNativeBackend : WhisperBackend {
     @Volatile private var lastStats: NativeSegmentStats? = null
     @Volatile private var lastStatsCtx: Long = 0L
 
+    // 4.10 speaker labels: THE SAME ONE-SLOT, CTX-TAGGED SHAPE, for the segment geometry — and it
+    // is a SECOND slot rather than two more fields on the first because the two are captured by
+    // two functions and a shared slot would make a geometry read answerable by a stats capture.
+    // Every word of the seam comment above applies here unchanged, with one thing added: this
+    // snapshot is read FOR A DECISION (which words carry which speaker's label), not for a
+    // diagnostic. So the hold is not merely what makes the numbers coherent — it is what keeps a
+    // label off the wrong sentence, and an off-gate read returns a self-consistent snapshot of
+    // the WRONG chunk with nothing about the numbers looking wrong.
+    //
+    // PAYLOAD FIRST, TAG LAST, both @Volatile, same as above: the tag is the guard.
+    @Volatile private var lastGeom: SegmentGeometry? = null
+    @Volatile private var lastGeomCtx: Long = 0L
+
     private fun captureStats(ctx: Long) {
         // runCatching: a diagnostic must never be able to fail a transcribe that already
         // succeeded (UnsatisfiedLinkError on a stale .so, OOM on the 3-int array).
@@ -468,6 +527,47 @@ object WhisperNativeBackend : WhisperBackend {
     override fun lastSegmentStats(ctx: Long): NativeSegmentStats? =
         if (ctx != 0L && ctx == lastStatsCtx) lastStats else null
 
+    /**
+     * Snapshots BOTH geometry arrays in ONE runCatching, inside the caller's gate hold (4.10).
+     *
+     * ONE runCatching AROUND BOTH READS, not one each: half a snapshot is worse than none. If the
+     * VAD array linked and the whisper array did not, a per-read wrapper would publish segment
+     * bounds with no text ranges to match them to, and the span mapper would then attribute every
+     * word to the last VAD segment — a plausible-looking single-speaker answer. Wrapped together,
+     * a failure publishes nothing and the tag stays clear, which the engine reads as "no geometry"
+     * and delivers today's unlabelled text.
+     *
+     * The wrapper itself is the invalidation's partner, exactly as in [captureStats]: an
+     * UnsatisfiedLinkError from a stale .so, or an OOM allocating either array, must never fail a
+     * transcribe that had ALREADY SUCCEEDED. A label is worth less than a sentence.
+     *
+     * The external funs are typed non-null, but `NewIntArray` can fail under memory pressure and
+     * whisper_jni returns nullptr rather than an array it does not have — so a null arrives past
+     * a non-null Kotlin type and the constructor call below NPEs inside this runCatching, which
+     * is precisely where it should land.
+     */
+    private fun captureGeometry(ctx: Long) {
+        val geometry = runCatching {
+            SegmentGeometry(
+                vadSegments = WhisperNative.lastVadSegments(),
+                whisperSegments = WhisperNative.lastWhisperSegments(),
+            )
+        }.getOrNull() ?: return
+        lastGeom = geometry   // payload FIRST
+        lastGeomCtx = ctx     // tag LAST: the guard for the payload written above it
+    }
+
+    /**
+     * @see WhisperBackend.lastGeometry. Same ctx-tag rule as [lastSegmentStats], including the
+     * `ctx != 0L` guard against [WhisperNative.init]'s failure value matching the untouched
+     * initial tag, and the same deliberate exemption from [NativeComputeGate]: two volatile reads
+     * of a Kotlin snapshot touch no native memory, and taking the fair gate here would park the
+     * segment's resolution behind an in-flight batch chunk that would re-tag this slot before the
+     * wait ended.
+     */
+    override fun lastGeometry(ctx: Long): SegmentGeometry? =
+        if (ctx != 0L && ctx == lastGeomCtx) lastGeom else null
+
     // The one place the gate + GpuPolicy sentinel wrap a native whisper_full. [onNewSegment]
     // (nullable) is invoked by the JNI trampoline on THIS thread while the gate is held —
     // see WhisperBackend.transcribeStreaming's contract for why the closure must stay lock-free.
@@ -487,6 +587,13 @@ object WhisperNativeBackend : WhisperBackend {
         // the capture overwrites them: the capture does not run on the paths that need this.
         lastStats = null
         lastStatsCtx = 0L
+        // 4.10: the geometry slot, same reset for the same reason, and it must stay BELOW the two
+        // lines above — `NativeSegmentStatsSeamTest` pins those as the FIRST and SECOND statements
+        // of this hold, and its message says why. A geometry left tagged behind a transcribe that
+        // THREW would hand the next chunk's spans the previous chunk's segment bounds: the labels
+        // would land on the wrong sentences and every number involved would look reasonable.
+        lastGeom = null
+        lastGeomCtx = 0L
         val vad = if (useVad) VadModel.path() else null   // batch passes false -> no native VAD
         val validating = GpuPolicy.needsComputeValidation()
         if (!validating) {
@@ -494,6 +601,7 @@ object WhisperNativeBackend : WhisperBackend {
                 ctx, samples, lang, translate = false, vadModelPath = vad, onNewSegment = onNewSegment
             )
             captureStats(ctx)
+            captureGeometry(ctx)
             return@serialized text
         }
         GpuPolicy.onGpuComputeStarting()
@@ -504,6 +612,7 @@ object WhisperNativeBackend : WhisperBackend {
             )
             ok = true
             captureStats(ctx)   // AFTER ok = true: the sentinel's verdict is about the transcribe
+            captureGeometry(ctx)
             text
         } finally {
             GpuPolicy.onGpuComputeFinished(ok)
@@ -527,6 +636,13 @@ object WhisperNativeBackend : WhisperBackend {
         if (ctx == lastStatsCtx) {
             lastStats = null
             lastStatsCtx = 0L
+        }
+        // 4.10: the geometry slot dies with the handle too, and it is tagged SEPARATELY — a
+        // geometry capture that failed while the stats capture succeeded leaves the two tags
+        // naming different ctxs, so one `if` over both would leave the other live.
+        if (ctx == lastGeomCtx) {
+            lastGeom = null
+            lastGeomCtx = 0L
         }
         WhisperNative.free(ctx)
     }

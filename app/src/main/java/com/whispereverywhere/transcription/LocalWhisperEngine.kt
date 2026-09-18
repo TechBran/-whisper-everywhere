@@ -2,6 +2,7 @@ package com.whispereverywhere.transcription
 
 import android.util.Log
 import com.whispereverywhere.audio.EndpointerTuning
+import com.whispereverywhere.transcription.speakers.SpeakerSpans
 import com.whispereverywhere.util.AudioMath
 import com.whispereverywhere.util.RetryPolicy
 import kotlinx.coroutines.runBlocking
@@ -544,6 +545,18 @@ class LocalWhisperEngine(
                     // Language code only — never transcript content.
                     android.util.Log.i("WE-DIAG", "language-pin: detected=$detected")
                 }
+                // 4.10 speaker labels: the segment geometry of the transcribe that just returned,
+                // read HERE for the same three reasons the stats read above is here — after the
+                // retry (so it describes the LAST attempt), on the success path only, and exactly
+                // once. With one difference that raises the stakes rather than lowering them:
+                // this is read FOR A DECISION, not for a log line, so a stale snapshot does not
+                // print a wrong number, it puts a speaker's label on another speaker's sentence.
+                //
+                // A null answer is normal and is the pre-4.10 path: no native geometry (the NPU
+                // tier while it is live), or the process-global slot was re-tagged by an
+                // interleaved batch chunk between the two calls. The outcome then carries no
+                // spans and every delivery surface behaves exactly as it did in 4.9.
+                val geometry = backend.lastGeometry(ctx)
                 if (cleaned.isBlank()) {
                     // EmptyExpected, NEVER EmptyUnexpected, for the on-device engine.
                     //
@@ -566,7 +579,7 @@ class LocalWhisperEngine(
                     android.util.Log.i("WE-DIAG", "transcribe result blank/non-speech -> empty")
                     SegmentOutcome.EmptyExpected
                 } else {
-                    SegmentOutcome.Text(cleaned)
+                    textOutcome(cleaned, text, geometry)
                 }
             }
         } catch (t: Throwable) {
@@ -577,6 +590,46 @@ class LocalWhisperEngine(
             SegmentOutcome.Lost(TRANSCRIBE_FAILED)
         }
         resolve(seq, outcome, clearPreview = streamedPreview, myListener)
+    }
+
+    /**
+     * Builds the `Text` outcome, attaching the 4.10 speaker geometry when this chunk has any.
+     *
+     * [cleaned] is the committed text and is passed through UNTOUCHED — the whole point of this
+     * function is that the spans ride ALONGSIDE it. [raw] is the pre-clean text, and it is the
+     * one the byte offsets belong to: the native side reports offsets into the UTF-8 it returned,
+     * and `TranscriptText.clean` collapses whitespace and deletes marker groups, so every offset
+     * past the first edit would be wrong against the cleaned string. `raw.toByteArray(UTF_8)`
+     * reproduces the buffer `transcribeRaw` returned, because the decode that produced [raw] was
+     * the inverse of this encode.
+     *
+     * BOTH FIELDS OR NEITHER. Three separate conditions collapse to "no geometry", and all three
+     * produce the byte-identical pre-4.10 outcome rather than an empty list:
+     *  - the backend published none (null) — no native VAD filter ran under it;
+     *  - the VAD produced no segments (an empty array) — which the spec forbids reading as one
+     *    speaker, so there is nothing to attach;
+     *  - the segments produced no spans — a geometry that maps onto no surviving text, which is
+     *    what a stale snapshot looks like from here.
+     * A half-attached outcome (`vad` set, `spans` empty) would make the service's "does this chunk
+     * have speakers" test true for a chunk with nothing to label.
+     */
+    private fun textOutcome(
+        cleaned: String,
+        raw: String,
+        geometry: SegmentGeometry?,
+    ): SegmentOutcome.Text {
+        if (geometry == null) return SegmentOutcome.Text(cleaned)
+        val vad = SpeakerSpans.vadSegments(geometry.vadSegments)
+        if (vad.isEmpty()) return SegmentOutcome.Text(cleaned)
+        val spans = SpeakerSpans.spans(
+            raw = geometry.whisperSegments,
+            bytes = raw.toByteArray(Charsets.UTF_8),
+            vad = vad,
+        )
+        if (spans.isEmpty()) return SegmentOutcome.Text(cleaned)
+        // Numbers only — a span's text IS user speech and never reaches a log line.
+        android.util.Log.i("WE-DIAG", "speaker-spans: vad=${vad.size} spans=${spans.size}")
+        return SegmentOutcome.Text(cleaned, spans = spans, vad = vad)
     }
 
     /**

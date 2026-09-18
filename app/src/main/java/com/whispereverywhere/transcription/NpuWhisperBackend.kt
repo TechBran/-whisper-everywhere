@@ -849,6 +849,26 @@ class NpuWhisperBackend(
     override fun lastSegmentStats(ctx: Long): NativeSegmentStats? =
         fallbackBackend?.lastSegmentStats(fallbackCtx)
 
+    /**
+     * The CPU tier's segment geometry AFTER a fallback; null while the NPU is live (4.10 speaker
+     * labels) — the third member to follow [lastSegmentStats]' delegation, for the same reason and
+     * with the same ungated-pair-read argument, which is recorded in full on that member.
+     *
+     * DELEGATION, NOT EMPTY ARRAYS, and the distinction is the behaviour: a declined session is
+     * running whisper.cpp with its native VAD filter, so its chunks have real geometry and the
+     * user gets speaker labels. Answering empty arrays here would silently make speaker detection
+     * a tier-dependent feature that stops working after a mid-session decline, with nothing in the
+     * UI naming why — the exact class of silent post-decline loss 4.1 L7 closed for the other two
+     * members.
+     *
+     * The live-NPU arm answers null through the safe-call: this path runs its own encoder and
+     * decoder on the HTP with no whisper.cpp VAD filter anywhere in it, so there is no geometry —
+     * and null, not a pair of empty arrays, is what says so. Empty arrays would claim a VAD ran
+     * and found no speech (see [SegmentGeometry]).
+     */
+    override fun lastGeometry(ctx: Long): SegmentGeometry? =
+        fallbackBackend?.lastGeometry(fallbackCtx)
+
     // ---------------------------------------------------------------- teardown and fallback
 
     /**
