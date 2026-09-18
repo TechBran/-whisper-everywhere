@@ -22,3 +22,25 @@
 5. If CAM++ still splits one voice after 1-4, try WeSpeaker ResNet34 / ERes2Net on the same dumped audio.
 
 **Next:** the spike writes every fingerprint (512 floats, duration, chunk, assigned id) to `filesDir/speaker-spike/<session>.jsonl`; segment audio is dumped only behind a hidden switch the owner turns on for a session he chooses. The tuning loop then runs on the PC against these three sessions.
+
+## Session 2 — the fingerprint dump, and the offline model comparison (2026-09-18 17:24-17:35, three new clips: exactly one, two and three speakers)
+
+The owner re-ran three sessions on the dump build (c3980cd..e4e51a4); 132 segments' fingerprints and audio were pulled to the PC. The PC's sherpa-onnx (1.13.8) reproduced the tablet's CAM++ fingerprints exactly (mean cosine 1.000 over the one-speaker session), so the failure below is the model's, not the pipeline's.
+
+**Retrospective clustering (average linkage on segments ≥ 2 s) with the shipped CAM++:** no threshold yields 1/2/3; the one-speaker session's segments score 0.26 (p10) to 0.87 against each other, and the two/three-speaker sessions cut into 36/4 and 26/4/1. **The stricter online rules on CAM++ fingerprints:** 2/2/2 for truths 1/2/3 at every band tried. The rules cannot rescue the signal.
+
+**Five models on the same 132 segments** (PC times are relative only):
+
+| model | dim | size | same-speaker sim, one-voice session (min / p5) | one global threshold giving 1/2/3 | online tracker bands giving exactly 1/2/3 |
+|---|---|---|---|---|---|
+| CAM++ VoxCeleb (shipped) | 512 | 29.6 MB | 0.04 / 0.26 | none | none |
+| WeSpeaker ResNet34-LM | 256 | 26.5 MB | 0.78 / 0.83 | 0.65 | none — merges speakers (cross-speaker p95 0.73-0.76 above same-speaker p5 0.63) |
+| WeSpeaker CAM++-LM | 512 | 29.3 MB | — / 0.29 | 0.375-0.40 | not simulated |
+| 3D-Speaker ERes2Net-base | 512 | 39.6 MB | 0.47 / 0.55 | 0.275-0.30 | one band only (0.45/0.30) |
+| **NeMo TitaNet-small** | 192 | 40.3 MB | **0.57 / 0.67** | 0.275 | **twelve bands, 0.45-0.70 / 0.25-0.60** |
+
+ERes2Net and TitaNet agree on 100 % of segment pairs in both multi-speaker sessions (25/15 and 15/11/5 on the ≥ 2 s segments); ResNet34 agrees with them on 95 % / 85 %. Two independent models finding the same structure is the best proxy for truth available without hand labels.
+
+**Decision: TitaNet-small** (, 40,257,283 B, sha256 ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e, CC-BY-4.0 — attribution goes into the OSS notices; the clearance sheet row is a production gate). Tracker rules that made it work, all verified in simulation on this data: a segment shorter than 2.0 s never opens a speaker and never updates one (it inherits the current speaker); matching is the maximum similarity over a speaker's last five fingerprints, not a running mean; a speaker is confirmed after two qualifying segments; after each chunk, an unconfirmed speaker whose centroid is within T_SAME of a confirmed one is merged into it. Band: **T_SAME 0.50, T_NEW 0.30** (the centre of the working region). Cost on the PC equals CAM++'s (48 ms per fingerprint), so the tablet's 130-300 ms per fingerprint carries over.
+
+**Known limit, accepted by the owner ("if we can detect that, great; if not, we'll live with it"):** an interruption shorter than two seconds is labelled as the current speaker.
