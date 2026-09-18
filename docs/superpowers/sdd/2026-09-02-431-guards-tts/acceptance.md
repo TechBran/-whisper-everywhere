@@ -476,8 +476,11 @@ K1. **Fresh voice install.** In Engines & voices, remove the local voice if inst
     because the upstream archive was silently replaced; 89 accepts the known-good set. FAIL if the
     verification error returns.
     `[ ] PASS  [ ] FAIL`
-K2. **Turbo card.** Open the model chooser on the Fold6: the AI-chip card reads "Best accuracy,
-    fastest" with the body naming the 190 MB Multilingual model as the comparison.
+K2. **Turbo card.** Open the model chooser on the Fold6: the AI-chip card reads "Best AI-chip
+    accuracy, fastest" with the body "Runs on this phone's AI chip — our most accurate model, and
+    the fastest on this device. The best choice on this device." (4.9.1 plain copy, owner ruling
+    2026-09-17; until then the body named the 190 MB Multilingual model as the comparison — that
+    measured comparison now lives in the KDoc beside the card, verbatim).
     `[ ] PASS  [ ] FAIL`
 K3. **Live by default.** With the Gemini key entered and nothing else touched, a session is live
     (words streaming) without flipping any switch; the switch on the Gemini row is ON and turning it
