@@ -37,26 +37,33 @@
 
                  The scrollbar is PERSISTENT and VISIBLE (owner ruling 2026-09-17, the 96 tablet
                  session: "that scrolling bar is very useful so people know that they can
-                 actually scroll previously"). With the framework default the bar fades to
-                 nothing at rest, so earlier builds looked as though the window did not scroll
-                 at all. fadeScrollbars off, 4dp wide, and a drawn thumb on a faint track so it
-                 reads as a bar on the dark panel. Android still draws it only when the text
-                 exceeds the view, which is right. Pinned by BubbleScrollbarPinTest. -->
+                 actually scroll previously") — and since 4.9.1 it is the TranscriptScrubberView
+                 beside this text, not the framework's: "if we touch the slider, we should be
+                 able to slide it up and down". The framework bar is a drawing that takes no
+                 touches, so this view's own scrollbars are NONE and the scrubber is the one bar
+                 (same 4dp, same thumb-on-track colours). Pinned by BubbleScrollbarPinTest. -->
             <TextView
                 android:id="@+id/transcription_edit_text"
                 android:layout_width="280dp"
                 android:layout_height="wrap_content"
-                android:scrollbars="vertical"
-                android:fadeScrollbars="false"
-                android:scrollbarSize="4dp"
-                android:scrollbarStyle="insideOverlay"
-                android:scrollbarThumbVertical="@drawable/bubble_scrollbar_thumb"
-                android:scrollbarTrackVertical="@drawable/bubble_scrollbar_track"
+                android:scrollbars="none"
                 android:textColor="#FFFFFF"
                 android:textSize="14sp"
                 android:hint="Listening..."
                 android:textColorHint="#99FFFFFF"
                 android:gravity="top|start" />
+
+            <!-- The committed text's grabbable scrollbar (4.9.1): a 12dp touch lane on the
+                 panel's right edge, drawing the 4dp bar at its edge, starting BELOW the resize
+                 handle so the handle keeps its corner. INVISIBLE (no touches) when the text
+                 fits; the view decides that itself from the TextView it is bound to. -->
+            <com.whispereverywhere.ui.components.TranscriptScrubberView
+                android:id="@+id/transcript_scrubber"
+                android:layout_width="12dp"
+                android:layout_height="match_parent"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="28dp"
+                android:visibility="invisible" />
 
             <!-- W3 resize handle: 28dp touch target, 45-degree double-arrow, visible whenever
                  the container is (resizing mid-dictation is the intended flow). Drag = resize,
@@ -87,28 +94,43 @@
           field would mean rewriting the whole field several times a second, which is the exact
           corruption class Release A's ordering exists to prevent (spec 5.6a/5.6b).
 
-          The scrollbar is the SAME persistent, drawn bar the committed text carries above
-          (owner ruling 2026-09-17): the 4.4 previewer panel already kept it from fading, at 2dp
-          and the framework's faint default thumb, which was "barely visible". 4dp, the shared
-          thumb and track. Pinned by BubbleScrollbarPinTest.
+          The scrollbar is the SAME grabbable bar the committed text carries above (owner ruling
+          2026-09-17; the 4.4 previewer panel's framework bar was "barely visible" and, like any
+          framework bar, took no touches): a TranscriptScrubberView beside the strip in the same
+          FrameLayout wrapper, this view's own scrollbars NONE. The strip KEEPS its 4dp top
+          margin (the scrubber carries the same, so it spans the text exactly): on the wrapper it
+          would survive a GONE strip as 4dp of phantom panel. The service still writes to the
+          TextView by id and the strip's own visibility (GONE / INVISIBLE / VISIBLE) still drives
+          the window's height — an INVISIBLE strip occupies its height in the wrapper exactly as
+          it did in the container, a GONE one collapses the wrapper to nothing. Pinned by
+          BubbleScrollbarPinTest.
         -->
-        <TextView
-            android:id="@+id/transcription_delta_text"
-            android:layout_width="280dp"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:maxLines="5"
-            android:scrollbars="vertical"
-            android:fadeScrollbars="false"
-            android:scrollbarSize="4dp"
-            android:scrollbarStyle="insideOverlay"
-            android:scrollbarThumbVertical="@drawable/bubble_scrollbar_thumb"
-            android:scrollbarTrackVertical="@drawable/bubble_scrollbar_track"
-            android:lineSpacingExtra="2dp"
-            android:textColor="#E6FFFFFF"
-            android:textSize="14sp"
-            android:textStyle="italic"
-            android:visibility="gone" />
+        <FrameLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/transcription_delta_text"
+                android:layout_width="280dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:maxLines="5"
+                android:scrollbars="none"
+                android:lineSpacingExtra="2dp"
+                android:textColor="#E6FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="italic"
+                android:visibility="gone" />
+
+            <com.whispereverywhere.ui.components.TranscriptScrubberView
+                android:id="@+id/delta_scrubber"
+                android:layout_width="12dp"
+                android:layout_height="match_parent"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="4dp"
+                android:visibility="invisible" />
+
+        </FrameLayout>
 
     </LinearLayout>
 

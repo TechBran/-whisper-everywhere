@@ -1002,6 +1002,11 @@ class FloatingBubbleService : Service(),
     private lateinit var transcriptionPreviewContainer: View
     private lateinit var transcriptionEditText: android.widget.TextView
     private lateinit var transcriptionDeltaText: android.widget.TextView
+    // 4.9.1: the grabbable scrollbars, one per transcript view. Bound once in createBubbleView
+    // and self-driven from there (scroll / layout / text listeners on their TextViews); the
+    // service never scrolls THEM — it scrolls the TextViews, and they follow.
+    private lateinit var transcriptScrubber: com.whispereverywhere.ui.components.TranscriptScrubberView
+    private lateinit var deltaScrubber: com.whispereverywhere.ui.components.TranscriptScrubberView
 
     private lateinit var audioRecorder: StreamingAudioRecorder
 
@@ -2542,6 +2547,10 @@ class FloatingBubbleService : Service(),
         transcriptionPreviewContainer = bubbleView.findViewById(R.id.transcription_preview_container)
         transcriptionEditText = bubbleView.findViewById(R.id.transcription_edit_text)
         transcriptionDeltaText = bubbleView.findViewById(R.id.transcription_delta_text)
+        transcriptScrubber = bubbleView.findViewById(R.id.transcript_scrubber)
+        transcriptScrubber.bind(transcriptionEditText)
+        deltaScrubber = bubbleView.findViewById(R.id.delta_scrubber)
+        deltaScrubber.bind(transcriptionDeltaText)
         resizeHandle = bubbleView.findViewById(R.id.resize_handle)
         resizeHandle.setOnTouchListener { _, event -> handleResizeTouch(event) }
         pinIcon = bubbleView.findViewById(R.id.pin_icon)
