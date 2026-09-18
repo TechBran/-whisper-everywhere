@@ -136,7 +136,7 @@ class SpeakerAssigner(
         val durations = ArrayList<Float>(vad.size)
         var embedNs = 0L
         // Whether THIS chunk paid the session's one-time model load. [VoicePrints] loads lazily on
-        // its first call, so the first fingerprint of a session costs 29.6 MB of asset read and an
+        // its first call, so the first fingerprint of a session costs 40.3 MB of asset read and an
         // ONNX session init ON TOP of one inference — hundreds of milliseconds, inside the same
         // `embedMs` number the device session reads CAM++'s per-segment cost off. Without this
         // flag chunk 1 is an unexplained outlier against a budget of "worst under 300 ms", and the
@@ -299,7 +299,7 @@ data class SpeakerAssignment(
  *        who has nobody to be compared with. This is the column `T_SAME` / `T_NEW` come from.
  * @param durationsSec per segment, its length in seconds on the original timeline.
  * @param includesModelLoad true for the ONE chunk of a session whose [embedMs] also paid the
- *        lazy model load — 29.6 MB of asset read plus an ONNX session init, hundreds of
+ *        lazy model load — 40.3 MB of asset read plus an ONNX session init, hundreds of
  *        milliseconds on top of one inference. It is here so that chunk is not read as CAM++
  *        being slow: it is the difference between a go and a no-go on the model.
  *

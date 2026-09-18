@@ -120,7 +120,7 @@ android {
         }
     }
 
-    // The bundled speaker-embedding model (speaker_campplus_en_16k.onnx, 29.6 MB) must stay
+    // The bundled speaker-embedding model (speaker_titanet_small_16k.onnx, 40.3 MB) must stay
 
     // STORED, not deflated: sherpa-onnx opens assets through the AssetManager, and a
 
@@ -435,13 +435,19 @@ tasks.withType<Test>().configureEach {
         // passes against the file as it used to be.
         "src/main/assets/whisper_vocab_turbo.json",
         // (4.10 Task 2) The BUNDLED speaker model and the one file that loads it, and they join
-        // together because they are two halves of the same claim. The model is a 29.6 MB binary
+        // together because they are two halves of the same claim. The model is a 40.3 MB binary
         // asset — an input to no compile task at all — and `SpeakerEmbedderPinTest` is the only
         // reader of those bytes anywhere in this repo: its length and sha256 are what stands
-        // between the APK and the WeSpeaker/TitaNet fallbacks of a similar size that spec §3.4
-        // lists, or a copy some future round interrupted. Nothing on device can tell us which file
-        // shipped; the owner ruled the model is bundled precisely so there is no download step to
-        // notice a wrong one at.
+        // between the APK and the four OTHER embedding models the spike's session 2 scored beside
+        // this one (26.5-39.6 MB, all in one directory on the PC while the swap was made), or a
+        // copy some future round interrupted. Nothing on device can tell us which file shipped;
+        // the owner ruled the model is bundled precisely so there is no download step to notice a
+        // wrong one at.
+        //
+        // The entry was RE-POINTED when TitaNet-small replaced CAM++
+        // (docs/measurements/2026-09-18-speaker-spike.md, session 2). A rename that missed this
+        // list would leave the new model undeclared and the old path naming a file that no longer
+        // exists — Gradle tolerates the second half silently, which is the whole hazard.
         //
         // SpeakerEmbedder.kt is the other half, for the reason Q6 added NpuWhisperBackend.kt: no
         // test may REFERENCE it (sherpa's SpeakerEmbeddingExtractor loads libsherpa-onnx-jni.so in
@@ -450,7 +456,7 @@ tasks.withType<Test>().configureEach {
         // digest the KDoc has to keep agreeing with the asset. All of those are comment-shaped
         // mutations that compile to a byte-identical class, which is exactly the shape that leaves
         // :app:testDebugUnitTest UP-TO-DATE with the pins green against the file as it used to be.
-        "src/main/assets/speaker_campplus_en_16k.onnx",
+        "src/main/assets/speaker_titanet_small_16k.onnx",
         "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerEmbedder.kt",
         // (4.10 Task 3) The ASSIGNER and the PREVIEW TEE, by this list's stated rule — membership
         // follows what the tests READ. `SpeakerWiringPinTest` reads both as text: the assigner for

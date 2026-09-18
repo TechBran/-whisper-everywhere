@@ -22,13 +22,16 @@ import java.security.MessageDigest
  *
  * ### The model, asserted against the bytes that ship
  *
- * The 29.6 MB CAM++ model is BUNDLED (owner ruling, spec §3.4) — there is no download flow, so the
- * one thing that can go wrong is the file itself: copied from the wrong release, truncated by an
- * interrupted copy, or replaced by the WeSpeaker fallback the spike may reach for without the
- * constants following it. A binary asset is an input to no compile task, so [theModelAssetIsTheCamPlusModel]
- * and the digest in the adapter's own KDoc are the only readers of those bytes in this repo — and
- * the asset is declared in the test task's `sourcePinnedInputs` (asserted below) so that replacing
- * it actually re-runs them.
+ * The 40.3 MB NeMo **TitaNet-small** model is BUNDLED (owner ruling, spec §3.4) — there is no
+ * download flow, so the one thing that can go wrong is the file itself: copied from the wrong
+ * release, truncated by an interrupted copy, or left as one of the four OTHER embedding models the
+ * spike's session 2 scored beside it (`docs/measurements/2026-09-18-speaker-spike.md`) without the
+ * constants following it. That last one is not hypothetical: the swap this file now pins replaced
+ * CAM++, and all five candidates sat in the same directory under the same 26-40 MB. A binary asset
+ * is an input to no compile task, so [theModelAssetIsTheTitaNetModel] and the digest in the
+ * adapter's own KDoc are the only readers of those bytes in this repo — and the asset is declared
+ * in the test task's `sourcePinnedInputs` (asserted below) so that replacing it actually re-runs
+ * them.
  *
  * Assets are NOT on the JVM test classpath (`unitTests.isIncludeAndroidResources` is at its default
  * `false`), so the file is read from `app/src/main/assets` by path, as BYTES, with the house
@@ -153,9 +156,9 @@ class SpeakerEmbedderPinTest {
     @Test
     fun theAssetIsLoadedThroughTheAssetManagerFirstAndTheStagedPathOnlyAsAFallback() {
         // The AssetManager constructor is what the bundling ruling rests on — it is why no download
-        // flow and no filesDir copy is needed for a 29.6 MB model. The staged path is the
+        // flow and no filesDir copy is needed for a 40.3 MB model. The staged path is the
         // contingency the plan named (a Task 4 finding), and it must stay a contingency: staging
-        // writes 29.6 MB into filesDir on a device that had no need of it.
+        // writes 40.3 MB into filesDir on a device that had no need of it.
         assertTrue("the AssetManager arm exists", "app.assets" in code)
         assertTrue("the fallback goes through the house stager", "NpuAssetStage" in code)
         assertTrue(
@@ -164,7 +167,7 @@ class SpeakerEmbedderPinTest {
             "SpeakerEmbeddingExtractor(null," in code,
         )
         assertTrue(
-            "…and the asset arm is tried FIRST: staging writes 29.6 MB into filesDir to fix a " +
+            "…and the asset arm is tried FIRST: staging writes 40.3 MB into filesDir to fix a " +
                 "problem most devices do not have, so it may only run once the bundled read has " +
                 "actually refused",
             code.indexOf("fromAsset()") < code.indexOf("fromStagedFile()"),
@@ -176,7 +179,7 @@ class SpeakerEmbedderPinTest {
         // sherpa's constructor throws IllegalArgumentException when the native handle comes back 0
         // (verified in the shipped jar: `require(ptr != 0L)`). Without a latch, a model that cannot
         // load at all would be re-attempted once per committed chunk, on the embedder's thread,
-        // forever — 29.6 MB of asset read per chunk for a capability that is already off.
+        // forever — 40.3 MB of asset read per chunk for a capability that is already off.
         assertTrue("the latch is read before a load is attempted", "if (failed) return null" in code)
         assertTrue("…and set when one fails", "failed = true" in code)
         assertTrue(
@@ -190,21 +193,25 @@ class SpeakerEmbedderPinTest {
     // ---------------------------------------------------------------- the model itself
 
     @Test
-    fun theModelAssetIsTheCamPlusModel() {
+    fun theModelAssetIsTheTitaNetModel() {
         val asset = source("src/main/assets/$ASSET_NAME")
         assertEquals(
-            "$ASSET_NAME must be exactly $ASSET_BYTES bytes — the Content-Length of the " +
-                "sherpa-onnx release the spec §3.4 recorded on 2026-09-18. A short file is a " +
-                "copy that was interrupted, and ONNX will refuse it on device with a message " +
-                "nobody reads; a different length is a different model, which the thresholds in " +
-                "SpeakerTracker were not set for.",
+            "$ASSET_NAME must be exactly $ASSET_BYTES bytes — the length of the NeMo " +
+                "TitaNet-small graph the spike's session 2 chose on 2026-09-18 " +
+                "(docs/measurements/2026-09-18-speaker-spike.md). A short file is a copy that was " +
+                "interrupted, and ONNX will refuse it on device with a message nobody reads; a " +
+                "different length is a different model, which the bands in SpeakerTracker were " +
+                "not set for.",
             ASSET_BYTES, asset.length(),
         )
         val digest = sha256(asset.readBytes())
         assertEquals(
-            "…and its sha256 must be the one the plan carried from the download. This is the only " +
-                "check in the repo that the bundled 29.6 MB is the CAM++ model and not the " +
-                "WeSpeaker or TitaNet fallback of a similar size (spec §3.4 lists both at 25-26 MB).",
+            "…and its sha256 must be the one the measurement doc recorded. This is the only check " +
+                "in the repo that the bundled 40.3 MB is TitaNet-small and not one of the four " +
+                "other models session 2 scored beside it — CAM++ VoxCeleb (29.6 MB), WeSpeaker " +
+                "CAM++-LM (29.3 MB), WeSpeaker ResNet34-LM (26.5 MB), ERes2Net-base (39.6 MB) — " +
+                "all of which sat in one directory on the PC while this swap was made, and only " +
+                "one of which separates one, two and three voices.",
             ASSET_SHA256, digest,
         )
         assertTrue(
@@ -212,25 +219,69 @@ class SpeakerEmbedderPinTest {
                 "loads it can be compared without a build (the plan's Task 2 asks for it there)",
             ASSET_SHA256 in doc,
         )
-        assertTrue("…along with its length", "29_596_978" in doc || ASSET_BYTES.toString() in doc)
+        assertTrue("…along with its length", "40_257_283" in doc || ASSET_BYTES.toString() in doc)
         assertEquals(
             "…and the runtime must stage against that same digest, so the fallback arm cannot " +
                 "verify a different file than this test just hashed",
             1, count(code, ASSET_SHA256),
+        )
+        assertFalse(
+            "…and no trace of the model it replaced may be left in the adapter's constants: the " +
+                "CAM++ digest naming a TitaNet asset is the one wrong pairing that would stage a " +
+                "file this test never hashed",
+            CAMPLUS_SHA256 in code,
+        )
+    }
+
+    /**
+     * CC-BY-4.0 asks for attribution, and this repo's habit is that a licence obligation is
+     * written down where the obligated file is named — the discipline `docs/LANGUAGE-CLEARANCE.md`
+     * already applies to every streaming pack.
+     *
+     * The swap traded CAM++'s Apache-2.0 for a licence with a USER-VISIBLE condition, and the
+     * attribution line is deliberately NOT written in this task. So the debt itself is pinned: the
+     * adapter has to say that the line is owed in `oss_licenses.html` and that the clearance-sheet
+     * row — not this test, and not the build — is what gates production. A production gate rather
+     * than a build gate because the spike must still be runnable on an uncleared model; that is
+     * the whole reason the debt is allowed to exist at all.
+     */
+    @Test
+    fun theAdapterStatesTheAttributionThatIsSTILLOWEDForACcByModel() {
+        for (phrase in listOf(
+            "CC-BY-4.0",
+            "oss_licenses.html",
+            "clearance-sheet row is the PRODUCTION GATE",
+        )) {
+            assertTrue(
+                "SpeakerEmbedder.kt's KDoc must state: <<$phrase>>. TitaNet-small is CC-BY-4.0 " +
+                    "and its attribution is not in the OSS notices yet; the sentence that says so " +
+                    "is the only thing standing between that debt and a store build.",
+                phrase in doc,
+            )
+        }
+        assertFalse(
+            "and the notices must not be claimed as done while they are not: this task did not " +
+                "edit oss_licenses.html, and a KDoc saying it did is worse than one saying nothing",
+            "already in oss_licenses.html" in doc,
         )
     }
 
     @Test
     fun theDocumentedEmbeddingWidthIsTheOneTheShippedGraphAnnounces() {
         // The one number about this model that nothing at runtime reads, and that nothing at
-        // runtime can therefore correct: SpeakerTracker measures every embedding against
-        // `centroids[0].size`, never against a constant, so a wrong width in the adapter's KDoc is
-        // invisible on device and still wrong for everything that is sized from it — the spike's
-        // diag line, the per-segment cost, spec §3.3's 40-60 MB budget. It said 192 (the CN-Celeb
-        // CAM++, same architecture, different model) while this file's graph says 512. So the
-        // documented width is re-derived here from the asset's own `metadata_props`, which means a
-        // model swap — the spike may reach for WeSpeaker, §3.4 — cannot update the digest above
-        // and leave the paragraph behind.
+        // runtime can therefore correct: SpeakerTracker measures every embedding against the width
+        // of the fingerprints it already holds, never against a constant, so a wrong width in the
+        // adapter's KDoc is invisible on device and still wrong for everything that is sized from
+        // it — the spike's diag line, the jsonl header's `dim`, the per-segment cost, spec §3.3's
+        // resident budget.
+        //
+        // This exact pin already caught one wrong width: the adapter said 192 while the CAM++
+        // graph it then loaded said 512. The model swap of this commit makes 192 the RIGHT answer,
+        // which is the nastiest possible sequel — the old wrong number and the new right one are
+        // the same digits — so the width is re-derived from the asset's own `metadata_props` here
+        // rather than reasoned about from the family name. `python onnx` reads the same thing off
+        // the graph: output `embs` is [*, 192], beside a `logits` [*, 16681] training head that
+        // sherpa does not use.
         val bytes = source("src/main/assets/$ASSET_NAME").readBytes()
         val key = indexOf(bytes, "output_dim")
         assertTrue("the graph must carry an output_dim annotation to be pinned against", key >= 0)
@@ -246,9 +297,10 @@ class SpeakerEmbedderPinTest {
             "$EMBEDDING_DIM-float" in doc,
         )
         assertFalse(
-            "…and must not describe the fingerprint as 192 floats again: that is the CN-Celeb " +
-                "CAM++, not the en/voxceleb model this repo bundles",
-            "192-float" in doc,
+            "…and must not describe the fingerprint as 512 floats: 512 was the width of the " +
+                "CAM++ VoxCeleb graph this model replaced, and the paragraph that describes the " +
+                "embedding is exactly what a model swap leaves behind",
+            "512-float" in doc,
         )
     }
 
@@ -274,16 +326,23 @@ class SpeakerEmbedderPinTest {
     private companion object {
         const val ADAPTER = "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerEmbedder.kt"
         const val CLASS = "class SpeakerEmbedder("
-        const val ASSET_NAME = "speaker_campplus_en_16k.onnx"
-        const val ASSET_BYTES = 29_596_978L
-        const val ASSET_SHA256 = "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b"
+        const val ASSET_NAME = "speaker_titanet_small_16k.onnx"
+        const val ASSET_BYTES = 40_257_283L
+        const val ASSET_SHA256 = "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e"
+
+        /**
+         * The digest of the CAM++ VoxCeleb model this one replaced. Here only to be asserted
+         * ABSENT: a half-finished swap that renames the asset and leaves the old digest in the
+         * staging arm verifies a file nothing in this repo has ever hashed.
+         */
+        const val CAMPLUS_SHA256 = "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b"
 
         /** The graph's own `output_dim`. Asserted against the asset bytes, not taken on trust. */
-        const val EMBEDDING_DIM = 512
+        const val EMBEDDING_DIM = 192
     }
 
     /**
-     * The final whole-branch review of 2026-09-18 found the 29.6 MB asset undeclared, so AAPT2
+     * The final whole-branch review of 2026-09-18 found the 29.6 MB CAM++ asset undeclared, so AAPT2
      * would have DEFLATED it: sherpa opens assets through the AssetManager, and a compressed
      * asset can be neither mapped nor read as a file. The rule lives in app/build.gradle.kts and
      * this pin reads it there.

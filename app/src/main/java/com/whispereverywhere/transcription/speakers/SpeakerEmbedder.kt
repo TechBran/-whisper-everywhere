@@ -8,7 +8,7 @@ import com.whispereverywhere.npu.NpuAssetStage
 
 /**
  * THE ONE ADAPTER over sherpa's speaker-embedding extractor (sherpa-onnx 1.13.7) — a slice of PCM
- * in, a 512-float voice fingerprint out, `null` on every failure (4.10 Task 2, spec §3.2 step 2).
+ * in, a 192-float voice fingerprint out, `null` on every failure (4.10 Task 2, spec §3.2 step 2).
  *
  * It is the production [VoicePrints] (4.10 Task 3): that interface is the seam
  * [SpeakerAssigner] — which owns every decision about which samples are fingerprinted and what
@@ -17,28 +17,58 @@ import com.whispereverywhere.npu.NpuAssetStage
  *
  * ### The model, and why it is an asset
  *
- * 3D-Speaker **CAM++**, `speaker_campplus_en_16k.onnx`: 29_596_978 bytes, sha256
- * `357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b`. The owner ruled on
+ * NVIDIA NeMo **TitaNet-small**, `speaker_titanet_small_16k.onnx`: 40_257_283 bytes, sha256
+ * `ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e`. The owner ruled on
  * 2026-09-18 that it is **bundled in the APK** ("let's bundle it so users don't have to download
  * another thing"), which is exactly what sherpa's `AssetManager` constructor is for: no download
  * flow, no Play pack, no network dependency, and no first-run state where a core behaviour is
  * missing. `SpeakerEmbedderPinTest` holds the length and the digest against the bytes that ship,
  * because a bundled model is the one input to this class that nothing on device can check.
  *
- * Its licence clearance is a PRODUCTION gate, not a build gate (spec §3.4): the spike may run on
- * the uncleared model, the store build may not.
+ * ### Why THIS model and not the CAM++ this file used to name
  *
- * ### 512 floats wide — read off the graph, not off the family name
+ * `docs/measurements/2026-09-18-speaker-spike.md`, session 2. The owner ran three clips — exactly
+ * one, two and three speakers — on the dump build; 132 segments' fingerprints and audio came back
+ * to the PC, and **five** embedding models were scored on the same segments. The shipped
+ * 3D-Speaker CAM++ scored its own single voice against itself as low as **0.04** (p5 0.26), so no
+ * threshold and no tracker rule recovered 1/2/3 from it — *"the rules cannot rescue the signal"*.
+ * TitaNet-small's same-voice minimum is **0.57** (p5 0.67), and twelve different tracker bands
+ * give exactly 1/2/3 on the three clips; ERes2Net-base agrees with it on 100 % of segment pairs in
+ * both multi-speaker clips, which is the best proxy for truth there is without hand labels. Cost
+ * is unchanged (48 ms per fingerprint on the PC, the same as CAM++'s), so session 1's measured
+ * 130-300 ms per fingerprint on the Tab carries over. It costs 10.7 MB more in the APK than CAM++
+ * did — the one price of the swap, and the base module has the room (spec §3.4).
  *
- * The shipped graph's output `embedding` has shape `[*, 512]`, its input `x` is `[N, T, 80]`
- * (80-bin fbank), and its ONNX `metadata_props` carry `output_dim = 512` beside
- * `url = modelscope.cn/models/iic/speech_campplus_sv_en_voxceleb_16k`. **512, not 192**: 192 is the
- * CN-Celeb CAM++ — the same architecture, a different model — and the two are easy to read as
- * interchangeable; this KDoc said 192 until 4.10 Task 2's fix round checked the bytes that ship.
- * Nothing at runtime depends on the number ([SpeakerTracker] measures every embedding against
- * `centroids[0].size`, never against a constant), which is exactly why a wrong one could sit here
- * unnoticed: the readers are people and plans — the spike's diag line, the per-segment cost, spec
- * §3.3's 40-60 MB resident budget. So it is held from two sides instead.
+ * ### Its licence is CC-BY-4.0, and the attribution is OWED
+ *
+ * NVIDIA NeMo TitaNet-small is **CC-BY-4.0**, which requires attribution — and unlike CAM++'s
+ * Apache-2.0 that attribution has to be VISIBLE to the user, not merely permitted. So:
+ *
+ *  - an attribution line for NVIDIA NeMo TitaNet-small is **owed in
+ *    `app/src/main/assets/oss_licenses.html`** before this model reaches production, and it is not
+ *    written yet: this task deliberately does not edit that file, so the debt is stated here where
+ *    the model is named;
+ *  - the **clearance-sheet row is the PRODUCTION GATE** (spec §3.4, the discipline
+ *    `docs/LANGUAGE-CLEARANCE.md` already applies to every streaming pack): the spike may run on
+ *    an uncleared model, the store build may not. A build gate would stop the measurement this
+ *    model exists to serve; a production gate stops the only thing that actually matters.
+ *
+ * ### 192 floats wide — read off the graph, not off the family name
+ *
+ * Read with `python onnx` off the bytes that ship: the graph's outputs are `logits`
+ * `[MatMullogits_dim_0, 16681]` (the 16 681-speaker training head, which sherpa does not use) and
+ * **`embs` `[Squeezeembs_dim_0, 192]`** — the fingerprint. Its input `audio_signal` is
+ * `[N, 80, T]` (80-bin log-mel, FEATURE-major, the transpose of CAM++'s `[N, T, 80]`) beside a
+ * `length` vector, and its ONNX `metadata_props` carry `output_dim = 192`, `feat_dim = 80`,
+ * `sample_rate = 16000`, `framework = nemo` and
+ * `url = catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small`. **192, and this time
+ * it is 192**: the same number that was WRONG for CAM++ (192 is the CN-Celeb CAM++, not the
+ * en/voxceleb one this repo used to bundle) is right for this model, which is exactly the kind of
+ * coincidence that makes a family-name guess look confirmed. Nothing at runtime depends on the
+ * number ([SpeakerTracker] measures every embedding against the width of the fingerprints it
+ * already holds, never against a constant), which is why a wrong one could sit here unnoticed: the
+ * readers are people and plans — the spike's diag line, the per-segment cost, spec §3.3's resident
+ * budget. So it is held from two sides instead.
  * `SpeakerEmbedderPinTest.theDocumentedEmbeddingWidthIsTheOneTheShippedGraphAnnounces` re-derives
  * it from the asset's own annotation, so swapping the model cannot leave this paragraph behind, and
  * both load arms log `dim()` so the device session reads the width off the loader too.
@@ -51,7 +81,7 @@ import com.whispereverywhere.npu.NpuAssetStage
  *    device (a finding the plan's device session would produce), the asset is staged into
  *    `filesDir`, verified by length AND digest, and handed over as an absolute path with a null
  *    `AssetManager` — the same shape `SherpaPreviewRecognizer` and `TtsEngine.buildTts` use for
- *    every model they load. It stays second because it costs 29.6 MB of the user's storage to fix
+ *    every model they load. It stays second because it costs 40.3 MB of the user's storage to fix
  *    a problem most devices do not have.
  *
  * ### Every failure is null, and a failure is remembered
@@ -62,13 +92,15 @@ import com.whispereverywhere.npu.NpuAssetStage
  * exception escaping there would kill a thread the session depends on for a *label*.
  *
  * The [failed] latch is the other half. Without it a model that cannot load at all would be
- * re-attempted once per committed chunk — 29.6 MB of asset read every few seconds, forever, for a
+ * re-attempted once per committed chunk — 40.3 MB of asset read every few seconds, forever, for a
  * capability that has already been established to be unavailable.
  *
  * ### Lifecycle and threading
  *
  * The model loads LAZILY, on the first [embed], on the caller's thread — one resident copy for the
- * session (roughly 40-60 MB, spec §3.3), [release]d with the session. Not synchronised: one
+ * session (spec §3.3 budgeted 40-60 MB against the 29.6 MB CAM++; this graph is 40.3 MB on its
+ * own, so the floor of that range has moved up with it and the device session is what measures
+ * the real figure), [release]d with the session. Not synchronised: one
  * instance per session, called only from the `speaker-embed` executor. `numThreads = 1` for the
  * same reason — the commit floors were measured without a second decoder-sized thread on these
  * cores.
@@ -173,9 +205,9 @@ class SpeakerEmbedder(private val app: Application) : VoicePrints {
     private companion object {
         const val TAG = "WE-DIAG"
 
-        /** The bundled CAM++ model. Its length and digest are pinned in `SpeakerEmbedderPinTest`. */
-        const val ASSET = "speaker_campplus_en_16k.onnx"
-        const val ASSET_BYTES = 29_596_978L
-        const val ASSET_SHA256 = "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b"
+        /** The bundled TitaNet-small model. Length and digest are pinned in `SpeakerEmbedderPinTest`. */
+        const val ASSET = "speaker_titanet_small_16k.onnx"
+        const val ASSET_BYTES = 40_257_283L
+        const val ASSET_SHA256 = "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e"
     }
 }

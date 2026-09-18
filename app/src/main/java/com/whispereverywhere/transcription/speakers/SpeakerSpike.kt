@@ -23,9 +23,20 @@ import java.util.Locale
  * [SPEAKER_SPIKE] is the compile-time switch that makes it exist at all, and
  * `SpeakerSpikePinTest` is the reason it cannot be forgotten.
  *
+ * ### It worked, and the answer was the MODEL
+ *
+ * Session 2 of that same doc is what came back: three clips (exactly one, two and three
+ * speakers), 132 segments' fingerprints and audio pulled to the PC, and five embedding models
+ * scored on them offline — which is the loop this file exists to close, and it cost the owner one
+ * device session instead of one per candidate. The verdict was not a band: CAM++ scores its own
+ * single voice against itself as low as **0.04**, so *"the rules cannot rescue the signal"*, and
+ * the model was swapped to NeMo TitaNet-small. [MODEL_ASSET] names whatever is bundled TODAY, and
+ * a dump's header carries it, so a jsonl pulled off the device can never be scored against a
+ * model it did not come from.
+ *
  * ### The audio half stores speech, and the app's rule is that audio is never retained
  *
- * A jsonl of 512-float vectors is not recoverable audio. A WAV is. Item 5 of the spike's plan —
+ * A jsonl of 192-float vectors is not recoverable audio. A WAV is. Item 5 of the spike's plan —
  * *"if CAM++ still splits one voice after 1-4, try WeSpeaker ResNet34 / ERes2Net on the same
  * dumped audio"* — needs the original slices, and there is no way to get a different model's
  * embeddings out of this one's. So the audio dump exists, and it is:
@@ -70,12 +81,12 @@ object SpeakerSpike {
     const val AUDIO_FLAG: String = "DUMP_AUDIO"
 
     /** The model the fingerprints in a dump came from — the adapter's bundled asset, by name. */
-    const val MODEL_ASSET: String = "speaker_campplus_en_16k.onnx"
+    const val MODEL_ASSET: String = "speaker_titanet_small_16k.onnx"
 
     /**
      * How long a dump survives: 24 h, swept at the next session start.
      *
-     * A session's jsonl is 5-6 KB per fingerprint and a session's WAVs are megabytes, and the
+     * A session's jsonl is ~1.4 KB per fingerprint and a session's WAVs are megabytes, and the
      * thing that reads them is a person with `adb pull` who has either already pulled them or
      * lost interest. Nothing in the app ever reads a dump back.
      */
@@ -145,9 +156,9 @@ data class SpikeFingerprint(
  *
  *  - **[Locale.ROOT] on every number.** `String.format` without one takes the device's default and
  *    a German tablet writes `0,1234`, which is not a JSON number — it is two of them.
- *  - **Four decimals on a float.** CAM++'s embeddings are unit-scale; four decimals is about 1e-4
+ *  - **Four decimals on a float.** The embeddings are unit-scale; four decimals is about 1e-4
  *    of resolution on a value whose cosine thresholds are being read to two, and it keeps a
- *    512-float row near 5 KB instead of 8.
+ *    192-float row near 1.4 KB instead of 2.
  *  - **`null`, never `NaN`, for a value that was not measured.** `best` is genuinely absent for the
  *    first speaker of a session (nobody to be compared with), and 0 is a real reading — two
  *    orthogonal voices. `NaN` is not JSON at all in the strict grammar.
@@ -449,7 +460,7 @@ class SpeakerSpikeDump(
     }
 
     private companion object {
-        /** One jsonl line is 5-6 KB at 512 floats; 64 KB holds a whole chunk before a flush. */
+        /** One jsonl line is ~1.4 KB at 192 floats; 64 KB holds a whole chunk before a flush. */
         const val BUFFER = 64 * 1024
     }
 }

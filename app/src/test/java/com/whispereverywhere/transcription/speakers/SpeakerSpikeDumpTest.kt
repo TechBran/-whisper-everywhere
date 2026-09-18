@@ -20,7 +20,7 @@ import java.util.Locale
  *
  *  - **A decimal comma.** `String.format` without a [Locale] takes the device's default, and the
  *    owner's own devices are not guaranteed to be `en`. `0,1234` is not a JSON number, it is two,
- *    and a file of 512-float rows fails to parse at line 2 with a message about line 2.
+ *    and a file of 192-float rows fails to parse at line 2 with a message about line 2.
  *  - **`NaN` in a JSON file.** `best` is genuinely absent for the first speaker of a session
  *    (nobody to be compared with) and NaN is not in the strict grammar. `null` is.
  *  - **A wrong WAV header.** A wrong `dataSize` truncates the tail, a wrong `byteRate` shifts the
@@ -100,7 +100,7 @@ class SpeakerSpikeDumpTest {
             assertTrue(
                 "…and the header is written by the same formatter",
                 SpikeJson.header(
-                    session = 1L, model = "m", dim = 512,
+                    session = 1L, model = "m", dim = 192,
                     tSame = 0.55f, tNew = 0.45f, minEmbed = 1.0f, minNew = 1.5f, cap = 8,
                 ).contains("\"tSame\":0.5500"),
             )
@@ -118,7 +118,7 @@ class SpeakerSpikeDumpTest {
         assertFalse("NaN is not JSON", line.contains("NaN"))
         assertFalse(line.contains("\"best\":0.0000"))
         // The same rule applies inside the vector, so one non-finite component cannot make a
-        // whole 512-float row unparseable.
+        // whole 192-float row unparseable.
         assertTrue(
             SpikeJson.line(record(emb = floatArrayOf(1f, Float.NaN, Float.NEGATIVE_INFINITY)))
                 .contains("\"emb\":[1.0000,null,null]"),
@@ -139,13 +139,15 @@ class SpeakerSpikeDumpTest {
     }
 
     @Test
-    fun aFiveHundredAndTwelveFloatRowIsOneLineOfTenKeysAndFiveHundredAndTwelveNumbers() {
-        val line = SpikeJson.line(record(emb = FloatArray(512) { it / 1_000f }))
+    fun aOneHundredAndNinetyTwoFloatRowIsOneLineOfTenKeysAndOneHundredAndNinetyTwoNumbers() {
+        // 192 is TitaNet-small's width, read off the graph's own `embs` output and re-derived from
+        // the asset bytes by the adapter's own pin test. It was 512 while CAM++ was bundled.
+        val line = SpikeJson.line(record(emb = FloatArray(192) { it / 1_000f }))
         assertFalse("one object per line, and no line breaks inside it", line.contains("\n"))
         val vector = line.substringAfter("\"emb\":[").substringBefore("]")
-        assertEquals(512, vector.split(",").size)
+        assertEquals(192, vector.split(",").size)
         assertEquals("0.0000", vector.split(",").first())
-        assertEquals("0.5110", vector.split(",").last())
+        assertEquals("0.1910", vector.split(",").last())
     }
 
     @Test
@@ -153,12 +155,12 @@ class SpeakerSpikeDumpTest {
         // A tuning run against a jsonl whose band nobody recorded is a measurement of an unknown
         // build, which is the one thing a spike cannot afford twice.
         assertEquals(
-            "{\"session\":1737000000000,\"model\":\"speaker_campplus_en_16k.onnx\",\"dim\":512," +
+            "{\"session\":1737000000000,\"model\":\"speaker_titanet_small_16k.onnx\",\"dim\":192," +
                 "\"tSame\":0.5500,\"tNew\":0.4500,\"minEmbed\":1.0000,\"minNew\":1.5000,\"cap\":8}",
             SpikeJson.header(
                 session = 1_737_000_000_000L,
                 model = SpeakerSpike.MODEL_ASSET,
-                dim = 512,
+                dim = 192,
                 tSame = 0.55f,
                 tNew = 0.45f,
                 minEmbed = SpeakerTracker.MIN_EMBED_SECONDS,
