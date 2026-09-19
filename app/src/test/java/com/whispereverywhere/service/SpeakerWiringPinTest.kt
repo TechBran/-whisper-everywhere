@@ -217,7 +217,7 @@ class SpeakerWiringPinTest {
         //
         // Two structural facts keep that impossible, and both are asserted here rather than
         // inferred: the per-window call is the `if`, and the whole-chunk call is inside the
-        // `else if` behind `!hadGeometry`.
+        // `else if` behind `!backendPublishesGeometry`.
         val perWindow = at(engine, "assigner.assign(seq, samples, windows)", "LocalWhisperEngine.kt")
         val wholeChunk = at(
             engine, "assigner.assignWholeChunk(seq, samples, it)", "LocalWhisperEngine.kt",
@@ -234,16 +234,57 @@ class SpeakerWiringPinTest {
             fork.contains("} else if ("),
         )
         assertTrue(
-            "…and that else-if is gated on `!hadGeometry`. Gating it on `windows == null` " +
-                "instead would drag in every CPU chunk whose geometry produced no windows or no " +
-                "spans — a stale snapshot, an empty VAD, a span set that could not reproduce the " +
-                "text — and give each of them a second VAD pass and a whole-chunk label where " +
-                "today they correctly get nothing.",
-            fork.contains("!hadGeometry"),
+            "…and that else-if is gated on `!backendPublishesGeometry`, which is a BACKEND " +
+                "CAPABILITY and not a per-chunk reading. The two per-chunk tests that look like " +
+                "it are both wrong, and each was in this position at some point: `windows == " +
+                "null` drags in every CPU chunk whose geometry produced no windows or no spans, " +
+                "and `it != null` off the chunk's own `lastGeometry` drags in every CPU chunk " +
+                "whose SNAPSHOT WAS LOST — `captureGeometry` swallowing an allocation failure, " +
+                "or an interleaved batch chunk re-tagging the process-global slot between the " +
+                "transcribe and the read. Neither says the tier cannot split a chunk's text, " +
+                "and both must keep 4.9's answer of no labels rather than pay a second VAD pass " +
+                "and wear one label for the whole chunk.",
+            fork.contains("!backendPublishesGeometry"),
         )
         assertEquals(
-            "`hadGeometry` is written at exactly ONE place, off the backend's own answer",
-            1, count(engine, "backend.lastGeometry(ctx).also { hadGeometry = it != null }"),
+            "`backendPublishesGeometry` is written at exactly ONE place, off the LIVE backend's " +
+                "own declaration and in the same breath as the geometry read, so a mid-segment " +
+                "NPU decline cannot be answered by a flag that has since flipped",
+            1, count(engine, "backendPublishesGeometry = backend.publishesGeometry"),
+        )
+        assertEquals(
+            "…and the geometry read itself no longer decides the route: it is a plain read",
+            1, count(engine, "val geometry = backend.lastGeometry(ctx)"),
+        )
+        assertEquals(
+            "the per-chunk null is never read as the tier's answer anywhere in this file",
+            0, count(engine, "hadGeometry"),
+        )
+    }
+
+    @Test
+    fun theCapabilityTheGateReadsIsDeclaredByBOTHProductionBackendsAndDefaultsToTheSafeAnswer() {
+        // The gate above is only as good as the flag behind it, and the flag has exactly three
+        // declarations in main: the interface default, and one per production backend.
+        val iface = collapsed("src/main/java/com/whispereverywhere/transcription/TranscriptionEngine.kt")
+        val npu = collapsed("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+        assertTrue(
+            "the interface default is TRUE — 'a null from me is a per-chunk accident'. It is " +
+                "deliberately NOT paired with `lastGeometry`'s null default: a forgotten " +
+                "override here costs a tier its labels, which is a missing feature, while the " +
+                "other way round costs a wrong label on text the user has already read.",
+            iface.contains("val publishesGeometry: Boolean get() = true"),
+        )
+        assertTrue(
+            "`WhisperNativeBackend` states it rather than inheriting it: it is the backend whose " +
+                "per-chunk nulls the distinction exists for",
+            iface.contains("override val publishesGeometry: Boolean get() = true"),
+        )
+        assertTrue(
+            "`NpuWhisperBackend` answers off the SAME guard `lastGeometry` delegates through, " +
+                "so the two can never disagree — and it is the exact inverse of " +
+                "`detectsPerUtterance`'s `fallbackBackend == null`",
+            npu.contains("override val publishesGeometry: Boolean get() = fallbackBackend != null"),
         )
     }
 

@@ -32,8 +32,11 @@ import kotlin.math.sin
  *    one that must not change, and the assertion that would catch it changing is
  *    [theCpuTiersChunkStillGetsOneIdPerWindowAndNoWholeChunkPick]: the ids are per window and
  *    `wholeChunkWindow` is null, which is the field every downstream reader branches on.
- *  - **no geometry at all → the whole-chunk route**, one label for the chunk, named by the window
- *    holding the most speech.
+ *  - **a backend that publishes no geometry at all → the whole-chunk route**, one label for the
+ *    chunk, named by the window holding the most speech. The test is
+ *    `WhisperBackend.publishesGeometry`, a property of the BACKEND, and not "was this chunk's
+ *    geometry null" — [aCpuChunkWhoseGeometrySNAPSHOTWasLostKeepsTodaysAnswerRatherThanTheVadRoute]
+ *    is the difference, and it is the case round 1 of review corrected.
  *  - **no assigner (detection off, or a cloud session, whose local engine is only the fallback) →
  *    neither**, and no VAD is run at all.
  *
@@ -65,13 +68,23 @@ class LocalWhisperEngineSpeakerRouteTest {
         override fun release() = Unit
     }
 
+    /**
+     * [publishes] is the BACKEND's own declaration — "do I publish geometry at all" — and it is
+     * separate from [geometry], which is what this chunk's read happens to answer. The two come
+     * apart in exactly one case and it is a real one: a whisper.cpp backend
+     * (`publishes = true`) whose per-chunk snapshot was LOST, so `lastGeometry` answers null for
+     * a chunk it transcribed perfectly well. Defaulted to "publishes iff it has geometry" so the
+     * fake reads as a real backend in the ordinary tests.
+     */
     private class GeometryBackend(
         private val text: String,
         private val geometry: SegmentGeometry?,
+        private val publishes: Boolean = geometry != null,
     ) : WhisperBackend {
         override fun load(modelPath: String): Long = 42L
         override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String = text
         override fun lastGeometry(ctx: Long): SegmentGeometry? = geometry
+        override val publishesGeometry: Boolean get() = publishes
         override fun release(ctx: Long) = Unit
     }
 
@@ -88,6 +101,7 @@ class LocalWhisperEngineSpeakerRouteTest {
         vadPath: String? = "/data/vad/silero.bin",
         attachAssigner: Boolean = true,
         text: String = " Hello world.",
+        publishesGeometry: Boolean = geometry != null,
         onSegmenterCall: () -> Unit = {},
     ): SpeakerAssignment? {
         val seen = AtomicReference<SpeakerAssignment?>(null)
@@ -99,7 +113,7 @@ class LocalWhisperEngineSpeakerRouteTest {
         val engine = LocalWhisperEngine(
             modelPathProvider = FakeModelPathProvider("/models/small-q8.bin"),
             retry = fastRetry(),
-            backend = GeometryBackend(text, geometry),
+            backend = GeometryBackend(text, geometry, publishesGeometry),
             executor = SameThreadExecutorService(),
             vadModelPath = { vadPath },
         )
@@ -183,6 +197,74 @@ class LocalWhisperEngineSpeakerRouteTest {
         )
         assertNull("nothing is published for this chunk, exactly as before", assignment)
         assertEquals("and no second VAD is run for it", 0, calls.get())
+    }
+
+    @Test
+    fun aCpuChunkWhoseGeometrySNAPSHOTWasLostKeepsTodaysAnswerRatherThanTheVadRoute() {
+        // THE CASE THAT CORRECTED THE GATE (round 1 of review). `WhisperNativeBackend.lastGeometry`
+        // answers null for a chunk it transcribed perfectly well in two ordinary ways:
+        // `captureGeometry`'s `runCatching` swallowing an allocation failure, and the
+        // process-global slot being re-tagged by an interleaved BatchTranscriber hold between the
+        // transcribe and the read — `transcribeInternal` clears `lastGeom`/`lastGeomCtx` at the
+        // top of every gate hold, and the engine's own comment names the race.
+        //
+        // The chunk is `Text`, non-blank, with samples — so a gate that read "was this chunk's
+        // geometry null" fired, and the chunk paid a ~60 ms second VAD pass and came back wearing
+        // ONE label for text that whisper had per-sentence timestamps for. The gate is a BACKEND
+        // CAPABILITY instead: this backend publishes geometry, this read just missed it, and the
+        // chunk keeps 4.9's answer of nothing at all.
+        val calls = AtomicInteger(0)
+        val assignment = commitOne(
+            geometry = null,
+            publishesGeometry = true,
+            onSegmenterCall = { calls.incrementAndGet() },
+        )
+        assertNull("no labels for the chunk that lost its snapshot, exactly as in 4.10", assignment)
+        assertEquals("and no second VAD pass was paid for it", 0, calls.get())
+    }
+
+    @Test
+    fun aBackendThatSaysNothingAboutGeometryIsReadAsPublishingIt() {
+        // The interface default is TRUE, and it is deliberately not paired with `lastGeometry`'s
+        // null default: a backend that forgets to declare loses its tier's labels, which is a
+        // missing feature, where the other default's worst case is a wrong label on text the user
+        // has already read. `GeometryBackend` overrides the flag, so the default is asserted on a
+        // fake that overrides neither member.
+        val bare = object : WhisperBackend {
+            override fun load(modelPath: String): Long = 42L
+            override fun transcribe(
+                ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean,
+            ): String = " Hello world."
+            override fun release(ctx: Long) = Unit
+        }
+        assertTrue("the default is the conservative one", bare.publishesGeometry)
+        assertNull("…and it answers no geometry all the same", bare.lastGeometry(42L))
+
+        val calls = AtomicInteger(0)
+        val seen = AtomicReference<SpeakerAssignment?>(null)
+        val assigner = SpeakerAssigner(
+            voices = TwoVoices(),
+            onAssigned = { seen.set(it) },
+            segmenter = { _, _ -> calls.incrementAndGet(); intArrayOf(0, 48_000, 64_000, 112_000) },
+        )
+        val engine = LocalWhisperEngine(
+            modelPathProvider = FakeModelPathProvider("/models/small-q8.bin"),
+            retry = fastRetry(),
+            backend = bare,
+            executor = SameThreadExecutorService(),
+            vadModelPath = { "/data/vad/silero.bin" },
+        )
+        engine.speakerAssigner = assigner
+        try {
+            engine.connect(language = "en", listener = RecordingListener())
+            engine.sendAudio(pcm)
+            engine.commit()
+            assertTrue(assigner.awaitIdle(5_000))
+        } finally {
+            assigner.release()
+        }
+        assertNull(seen.get())
+        assertEquals(0, calls.get())
     }
 
     @Test

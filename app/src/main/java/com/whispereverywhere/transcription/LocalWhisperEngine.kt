@@ -462,14 +462,26 @@ class LocalWhisperEngine(
         // chance to disagree with the buffer the native VAD bounds were measured against. Null for
         // every branch where whisper never ran.
         var chunkSamples: FloatArray? = null
-        // 4.10 (the Fold6 defect): whether the backend published SEGMENT GEOMETRY for this chunk,
-        // hoisted for the same reason the samples are. It is NOT the same question as "does the
-        // outcome carry windows": a chunk can have real geometry that produced no windows or no
-        // spans (an empty VAD, a stale snapshot, a geometry that maps onto no surviving text),
-        // and those are CPU-tier chunks that must keep behaving exactly as they do today. Only
-        // the tiers that publish NO geometry at all take the VAD route below, and this flag is
-        // the only thing that can tell the two apart from down there.
-        var hadGeometry = false
+        // 4.10 (the Fold6 defect): whether the LIVE backend publishes segment geometry AT ALL —
+        // a property of the backend, not of this chunk — hoisted for the same reason the samples
+        // are, and snapshotted beside the geometry read so the two describe the same instant.
+        //
+        // It answers neither of the two questions that look like it, and the VAD route below is
+        // wrong if it is given either of them instead:
+        //  - "does the outcome carry windows" would drag in every CPU chunk whose geometry
+        //    produced no windows or no spans (an empty VAD, a geometry that maps onto no
+        //    surviving text);
+        //  - "was THIS chunk's geometry null" would drag in every CPU chunk whose snapshot was
+        //    lost, and `WhisperNativeBackend` has two ordinary ways to lose one: `captureGeometry`
+        //    swallowing an allocation failure, and the process-global slot being re-tagged by an
+        //    interleaved batch chunk between the transcribe and the read (see the read below).
+        // Both of those are chunks that must keep 4.9's answer — no labels, no second VAD pass —
+        // rather than quietly collapse to one speaker for the whole chunk.
+        //
+        // Starts TRUE, which is the conservative value: a segment that never reaches the read
+        // (whisper never ran, or the transcribe threw) must not take the VAD route on the
+        // strength of a flag nobody set.
+        var backendPublishesGeometry = true
         val outcome: SegmentOutcome = try {
             val ctx = ctxPtr
             if (ctx == 0L) {
@@ -606,7 +618,15 @@ class LocalWhisperEngine(
                 // tier while it is live), or the process-global slot was re-tagged by an
                 // interleaved batch chunk between the two calls. The outcome then carries no
                 // spans and every delivery surface behaves exactly as it did in 4.9.
-                val geometry = backend.lastGeometry(ctx).also { hadGeometry = it != null }
+                //
+                // `publishesGeometry` is read in the SAME breath, off the same live backend, and
+                // it is what separates those two causes — a tier that never publishes from a
+                // chunk that lost its snapshot. Only the first takes the VAD route at the foot of
+                // this function; the second keeps 4.9's answer. Reading it here rather than down
+                // there is what stops a mid-segment NPU decline from being answered by a flag
+                // that has since flipped.
+                backendPublishesGeometry = backend.publishesGeometry
+                val geometry = backend.lastGeometry(ctx)
                 if (cleaned.isBlank()) {
                     // EmptyExpected, NEVER EmptyUnexpected, for the on-device engine.
                     //
@@ -664,19 +684,29 @@ class LocalWhisperEngine(
         // must behave EXACTLY as they do today, and `SpeakerWiringPinTest` fails if this branch
         // moves, loses its guards, or stops being first.
         //
-        // THE VAD ROUTE SECOND, and only where there was NO GEOMETRY AT ALL. That is the NPU tier
-        // while its arm is live: it runs its own encoder and decoder on the HTP, never calls the
-        // whisper.cpp VAD filter, and therefore publishes nothing for the assigner to stand on —
-        // which is why the owner's Fold6, a device the 4.3 one-tier rule offers no CPU rung,
-        // produced no speaker changes at all. `assignWholeChunk` re-runs the VAD on the embed
-        // thread and labels the chunk as a whole.
+        // THE VAD ROUTE SECOND, and only for a BACKEND THAT PUBLISHES NO GEOMETRY AT ALL. That is
+        // the NPU tier while its arm is live: it runs its own encoder and decoder on the HTP,
+        // never calls the whisper.cpp VAD filter, and therefore publishes nothing for the
+        // assigner to stand on — which is why the owner's Fold6, a device the 4.3 one-tier rule
+        // offers no CPU rung, produced no speaker changes at all. `assignWholeChunk` re-runs the
+        // VAD on the embed thread and labels the chunk as a whole.
         //
-        // `hadGeometry` rather than `windows == null` is the test, and the difference is the CPU
-        // tier's behaviour: a chunk WITH geometry that produced no windows or no spans keeps
-        // today's answer (no labels for that chunk) instead of quietly acquiring a second VAD
-        // pass and a whole-chunk label. The path handed over below is the same one the backend
-        // seam gives `transcribeRaw`; a null one means this device has no VAD model at all, and
-        // the route is SKIPPED rather than given an invented path.
+        // THE TEST IS A BACKEND CAPABILITY, and neither of the two per-chunk tests that look like
+        // it (round 1 of review corrected this from the second of them):
+        //  - `windows == null` would drag in every CPU chunk whose geometry produced no windows
+        //    or no spans;
+        //  - "this chunk's geometry was null" would drag in every CPU chunk whose snapshot was
+        //    LOST, which `WhisperNativeBackend` has two ordinary ways to do — a swallowed
+        //    allocation failure in `captureGeometry`, and an interleaved batch chunk re-tagging
+        //    the process-global slot between the transcribe and the read. Neither of those says
+        //    the tier cannot split a chunk's text, and both must keep 4.9's answer.
+        // `WhisperBackend.publishesGeometry` says the structural thing instead, it is read beside
+        // the geometry itself, and `SpeakerWiringPinTest` fails if this gate becomes a per-chunk
+        // one again.
+        //
+        // The path handed over below is the same one the backend seam gives `transcribeRaw`; a
+        // null one means this device has no VAD model at all, and the route is SKIPPED rather
+        // than given an invented path.
         val assigner = speakerAssigner
         if (assigner != null && listener === myListener) {
             val committed = outcome as? SegmentOutcome.Text
@@ -684,7 +714,7 @@ class LocalWhisperEngine(
             val samples = chunkSamples
             if (windows != null && samples != null) {
                 assigner.assign(seq, samples, windows)
-            } else if (!hadGeometry && samples != null && committed != null &&
+            } else if (!backendPublishesGeometry && samples != null && committed != null &&
                 committed.text.isNotBlank()
             ) {
                 vadModelPath()?.let { assigner.assignWholeChunk(seq, samples, it) }

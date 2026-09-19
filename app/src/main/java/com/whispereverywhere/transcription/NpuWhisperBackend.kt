@@ -869,6 +869,28 @@ class NpuWhisperBackend(
     override fun lastGeometry(ctx: Long): SegmentGeometry? =
         fallbackBackend?.lastGeometry(fallbackCtx)
 
+    /**
+     * @see WhisperBackend.publishesGeometry — and this is the backend the member exists for
+     * (4.10, round 1 of review).
+     *
+     * `fallbackBackend != null` is the SAME guard [lastGeometry] delegates through, read as a
+     * structural fact instead of per chunk: while the NPU arm is live nothing under this object
+     * will ever publish geometry, for any chunk, because no whisper.cpp VAD filter runs; after a
+     * decline the delegate publishes it for every chunk. There is no third state, which is why
+     * the guard alone can answer, and it is the exact inverse of [detectsPerUtterance]'s.
+     *
+     * `LocalWhisperEngine` reads THIS, not "was this chunk's geometry null", to decide whether a
+     * chunk takes the whole-chunk speaker route. The difference is the CPU tier: a whisper.cpp
+     * chunk whose geometry snapshot was lost answers null too, and it must keep 4.9's no-labels
+     * answer rather than collapse to one speaker.
+     *
+     * The read is of the guard alone and ungated, on the same argument [detectsPerUtterance]
+     * records: it touches nothing native, decides no routing, and a stale answer costs at most
+     * one segment — labelled per window when it could have been labelled per chunk, or the
+     * reverse, on the single segment that straddles the decline.
+     */
+    override val publishesGeometry: Boolean get() = fallbackBackend != null
+
     // ---------------------------------------------------------------- teardown and fallback
 
     /**

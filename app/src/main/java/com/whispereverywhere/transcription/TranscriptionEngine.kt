@@ -303,6 +303,39 @@ interface WhisperBackend {
      */
     fun lastGeometry(ctx: Long): SegmentGeometry? = null
 
+    /**
+     * Whether this backend publishes [lastGeometry] AT ALL — a property of the BACKEND, never of
+     * a chunk (4.10, round 1 of review).
+     *
+     * It exists because a null from [lastGeometry] has two completely different causes and the
+     * speaker pipeline has to tell them apart:
+     *  - **structural** — this backend never publishes geometry, for any chunk, because no
+     *    whisper.cpp VAD filter runs under it. That is the NPU tier while its arm is live, and it
+     *    is the case `LocalWhisperEngine` answers with the whole-chunk speaker route: a second
+     *    VAD pass on the embed thread and ONE label for the chunk's text.
+     *  - **per chunk** — this backend does publish geometry and this particular read did not get
+     *    it. `WhisperNativeBackend` has two such ways and both are ordinary: `captureGeometry`'s
+     *    `runCatching` swallowing an allocation failure, and the process-global slot being
+     *    re-tagged by an interleaved [com.whispereverywhere.transcription.batch.BatchTranscriber]
+     *    hold between the transcribe and the read. Those chunks must keep their 4.9 answer — no
+     *    labels — and must NOT quietly acquire a 60 ms VAD pass and a whole-chunk label, which
+     *    on the CPU tier would collapse a sentence-labelled chunk to a single speaker with every
+     *    id in it still looking like a real id.
+     *
+     * **The default is `true`, deliberately not paired with [lastGeometry]'s default of null.**
+     * The two defaults answer different questions. A backend that says nothing here is read as
+     * "a null from me is a per-chunk accident", so the worst a forgotten override can do is leave
+     * a tier at its pre-4.10 behaviour — no labels — which is a missing feature. The other
+     * default's worst case is a wrong label on text the user has already read, and a wrong label
+     * is not visibly wrong.
+     *
+     * LIVE, read off the ACTIVE backend at the same point in the segment as [lastGeometry] and
+     * never snapshotted at session start — the same discipline [detectsPerUtterance] is read
+     * under, and for the same reason: `NpuWhisperBackend` answers `fallbackBackend != null`, so a
+     * session that declines mid-life starts publishing geometry from that segment on.
+     */
+    val publishesGeometry: Boolean get() = true
+
     fun release(ctx: Long)
 }
 
@@ -567,6 +600,20 @@ object WhisperNativeBackend : WhisperBackend {
      */
     override fun lastGeometry(ctx: Long): SegmentGeometry? =
         if (ctx != 0L && ctx == lastGeomCtx) lastGeom else null
+
+    /**
+     * @see WhisperBackend.publishesGeometry. TRUE, unconditionally and structurally: every
+     * transcribe this object runs goes through `we_vad_filter`, which records the bounds, and
+     * [captureGeometry] publishes them.
+     *
+     * It is stated here rather than left to the interface default because this is the backend
+     * the distinction is FOR. The two ways [lastGeometry] answers null for a chunk this object
+     * transcribed perfectly well — [captureGeometry]'s `runCatching` losing the arrays, and the
+     * ctx tag being cleared at the top of an interleaved [transcribeInternal] hold a few lines
+     * below — are both per-chunk accidents, and neither of them means this tier cannot split a
+     * chunk's text between two speakers. Those chunks get 4.9's answer: no labels, no second VAD.
+     */
+    override val publishesGeometry: Boolean get() = true
 
     // The one place the gate + GpuPolicy sentinel wrap a native whisper_full. [onNewSegment]
     // (nullable) is invoked by the JNI trampoline on THIS thread while the gate is held —
