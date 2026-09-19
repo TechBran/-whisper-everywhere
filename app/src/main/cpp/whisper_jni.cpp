@@ -167,11 +167,30 @@ static std::mutex             g_geom_mutex;
 static std::vector<jint>      g_last_vad_segments;      // [origS0, origS1, trimS0, trimS1] * n
 static std::vector<jint>      g_last_whisper_segments;  // [t0cs, t1cs, byteStart, byteEnd] * n
 
-// Filters [pcm] down to speech-only (with 100 ms inter-segment gaps, mirroring whisper_full's
-// own VAD assembly). Returns false when VAD is unavailable (caller proceeds unfiltered). On
-// success pcm holds the filtered audio — possibly EMPTY when no speech at all was detected.
-static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
-    std::lock_guard<std::mutex> lock(g_vad_mutex);
+// THE ONE SILERO SEGMENTER, and the one place its knobs live (4.10 speaker labels, the NPU tier).
+//
+// It was the body of we_vad_filter until the NPU tier needed the SAME segmentation without the
+// filtering: that tier runs its own encoder and decoder on the HTP, never calls whisper_full, and
+// therefore publishes no segment geometry at all — so `vadSegmentsOf` below re-runs exactly this
+// on the speaker thread to recover the speech bounds an embedder has to slice.
+//
+// FACTORED RATHER THAN COPIED, and that is the whole point of the function existing. Two callers
+// asking Silero the same question with two independently written copies of `threshold = 0.40f`
+// and `speech_pad_ms = 150` would drift the moment either is tuned, and the symptom would be a
+// speaker label that disagrees with the paragraph it sits on — quiet, plausible, and only
+// reproducible on the tier nobody develops on. One body, one set of knobs, both callers.
+//
+// THE CALLER MUST HOLD g_vad_mutex: this reads and writes the cached context. [outWallUs] takes
+// the segmentation's own wall cost so each caller can log it in its own words. Returns nullptr
+// when the VAD is unavailable (init failed) or the segmentation failed — both already-logged,
+// both NORMAL degradations rather than errors. On success the CALLER owns the segments and must
+// whisper_vad_free_segments them.
+//
+// It touches NONE of the g_last_* geometry globals. Those describe the last transcribeRaw and
+// belong to we_vad_filter's stitch loop alone; a write from here would let a speaker-thread VAD
+// run overwrite the bounds the CPU tier's spans are cut against.
+static whisper_vad_segments *we_vad_segment(const std::string &vadPath, const float *pcm,
+                                            int nSamples, int64_t *outWallUs) {
     if (g_vad_ctx == nullptr || g_vad_path != vadPath) {
         if (g_vad_ctx != nullptr) {
             whisper_vad_free(g_vad_ctx);
@@ -197,7 +216,7 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
         if (g_vad_ctx == nullptr) {
             // Tag+level moved whisper_jni/E -> WE-DIAG/E (3.7 F); the TEXT is byte-identical.
             LOGDIAGE("VAD init failed for %s — transcribing without VAD", vadPath.c_str());
-            return false;
+            return nullptr;
         }
         LOGI("VAD context loaded (%s)", vadPath.c_str());
     }
@@ -216,14 +235,26 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
     // the log volume, and it survives any future upstream merge of the fork.
     const auto t_vad_start = std::chrono::steady_clock::now();
     whisper_vad_segments *segs =
-        whisper_vad_segments_from_samples(g_vad_ctx, vp, pcm.data(), static_cast<int>(pcm.size()));
-    const auto t_vad_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        whisper_vad_segments_from_samples(g_vad_ctx, vp, pcm, nSamples);
+    *outWallUs = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - t_vad_start).count();
     if (segs == nullptr) {
         // Tag+level moved whisper_jni/E -> WE-DIAG/E (3.7 F); the TEXT is byte-identical.
         LOGDIAGE("VAD segmentation failed — transcribing without VAD");
-        return false;
+        return nullptr;
     }
+    return segs;
+}
+
+// Filters [pcm] down to speech-only (with 100 ms inter-segment gaps, mirroring whisper_full's
+// own VAD assembly). Returns false when VAD is unavailable (caller proceeds unfiltered). On
+// success pcm holds the filtered audio — possibly EMPTY when no speech at all was detected.
+static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
+    std::lock_guard<std::mutex> lock(g_vad_mutex);
+    int64_t t_vad_us = 0;
+    whisper_vad_segments *segs =
+        we_vad_segment(vadPath, pcm.data(), static_cast<int>(pcm.size()), &t_vad_us);
+    if (segs == nullptr) return false;
 
     const int nseg = whisper_vad_segments_n_segments(segs);
     constexpr int kGapSamples = 1600; // 100 ms of silence between stitched segments
@@ -602,6 +633,91 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastWhisperSegments(
         JNIEnv *env, jobject /* this */) {
     std::lock_guard<std::mutex> geom(g_geom_mutex);
     return we_int_vector(env, g_last_whisper_segments);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 4.10 speaker labels, the NPU TIER: a STANDALONE VAD segmentation of a caller-supplied buffer.
+//
+// The two exports above answer "where were the speech segments of the last transcribeRaw". On the
+// NPU tier there IS no last transcribeRaw: that path runs its own encoder and decoder on the HTP
+// and never reaches whisper.cpp's VAD filter, so `NpuWhisperBackend.lastGeometry` correctly
+// answers null and the speaker pipeline had nothing to stand on — the owner's Z Fold6 got no
+// speaker changes at all. This function is the substitute: hand it the same raw chunk the tier
+// transcribed and it answers the speech bounds directly.
+//
+// [start, end] SAMPLE PAIRS — TWO ints per segment, not four — in the ORIGINAL buffer's timeline,
+// in chunk order. There is no second timeline here and the shape says so: nothing is stitched,
+// nothing is swapped, so the "trimmed" half of `lastVadSegments`' four-int group would be a copy
+// of the first half pretending to be a measurement. An EMPTY array means no speech, a missing or
+// unloadable model, or a failed segmentation — all three normal, none an error, and none of them
+// "one speaker" (spec §2).
+//
+// IT IS THE SAME SEGMENTER AND THE SAME KNOBS as the batch filter, because both go through
+// we_vad_segment — see that function for why the parameters are factored rather than copied.
+// It takes g_vad_mutex exactly as we_vad_filter does, which is what makes sharing the cached
+// context safe: whisper_vad_detect_speech resets the LSTM on entry and resizes probs from index
+// 0, so two concurrent callers would corrupt each other (the argument the dedicated PROBE context
+// is built on). Serialised, they cannot.
+//
+// IT WRITES NO g_last_* GLOBAL. Those belong to transcribeRaw, and a stale read of them must stay
+// impossible: this runs on the speaker thread, off NativeComputeGate, and could otherwise
+// overwrite the geometry a CPU-tier chunk's spans are about to be cut against.
+//
+// COST: a second full Silero pass over the chunk — the ~60 ms the `VAD: … wallMs=` lines already
+// report for the same work. The caller runs it on its own embed thread, below delivered text, and
+// never on the whisper or audio thread.
+// ---------------------------------------------------------------------------------------------
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_vadSegmentsOf(
+        JNIEnv *env, jobject /* this */, jfloatArray samples, jstring vadModelPath) {
+    we_install_native_logging();
+    if (samples == nullptr || vadModelPath == nullptr) return env->NewIntArray(0);
+
+    const char *rawPath = env->GetStringUTFChars(vadModelPath, nullptr);
+    if (rawPath == nullptr) return env->NewIntArray(0);
+    const std::string vadPath(rawPath);
+    env->ReleaseStringUTFChars(vadModelPath, rawPath);
+    if (vadPath.empty()) return env->NewIntArray(0);
+
+    const jsize n = env->GetArrayLength(samples);
+    if (n <= 0) return env->NewIntArray(0);
+    std::vector<float> pcm(static_cast<size_t>(n));
+    env->GetFloatArrayRegion(samples, 0, n, pcm.data());
+
+    std::vector<jint> bounds;
+    {
+        std::lock_guard<std::mutex> lock(g_vad_mutex);
+        int64_t wallUs = 0;
+        whisper_vad_segments *segs =
+            we_vad_segment(vadPath, pcm.data(), static_cast<int>(pcm.size()), &wallUs);
+        if (segs == nullptr) return env->NewIntArray(0);
+        const int nseg = whisper_vad_segments_n_segments(segs);
+        bounds.reserve(static_cast<size_t>(nseg) * 2);
+        for (int i = 0; i < nseg; ++i) {
+            // t0/t1 are centiseconds -> samples at 16 kHz = cs * 160, the same conversion the
+            // stitch loop uses, and clamped into the caller's buffer for the same reason: these
+            // bounds are about to index a float array on the Kotlin side.
+            auto s0 = static_cast<int64_t>(whisper_vad_segments_get_segment_t0(segs, i)) * 160;
+            auto s1 = static_cast<int64_t>(whisper_vad_segments_get_segment_t1(segs, i)) * 160;
+            if (s0 < 0) s0 = 0;
+            if (s1 > static_cast<int64_t>(pcm.size())) s1 = static_cast<int64_t>(pcm.size());
+            if (s1 <= s0) continue;
+            bounds.push_back(static_cast<jint>(s0));
+            bounds.push_back(static_cast<jint>(s1));
+        }
+        whisper_vad_free_segments(segs);
+        // Its OWN line, distinguishable from we_vad_filter's "VAD:" at a glance, because on the
+        // NPU tier this is the only VAD cost in the session and it is the number the device
+        // session reads the per-chunk speaker budget off. Counts only — never transcript.
+        LOGDIAG("VAD-standalone: %zu samples -> %d segments wallMs=%.1f", pcm.size(), nseg,
+                static_cast<double>(wallUs) / 1000.0);
+    }
+
+    jintArray out = env->NewIntArray(static_cast<jsize>(bounds.size()));
+    if (out != nullptr && !bounds.empty()) {
+        env->SetIntArrayRegion(out, 0, static_cast<jsize>(bounds.size()), bounds.data());
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------------------------

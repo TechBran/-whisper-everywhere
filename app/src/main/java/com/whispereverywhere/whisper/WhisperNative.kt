@@ -15,6 +15,8 @@ import java.nio.ByteBuffer
  *   - lastVadSegments() / lastWhisperSegments() -> the 4.10 segment geometry of the last
  *     transcribeRaw: where each speech segment sat in the raw audio, and which bytes of the
  *     returned text came out of it. NOT diagnostics — the speaker pipeline reads both.
+ *   - vadSegmentsOf()    -> a standalone Silero pass over a caller-supplied buffer: the NPU tier's
+ *     substitute for that geometry, since that tier never runs whisper.cpp's VAD filter
  *   - diag()             -> __android_log_print: the one Kotlin diagnostic that has to survive R8
  *
  * The returned Long is an opaque native pointer handle owned by the caller
@@ -300,6 +302,49 @@ object WhisperNative {
      * the-gate contract as [lastVadSegments].
      */
     external fun lastWhisperSegments(): IntArray
+
+    /**
+     * THE NPU TIER'S SUBSTITUTE for the geometry [lastVadSegments] exports — a STANDALONE Silero
+     * pass over [samples], answering `[start, end]` SAMPLE PAIRS at 16 kHz in that buffer's own
+     * timeline, in chunk order (4.10 speaker labels).
+     *
+     * It exists because the NPU tier publishes no geometry and cannot: that path runs its own
+     * encoder and decoder on the HTP and never reaches whisper.cpp's VAD filter, so
+     * `NpuWhisperBackend.lastGeometry` answers null by design — and the speaker pipeline, which
+     * hangs off [lastVadSegments] and [lastWhisperSegments], had nothing to stand on. On an
+     * NPU-capable device (the 4.3 one-tier rule offers that device no CPU rung) the result was no
+     * speaker changes at all. This recovers the SPEECH BOUNDS; the decoder still exposes no token
+     * or sentence timestamps, so the tier labels a whole chunk at once rather than per sentence.
+     *
+     * **TWO ints per segment, not four.** [lastVadSegments] carries both an original and a trimmed
+     * pair because `transcribeRaw` stitches the speech together and hands whisper the stitched
+     * buffer. Nothing is stitched here and nothing is swapped, so there is exactly one timeline —
+     * the caller's own — and a second pair would be a copy of the first pretending to be a
+     * measurement.
+     *
+     * **EMPTY is the normal negative** and means any of: no speech in [samples]; a missing,
+     * unloadable or empty [vadModelPath]; a failed segmentation. None of the three is an error and
+     * none of them may be read as one speaker (spec §2) — a chunk with no speech must not become
+     * a speaker.
+     *
+     * **THE SAME SEGMENTER AND THE SAME KNOBS as the batch filter `transcribeRaw` runs** —
+     * `threshold = 0.40f`, `speech_pad_ms = 150` — because both callers go through one native
+     * function (`we_vad_segment`) rather than two copies of the numbers. That is pinned by
+     * `SegmentGeometryPinTest`: two copies would drift the first time either is tuned, and the
+     * symptom would be a speaker label disagreeing with the paragraph it sits on, on the one tier
+     * nobody develops on.
+     *
+     * **IT IS A SECOND VAD RUN AND IT COSTS ONE** — roughly 60 ms for a 6-8 s chunk, the same work
+     * the `VAD: … wallMs=61.2` lines already report. It takes the batch filter's native mutex, so
+     * it is serialised against an in-flight `transcribeRaw`'s own VAD and can be made to wait by
+     * one. **Call it on the speaker-embed thread and nowhere else**: never the whisper thread
+     * (it would be added to the commit cadence the floors were measured against), never the audio
+     * thread, never Main.
+     *
+     * It writes none of the process-global geometry the two exports above read, so a call here can
+     * never be mistaken for, or corrupt, a transcribe's own segment bounds.
+     */
+    external fun vadSegmentsOf(samples: FloatArray, vadModelPath: String): IntArray
 
     /**
      * Writes one line to logcat under the house `WE-DIAG` tag **through native logging**, so that

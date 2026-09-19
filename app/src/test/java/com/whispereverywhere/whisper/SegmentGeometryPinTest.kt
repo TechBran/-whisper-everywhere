@@ -178,6 +178,117 @@ class SegmentGeometryPinTest {
         )
     }
 
+    // ------------------------------------------------------------- the NPU tier's substitute
+
+    /** `vadSegmentsOf`'s body. Every JNI function in whisper_jni.cpp closes at column 0. */
+    private fun vadSegmentsOfBody(): String {
+        val marker = "Java_com_whispereverywhere_whisper_WhisperNative_vadSegmentsOf("
+        val start = jni.indexOf(marker)
+        assertTrue(
+            "vadSegmentsOf is not declared in whisper_jni.cpp. indexOf() returns -1 when the " +
+                "marker is absent, so substring(start) would silently rebase the scope to the " +
+                "TOP of the file and every claim below would be answered by unrelated code.",
+            start >= 0
+        )
+        val body = jni.substring(start)
+        assertTrue("no column-0 \"\\n}\\n\" follows vadSegmentsOf", body.contains("\n}\n"))
+        return body.substringBefore("\n}\n")
+    }
+
+    @Test
+    fun theStandaloneSegmenterIsDeclaredOnBothSidesWithTheShapeTheNpuRouteIndexesWith() {
+        assertTrue(
+            "WhisperNative must declare `external fun vadSegmentsOf(samples: FloatArray, " +
+                "vadModelPath: String): IntArray` — JNI binds by name, so a rename on either " +
+                "side is an UnsatisfiedLinkError at the first NPU-tier chunk and nothing at " +
+                "compile time",
+            kt.contains(
+                "external fun vadSegmentsOf(samples: FloatArray, vadModelPath: String): IntArray"
+            )
+        )
+        assertTrue(
+            "whisper_jni.cpp must export Java_..._vadSegmentsOf",
+            jni.contains("Java_com_whispereverywhere_whisper_WhisperNative_vadSegmentsOf")
+        )
+        val clazz = Class.forName(
+            "com.whispereverywhere.whisper.WhisperNative", false, javaClass.classLoader
+        )
+        val m = try {
+            clazz.getDeclaredMethod("vadSegmentsOf", FloatArray::class.java, String::class.java)
+        } catch (e: NoSuchMethodException) {
+            throw AssertionError(
+                "WhisperNative declares no vadSegmentsOf(FloatArray, String). JNI binds by the " +
+                    "SHORT name first, so a signature change calls the same native function " +
+                    "with arguments it was not written for. Declared instead: " +
+                    clazz.declaredMethods.map { it.name }.sorted(),
+                e
+            )
+        }
+        assertTrue("vadSegmentsOf must be declared `external`", Modifier.isNative(m.modifiers))
+        assertEquals(
+            "ONE IntArray of [start, end] SAMPLE PAIRS — two ints per segment, not four. There " +
+                "is no stitched buffer on this path, so there is no second timeline and a " +
+                "trimmed pair would be a copy of the first pretending to be a measurement.",
+            IntArray::class.java, m.returnType
+        )
+    }
+
+    @Test
+    fun bothVadCallersShareOneSegmenterSoTheOnsetKnobsCannotDrift() {
+        // The NPU tier re-runs the VAD to recover the bounds its decoder cannot give it. If it
+        // ran its own copy of `threshold = 0.40f` / `speech_pad_ms = 150`, the two would drift the
+        // first time either is tuned and the symptom would be a speaker label disagreeing with
+        // the paragraph it sits on — on the one tier nobody develops on.
+        assertEquals(
+            "the VAD threshold is written ONCE in whisper_jni.cpp, inside we_vad_segment",
+            1, Regex("""(?m)^[ \t]*vp\.threshold\s*=""").findAll(jni).count()
+        )
+        assertEquals(
+            "the speech pad is written ONCE in whisper_jni.cpp, inside we_vad_segment",
+            1, Regex("""(?m)^[ \t]*vp\.speech_pad_ms\s*=""").findAll(jni).count()
+        )
+        assertEquals(
+            "there is ONE call to whisper_vad_segments_from_samples: two would be two segmenters",
+            1, Regex("""whisper_vad_segments_from_samples\(""").findAll(jni).count()
+        )
+        listOf("we_vad_filter", "vadSegmentsOf").forEach { caller ->
+            val body =
+                if (caller == "we_vad_filter") {
+                    jni.substring(jni.indexOf("static bool we_vad_filter(")).substringBefore("\n}\n")
+                } else {
+                    vadSegmentsOfBody()
+                }
+            live(body, """we_vad_segment\(""", "$caller's call to the shared segmenter")
+        }
+    }
+
+    @Test
+    fun theStandaloneSegmenterTakesTheVadLockAndWritesNoTranscribeGeometry() {
+        val body = vadSegmentsOfBody()
+        live(
+            body, """std::lock_guard<std::mutex> lock\(g_vad_mutex\);""",
+            "vadSegmentsOf's hold of the batch filter's own mutex"
+        )
+        listOf("g_last_vad_segments", "g_last_whisper_segments", "g_last_vad_in", "g_last_vad_out")
+            .forEach { name ->
+                assertEquals(
+                    "vadSegmentsOf must not touch $name. Those globals describe the LAST " +
+                        "transcribeRaw and are read for a DECISION by the CPU tier's span " +
+                        "cutter; this function runs on the speaker thread, outside " +
+                        "NativeComputeGate, so a write here could overwrite the bounds a CPU " +
+                        "chunk's spans are about to be cut against — a speaker's label on " +
+                        "another speaker's sentence, with every number still looking plausible.",
+                    0, Regex(Regex.escape(name)).findAll(body).count()
+                )
+            }
+        assertEquals(
+            "…and it must not take the geometry mutex either: nothing it touches is under it, " +
+                "and taking two locks on a path that takes neither today is how a lock order " +
+                "gets invented by accident.",
+            0, Regex("g_geom_mutex").findAll(body).count()
+        )
+    }
+
     @Test
     fun theClearSitsAboveEveryReturnInTranscribeRaw_soNoChunkInheritsThePreviousChunksBounds() {
         val body = transcribeRawBody()
