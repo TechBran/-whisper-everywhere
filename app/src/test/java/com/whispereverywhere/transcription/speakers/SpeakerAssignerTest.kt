@@ -447,27 +447,99 @@ class SpeakerAssignerTest {
     }
 
     @Test
-    fun onlyWindowsThatProducedAVectorAreEverRelabelled() {
-        // A window under the embed floor and one the embedder refused have no fingerprint, so a
-        // clustering has nothing to weigh them with. They keep the label they inherited, and the
-        // relabel map does not mention them — which is what lets the sink apply it blindly.
+    fun EVERYWindowIsRelabelledIncludingTheOnesThatProducedNoVector() {
+        // A window under the embed floor and one the embedder refused have no fingerprint, and
+        // for a whole round they were also absent from the relabel — which looked harmless and
+        // was not. `SpeakerTracker.reseed` RENUMBERS the id space, so a run the relabel does not
+        // name keeps an id from the old numbering; after the pass that id usually belongs to a
+        // different person, `SpeakerLabels.displayNumbers` compacts by raw id, and the panel,
+        // the field, the clipboard and the history sidecar all grow a ghost `Speaker N:`. So
+        // they are carried with a null vector: they never vote, they are always named.
         val arrivals = LinkedBlockingQueue<SpeakerAssignment>()
         val published = AtomicReference<SpeakerRelabel?>(null)
-        val voices = FakeVoices { index -> if (index == 1) null else unit(index * 45.0) }
+        // Two voices, 0-2° and 95-97°, and one refusal in the middle of the first.
+        val voices = FakeVoices { index ->
+            when (index) {
+                0 -> unit(0.0)
+                1 -> unit(2.0)
+                2 -> null
+                3 -> unit(95.0)
+                else -> unit(97.0)
+            }
+        }
         val assigner = SpeakerAssigner(
             voices = voices,
             onAssigned = { arrivals.put(it) },
             onRelabel = { published.set(it) },
         )
         try {
-            // Window 0: 4 s, fingerprinted. Window 1: 4 s, the embedder refuses. Window 2: 0.5 s,
-            // never fingerprinted at all. Window 3: 4 s, fingerprinted.
-            assigner.assign(1L, buffer(20f), segs(0f to 4f, 5f to 9f, 10f to 10.5f, 11f to 15f))
+            // Windows 0, 1: 4 s of voice A. Window 2: 4 s, the embedder refuses. Window 3: 0.5 s,
+            // never fingerprinted at all. Windows 4, 5: 4 s of voice B.
+            assigner.assign(
+                1L,
+                buffer(26f),
+                segs(0f to 4f, 5f to 9f, 10f to 14f, 15f to 15.5f, 16f to 20f, 21f to 25f),
+            )
             assertNotNull(arrivals.poll(5, TimeUnit.SECONDS))
             assertTrue(assigner.awaitIdle(5_000))
 
-            val labels = published.get()!!.windowLabels
-            assertEquals(setOf(WindowKey(1L, 0), WindowKey(1L, 3)), labels.keys)
+            val relabel = published.get()
+            assertNotNull("two confirmed voices, so the pass is published", relabel)
+            assertEquals(
+                "every window of the chunk, not only the four with a vector",
+                (0..5).map { WindowKey(1L, it) }.toSet(),
+                relabel!!.windowLabels.keys,
+            )
+            assertEquals(
+                "…and the two with none went to the voice they inherited",
+                listOf(1, 1, 1, 1, 2, 2),
+                (0..5).map { relabel.windowLabels.getValue(WindowKey(1L, it)) },
+            )
+            assertEquals("the diag's n= is still the VECTORS weighed", 4, relabel.fingerprints)
+        } finally {
+            assigner.release()
+        }
+    }
+
+    @Test
+    fun aPassThatCONFIRMSNobodyIsNotPublishedAndCannotCollapseTheTracker() {
+        // The degenerate answer — nothing cleared MIN_CLUSTER_SECONDS — labels EVERY window 1
+        // and reports confirmedCount 0. Published, it would print "Speaker 1:" over a session
+        // the online tracker had already got right (the panel's latch is one-way) and reseed the
+        // tracker down to a single unconfirmed voice that has to re-earn the second. The window
+        // shape is session 4's 20:39 dump: short turns, clearly distinct voices, nothing with
+        // six seconds to its name.
+        val arrivals = LinkedBlockingQueue<SpeakerAssignment>()
+        val published = AtomicReference<SpeakerRelabel?>(null)
+        val tracker = SpeakerTracker()
+        val voices = FakeVoices { index ->
+            when (index) {
+                0 -> unit(0.0)
+                1 -> unit(1.0)
+                2 -> unit(95.0)
+                else -> unit(96.0)
+            }
+        }
+        val assigner = SpeakerAssigner(
+            voices = voices,
+            onAssigned = { arrivals.put(it) },
+            onRelabel = { published.set(it) },
+            tracker = tracker,
+        )
+        try {
+            for (seq in 1L..4L) {
+                assigner.assign(seq, buffer(3f), segs(0f to 2f))
+                assertNotNull(arrivals.poll(5, TimeUnit.SECONDS))
+            }
+            assertEquals("the ONLINE pass found both voices", 2, tracker.speakerCount)
+            assertEquals(2, tracker.confirmedCount)
+
+            assertTrue(assigner.awaitIdle(5_000))
+
+            assertNull("a pass that confirmed nobody says nothing", published.get())
+            assertEquals("…and the live tracker is untouched", 2, tracker.speakerCount)
+            assertEquals(2, tracker.confirmedCount)
+            assertTrue(tracker.secondSpeakerConfirmed)
         } finally {
             assigner.release()
         }

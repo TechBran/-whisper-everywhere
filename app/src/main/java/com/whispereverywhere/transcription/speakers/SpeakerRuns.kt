@@ -116,13 +116,28 @@ object SpeakerRuns {
      * else's: that is precisely session 6's 03:27 failure, where one id had swallowed fifty
      * windows of two different voices and no id-level map could have separated them.
      *
-     * Everything not named is left alone rather than guessed at:
+     * ### WHICH runs this map is expected to name, and why the list matters
+     *
+     * All of them that have a window. `SpeakerAssigner` hands the pass EVERY window of the
+     * session — including the ones it never fingerprinted, which carry a null vector — precisely
+     * so that this method names every run the session can still address. That is not
+     * thoroughness for its own sake: the same pass re-numbers the tracker's id space
+     * ([SpeakerTracker.reseed]), so a run left holding a pre-renumbering id is not carrying a
+     * stale label, it is carrying **somebody else's** — and [SpeakerLabels.displayNumbers]
+     * compacts by raw id, so one such orphan becomes an extra `Speaker N:` and an extra
+     * paragraph break in a session the pass says has two voices.
+     *
+     * So exactly three kinds of run go unnamed, and each is a run nothing could name:
      *  - a run with [NO_WINDOW_INDEX] (cloud, the NPU tier, a chunk whose spans could not
      *    reproduce its text) belongs to no window and can never be labelled;
-     *  - a window the pass did not look at — one older than the clustering's cap — keeps the
-     *    label it has, which is the whole reason the cap is safe;
-     *  - a label of 0 is dropped at the door, exactly as in [applyAssignment]: 0 is
-     *    "unattributed", never speaker 1.
+     *  - a window past the assigner's retention bound (`SpeakerAssigner.MAX_RETAINED_WINDOWS`,
+     *    roughly four hours of speech) keeps the label it has, which is where the accounting
+     *    honestly stops;
+     *  - a window whose chunk never reached the assigner at all — an empty sample buffer, or a
+     *    submission rejected after teardown.
+     *
+     * And one label is dropped at the door rather than applied: a label of 0, exactly as in
+     * [applyAssignment]. 0 is "unattributed", never speaker 1.
      *
      * Idempotent, and order-free with respect to [applyAssignment] and [applyRemap] for the runs
      * it names: this map is the newest and most complete opinion about those windows, so it wins

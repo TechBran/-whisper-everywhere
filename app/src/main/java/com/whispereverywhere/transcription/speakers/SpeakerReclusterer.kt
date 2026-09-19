@@ -57,15 +57,18 @@ data class WindowKey(val seq: Long, val windowIndex: Int)
  *     Average linkage rather than single (which chains two voices together through one ambiguous
  *     window) or complete (which splits one voice on its single worst window — exactly session
  *     1's failure).
- *  3. **Merge while the best pair is at least [RECLUSTER_SIM].** 0.40 sits below the online
- *     `T_SAME` of 0.50 deliberately: a MEAN over many pairs is a stronger claim than a maximum
- *     over five, so it is allowed to be less demanding. Session 6's dumps bracket it — the
- *     03:27 session's within-speaker mean was 0.50 and its between-speaker mean 0.06, and the
- *     03:02 and 03:05 sessions sat at 0.31/0.05 and 0.35/0.01. Every one of those separations
- *     straddles 0.40.
+ *  3. **Merge while the best pair is at least [RECLUSTER_SIM].** 0.30, and the number is an
+ *     INTERSECTION rather than a preference: session 6's three dumps measured within- /
+ *     between-speaker means of 0.50/0.06, 0.31/0.05 and 0.35/0.01, so a threshold that neither
+ *     splits a voice nor merges two people has to sit above every `between` and at or below
+ *     every `within` — inside [0.06, 0.31], and 0.30 is the top of that window. See
+ *     [RECLUSTER_SIM] for what the first shipped value (0.40, outside two of the three gaps)
+ *     did to the 03:02 and 03:05 sessions.
  *  4. **A cluster is a SPEAKER only above a mass** — [MIN_CLUSTER_SECONDS] of total duration AND
  *     at least [MIN_CLUSTER_FINGERPRINTS] windows. Everything below is absorbed into the nearest
- *     confirmed cluster, and if nothing at all clears the bar the whole session is ONE speaker.
+ *     confirmed cluster, and if nothing at all clears the bar the whole session is ONE speaker —
+ *     a [Relabel] with `confirmedCount = 0`, which is a pass saying it concluded NOTHING and
+ *     which a caller must therefore not publish (see [oneSpeaker] and `SpeakerAssigner`).
  *     This is the same judgement the online tracker's CONFIRM_N makes and it is the one that
  *     keeps a cough, a jingle or one bad window from becoming a person in the panel.
  *  5. **Short fingerprints then attach**, to the cluster their ONLINE id mostly went to, or — if
@@ -83,20 +86,25 @@ data class WindowKey(val seq: Long, val windowIndex: Int)
  * these". That is the honest limit of a remap, it is why `windowLabels` exists beside it, and a
  * caller that can address windows should always prefer the window map.
  *
- * ### Cost, stated as arithmetic
+ * ### Cost, stated as arithmetic — and WHAT the cap is on
  *
- * The similarity matrix is O(n²) in the fingerprint count, which is why the input is capped at
- * [MAX_RECLUSTER_FINGERPRINTS]. At the cap that is 600·599/2 ≈ 180 000 pairs, each a dot product
- * of 192 floats — about 34.5 million multiply-adds.
+ * The similarity matrix is O(k²) in the number of SEEDS, which is why the seeds are capped at
+ * [MAX_RECLUSTER_FINGERPRINTS] (the newest ones). At the cap that is 600·599/2 ≈ 180 000 pairs,
+ * each a dot product of 192 floats — about 34.5 million multiply-adds.
  *
  * The merge loop is the bigger term and it is worth stating honestly: it rescans the live pairs
  * every round, so its worst case (everything collapsing into one cluster, 598 merges) is
- * Σ k²/2 ≈ n³/6 ≈ 3.6·10⁷ divide-and-compares — of the same order as the matrix, and on a
+ * Σ k²/2 ≈ k³/6 ≈ 3.6·10⁷ divide-and-compares — of the same order as the matrix, and on a
  * conversation far cheaper, because the loop stops the moment no pair reaches [RECLUSTER_SIM].
  * Together, a few hundred milliseconds at the cap on the owner's Tab, on the `speaker-embed`
- * thread, below text that was delivered long ago. 600 windows is roughly 25 minutes of speech;
- * past it the OLDEST are dropped, and the windows they name simply keep the label they were last
- * given.
+ * thread, below text that was delivered long ago. 600 seeds is roughly 25 minutes of speech.
+ *
+ * The cap is on the seeds and NOT on the answer: every window handed to [recluster] is labelled,
+ * whatever the cap did, and the extra terms that costs are linear — one normalisation, one
+ * `argmax` lookup and one map entry per window. That distinction is load-bearing rather than
+ * tidy. A window this pass does not name keeps the id it was last given, and after the very
+ * next [SpeakerTracker.reseed] renumbers the id space that id can denote a DIFFERENT person; so
+ * the only windows allowed to go unnamed are the ones the caller has itself stopped holding.
  *
  * Pure: no Android, no I/O, no state, no thread of its own. Like [SpeakerTracker] and
  * [SpeakerLabels], every judgement it makes is reachable from a JUnit test with vectors whose
@@ -105,15 +113,36 @@ data class WindowKey(val seq: Long, val windowIndex: Int)
 object SpeakerReclusterer {
 
     /**
-     * **0.40** — merge two clusters while their duration-weighted mean cosine is at least this.
+     * **0.30** — merge two clusters while their duration-weighted mean cosine is at least this.
      *
-     * Session 6 of `docs/measurements/2026-09-18-speaker-spike.md`: the three dumps' within- /
-     * between-speaker means were 0.50/0.06, 0.31/0.05 and 0.35/0.01, and 0.40 is the only round
-     * number inside all three gaps. It is BELOW the online [SpeakerTracker.T_SAME] on purpose — a
-     * mean over every member pair is a stronger claim than a maximum over five recent vectors, so
-     * it can afford to ask for less.
+     * Session 6 of `docs/measurements/2026-09-18-speaker-spike.md` measured three dumps' within- /
+     * between-speaker means: **0.50/0.06, 0.31/0.05 and 0.35/0.01**. A threshold that must not
+     * split one voice has to be at or below every `within`; one that must not merge two people
+     * has to be above every `between`. That intersection is **[0.06, 0.31]**, and 0.30 is the top
+     * of it.
+     *
+     * **0.40 shipped first and was outside two of the three gaps.** It is written down because it
+     * is the exact shape of mistake this constant invites. Average linkage stops when the best
+     * inter-cluster weighted mean falls below the threshold, so a voice whose own internal mean is
+     * 0.31 or 0.35 cannot be assembled at all by merges gated at 0.40: on the 03:02 and 03:05
+     * sessions the pass provably over-split one speaker into many — a reconstruction at the
+     * documented means left 19 live clusters (six over the mass bar) at within-mean 0.35 and 32
+     * (three over the bar) at 0.31, where 0.30 gives the correct 1-2. The KDoc that justified 0.40
+     * said "the only round number inside all three gaps", which was false on the numbers in its
+     * own sentence.
+     *
+     * It is BELOW the online [SpeakerTracker.T_SAME] because a mean over every member pair is a
+     * stronger claim than a maximum over five recent vectors, so it can afford to ask for less;
+     * that it lands on [SpeakerTracker.T_NEW] is a coincidence with a readable meaning — the
+     * retrospective pass keeps merging down to exactly the point where the online pass would have
+     * declared a new person.
+     *
+     * **Which way there is room to move.** Downwards. The margin above the largest measured
+     * `between` (0.06) is 0.24; the margin below the smallest measured `within` (0.31) is 0.01.
+     * If the field still reports one voice broken into several, the next value is inside the same
+     * interval and lower — not higher.
      */
-    const val RECLUSTER_SIM: Float = 0.40f
+    const val RECLUSTER_SIM: Float = 0.30f
 
     /**
      * **6.0 s** — the total speech a cluster must hold before it is a SPEAKER rather than a
@@ -135,10 +164,15 @@ object SpeakerReclusterer {
     const val MIN_CLUSTERED_SECONDS: Float = 1.5f
 
     /**
-     * **600** — the most fingerprints one pass looks at, oldest dropped. It bounds an O(n²) pass
-     * on a phone (see the class KDoc's arithmetic) at roughly 25 minutes of speech. A window
-     * older than the cap keeps whatever label it was last given: it is off the bottom of the
-     * panel and out of the tracker's state, so nothing it could be renamed to is visible.
+     * **600** — the most fingerprints one pass lets VOTE, the newest kept. It bounds an O(k²)
+     * pass on a phone (see the class KDoc's arithmetic) at roughly 25 minutes of speech.
+     *
+     * It caps the SEEDS and not the answer. A window past the cap stops defining clusters and is
+     * labelled like any other window too thin to vote — by the company it keeps (step 5) — so
+     * every window the caller still holds is named by every pass. It used to cap the input, and
+     * that was a defect: an unnamed window keeps an id from BEFORE the next
+     * [SpeakerTracker.reseed] renumbers the id space, and a stale id in a renumbered space is not
+     * a missing label, it is somebody else's.
      */
     const val MAX_RECLUSTER_FINGERPRINTS: Int = 600
 
@@ -155,7 +189,12 @@ object SpeakerReclusterer {
      * ONE fingerprint of the session, as this pass needs it.
      *
      * @param windowKey which window it came from — the key the answer is published under.
-     * @param emb the voice vector. Expected unit-normalised; normalised defensively here anyway,
+     * @param emb the voice vector, or an EMPTY array for a window that has none — one under the
+     *        embed floor, one the embedder refused, or one whose vector the caller has dropped
+     *        past its own retention bound. Such a window never seeds and never votes; it is
+     *        labelled in step 5 by the company it keeps, and it is here rather than absent
+     *        because a window nobody labels keeps an id from a superseded numbering.
+     *        A vector is expected unit-normalised; normalised defensively here anyway,
      *        because every similarity below is a bare dot product and a caller that forgot would
      *        not fail, it would quietly cluster by loudness.
      * @param durSec the window's length in seconds — the WEIGHT, and the gate in steps 1 and 4.
@@ -198,12 +237,16 @@ object SpeakerReclusterer {
      *
      * @param map `onlineId -> clusterId`, for every online id in the input. LOSSY where an id's
      *        windows straddle two clusters — see the class KDoc.
-     * @param windowLabels `windowKey -> clusterId`, for every fingerprint the pass looked at.
-     *        EXACT, and the one a caller that can address windows should use.
+     * @param windowLabels `windowKey -> clusterId`, for EVERY window the pass was given —
+     *        including the ones with no usable vector. EXACT, and the one a caller that can
+     *        address windows should use.
      * @param clusters the speakers, in id order (so `clusters[i].id == i + 1`).
      * @param clusterCount how many speakers the session has, retrospectively.
      * @param confirmedCount how many of them cleared the mass bar — the number the panel's latch
-     *        is a threshold on ([SpeakerLabels.MIN_CONFIRMED_SPEAKERS]).
+     *        is a threshold on ([SpeakerLabels.MIN_CONFIRMED_SPEAKERS]), and the number a caller
+     *        decides whether to publish this pass at all on. It is 0 for the degenerate answer
+     *        ([oneSpeaker]) and equal to [clusterCount] otherwise, because every cluster that
+     *        survives the absorption step cleared the bar.
      */
     data class Relabel(
         val map: Map<Int, Int>,
@@ -219,27 +262,35 @@ object SpeakerReclusterer {
     }
 
     /**
-     * The whole pass. [fingerprints] in TIME order (chunk order, window order within a chunk);
-     * only the last [MAX_RECLUSTER_FINGERPRINTS] are looked at.
+     * The whole pass. [fingerprints] in TIME order (chunk order, window order within a chunk).
+     *
+     * EVERY one of them is labelled. The cost cap ([MAX_RECLUSTER_FINGERPRINTS]) applies to the
+     * windows allowed to DEFINE a cluster — the newest that clear [MIN_CLUSTERED_SECONDS] — and
+     * an [Fp] with an unusable vector (an empty array is the canonical one) costs a null check
+     * and a map entry, which is what lets a caller hand over the windows it never fingerprinted
+     * and still get a label for them.
      *
      * Deterministic: the same list always yields the same answer, ties everywhere broken towards
      * the earlier fingerprint and the lower cluster index, because a relabel that flickered
      * between two equally good answers would rewrite the panel for nothing.
      */
     fun recluster(fingerprints: List<Fp>): Relabel {
-        val kept = if (fingerprints.size <= MAX_RECLUSTER_FINGERPRINTS) {
-            fingerprints
-        } else {
-            fingerprints.subList(fingerprints.size - MAX_RECLUSTER_FINGERPRINTS, fingerprints.size)
-        }
+        val kept = fingerprints
         val n = kept.size
         if (n == 0) return Relabel.NOTHING
 
         val unit = Array(n) { unitOrNull(kept[it].emb) }
-        // Step 1: the fingerprints that may DEFINE a cluster. A NaN duration fails this test, as
-        // it should — every comparison with NaN is false.
-        val seeds = ArrayList<Int>(n)
-        for (i in 0 until n) if (kept[i].durSec >= MIN_CLUSTERED_SECONDS && unit[i] != null) seeds += i
+        // Step 1: the fingerprints that may DEFINE a cluster — scanned NEWEST first and stopped
+        // at the cap, because the O(k²) term of this pass is the seed count and nothing else. A
+        // NaN duration fails this test, as it should — every comparison with NaN is false.
+        val seeds = ArrayList<Int>(minOf(n, MAX_RECLUSTER_FINGERPRINTS))
+        for (i in n - 1 downTo 0) {
+            if (seeds.size >= MAX_RECLUSTER_FINGERPRINTS) break
+            if (kept[i].durSec >= MIN_CLUSTERED_SECONDS && unit[i] != null) seeds += i
+        }
+        // …and back into TIME order, which every tie-break and the first-appearance numbering
+        // are defined against.
+        seeds.reverse()
         if (seeds.isEmpty()) return oneSpeaker(kept, unit)
 
         // Steps 2 and 3: duration-weighted average-linkage agglomeration.
@@ -373,8 +424,15 @@ object SpeakerReclusterer {
 
     /**
      * The degenerate answer: nothing cleared the bar, so the session is ONE speaker and it is not
-     * a confirmed one — which is exactly what the panel needs to keep showing no labels at all
-     * (`SpeakerLabels.MIN_CONFIRMED_SPEAKERS`).
+     * a confirmed one. `confirmedCount = 0` is the whole of what it says, and what it says is
+     * *"this pass concluded nothing"* — NOT *"this session has one speaker"*.
+     *
+     * A caller must therefore not publish it, and `SpeakerAssigner.recluster` does not: a pass
+     * below [SpeakerLabels.MIN_CONFIRMED_SPEAKERS] confirmed speakers reaches neither the sink
+     * nor [SpeakerTracker.reseed]. This used to be described here as *"exactly what the panel
+     * needs to keep showing no labels at all"*, which is true only while the panel has none —
+     * the latch is one-way, so once it has risen, publishing this would print `Speaker 1:` over
+     * a whole correctly-labelled session and collapse the live tracker to a single voice.
      */
     private fun oneSpeaker(kept: List<Fp>, unit: Array<FloatArray?>): Relabel {
         val all = kept.indices.toMutableList()

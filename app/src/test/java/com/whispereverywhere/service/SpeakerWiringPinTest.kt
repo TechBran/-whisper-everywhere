@@ -270,10 +270,29 @@ class SpeakerWiringPinTest {
     @Test
     fun theKeptFingerprintsAreCappedSoASessionCannotGrowWithoutBound() {
         // A three-hour session is thousands of windows at 192 floats each, and the pass is
-        // O(n²) besides. The cap is the reclusterer's, read here rather than restated, so the
-        // memory bound and the cost bound can never drift apart.
+        // O(k²) besides. The VECTOR cap is the reclusterer's, read here rather than restated, so
+        // the memory bound and the cost bound can never drift apart; the WINDOW bound is the
+        // assigner's own and much larger, because a key is not a vector.
         at(assigner, "SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS", "SpeakerAssigner.kt")
         at(assigner, "session.subList(0, excess).clear()", "SpeakerAssigner.kt")
+        at(assigner, "MAX_RETAINED_WINDOWS", "SpeakerAssigner.kt")
+    }
+
+    @Test
+    fun ALLTHREEFatesAreRememberedAndAPassThatConfirmedNobodyIsNotPublished() {
+        // Two rules that only look unrelated. The pass RENUMBERS the id space
+        // (`SpeakerTracker.reseed`), so every window it does not name is left holding an id that
+        // afterwards means a different person — hence all three fates call `remember`, the two
+        // without a vector included. And a pass concluding less than the panel already stands on
+        // may not be published at all: the degenerate answer labels every window 1, the latch is
+        // one-way, and reseeding on it collapses two live voices into one unconfirmed cluster.
+        assertEquals("one declaration plus all three fates", 4, count(assigner, "remember("))
+        at(assigner, "if (relabel.confirmedCount < SpeakerLabels.MIN_CONFIRMED_SPEAKERS) return", "SpeakerAssigner.kt")
+        // The gate stands BEFORE the reseed and before the publication, not beside them.
+        val pass = between(assigner, "private fun recluster() {", "/** Set by the first", "SpeakerAssigner.kt")
+        val gate = at(pass, "if (relabel.confirmedCount < SpeakerLabels.MIN_CONFIRMED_SPEAKERS) return", "recluster()")
+        assertTrue("nothing is re-seeded by a pass that concluded nothing", gate < at(pass, "tracker.reseed(relabel)", "recluster()"))
+        assertTrue("…and nothing is published by one", gate < at(pass, "onRelabel(", "recluster()"))
     }
 
     @Test

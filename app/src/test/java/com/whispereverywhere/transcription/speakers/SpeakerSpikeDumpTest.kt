@@ -183,7 +183,7 @@ class SpeakerSpikeDumpTest {
                 "\"minOpen\":1.5000,\"minUpdate\":2.0000," +
                 "\"recentK\":5,\"confirmN\":2,\"cap\":8," +
                 "\"longSegment\":2.0000,\"minWindow\":1.0000," +
-                "\"reclusterSim\":0.4000,\"minClusterSeconds\":6.0000,\"reclusterEvery\":5}",
+                "\"reclusterSim\":0.3000,\"minClusterSeconds\":6.0000,\"reclusterEvery\":5}",
             SpikeJson.header(
                 session = 1_737_000_000_000L,
                 model = SpeakerSpike.MODEL_ASSET,

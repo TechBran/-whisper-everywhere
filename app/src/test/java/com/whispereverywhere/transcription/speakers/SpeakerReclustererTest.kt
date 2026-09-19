@@ -24,9 +24,17 @@ import kotlin.math.sin
  * Speaker A sits around 0° and speaker B around 87.13°, whose cosine is **0.05** — the
  * between-speaker figure session 6 measured (0.01-0.06 across its three dumps) — with each
  * speaker's own windows scattered ±5°, so within-speaker cosines are at worst 0.985 and
- * cross-speaker ones never exceed 0.22. [RECLUSTER_SIM] at 0.40 sits in that gap with room on
- * both sides, which is the point: a test that needed 0.399 vs 0.401 would be measuring the
+ * cross-speaker ones never exceed 0.22. `RECLUSTER_SIM` at 0.30 sits in that gap with room on
+ * both sides, which is the point: a test that needed 0.299 vs 0.301 would be measuring the
  * fixture rather than the rule.
+ *
+ * The angle fixture is DELIBERATELY easier than the field, and that is why
+ * [theThreeSeparationsSessionSixMEASUREDAreEachCutIntoTwoVoices] exists beside it: that one
+ * builds sessions at the exact within-/between-speaker means the doc records (0.50/0.06,
+ * 0.31/0.05, 0.35/0.01) out of orthogonal noise, which is the only shape in this file that can
+ * catch a threshold sitting above a real voice's own internal similarity. The first shipped
+ * [SpeakerReclusterer.RECLUSTER_SIM], 0.40, was above two of those three and split one voice
+ * into many; nothing in the angle fixture could see it.
  */
 class SpeakerReclustererTest {
 
@@ -57,6 +65,44 @@ class SpeakerReclustererTest {
     /** The labels of [fps], in the order they were given. */
     private fun labels(relabel: SpeakerReclusterer.Relabel, fps: List<SpeakerReclusterer.Fp>): List<Int> =
         fps.map { relabel.windowLabels.getValue(it.windowKey) }
+
+    /**
+     * ONE speaker's [count] windows at an EXACT pairwise cosine, out of orthogonal noise rather
+     * than out of an angle — the only construction that can reproduce a real voice's measured
+     * internal similarity.
+     *
+     * A window is `α·b + √(1-α²)·e`, where `b` is the speaker's base direction and every `e` is
+     * a dimension nothing else touches. Two windows of the same speaker are then exactly `α²`
+     * apart, and two windows of speakers whose bases are `β` apart are exactly `α²·β` apart. So
+     * `withinMean` and `betweenMean` below are not approximations of the doc's numbers, they
+     * ARE them.
+     *
+     * @param tilt the cosine between this speaker's base and speaker 0's — 1.0 for speaker 0.
+     * @param noiseFrom the first noise dimension this speaker may use; no two speakers share one.
+     */
+    private fun measuredVoice(
+        withinMean: Double,
+        tilt: Double,
+        count: Int,
+        noiseFrom: Int,
+        durSec: Float,
+        onlineId: Int,
+    ): List<SpeakerReclusterer.Fp> {
+        val alpha = kotlin.math.sqrt(withinMean)
+        val noise = kotlin.math.sqrt(1.0 - withinMean)
+        return (0 until count).map { i ->
+            val v = FloatArray(192)
+            v[0] = (alpha * tilt).toFloat()
+            v[1] = (alpha * kotlin.math.sqrt(1.0 - tilt * tilt)).toFloat()
+            v[2 + noiseFrom + i] = noise.toFloat()
+            SpeakerReclusterer.Fp(
+                windowKey = WindowKey(nextSeq++, 0),
+                emb = v,
+                durSec = durSec,
+                onlineId = onlineId,
+            )
+        }
+    }
 
     // ------------------------------------------------------------------ the session-6 case
 
@@ -201,21 +247,79 @@ class SpeakerReclustererTest {
     }
 
     @Test
-    fun onlyTheLastSixHundredFingerprintsAreLookedAtAndTheOldestSimplyKeepTheirLabel() {
-        // The cap is what keeps an O(n²) pass bounded on a phone. A window older than it is off
-        // the bottom of the panel and out of the tracker's state, so it is not renamed — it is
-        // not mentioned.
-        val old = (0 until 100).map { fp(0.0, 2f, 1) }
+    fun theCapBoundsWhatMaySEEDAClusterAndNeverWhatIsLABELLED() {
+        // The cap is what keeps an O(k²) pass bounded on a phone, and it is on the SEEDS. Every
+        // window is still named, because the pass renumbers the id space and a window it leaves
+        // unnamed keeps an id that afterwards denotes a different person — not a stale label,
+        // somebody else's. Online id 9 appears on nothing that can vote, so the hundred windows
+        // past the cap are labelled by their own vectors instead.
+        val old = (0 until 100).map { fp(0.0, 2f, 9) }
         val recent = (0 until SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS).map {
             fp(if (it % 2 == 0) 0.0 else 87.13, 2f, 1)
         }
 
         val relabel = SpeakerReclusterer.recluster(old + recent)
 
-        assertEquals(SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS, relabel.windowLabels.size)
-        for (fp in old) assertFalse("a dropped window is not relabelled", fp.windowKey in relabel.windowLabels)
+        assertEquals("every window is named", old.size + recent.size, relabel.windowLabels.size)
+        for (fp in old) assertTrue("an over-cap window is still relabelled", fp.windowKey in relabel.windowLabels)
         for (fp in recent) assertTrue(fp.windowKey in relabel.windowLabels)
-        assertEquals("…and the two voices in the kept window are still found", 2, relabel.clusterCount)
+        assertEquals("…and only the newest 600 defined the clusters", 2, relabel.clusterCount)
+        assertEquals("…the old ones sitting on the voice they actually are", listOf(1), labels(relabel, old).distinct())
+    }
+
+    // ------------------------------------------------------------------ the measured separations
+
+    @Test
+    fun theThreeSeparationsSessionSixMEASUREDAreEachCutIntoTwoVoices() {
+        // THE REGRESSION THIS FILE EXISTS FOR SINCE ROUND 1. Session 6 of the spike doc records
+        // three dumps' within- / between-speaker means: 0.50/0.06, 0.31/0.05 and 0.35/0.01. A
+        // merge threshold must sit above every `between` and at or below every `within`, and
+        // RECLUSTER_SIM shipped at 0.40 — above two of the three `within` means. Average linkage
+        // stops when the best inter-cluster mean falls under the threshold, so at 0.40 a voice
+        // whose own internal mean is 0.31 or 0.35 cannot be assembled at all: the 03:02 and
+        // 03:05 sessions over-split into many clusters, which is the owner's "one big run-on
+        // paragraph" traded for ghost speakers. These are not angles scattered ±5°; they are the
+        // documented means exactly.
+        val measured = listOf(0.50 to 0.06, 0.31 to 0.05, 0.35 to 0.01)
+        for ((within, between) in measured) {
+            nextSeq = 1L
+            val a = measuredVoice(within, tilt = 1.0, count = 8, noiseFrom = 0, durSec = 2.5f, onlineId = 1)
+            val b = measuredVoice(
+                within,
+                tilt = between / within,
+                count = 8,
+                noiseFrom = 8,
+                durSec = 2.5f,
+                onlineId = 1,
+            )
+            // Interleaved, the way a conversation goes and the way the online matcher saw it:
+            // one id for both voices.
+            val session = a.indices.flatMap { listOf(a[it], b[it]) }
+
+            val relabel = SpeakerReclusterer.recluster(session)
+
+            val where = "within $within / between $between"
+            assertEquals("$where: two voices", 2, relabel.clusterCount)
+            assertEquals("$where: both over the mass bar", 2, relabel.confirmedCount)
+            assertEquals("$where: speaker A", List(8) { 1 }, labels(relabel, a))
+            assertEquals("$where: speaker B", List(8) { 2 }, labels(relabel, b))
+        }
+    }
+
+    @Test
+    fun aSingleVoiceAtItsMeasuredInternalSIMILARITYIsNeverSplitIntoSeveral() {
+        // The other half, and the half 0.40 actually failed: ONE speaker, 16 windows, pairwise
+        // 0.31 — the tightest within-speaker mean session 6 measured. A threshold above it
+        // merges nothing at all and the session shatters into sixteen singletons, none of which
+        // clears the mass bar, so the pass answers the degenerate "one UNCONFIRMED speaker" and
+        // the panel loses its labels. Below it, the voice assembles.
+        val one = measuredVoice(0.31, tilt = 1.0, count = 16, noiseFrom = 0, durSec = 2.5f, onlineId = 1)
+
+        val relabel = SpeakerReclusterer.recluster(one)
+
+        assertEquals(1, relabel.clusterCount)
+        assertEquals("…and it is a CONFIRMED speaker, not the degenerate answer", 1, relabel.confirmedCount)
+        assertEquals(16, relabel.clusters.single().fingerprints)
     }
 
     @Test
@@ -316,14 +420,37 @@ class SpeakerReclustererTest {
 
     // ------------------------------------------------------------------ the constants
 
+    /** Session 6's three dumps, `within to between`, as the doc records them. */
+    private val measuredSeparations = listOf(0.50f to 0.06f, 0.31f to 0.05f, 0.35f to 0.01f)
+
+    @Test
+    fun theMergeThresholdIsInsideEVERYSeparationTheDocMeasured() {
+        // The pin that 0.40 would have failed, stated as the property rather than as a value: a
+        // threshold ABOVE a within-speaker mean cannot assemble that voice (average linkage
+        // stops below the threshold), and one BELOW a between-speaker mean merges two people.
+        // So RECLUSTER_SIM has to sit in the intersection of all three gaps — (0.06, 0.31] here.
+        for ((within, between) in measuredSeparations) {
+            assertTrue(
+                "RECLUSTER_SIM ${SpeakerReclusterer.RECLUSTER_SIM} must be above the between-speaker mean $between",
+                SpeakerReclusterer.RECLUSTER_SIM > between,
+            )
+            assertTrue(
+                "RECLUSTER_SIM ${SpeakerReclusterer.RECLUSTER_SIM} must not exceed the within-speaker mean $within",
+                SpeakerReclusterer.RECLUSTER_SIM <= within,
+            )
+        }
+    }
+
     @Test
     fun theConstantsAreTheONESSessionSixSettled() {
         // THE SOURCE: docs/measurements/2026-09-18-speaker-spike.md, session 6. The within- and
-        // between-speaker means of its three dumps were 0.50/0.06, 0.31/0.05 and 0.35/0.01;
-        // RECLUSTER_SIM is the round number inside all three gaps, and it is deliberately BELOW
-        // the online T_SAME because a mean over every member pair is a stronger claim than a
-        // maximum over five recent vectors.
-        assertEquals("RECLUSTER_SIM", 0.40f, SpeakerReclusterer.RECLUSTER_SIM, 0f)
+        // between-speaker means of its three dumps were 0.50/0.06, 0.31/0.05 and 0.35/0.01, so
+        // the only thresholds that neither split a voice nor merge two people are (0.06, 0.31] —
+        // and RECLUSTER_SIM is the top of that interval. It is deliberately BELOW the online
+        // T_SAME because a mean over every member pair is a stronger claim than a maximum over
+        // five recent vectors. It shipped at 0.40 for one round, which was outside two of the
+        // three gaps; see theThreeSeparationsSessionSixMEASUREDAreEachCutIntoTwoVoices.
+        assertEquals("RECLUSTER_SIM", 0.30f, SpeakerReclusterer.RECLUSTER_SIM, 0f)
         assertEquals("MIN_CLUSTER_SECONDS", 6.0f, SpeakerReclusterer.MIN_CLUSTER_SECONDS, 0f)
         assertEquals("MIN_CLUSTER_FINGERPRINTS", 2, SpeakerReclusterer.MIN_CLUSTER_FINGERPRINTS)
         assertEquals("MIN_CLUSTERED_SECONDS", 1.5f, SpeakerReclusterer.MIN_CLUSTERED_SECONDS, 0f)

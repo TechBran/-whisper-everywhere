@@ -728,6 +728,15 @@ class SpeakerTrackerTest {
     private fun relabelOf(
         vararg clusters: Pair<Boolean, List<FloatArray>>,
         map: Map<Int, Int> = emptyMap(),
+        /**
+         * How many windows each cluster HOLDS. Defaulted to the seed count for brevity, but
+         * production never produces that: a cluster holds every window attached to it and only
+         * its [SpeakerTracker.RECENT_K] longest come back as seeds, so the real value is larger
+         * and never below `SpeakerReclusterer.MIN_CLUSTER_FINGERPRINTS`. A test about the
+         * confirmation counter must say so explicitly — the default is exactly what hid the
+         * early-confirmation defect for a round.
+         */
+        fingerprints: Int? = null,
     ): SpeakerReclusterer.Relabel = SpeakerReclusterer.Relabel(
         map = map,
         windowLabels = emptyMap(),
@@ -736,7 +745,7 @@ class SpeakerTrackerTest {
                 id = index + 1,
                 confirmed = confirmed,
                 totalSec = 10f,
-                fingerprints = seeds.size,
+                fingerprints = fingerprints ?: seeds.size,
                 longest = seeds,
             )
         },
@@ -794,12 +803,39 @@ class SpeakerTrackerTest {
 
     @Test fun anUnconfirmedClusterStillHasToEarnItsConfirmationTheOnlineWay() {
         // The degenerate answer — nothing cleared the mass bar, so the whole session is ONE
-        // unconfirmed speaker. The tracker must not treat that as a person already proven.
+        // unconfirmed speaker. The tracker must not treat that as a person already proven, and
+        // it is not enough to check the flag right after the reseed: the defect this test now
+        // guards was in the COUNTER. `Cluster.fingerprints` counts every window a cluster holds,
+        // short attachments included, so copying it into `Voice.qualifying` — which counts only
+        // segments of at least MIN_OPEN_SECONDS that opened or matched — put the voice at or
+        // past CONFIRM_N before it had said anything, and it confirmed on its next SINGLE
+        // segment. The old fixture hid it by defaulting `fingerprints` to one seed.
         val tracker = SpeakerTracker()
-        tracker.reseed(relabelOf(false to listOf(unit(0.0))))
+        tracker.reseed(relabelOf(false to listOf(unit(0.0)), fingerprints = 9))
         assertEquals(1, tracker.speakerCount)
         assertEquals(0, tracker.confirmedCount)
         assertFalse(tracker.secondSpeakerConfirmed)
+
+        // CONFIRM_N qualifying segments the online way, and not one fewer.
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals("one qualifying segment is not a confirmation", 0, tracker.confirmedCount)
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals("the second one is", 1, tracker.confirmedCount)
+    }
+
+    @Test fun aConfirmedClusterIsConfirmedOnArrivalHoweverManyWindowsItHeld() {
+        // The other side of the same line: a cluster the pass confirmed has nothing left to
+        // earn, so the counter is parked at the bar and the flag carries the verdict. Its
+        // window count is the reclusterer's arithmetic and must not leak into this object's.
+        val tracker = SpeakerTracker()
+        tracker.reseed(
+            relabelOf(true to listOf(unit(0.0)), true to listOf(unit(90.0)), fingerprints = 40),
+        )
+        assertEquals(2, tracker.confirmedCount)
+        assertTrue(tracker.secondSpeakerConfirmed)
+        // And a later qualifying segment neither un-confirms it nor throws.
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(2, tracker.confirmedCount)
     }
 
     @Test fun theCURRENTSpeakerFollowsTheMapAndIsUnlabelledWhenThePassNeverSawIt() {

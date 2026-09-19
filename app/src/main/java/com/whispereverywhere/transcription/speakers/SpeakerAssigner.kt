@@ -37,6 +37,11 @@ import java.util.concurrent.TimeUnit
  *     native code threw. The label is left exactly where it was. A session on a device that
  *     cannot load the model loses LABELS, never text.
  *
+ * All three are REMEMBERED for the retrospective pass, fates 1 and 3 with a null vector. They
+ * cannot vote in a clustering and they are not meant to; they are there so the pass can rename
+ * them, because it renumbers the id space and a window it never hears about keeps an id that
+ * afterwards means somebody else. See [remember].
+ *
  * ### WHAT A CHUNK NOW COSTS, and the one thing that can be lost by it
  *
  * [SpeakerSpans.LONG_SEGMENT_SECONDS] fell to 2.0 s and [SpeakerSpans.MIN_WINDOW_SECONDS] to
@@ -63,12 +68,15 @@ import java.util.concurrent.TimeUnit
  *
  * ### THE SECOND LOOK: online for display, retrospective for truth (spike session 6)
  *
- * Every fingerprint that produced a vector is also KEPT, under its [WindowKey], and every
- * [SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS] chunks — plus once inside the [awaitIdle] fence at
- * finalize — all of them are clustered at once by [SpeakerReclusterer]. Session 6 is why: the
- * online matcher is greedy and can lock onto a single id for a whole conversation (*"one big
- * run-on paragraph"*) while a retrospective clustering of the very same fingerprints finds the
- * speakers it merged. Three things then happen, in this order and on this thread:
+ * EVERY window is KEPT, under its [WindowKey] — all three fates, the two that produced no vector
+ * included — and every [SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS] chunks, plus once inside the
+ * [awaitIdle] fence at finalize, all of them are clustered at once by [SpeakerReclusterer].
+ * Session 6 is why: the online matcher is greedy and can lock onto a single id for a whole
+ * conversation (*"one big run-on paragraph"*) while a retrospective clustering of the very same
+ * fingerprints finds the speakers it merged. Three things then happen, in this order and on this
+ * thread — and only when the pass found [SpeakerLabels.MIN_CONFIRMED_SPEAKERS] confirmed
+ * speakers, because a pass that concluded less than the panel already stands on must not be
+ * allowed to take it back:
  *
  *  1. **[SpeakerTracker.reseed]** — the tracker's speakers become the clusters, so the NEXT chunk
  *     is decided from the retrospective truth rather than from the state that went wrong;
@@ -78,9 +86,12 @@ import java.util.concurrent.TimeUnit
  *     exactly (`TranscriptSink.relabel`) and which raises the panel's latch when two speakers are
  *     confirmed. The latch is never lowered by a pass.
  *
- * The cost is O(n²) in the kept fingerprints, capped at
+ * The cost is O(k²) in the kept VECTORS, capped at
  * [SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS] — a few hundred milliseconds at the cap, on
  * this thread, below text that was delivered long ago, exactly like the embedding beside it.
+ * Past the cap the oldest vector is dropped and its window stays: it is the WINDOW that must
+ * still be nameable, because step 1 renumbers the id space and a run the relabel misses keeps an
+ * id that now means somebody else. [MAX_RETAINED_WINDOWS] is where even that stops.
  *
  * ### The slice is on the ORIGINAL timeline, and it is clamped
  *
@@ -272,8 +283,13 @@ class SpeakerAssigner(
                 // Fate 1: too short to carry a voice. It inherits, and reports no similarity —
                 // NaN rather than 0, because 0 is a real reading (two orthogonal voices) and the
                 // spike's `best=` column is read as a distribution.
-                ids += tracker.currentSpeaker()
+                val inherited = tracker.currentSpeaker()
+                ids += inherited
                 best += Float.NaN
+                // It is REMEMBERED all the same, with no vector. See [remember]: a window the
+                // retrospective pass never hears about keeps an id from before the next reseed
+                // renumbers the id space, and a stale id in a renumbered space is somebody else.
+                remember(WindowKey(seq, index), NO_VECTOR, seconds, inherited)
                 continue
             }
 
@@ -285,9 +301,12 @@ class SpeakerAssigner(
             hasEmbedded = true
 
             if (embedding == null) {
-                // Fate 3: no fingerprint. The label stays where it was.
-                ids += tracker.currentSpeaker()
+                // Fate 3: no fingerprint. The label stays where it was — and, like fate 1, the
+                // window is still remembered so the pass can rename it into the new id space.
+                val inherited = tracker.currentSpeaker()
+                ids += inherited
                 best += Float.NaN
+                remember(WindowKey(seq, index), NO_VECTOR, seconds, inherited)
             } else {
                 // Fate 2: the tracker decides. `lastBestSimilarity` is read immediately after,
                 // on this thread, which is the only place it is defined to mean anything.
@@ -296,9 +315,7 @@ class SpeakerAssigner(
                 ids += id
                 best += similarity
                 // …and the SESSION keeps the fingerprint, because the retrospective pass is a
-                // function of all of them at once (spike session 6). Only the windows that
-                // actually produced a vector: a window that inherited a label has nothing for a
-                // clustering to weigh, and it keeps the label it inherited.
+                // function of all of them at once (spike session 6).
                 remember(WindowKey(seq, index), embedding, seconds, id)
                 // The spike's row, and the ONLY place one is written: a vector exists, so the
                 // offline tuner can re-decide this segment. It is written AFTER the tracker has
@@ -364,13 +381,30 @@ class SpeakerAssigner(
 
     // ------------------------------------------------------------------ the retrospective pass
 
-    /** The session's fingerprints, newest last, capped like the pass that reads them. Embed thread only. */
+    /**
+     * EVERY window of the session, newest last, whether or not it produced a vector. Embed
+     * thread only.
+     *
+     * The three fates all land here, and that is the fix to a real defect rather than tidiness.
+     * The pass renumbers the id space ([SpeakerTracker.reseed]) and the sink rewrites the runs it
+     * names ([SpeakerRuns.applyWindowLabels]); a window the pass never hears about therefore
+     * keeps an id issued BEFORE the renumbering, which after it usually denotes a different
+     * person — a ghost `Speaker 3:` in the panel, the field, the clipboard and the history
+     * sidecar. Keeping the short and the failed windows here costs a null vector each and closes
+     * it: they never seed and never vote, they are labelled by the company they keep.
+     */
     private val session = ArrayList<SpeakerReclusterer.Fp>(SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS)
+
+    /** How many entries of [session] still carry a vector — what the O(k²) cap is actually on. */
+    private var vectorsHeld = 0
+
+    /** Where in [session] to look for the oldest entry that still has a vector. Embed thread only. */
+    private var oldestVector = 0
 
     /** Chunks since the last retrospective pass. Embed thread only. */
     private var chunksSinceRecluster = 0
 
-    /** How many fingerprints this session has taken, ever — the "is there anything new" test. */
+    /** How many windows this session has taken, ever — the "is there anything new" test. */
     private var fingerprintsTaken = 0L
 
     /** [fingerprintsTaken] as it stood at the last pass, so a second fence publishes nothing. */
@@ -384,7 +418,22 @@ class SpeakerAssigner(
      */
     private val shown = HashMap<WindowKey, Int>()
 
-    /** Keeps one fingerprint for the retrospective pass, dropping the oldest past the cap. */
+    /**
+     * Keeps ONE window for the retrospective pass — [embedding] is [NO_VECTOR] for the two fates
+     * that produced none.
+     *
+     * TWO bounds, and they are different bounds because the two costs are different:
+     *
+     *  - **[SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS] vectors.** The clustering is O(k²) in
+     *    the windows that can seed it, so past 600 the OLDEST VECTOR is dropped — the window
+     *    itself stays, keyed and labelled, it just stops voting. Dropping the window instead
+     *    (which is what this did) is what left a 25-minute-old run wearing an id from a
+     *    numbering two reseeds ago.
+     *  - **[MAX_RETAINED_WINDOWS] windows.** Keys are cheap but not free, and a session has no
+     *    documented length limit. Past the bound the oldest are dropped outright and go back to
+     *    keeping whatever label they last had — hours of text above the top of any panel, and
+     *    the honest place to stop paying.
+     */
     private fun remember(key: WindowKey, embedding: FloatArray, seconds: Float, id: Int) {
         session += SpeakerReclusterer.Fp(
             windowKey = key,
@@ -392,12 +441,24 @@ class SpeakerAssigner(
             durSec = seconds,
             onlineId = id,
         )
+        if (embedding.isNotEmpty()) vectorsHeld++
         fingerprintsTaken++
         shown[key] = id
-        if (session.size > SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS) {
-            val excess = session.size - SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS
-            for (i in 0 until excess) shown.remove(session[i].windowKey)
+        while (vectorsHeld > SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS) {
+            while (oldestVector < session.size && session[oldestVector].emb.isEmpty()) oldestVector++
+            if (oldestVector >= session.size) break // unreachable: the counter says one is there
+            session[oldestVector] = session[oldestVector].copy(emb = NO_VECTOR)
+            oldestVector++
+            vectorsHeld--
+        }
+        if (session.size > MAX_RETAINED_WINDOWS) {
+            val excess = session.size - MAX_RETAINED_WINDOWS
+            for (i in 0 until excess) {
+                shown.remove(session[i].windowKey)
+                if (session[i].emb.isNotEmpty()) vectorsHeld--
+            }
             session.subList(0, excess).clear()
+            oldestVector = (oldestVector - excess).coerceAtLeast(0)
         }
     }
 
@@ -414,12 +475,33 @@ class SpeakerAssigner(
      * A pass with nothing new to look at publishes NOTHING: the stop tap can bring two fences
      * through here, and a second identical relabel would repaint the panel and print a second
      * diag line for no change at all.
+     *
+     * ### A pass that concluded nothing publishes nothing, and re-seeds nothing
+     *
+     * Below [SpeakerLabels.MIN_CONFIRMED_SPEAKERS] confirmed clusters, this returns before the
+     * tracker and the sink hear anything about it. The pass is still RUN — it costs its
+     * milliseconds and resets the counter — because "did the second look find two voices yet" is
+     * the question, and the answer "not yet" is a real one.
+     *
+     * Both halves of publishing it would be wrong, and the degenerate answer
+     * ([SpeakerReclusterer.oneSpeaker], `confirmedCount = 0`) shows it plainly. Its window labels
+     * are all `1`. Before the panel's latch rises that is invisible, so nothing is gained; AFTER
+     * it rises — and the latch is one-way — it prints `Speaker 1:` across a session whose two
+     * speakers the online tracker had already got right, which is neither 4.9's output nor
+     * correct. And [SpeakerTracker.reseed] would replace two live voices with one unconfirmed
+     * cluster that then has to re-open and re-earn the second. Session 4's 20:39 dump is the
+     * shape that reaches it: a 1.8 s median with 11 of 15 segments under 2.0 s clears
+     * [SpeakerReclusterer.MIN_CLUSTER_SECONDS] for nobody.
+     *
+     * The rule generalises past the degenerate case by the same argument: a pass finding ONE
+     * confirmed speaker cannot raise the latch either, and where the online tracker has already
+     * raised it the two disagree — so the live labels, which the user is reading, stand.
      */
     private fun recluster() {
         chunksSinceRecluster = 0
-        // Fewer fingerprints than the smallest cluster the pass will call a speaker: there is
+        // Fewer VECTORS than the smallest cluster the pass will call a speaker: there is
         // nothing for a clustering to say that the online ids have not already said.
-        if (session.size < SpeakerReclusterer.MIN_CLUSTER_FINGERPRINTS) return
+        if (vectorsHeld < SpeakerReclusterer.MIN_CLUSTER_FINGERPRINTS) return
         if (fingerprintsTaken == reclusteredAt) return
         reclusteredAt = fingerprintsTaken
 
@@ -427,6 +509,7 @@ class SpeakerAssigner(
         val relabel = SpeakerReclusterer.recluster(session)
         val costMs = (clockNs() - startedNs) / 1_000_000L
         if (relabel.windowLabels.isEmpty()) return
+        if (relabel.confirmedCount < SpeakerLabels.MIN_CONFIRMED_SPEAKERS) return
 
         var changed = 0
         for ((key, label) in relabel.windowLabels) {
@@ -449,7 +532,7 @@ class SpeakerAssigner(
             SpeakerRelabel(
                 windowLabels = relabel.windowLabels,
                 confirmedCount = relabel.confirmedCount,
-                fingerprints = session.size,
+                fingerprints = vectorsHeld,
                 clusterCount = relabel.clusterCount,
                 changed = changed,
                 costMs = costMs,
@@ -514,6 +597,24 @@ class SpeakerAssigner(
 
         /** The app's one sample rate. The VAD bounds are samples; durations are seconds. */
         const val SAMPLE_RATE: Int = 16_000
+
+        /**
+         * **6 000** — the most windows the retrospective pass is kept able to NAME, oldest
+         * dropped. Ten times [SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS], which at the
+         * session-6 median of ~2.5 s per window is roughly four hours of speech, for a key, a
+         * duration and an int apiece. It is not the cost bound — that is the vector cap, and it
+         * is unchanged — it is the bound on remembering that a window EXISTS, which is what a
+         * reseed needs so no run is left holding an id from a superseded numbering.
+         */
+        const val MAX_RETAINED_WINDOWS: Int = 6_000
+
+        /**
+         * What a window with no fingerprint carries: a window under
+         * [SpeakerTracker.MIN_EMBED_SECONDS], one the embedder refused, or one whose vector has
+         * been dropped past the cap. Shared and empty — `SpeakerReclusterer.unitOrNull` answers
+         * null for it, so it never seeds, never votes and is labelled by the company it keeps.
+         */
+        private val NO_VECTOR: FloatArray = FloatArray(0)
     }
 }
 
@@ -566,14 +667,18 @@ data class SpeakerAssignment(
  * `SpeakerReclusterer.Relabel.map` exists for callers that can only address ids, and this
  * message deliberately does not carry it.
  *
- * @param windowLabels `windowKey -> clusterId` for every fingerprint window of the session that
- *        the pass looked at. A window older than [SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS]
- *        is absent and keeps the label it has.
- * @param confirmedCount how many retrospective speakers cleared the mass bar. The panel's latch
- *        follows this at [SpeakerLabels.MIN_CONFIRMED_SPEAKERS] — and only ever UPWARDS: a later
+ * @param windowLabels `windowKey -> clusterId` for EVERY window of the session the assigner
+ *        still holds — the ones that produced no vector included, because a window this map
+ *        misses keeps an id from before the pass renumbered the id space. Only a window past
+ *        [SpeakerAssigner.MAX_RETAINED_WINDOWS] is absent, and it keeps the label it has.
+ * @param confirmedCount how many retrospective speakers cleared the mass bar. Never below
+ *        [SpeakerLabels.MIN_CONFIRMED_SPEAKERS], because a pass that concluded less than that is
+ *        not published at all. The panel's latch follows it — and only ever UPWARDS: a later
  *        pass that sees one speaker never takes the labels back off a panel that has them, which
  *        would be the only thing on screen that moved backwards.
- * @param fingerprints how many fingerprints the pass weighed — the diag line's `n=`.
+ * @param fingerprints how many VECTORS the pass weighed — the diag line's `n=`. NOT the number
+ *        of windows it labelled (`windowLabels.size`), which is larger by every window that was
+ *        never fingerprinted.
  * @param clusterCount how many speakers it found, confirmed or not.
  * @param changed how many windows' labels actually MOVED. Zero is the ordinary reading on a
  *        stable session and is the number that says a pass cost nothing but its milliseconds.
