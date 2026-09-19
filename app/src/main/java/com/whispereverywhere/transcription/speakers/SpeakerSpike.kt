@@ -181,11 +181,14 @@ object SpikeJson {
      *
      * [longSegment] and [minWindow] are in here for a sharper reason than completeness: since
      * session 4 a row is one fingerprint WINDOW, not one VAD segment, and those two rules are the
-     * whole of what decides which. A VAD segment past [longSegment] holding two or more whisper
-     * segments is cut into windows of at least [minWindow], so `seg`, `durSec`, `origStart` and
-     * `origEnd` mean a SLICE there and a whole segment everywhere else. Without them a session-4
-     * dump reads exactly like a session-3 dump whose columns meant something else, and the
-     * `windows` vs `segs` comparison a later session is meant to make has nothing to stand on.
+     * whole of what decides which. A VAD segment AT OR past [longSegment] holding two or more
+     * whisper segments is cut into windows of at least [minWindow], so `seg`, `durSec`,
+     * `origStart` and `origEnd` mean a SLICE there and a whole segment everywhere else. A segment
+     * of exactly [longSegment] with two sentences in it is cut, not left whole — the floor is the
+     * smallest segment that can hold two windows, so excluding it would exclude the one case the
+     * number was chosen for. Without these two rules a session-4 dump reads exactly like a
+     * session-3 dump whose columns meant something else, and the `windows` vs `segs` comparison
+     * a later session is meant to make has nothing to stand on.
      */
     fun header(
         session: Long,
