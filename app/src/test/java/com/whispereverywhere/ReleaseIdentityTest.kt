@@ -185,6 +185,18 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 101 = 4.10.1 — a PATCH, and the tier it fixes is the one the owner tests on.**
+ * 100 went to the internal track on 2026-09-19 and is spent there. On his Z Fold6 — NPU-capable,
+ * so the 4.3 one-tier rule offers `npu-turbo` alone — 4.10.0 produced *"no speaker changes at
+ * all"*. Not a defect in the tier: every speaker window came from the geometry `transcribeRaw`
+ * exports, and `NpuWhisperBackend.lastGeometry` answers null while that arm is live, exactly as
+ * its own KDoc says, because the HTP path never runs the whisper.cpp VAD. 101 gives that tier a
+ * VAD of its own — `WhisperNative.vadSegmentsOf` on the speaker thread, one segmenter in the JNI
+ * with two callers — and one id per chunk: the window holding the most SPEECH, ties to the
+ * earliest. Coarser and honest about it: with no token timestamps on that decoder a chunk's text
+ * cannot be split between two voices, so a change lands on a 6-8 s chunk boundary. The CPU tiers
+ * are untouched, gated on what the backend CAN publish rather than on what one read returned.
+ *
  * **versionCode 100 = 4.10.0 — the MINOR moves, because the app gains a capability.** 99 went to
  * PRODUCTION as 4.9.1 on 2026-09-17, uploaded by the owner, so it is spent twice over, as 82 and
  * 84 were: Play refuses a second upload at the same code, and every installed phone already
@@ -235,17 +247,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_10_0_at_version_code_100() {
+    fun release_identity_is_4_10_1_at_version_code_101() {
         assertEquals(
-            "versionName must be 4.10.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.10.0",
+            "versionName must be 4.10.1 for this release (app/build.gradle.kts defaultConfig)",
+            "4.10.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 100 for this release (app/build.gradle.kts defaultConfig). " +
-                "99 = 4.9.1 is IN PRODUCTION since 2026-09-17, so it is spent: Play refuses a " +
-                "second upload at the same code, and every installed phone already carries it",
-            100,
+            "versionCode must be 101 for this release (app/build.gradle.kts defaultConfig). " +
+                "100 = 4.10.0 went to the INTERNAL TRACK on 2026-09-19 and is spent there: Play " +
+                "refuses a second upload at the same code",
+            101,
             BuildConfig.VERSION_CODE,
         )
     }
