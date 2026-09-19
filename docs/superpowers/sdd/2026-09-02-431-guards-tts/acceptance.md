@@ -1535,17 +1535,17 @@ user-visible attribution. Two different things have to be true, and only one of 
   NVIDIA, the NVIDIA NeMo toolkit, the licence by its full name with a link to its text, both
   filenames with the shipped `sha256`, NVIDIA's model card, and the statement of what was changed
   (the filename, and nothing else). The suite fails the build if any of that leaves.
-- **NOT SIGNED OFF:** the model's row in `docs/LANGUAGE-CLEARANCE.md` reads **PENDING OWNER
-  SIGN-OFF**. Nothing in this repository records a decision by you on it. What it asks you to
-  accept is written there and is the shape you already accepted for `ru` and `zh`: the grant is
-  read off NVIDIA's own published model card and the ONNX graph's own metadata — nobody was
+- **SIGNED OFF 2026-09-19 by Brandon Slacum**, asked directly and answered *“Yes. And, yeah, I agree and approve it.”*. The model's row in
+  `docs/LANGUAGE-CLEARANCE.md` now reads **CLEARED for production** and names him. What he
+  accepted is written there and is the shape he accepted for `ru` and `zh`: the grant is read
+  off NVIDIA's own published model card and the ONNX graph's own metadata — nobody was
   written to, and CC-BY-4.0 needs nobody to be — and **the corpus NVIDIA trained it on is
   undisclosed** on that card.
 
 Paying a licence's term is not the same act as accepting that basis, and the seven language packs
 went in exactly this order: notice first, decision after.
 
-`[ ] signed off — promotion to production may proceed`
+`[x] signed off — promotion to production may proceed` — Brandon Slacum, 2026-09-19
 `[ ] not signed off — INTERNAL TRACK ONLY (the model ships in every build either way; nothing the app runs consults this)`
 
 **And the spike is disarmed, which is a thing to know rather than a thing to check.** The builds

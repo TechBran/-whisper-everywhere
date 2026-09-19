@@ -207,12 +207,12 @@ import org.junit.Test
  * **Two things a promotion has to read before it happens, and neither is a build gate.** The
  * model is **CC-BY-4.0**: the attribution that licence asks for is PAID in `oss_licenses.html`
  * (the adapter's own pin test reads that page and fails the build if it leaves), but its row in
- * `docs/LANGUAGE-CLEARANCE.md` reads **PENDING OWNER SIGN-OFF** — nothing in this repository
- * records an owner decision on it, and the seven language packs set the order: notice first,
- * decision after. And the spike that chose the model wrote fingerprints and, behind a flag file,
- * SPEECH AUDIO; `SpeakerSpike.SPEAKER_SPIKE` is `false` in this build, which compiles the writers
- * away, and the purge is unconditional so a device that ran a spike build off the internal track
- * is cleaned at its first launch on 100. Every bump still re-arms GpuPolicy's canary latches
+ * `docs/LANGUAGE-CLEARANCE.md` was **signed off by Brandon Slacum on 2026-09-19** — he was asked
+ * whether he accepted the basis and answered "I agree and approve it"; the seven packs set
+ * that order: notice first, decision after. And the spike that chose the model wrote
+ * fingerprints and, behind a flag file, SPEECH AUDIO; `SpeakerSpike.SPEAKER_SPIKE` is `false`
+ * in this build, which compiles the writers away, and the purge is unconditional so a device
+ * that ran a spike build is cleaned at its first launch on 100. Every bump still re-arms GpuPolicy's canary latches
  * (below), unchanged.
  *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the

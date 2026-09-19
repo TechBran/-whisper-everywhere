@@ -317,13 +317,18 @@ class SpeakerEmbedderPinTest {
 
         // The clearance row, which is the OTHER half and is not this one. Naming it here keeps a
         // green suite from reading as a clearance: the licence's term is paid, the owner's
-        // sign-off on an unanswered, undisclosed-corpus model is not.
+        // sign-off on an unanswered, undisclosed-corpus model was not — until 2026-09-19,
+        // when the owner gave it ("I agree and approve it"). So what this pin holds now is
+        // that the row still SAYS so and still names him: a verdict with nobody against it is
+        // the shape the pack rows reject. A green suite is still not the clearance; the row is.
         val clearance = source(CLEARANCE).readText().replace("\r\n", "\n")
         assertTrue(
             "docs/LANGUAGE-CLEARANCE.md must carry the speaker model's row — paying the " +
                 "attribution is the licence's term, not the owner's decision, and the production " +
                 "gate is his",
-            clearance.contains("TitaNet-small") && clearance.contains("PENDING OWNER SIGN-OFF"),
+            clearance.contains("TitaNet-small") &&
+                clearance.contains("CLEARED for production") &&
+                clearance.contains("Brandon Slacum"),
         )
     }
 

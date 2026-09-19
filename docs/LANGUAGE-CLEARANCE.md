@@ -130,14 +130,14 @@ reading it — not a test.
 
 | language | verdict | granted by | what was ACCEPTED with it |
 |---|---|---|---|
-| **the speaker model** (not a language) — NVIDIA NeMo **TitaNet-small**, `nemo_en_titanet_small.onnx`, bundled as `app/src/main/assets/speaker_titanet_small_16k.onnx`, 40,257,283 B, `sha256 ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e`. Licence as published: **CC-BY-4.0** | **PENDING OWNER SIGN-OFF** — the attribution the licence asks for is **PAID and shipping**, which is the condition and not the clearance | **nobody, as of 2026-09-19.** No owner decision on this model is recorded anywhere in this repository. The condition is discharged: `app/src/main/assets/oss_licenses.html` carries a **Speaker labels** section naming NVIDIA, NVIDIA NeMo, CC BY 4.0, the model card and the licence text, held by `SpeakerEmbedderPinTest` | that the grant is read off **NVIDIA's own published model card and the ONNX graph's own metadata**, not off a reply from NVIDIA — **nobody was written to**, and nothing needs to be: CC-BY-4.0 is a public licence whose only term we can fail is attribution. What is unwitnessed is that the card's declaration is the card's own. And that the **corpus** NVIDIA trained it on is **undisclosed** on that card — `ru`'s and `zh`'s shape exactly, and acceptable on the same basis or on none |
+| **the speaker model** (not a language) — NVIDIA NeMo **TitaNet-small**, `nemo_en_titanet_small.onnx`, bundled as `app/src/main/assets/speaker_titanet_small_16k.onnx`, 40,257,283 B, `sha256 ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e`. Licence as published: **CC-BY-4.0** | **CLEARED for production** — the attribution the licence asks for is **PAID and shipping**, which is the condition; this is the decision | **Brandon Slacum, 2026-09-19** — asked whether he accepted the basis and answered *“Yes. And, yeah, I agree and approve it.”*. The condition was already discharged: The condition is discharged: `app/src/main/assets/oss_licenses.html` carries a **Speaker labels** section naming NVIDIA, NVIDIA NeMo, CC BY 4.0, the model card and the licence text, held by `SpeakerEmbedderPinTest` | that the grant is read off **NVIDIA's own published model card and the ONNX graph's own metadata**, not off a reply from NVIDIA — **nobody was written to**, and nothing needs to be: CC-BY-4.0 is a public licence whose only term we can fail is attribution. What is unwitnessed is that the card's declaration is the card's own. And that the **corpus** NVIDIA trained it on is **undisclosed** on that card — `ru`'s and `zh`'s shape exactly, and acceptable on the same basis or on none |
 
 **What this row gates is what AL0 gates: a production promotion, never the internal track.** The
 model is in every build and always has been, exactly as the six languages were in every build while
 five clearances were outstanding — that is what lets it be heard before it is decided. Nothing the
 app runs consults this row.
 
-`[ ] signed off — promotion may proceed`
+`[x] signed off — promotion may proceed` — Brandon Slacum, 2026-09-19
 `[ ] not signed off — INTERNAL TRACK ONLY`
 
 ---
@@ -354,11 +354,14 @@ Before promoting a release from the internal track to production:
    it any more.** 4.10.0 bundles NVIDIA NeMo TitaNet-small for the speaker labels; CC-BY-4.0 makes
    attribution a term, so the page gained a **Speaker labels** section paying it. The committed
    page is now **40,899 B**, `sha256 e52b058adafd89bf5412ac2d3ac1704d1fca800f4b01a15abe31374c3d8b5319`
-   in the CRLF working-tree form the asset merge copies. **Those two numbers are DERIVED from the
-   file in this tree and read out of no artefact at all** — no bundle has been opened on this page,
-   and the two rows above stand as what they always were: observations of 2026-09-13 on the page as
-   it stood at `0663afe`. The gap below therefore widens rather than closing: the one
-   `bundleRelease` read that would shut it must now be of a 4.10.0 bundle.
+   in the CRLF working-tree form the asset merge copies. **Both numbers have now been READ OUT OF THE 4.10.0 ARTEFACT**, not derived: the controller's
+   `bundleRelease` of 2026-09-19 14:32 (5,476,001,464 B) was opened and its
+   `base/assets/oss_licenses.html` is **40,899 B**, `sha256 e52b058adafd89bf5412ac2d3ac1704d1fca800f4b01a15abe31374c3d8b5319`
+   — byte-identical to the committed page. Every Speaker-labels element probed PRESENT inside the
+   packaged entry (the section heading, NVIDIA NeMo TitaNet-small, the licence by its full name,
+   the shipped filename, the `sha256`, the licence link and the model card) and a deliberately
+   wrong control probe MISSING. The 2026-09-13 rows above stand as what they always were:
+   observations on the page as it stood at `0663afe`.
 
    **And the gap, stated as a gap: no release bundle of 4.5.2 has been opened, because none has been
    built.** A debug bundle is not a release bundle — different build type, no R8, the payload gates
