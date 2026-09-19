@@ -18,6 +18,7 @@ import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.transcription.NpuWhisperBackend
+import com.whispereverywhere.transcription.speakers.SpeakerSpikeStore
 
 class WhisperEverywhereApp : Application() {
 
@@ -274,6 +275,23 @@ class WhisperEverywhereApp : Application() {
         // app its launch (the same promise configureFastRpcLibraryPath documents).
         runCatching { whisperModelManager.reconcileNpuStagingDebris() }
             .onFailure { Log.w(NpuDiag.TAG, "npu: launch staging sweep failed", it) }
+
+        // (4.10.0) THE SPEAKER SPIKE'S DUMP IS PURGED AT EVERY LAUNCH, and this call is gated on
+        // NOTHING — see SpeakerSpike.purge for the whole argument. The 4.10 spike wrote
+        // per-segment fingerprints, and behind a flag file the controller touched with `adb` the
+        // SPEECH AUDIO those fingerprints came from, into its own directory under both filesDir
+        // and getExternalFilesDir. Its compile-time switch is off from 4.10.0/100 on, so nothing
+        // in this build can write another one; but the 24 h sweep that deleted the old ones lived
+        // inside the dump's own open(), on the way to writing a line, so the disarm compiled the
+        // deleter away with the writer. A phone that ran a spike build off the internal track and
+        // then took this update would otherwise keep that audio for good, and this app's whole
+        // promise is that audio is never retained. The cost is two listFiles on a directory that
+        // does not exist on any device that never ran a spike build, on a daemon thread of its
+        // own (purgeAsync resolves the dirs there — this is cold-start time and
+        // getExternalFilesDir touches the volume). Wrapped for the same reason the sweep above
+        // is: a filesystem surprise may never cost the app its launch.
+        runCatching { SpeakerSpikeStore.purgeAsync(this) }
+            .onFailure { Log.w("WE-DIAG", "speaker dump: launch purge failed", it) }
 
         // Create notification channel for foreground service
         createNotificationChannel()

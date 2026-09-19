@@ -7,7 +7,7 @@ import java.io.OutputStreamWriter
 import java.util.Locale
 
 /**
- * THE SPIKE LATCH, and the one constant a release has to turn off (4.10 speaker spike, session 2).
+ * THE SPIKE LATCH — DISARMED at 4.10.0/100, kept for the next spike (4.10 speaker spike, s. 2).
  *
  * `docs/measurements/2026-09-18-speaker-spike.md` ended with a verdict and a plan: CAM++ costs what
  * the spec budgeted (130-310 ms per fingerprint) but *"quality with fixed thresholds: not
@@ -44,8 +44,7 @@ import java.util.Locale
  *  - **off unless a file exists** ([AUDIO_FLAG], see [SpeakerSpikeDump]) — no preference, no
  *    Settings row, nothing a user can turn on by accident and nothing they can leave on;
  *  - **deleted with everything else** when detection is switched off, and after 24 h;
- *  - **gone before 4.10.0 ships.** [SPEAKER_SPIKE] must be `false` by then, and the pin asserts
- *    exactly that pairing rather than trusting anyone to remember it.
+ *  - **gone before 4.10.0 ships**, and it is: [SPEAKER_SPIKE] is `false` from 4.10.0/100 on.
  *
  * **The standing warning, in the words the plan asked for it in.** The audio dump is a
  * SPIKE-ONLY DIAGNOSTIC, off by default, and it STORES SPEECH AUDIO.
@@ -53,18 +52,48 @@ import java.util.Locale
  * rests on — so the mechanism
  * must be removed or put behind explicit user consent before any production release.
  * `SpeakerSpikePinTest` is the enforcement and this paragraph is the reason.
+ *
+ * ### THE MECHANISM IS DISARMED, and this is how it is re-armed
+ *
+ * The paragraph above is kept as HISTORY, not as an outstanding debt: it is the condition on ever
+ * turning this on again, and it is why the condition is written beside the switch rather than in a
+ * plan nobody re-reads. **As of 4.10.0/100 [SPEAKER_SPIKE] is `false`**, so no code path in this
+ * app can write a fingerprint, a WAV, a jsonl mirror or anything else — the constant is a `const`,
+ * every entry point tests it first, and the compiler removes the bodies behind it.
+ *
+ * It is DISARMED rather than deleted because the next model change is the thing that will want it:
+ * TitaNet-small was chosen by running five candidates offline against one session's dumped
+ * embeddings, and a sixth candidate would be chosen the same way. **To re-arm it for that spike,
+ * one edit:** set [SPEAKER_SPIKE] back to `true` and rebuild (the jsonl and its external mirror
+ * then write themselves); for the audio half, additionally
+ * `adb shell touch /sdcard/Android/data/com.whispereverywhere/files/speaker-spike/DUMP_AUDIO`
+ * before the session, and `rm` it after. Nothing else moves, and `SpeakerSpikePinTest` names the
+ * same one edit from the other side.
+ *
+ * **What a disarmed build still does: it PURGES.** A device that ran a spike build can be holding
+ * a dump from it, and a mechanism that is merely inert would leave those files there forever. So
+ * the purge is the one half of this that is NOT behind the constant — [purge] runs unconditionally
+ * at every process start (`WhisperEverywhereApp.onCreate`) and on the settings tap that turns
+ * detection off — which is what makes "no speech audio survives on a user's device" true of an
+ * upgrade and not only of a fresh install.
  */
 object SpeakerSpike {
 
     /**
-     * TRUE while this is a spike build, and the guard on every line of dump machinery.
+     * FALSE in every shipped build since 4.10.0/100 — the guard on every line of dump machinery,
+     * and the one edit that re-arms the spike.
      *
-     * `SpeakerSpikePinTest` asserts `!(SPEAKER_SPIKE && versionName == "4.10.0")`: the release that
-     * ships speaker labels cannot also ship the dump. Flipping this to `false` is what makes that
-     * test green — and because it is a `const`, flipping it lets the compiler strip every call
-     * below it rather than leaving dead-but-reachable file writers in the APK.
+     * `SpeakerSpikePinTest` asserted `!(SPEAKER_SPIKE && versionName == "4.10.0")` while the spike
+     * was running; now that 4.10.0 is the release, it asserts the shipping state directly —
+     * `false`, plainly, with no version in the condition. Because this is a `const`, `false` lets
+     * the compiler strip every guarded body rather than leaving dead-but-reachable file writers in
+     * the APK: the writes are not merely not taken, they are not there.
+     *
+     * **Re-arming is this line and nothing else** (see the object's KDoc): `true`, rebuild, and for
+     * the audio half `adb shell touch <externalFilesDir>/speaker-spike/DUMP_AUDIO`. The standing
+     * warning above the declaration is the condition on doing so, and it is kept for that reason.
      */
-    const val SPEAKER_SPIKE: Boolean = true
+    const val SPEAKER_SPIKE: Boolean = false
 
     /** The one directory name, under `filesDir` and under `getExternalFilesDir(null)` alike. */
     const val DIR_NAME: String = "speaker-spike"
@@ -101,6 +130,16 @@ object SpeakerSpike {
      * The flag file is LEFT: it is the controller's switch, not a dump, and a purge that silently
      * disarmed it would make the next session's missing audio look like a bug in the dumper.
      * Returns how many files went, for a caller that wants to say so.
+     *
+     * **This is the one half of the spike that is NOT behind [SPEAKER_SPIKE], and deliberately.**
+     * With the constant `false` the writer, the assigner's lazy build and the session's
+     * destination are all compiled away — which also compiles away the 24 h sweep that lived
+     * inside [SpeakerSpikeDump.open], because that sweep only ever ran on the way to writing a
+     * line. A device upgrading from a spike build to this one would therefore keep its dump
+     * forever: no session can write one, and nothing would ever delete one. So both callers run
+     * this unconditionally — `WhisperEverywhereApp.onCreate` at every process start, and
+     * `PreferencesManager.detectSpeakers` when the switch goes off — and a disarmed build cleans
+     * up after the armed build that preceded it on the first launch after the update.
      */
     fun purge(vararg dirs: File?): Int {
         var gone = 0

@@ -1,6 +1,5 @@
 package com.whispereverywhere.transcription.speakers
 
-import com.whispereverywhere.BuildConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,32 +7,55 @@ import org.junit.Test
 import java.io.File
 
 /**
- * THE SPIKE's TWO PROMISES, pinned (4.10 spike session 2).
+ * THE SPIKE IS DISARMED, pinned — and the mechanism is still here, pinned too (4.10.0/100).
  *
- * ### 1. The dump cannot reach the release
+ * ### 1. What this class used to say, and what it says now
  *
- * The audio half of this dump stores SPEECH AUDIO on app-private external storage, which is the
- * one thing this product has always refused to do: audio is deliberately never retained. It exists
- * because item 5 of `docs/measurements/2026-09-18-speaker-spike.md` needs it — *"if CAM++ still
- * splits one voice after 1-4, try WeSpeaker ResNet34 / ERes2Net on the same dumped audio"* — and
- * there is no way to get a second model's embeddings out of the first model's vectors.
+ * While the spike was running this test asserted a PAIRING — `!(SPEAKER_SPIKE && versionName ==
+ * "4.10.0")` — because the thing being guarded against was a deadline: the release that ships
+ * speaker labels must not also ship the dump. **4.10.0 is now the release**, so a conditional
+ * assertion has nothing left to condition on. It asserts the SHIPPING STATE instead, plainly:
+ * `SPEAKER_SPIKE` is `false`, and no code path in this app can write speech audio.
  *
- * So it is guarded by a compile-time constant, [SpeakerSpike.SPEAKER_SPIKE], and this class asserts
- * the pairing the `ReleaseIdentityTest` idiom exists for: **`!(SPEAKER_SPIKE && versionName ==
- * "4.10.0")`**. 4.10.0 is the release that ships speaker labels, so the build that ships them
- * cannot also ship the dump. The failure is a one-line fix — flip the constant to `false`, which
- * lets the compiler strip every call below it — and there is no other detector: a diagnostic that
- * works perfectly is exactly the kind of thing that ships.
+ * That is a stronger claim than the old one and it is asserted from four sides rather than one,
+ * because "the constant is false" only disarms what actually reads the constant:
  *
- * ### 2. The writing happens on the embed thread and nowhere else
+ *  1. the constant itself, declared once, `const`, `false`;
+ *  2. the three entry points that test it before they do anything — the writer
+ *     ([SpeakerSpikeDump.write]), the assigner's lazy build (`SpeakerAssigner.spikeDump`) and the
+ *     session's destination (`FloatingBubbleService`);
+ *  3. the two things that could still touch a user's disk if an entry point were missed — the ONE
+ *     construction of [SpeakerSpikeDump] in the whole app and the ONE call to [SpikeWav.mono16] —
+ *     each pinned to sit below a guard;
+ *  4. the PURGE, which is the half that must NOT be guarded, and is asserted not to be.
  *
- * Neither `FloatingBubbleService` nor a real file write on a service's threads is reachable from
- * the JVM suite, so the confinement is pinned as SOURCE, the `SpeakerWiringPinTest` way:
- * whitespace-collapsed, symbol-scoped needles inside their declaring bodies, never line numbers.
- * The hazard is specific and it is not theoretical — a flush moved into `assign` (which is called
- * on `LocalWhisperEngine`'s native executor, the whisper thread) would put file I/O inside the
- * commit floors spec §3.3 measured without it, and the only symptom would be a commit cadence
- * that drifts on some devices.
+ * ### 2. Why the mechanism is kept, and how it comes back
+ *
+ * It is DISARMED, not deleted. TitaNet-small was chosen by scoring five candidate models offline
+ * against one session's dumped embeddings (`docs/measurements/2026-09-18-speaker-spike.md`,
+ * session 2), and that is how a sixth would be chosen: the next model change wants this file. So
+ * the standing warning stays in `SpeakerSpike.kt` as HISTORY — it is the condition on ever turning
+ * the audio half on again — and the re-arm is one edit, named here and there: `SPEAKER_SPIKE =
+ * true`, plus `adb shell touch <externalFilesDir>/speaker-spike/DUMP_AUDIO` for the audio.
+ *
+ * ### 3. The purge, and the one thing a disarm on its own would get wrong
+ *
+ * The 24 h sweep lived inside [SpeakerSpikeDump]'s `open`, on the way to writing a line. Disarming
+ * the writer compiles the sweep away with it, so a phone that ran a spike build off the internal
+ * track and then took 4.10.0 would keep that build's WAVs forever: nothing can write one, and
+ * nothing would ever delete one. Both purge callers are therefore unconditional — every process
+ * start, and the settings tap that turns detection off — and this class asserts that neither one
+ * mentions the constant.
+ *
+ * ### 4. The writing still happens on the embed thread and nowhere else
+ *
+ * Kept from the armed build, and kept for the re-arm: neither `FloatingBubbleService` nor a real
+ * file write on a service's threads is reachable from the JVM suite, so the confinement is pinned
+ * as SOURCE, the `SpeakerWiringPinTest` way — whitespace-collapsed, symbol-scoped needles inside
+ * their declaring bodies, never line numbers. The hazard is specific and it is not theoretical: a
+ * flush moved into `assign` (which is called on `LocalWhisperEngine`'s native executor, the
+ * whisper thread) would put file I/O inside the commit floors spec §3.3 measured without it, and
+ * the only symptom would be a commit cadence that drifts on some devices.
  */
 class SpeakerSpikePinTest {
 
@@ -70,6 +92,7 @@ class SpeakerSpikePinTest {
     private val assigner by lazy { collapsed(ASSIGNER) }
     private val service by lazy { collapsed(SERVICE) }
     private val prefs by lazy { collapsed(PREFS) }
+    private val app by lazy { collapsed(APP) }
     private val buildFile by lazy { collapsed("build.gradle.kts") }
 
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
@@ -87,19 +110,33 @@ class SpeakerSpikePinTest {
         return haystack.substring(start, end)
     }
 
-    // ------------------------------------------------------------------ 1. the release pin
+    /** Every `.kt` under main, collapsed, so a claim about the WHOLE app can be made. */
+    private val mainSources: List<Pair<String, String>> by lazy {
+        sourceDir("src/main/java").walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .map { it.name to it.readText().replace("\r\n", "\n").replace(Regex("\\s+"), " ") }
+            .toList()
+    }
+
+    // --------------------------------------------------- 1. the spike is off in the shipped app
 
     @Test
-    fun theDumpMechanismCannotStillExistInTheReleaseThatShipsSpeakerLabels() {
+    fun theSpikeIsDISARMEDAndTheConstantSaysSoInBothTheCodeAndTheSource() {
         assertFalse(
-            "SpeakerSpike.SPEAKER_SPIKE is still true at versionName ${BuildConfig.VERSION_NAME}. " +
-                "4.10.0 is the release that ships speaker labels, and the fingerprint/audio dump " +
-                "is a SPIKE-ONLY DIAGNOSTIC: the audio half stores speech audio under " +
-                "getExternalFilesDir, and this app's rule is that audio is deliberately never " +
-                "retained. Before 4.10.0 ships, either delete the mechanism or put it behind " +
-                "explicit user consent, and set SPEAKER_SPIKE = false — which lets the compiler " +
-                "strip every guarded call rather than leaving a reachable file writer in the APK.",
-            SpeakerSpike.SPEAKER_SPIKE && BuildConfig.VERSION_NAME == SHIPPING_VERSION,
+            "SpeakerSpike.SPEAKER_SPIKE is TRUE. 4.10.0 is the release that ships speaker labels " +
+                "and the fingerprint/audio dump is a SPIKE-ONLY DIAGNOSTIC: the audio half stores " +
+                "speech audio under getExternalFilesDir, and this app's rule is that audio is " +
+                "deliberately never retained. The fix is one line — SPEAKER_SPIKE = false — which " +
+                "lets the compiler strip every guarded call rather than leaving a reachable file " +
+                "writer in the APK. Do NOT delete the mechanism to make this green: the next " +
+                "model change needs it, and SpeakerSpike.kt says how to re-arm it.",
+            SpeakerSpike.SPEAKER_SPIKE,
+        )
+        assertTrue(
+            "…and it must be FALSE AS A LITERAL in the source, not computed: a const folded by " +
+                "the compiler is what removes the guarded bodies from the APK, and anything the " +
+                "compiler cannot fold leaves them in it",
+            spike.contains("const val SPEAKER_SPIKE: Boolean = false"),
         )
     }
 
@@ -112,23 +149,18 @@ class SpeakerSpikePinTest {
             .sorted()
             .toList()
         assertEquals(
-            "SPEAKER_SPIKE must be declared exactly once, in one object, so that turning the " +
-                "spike off is one edit with no second home to forget. Found: $declarers",
+            "SPEAKER_SPIKE must be declared exactly once, in one object, so that re-arming the " +
+                "spike is one edit with no second home to forget. Found: $declarers",
             listOf("SpeakerSpike.kt"),
             declarers,
         )
         assertTrue("it lives in `object SpeakerSpike`", spike.contains("object SpeakerSpike { /**"))
-        assertTrue(
-            "…and it is a `const`, not a `val`: a const is what lets the compiler remove the " +
-                "guarded branches instead of merely not taking them",
-            spike.contains("const val SPEAKER_SPIKE: Boolean = true") ||
-                spike.contains("const val SPEAKER_SPIKE: Boolean = false"),
-        )
     }
 
     @Test
     fun everyEntryIntoTheDumpIsBehindThatConstant() {
-        // The four ways in, and each one checks the constant before it does anything at all.
+        // The three ways in, and each one checks the constant before it does anything at all.
+        // (The fourth site — the purge — is the deletion, and it is asserted UNGUARDED below.)
         assertTrue("the writer itself", spike.contains("if (!SpeakerSpike.SPEAKER_SPIKE) return"))
         assertTrue(
             "the assigner's lazy build",
@@ -138,22 +170,132 @@ class SpeakerSpikePinTest {
             "the session's destination",
             service.contains("spike = if (SpeakerSpike.SPEAKER_SPIKE) {"),
         )
-        assertTrue(
-            "and the purge on the settings tap",
-            prefs.contains("if (!value && SpeakerSpike.SPEAKER_SPIKE) SpeakerSpikeStore.purgeAsync(context)"),
+        // The writer's guard is its FIRST statement. A guard below a line that touches the disk
+        // is not a guard, and `write` is the one function here that is handed speech audio.
+        val write = between(spike, "fun write(record: SpikeFingerprint, audio: FloatArray?) {", "fun flush()", SPIKE)
+        assertEquals(
+            "the constant must be tested before anything else in write(): the parameter it " +
+                "returns before touching is the original audio slice",
+            0,
+            write.indexOf("{ if (!SpeakerSpike.SPEAKER_SPIKE) return") - write.indexOf("{"),
         )
     }
 
     @Test
-    fun theStandingWarningAboutStoringSpeechAudioIsWrittenWhereTheMechanismIs() {
-        // The reason this is a pin and not a comment somebody trusts: the next round to touch this
-        // file is the one that deletes the spike, and it has to be told why in the file itself.
+    fun noCodePathInTheWholeAppCanWriteSpeechAudio() {
+        // A constant disarms only what reads it, so the two operations that could still reach a
+        // user's disk are counted across EVERY main source and pinned to sit below a guard.
+        //
+        // (a) The dump object is CONSTRUCTED exactly once in the app, inside the assigner's
+        //     spikeDump(), below that function's guard. A second construction anywhere — a
+        //     debug menu, a second assigner — would open files with no constant in front of it.
+        val builders = mainSources.filter { (_, body) -> body.contains("= SpeakerSpikeDump(") }
+        assertEquals(
+            "SpeakerSpikeDump must be constructed in exactly one place in the app. Found: " +
+                builders.map { it.first },
+            listOf("SpeakerAssigner.kt"),
+            builders.map { it.first },
+        )
+        val lazyBuild = between(assigner, "private fun spikeDump(): SpeakerSpikeDump? {", "companion object", ASSIGNER)
+        assertTrue(
+            "…and the one construction is BELOW the guard, not beside it",
+            lazyBuild.indexOf("if (!SpeakerSpike.SPEAKER_SPIKE) return null") <
+                lazyBuild.indexOf("SpeakerSpikeDump("),
+        )
+
+        // (b) The WAV encoder has exactly one caller in the app: writeWav, private to the dump,
+        //     called only from write() — which is the function whose first statement is the
+        //     guard. Nothing else in this app turns samples into a file.
+        val wavCallers = mainSources.filter { (_, body) -> body.contains("SpikeWav.mono16(") }
+        assertEquals(
+            "SpikeWav.mono16 must have exactly one caller in the app. Found: " +
+                wavCallers.map { it.first },
+            listOf("SpeakerSpike.kt"),
+            wavCallers.map { it.first },
+        )
+        assertEquals("…one call site inside that file", 1, count(spike, "SpikeWav.mono16("))
+        assertTrue("…and it is inside writeWav", spike.contains("private fun writeWav(record: SpikeFingerprint, audio: FloatArray) { val dir"))
+        assertEquals(
+            "…which write() is the only caller of. A second caller is a second path to a WAV, " +
+                "and this one would not be behind write()'s guard",
+            1,
+            count(spike, "writeWav(record, audio)"),
+        )
+
+        // (c) And there is ONE dump directory, named once. A second file writing to a path of
+        //     its own — a second mirror, a debug export — would be outside every pin above, so
+        //     the literal is declared in SpeakerSpike.kt and resolved only by the store.
+        val namers = mainSources
+            .filter { (_, body) -> body.contains("= \"${SpeakerSpike.DIR_NAME}\"") }
+            .map { it.first }
+            .sorted()
+        assertEquals("the dump directory's name is a literal in one file. Found: $namers", listOf("SpeakerSpike.kt"), namers)
+        val resolvers = mainSources
+            .filter { (_, body) -> body.contains("SpeakerSpike.DIR_NAME") }
+            .map { it.first }
+            .sorted()
+        assertEquals("…and only the store turns it into a File. Found: $resolvers", listOf("SpeakerSpikeStore.kt"), resolvers)
+    }
+
+    @Test
+    fun thePurgeIsTheONEHalfThatIsNOTBehindTheConstantAndRunsAtEveryLaunch() {
+        // The disarm has one gap and this closes it: the 24 h sweep lived inside the dump's
+        // open(), on the way to writing a line, so turning the writer off turned the deleter off
+        // with it. A phone that ran a spike build off the internal track would keep its WAVs for
+        // good. A deletion may not be gated on the switch that produced the thing deleted.
+        assertTrue(
+            "the settings tap must purge with no mention of the constant",
+            prefs.contains("if (!value) SpeakerSpikeStore.purgeAsync(context)"),
+        )
+        assertEquals(
+            "…and PreferencesManager must not read SPEAKER_SPIKE at all any more — the old line " +
+                "was `!value && SpeakerSpike.SPEAKER_SPIKE`, which is exactly the bug",
+            0,
+            count(prefs, "SPEAKER_SPIKE"),
+        )
+        // The launch call is what reaches a user who never taps that switch — which is every
+        // user, since detection defaults ON and the dump only ever existed on the owner's own
+        // devices. Application.onCreate: once per process, wrapped, off Main.
+        assertTrue(
+            "WhisperEverywhereApp.onCreate must purge the dump at every process start",
+            app.contains("runCatching { SpeakerSpikeStore.purgeAsync(this) }"),
+        )
+        assertEquals("…and it must not read the constant either", 0, count(app, "SPEAKER_SPIKE"))
+        val onCreate = between(app, "override fun onCreate() {", "private fun configureFastRpcLibraryPath", APP)
+        assertTrue("…and the call is inside onCreate, not merely in the file", onCreate.contains("SpeakerSpikeStore.purgeAsync(this)"))
+        // The store's own half, likewise unguarded, and the dirs resolved ON the thread:
+        // getExternalFilesDir is not a getter — it touches the volume and creates the directory —
+        // and both callers are on Main, one of them inside cold start.
+        assertEquals("the store may not gate a deletion either", 0, count(store, "SPEAKER_SPIKE"))
+        val purgeAsync = between(store, "fun purgeAsync(context: Context) {", "thread.isDaemon", STORE)
+        assertTrue(
+            "the directories must be resolved inside the thread, not on the caller's",
+            purgeAsync.indexOf("Thread(") < purgeAsync.indexOf("internalDir("),
+        )
+    }
+
+    @Test
+    fun theStandingWarningIsKEPTAsHistoryAndTheFileSaysHowToReArmTheMechanism() {
+        // The warning is not deleted with the arming. It is the CONDITION on ever turning the
+        // audio half on again, and the next round to open this file — the one that re-arms it for
+        // a sixth candidate model — has to be told that in the file itself.
         for (phrase in listOf(
             "SPIKE-ONLY DIAGNOSTIC",
             "off by default",
             "STORES SPEECH AUDIO",
             "audio is deliberately never retained",
             "must be removed or put behind explicit user consent before any production release",
+        )) {
+            assertTrue("SpeakerSpike.kt must keep the standing warning: <<$phrase>>", spike.contains(phrase))
+        }
+        // …and beside it, the state it is now in and the one edit that undoes it. Without this
+        // the file reads as an outstanding debt rather than a paid one, and the next reader
+        // deletes the mechanism the next model change needs.
+        for (phrase in listOf(
+            "THE MECHANISM IS DISARMED",
+            "DISARMED rather than deleted",
+            "set [SPEAKER_SPIKE] back to `true` and rebuild",
+            "DUMP_AUDIO",
         )) {
             assertTrue("SpeakerSpike.kt must state: <<$phrase>>", spike.contains(phrase))
         }
@@ -164,7 +306,8 @@ class SpeakerSpikePinTest {
         // No preference, no Settings row, no receiver: the switch is a file only `adb` creates.
         // getExternalFilesDir is the one app-private directory a shell can write WITHOUT `run-as`,
         // which is what makes it usable at all on the non-debuggable internal-track builds the
-        // owner installs.
+        // owner installs. Kept asserted with the spike disarmed, because the re-arm must not be
+        // able to bring a user-reachable switch back with it.
         assertTrue(spike.contains("const val AUDIO_FLAG: String = \"DUMP_AUDIO\""))
         assertTrue(store.contains("context.getExternalFilesDir(null)"))
         assertEquals(
@@ -226,8 +369,9 @@ class SpeakerSpikePinTest {
 
     @Test
     fun nothingInTheDumpEverHopsToMainOrSpawnsAThreadOfItsOwn() {
-        // The one exception is the purge, which is explicitly its own daemon thread because its
-        // caller is a Settings tap on Main; it is in the store, not in the writer.
+        // The one exception is the purge, which is explicitly its own daemon thread because both
+        // its callers are on Main — a Settings tap, and Application.onCreate; it is in the store,
+        // not in the writer.
         for (symbol in listOf("Handler", "Looper", "Dispatchers", "runOnUiThread", "Thread(")) {
             assertEquals("SpeakerSpike.kt must not mention $symbol", 0, count(spike, symbol))
         }
@@ -247,7 +391,9 @@ class SpeakerSpikePinTest {
     @Test
     fun aWriteCanNeverThrowOnTheSessionsOnlyEmbedThread() {
         // An exception escaping a task there costs the session its embed thread, for a LABEL, on a
-        // path whose text has already been delivered. Every file operation is wrapped.
+        // path whose text has already been delivered. Every file operation is wrapped. Asserted
+        // with the spike disarmed because these are the lines a re-arm switches back on, and a
+        // re-arm is one edit that re-reads none of them.
         for (call in listOf(
             "runCatching { primary?.write(line); primary?.write(\"\\n\") }",
             "runCatching { file.writeBytes(SpikeWav.mono16(audio)) }",
@@ -265,6 +411,8 @@ class SpeakerSpikePinTest {
     fun aDumpAgesOutInTwentyFourHoursAndGoesEntirelyWithTheSwitch() {
         assertTrue(spike.contains("const val MAX_AGE_MS: Long = 24L * 60L * 60L * 1_000L"))
         // The sweep is at session start, inside the open — the one moment already paying for I/O.
+        // It is also the reason the purge above had to become unconditional: this sweep is behind
+        // the writer's guard, so the disarm took it with it.
         val open = between(spike, "private fun open(dim: Int) {", "private fun writer(", SPIKE)
         assertTrue("the sweep runs before the first line is written", open.indexOf("sweep()") < open.indexOf("primary = writer("))
         // And a purge may only ever delete the two dump extensions: the flag file is the
@@ -283,7 +431,7 @@ class SpeakerSpikePinTest {
         // Every pin above is an ORDER, ZERO-count, literal or KDoc-phrase claim — the shape that
         // compiles to a byte-identical class, so without these entries the one edit each pin
         // exists to catch is the one that leaves :app:testDebugUnitTest UP-TO-DATE.
-        for (path in listOf(SPIKE, STORE, ASSIGNER, SERVICE, PREFS)) {
+        for (path in listOf(SPIKE, STORE, ASSIGNER, SERVICE, PREFS, APP)) {
             assertTrue("app/build.gradle.kts must list \"$path\" in sourcePinnedInputs", buildFile.contains("\"$path\""))
         }
     }
@@ -294,9 +442,7 @@ class SpeakerSpikePinTest {
         const val ASSIGNER = "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerAssigner.kt"
         const val SERVICE = "src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt"
         const val PREFS = "src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt"
+        const val APP = "src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt"
         const val SETTINGS = "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt"
-
-        /** The release that ships speaker labels, and the one the dump may not reach. */
-        const val SHIPPING_VERSION = "4.10.0"
     }
 }

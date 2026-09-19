@@ -6,7 +6,6 @@ import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.BubbleColours
 import com.whispereverywhere.service.ResizeMath
-import com.whispereverywhere.transcription.speakers.SpeakerSpike
 import com.whispereverywhere.transcription.speakers.SpeakerSpikeStore
 import com.whispereverywhere.tts.ttsCloudVoiceKey
 import java.io.File
@@ -532,9 +531,17 @@ class PreferencesManager(private val context: Context) {
             // so there is nothing to lose and no reason to keep speech-derived data one tap
             // longer than the feature that produced it. Off the Main thread
             // (`SpeakerSpikeStore.purgeAsync`) because this setter runs under a finger and a
-            // session's WAVs can be hundreds of files. Inert on a non-spike build: the whole
-            // mechanism is behind `SpeakerSpike.SPEAKER_SPIKE`.
-            if (!value && SpeakerSpike.SPEAKER_SPIKE) SpeakerSpikeStore.purgeAsync(context)
+            // session's WAVs can be hundreds of files.
+            //
+            // UNCONDITIONAL since 4.10.0, and that is the point of the line. It used to be
+            // ANDed with the spike's compile-time switch, which was right while the spike was
+            // armed and is exactly wrong now that it is not: with that switch off no session can
+            // write a dump AND the 24 h sweep inside the dump's own open() is compiled away with
+            // it, so a phone upgrading from a spike build to this one would keep that build's
+            // speech audio forever. A deletion must not be gated on the switch that produced the
+            // thing being deleted. `SpeakerSpike.purge` carries the argument; the other caller is
+            // `WhisperEverywhereApp.onCreate`, which is what reaches a user who never taps here.
+            if (!value) SpeakerSpikeStore.purgeAsync(context)
         }
 
     /**

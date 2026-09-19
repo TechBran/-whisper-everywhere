@@ -254,6 +254,37 @@ class SpeakerSpikeDumpTest {
 
     // ------------------------------------------------------------------ the files
 
+    /**
+     * **DISARMED, and these tests follow the switch rather than being deleted with it.**
+     *
+     * Since 4.10.0/100 [SpeakerSpike.SPEAKER_SPIKE] is `false`, so [SpeakerSpikeDump.write]
+     * returns before it opens anything and the four file tests below cannot observe the files
+     * they were written to observe. The mechanism is kept for the next model change
+     * (`SpeakerSpike.kt` says how to re-arm it in one edit), so its tests are kept too: each one
+     * runs the same sequence of calls and then asks THIS — with the spike off, the sequence left
+     * nothing on disk at all — and stops. Flip the constant and every assertion below the call
+     * runs again, which is the only way a re-arm ships tested.
+     *
+     * The flag file is excluded because it is not something the dump writes: it is the
+     * controller's switch, created by `adb` and by the fixture here.
+     */
+    private fun disarmedSoTheSequenceLeftNothingOnDisk(vararg dirs: File?): Boolean {
+        if (SpeakerSpike.SPEAKER_SPIKE) return false
+        for (dir in dirs) {
+            val left = (dir?.listFiles() ?: continue)
+                .map { it.name }
+                .filter { it != SpeakerSpike.AUDIO_FLAG }
+                .sorted()
+            assertEquals(
+                "SPEAKER_SPIKE is false, so nothing in this app may write a fingerprint or a WAV " +
+                    "— and ${dir.name} holds: $left",
+                emptyList<String>(),
+                left,
+            )
+        }
+        return true
+    }
+
     @Test
     fun theFirstWriteOpensOneJsonlWithAHeaderLineAndMirrorsItWhereAdbCanReachIt() {
         val internal = tempDir("internal")
@@ -265,6 +296,8 @@ class SpeakerSpikeDumpTest {
         dump.write(record(seq = 1, seg = 1, best = Float.NaN), audio = null)
         dump.flush()
         dump.close()
+
+        if (disarmedSoTheSequenceLeftNothingOnDisk(internal, external)) return
 
         for (dir in listOf(internal, external)) {
             val lines = File(dir, "555.jsonl").readLines()
@@ -284,6 +317,13 @@ class SpeakerSpikeDumpTest {
         val dump = dumpInto(internal, external, session = 777L)
         dump.write(record(seq = 4, seg = 2), audio = floatArrayOf(0.25f, -0.25f))
         dump.close()
+
+        // THE ONE THAT MATTERS MOST WITH THE SPIKE OFF: the flag file is present and the audio
+        // was still not written. A disarmed build cannot be armed by a file on the sdcard.
+        if (disarmedSoTheSequenceLeftNothingOnDisk(internal, external)) {
+            assertFalse("a flag file may not arm a disarmed build", dump.audioArmed)
+            return
+        }
 
         assertTrue("the flag arms the session", dump.audioArmed)
         val wav = File(external, "777-4-2.wav")
@@ -322,6 +362,22 @@ class SpeakerSpikeDumpTest {
         dumpInto(internal, external, session = 999L, now = { now })
             .write(record(), audio = null)
 
+        // DISARMED (4.10.0): the sweep lives inside open(), on the way to writing a line, so
+        // turning the writer off turns the deleter off with it — nothing is written AND nothing
+        // is swept. That is precisely why the purge had to stop being conditional: without the
+        // unconditional one at launch, `old` and `oldWav` below would survive a user's upgrade
+        // from a spike build forever. `SpeakerSpikePinTest` holds that other half.
+        if (SpeakerSpike.SPEAKER_SPIKE.not()) {
+            assertFalse("no session file is written by a disarmed build", File(internal, "999.jsonl").exists())
+            assertTrue("…and the disarmed build sweeps nothing either — the launch purge does", old.exists())
+            assertTrue(oldWav.exists())
+            assertTrue(recent.exists())
+            assertTrue(flag.exists())
+            assertEquals("and SpeakerSpike.purge is what removes them", 3, SpeakerSpike.purge(internal, external))
+            assertTrue("…never the controller's switch", flag.exists())
+            return
+        }
+
         assertFalse("a stale jsonl goes", old.exists())
         assertFalse("a stale wav goes", oldWav.exists())
         assertTrue("one inside the window stays", recent.exists())
@@ -355,6 +411,7 @@ class SpeakerSpikeDumpTest {
         dump.write(record(), audio = floatArrayOf(0.5f, 0.5f))
         dump.close()
         assertFalse("the flag cannot be found, so audio is off", dump.audioArmed)
+        if (disarmedSoTheSequenceLeftNothingOnDisk(internal)) return
         assertEquals(2, File(internal, "1234.jsonl").readLines().size)
         assertEquals(1, internal.listFiles()!!.size)
     }

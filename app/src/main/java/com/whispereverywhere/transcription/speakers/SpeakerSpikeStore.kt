@@ -47,18 +47,28 @@ object SpeakerSpikeStore {
 
     /**
      * Deletes every dump file in both directories — item 3 of the spike plan's storage rules, the
-     * "switch turned off" half ([SpeakerSpikeDump] sweeps the 24 h half at session start).
+     * "switch turned off" half ([SpeakerSpikeDump] swept the 24 h half at session start while the
+     * spike was armed).
      *
-     * On a background thread of its own: the caller is `PreferencesManager`'s `detectSpeakers`
-     * setter, which runs on Main under the user's finger, and a session's WAVs can be a few hundred
-     * files. A daemon thread is the right size for this — there is nothing to wait for, nothing to
-     * report, and the work is idempotent, so a process death mid-purge leaves files the next call
-     * (or the next session's sweep) removes.
+     * **Unconditional since 4.10.0**, and both of its callers are: `WhisperEverywhereApp.onCreate`
+     * at every process start, and `PreferencesManager`'s `detectSpeakers` setter. With the spike's
+     * compile-time switch off nothing writes a dump and nothing sweeps one either, so a device
+     * that ran a spike build would otherwise keep its speech audio for good; the launch call is
+     * what makes the disarm retroactive. See [SpeakerSpike.purge] for the whole argument.
+     *
+     * On a background thread of its own, and the DIRECTORIES ARE RESOLVED ON IT: both callers run
+     * on Main (one under a user's finger, one inside `Application.onCreate` where every
+     * millisecond is cold-start time), and `getExternalFilesDir` is not a getter — it touches the
+     * volume and creates the directory. A session's WAVs can also be a few hundred files. A daemon
+     * thread is the right size for all of it: there is nothing to wait for, nothing to report, and
+     * the work is idempotent, so a process death mid-purge leaves files the next launch removes.
      */
     fun purgeAsync(context: Context) {
-        val internal = internalDir(context)
-        val external = externalDir(context)
-        val thread = Thread({ SpeakerSpike.purge(internal, external) }, "speaker-spike-purge")
+        val app = context.applicationContext ?: context
+        val thread = Thread(
+            { SpeakerSpike.purge(internalDir(app), externalDir(app)) },
+            "speaker-spike-purge",
+        )
         thread.isDaemon = true
         runCatching { thread.start() }
     }
