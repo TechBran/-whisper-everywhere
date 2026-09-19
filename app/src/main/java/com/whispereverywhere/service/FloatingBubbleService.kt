@@ -1212,6 +1212,23 @@ class FloatingBubbleService : Service(),
     private val FINALIZE_TIMEOUT_MS = 300_000L
 
     /**
+     * (4.10) How long finalize waits for the SPEAKER pass after the transcription backlog has
+     * already drained — the second fence, and the only wait in this app that exists for a label.
+     *
+     * The last chunk's fingerprinting is submitted by `LocalWhisperEngine` on the same pass that
+     * releases the engine's own drain fence, so without this wait the final chunk is
+     * DETERMINISTICALLY unassigned in the runs the delivery, the clipboard and history are
+     * rendered from (`SpeakerAssigner.awaitIdle`). Sized off the budget the spike measured — worst
+     * segment under 300 ms, no chunk over 1 s, plus the one-time model load a session that
+     * fingerprints late might still be paying — and generous by a margin because the cost of
+     * overshooting is milliseconds of stop latency on the IO thread while the cost of undershooting
+     * is the session's last paragraph break. A one-speaker session pays only the residual embed of
+     * its last chunk; nothing waits for this timeout unless the embedder has hung, and a timeout
+     * loses labels for one chunk, never text.
+     */
+    private val SPEAKER_DRAIN_MS = 1_500L
+
+    /**
      * Client-VAD live (Gemini, 4.3.4): how long the finalize drain waits for the provider's final
      * of the stop-cut tail before rescuing it locally. Gemini's final follows our activityEnd in
      * 0.26 s p50 / 0.44 s max on a PC (T0 P9, n = 28); 2 s leaves room for the phone's radio RTT.
@@ -5250,6 +5267,25 @@ class FloatingBubbleService : Service(),
                 "finalize-timing: orderer-flush=${(System.nanoTime() - flushStartNs) / 1_000_000}ms",
             )
 
+            // (4.10) THE SPEAKER FENCE, and it belongs HERE: after the flush, so every run of the
+            // session exists in the sink and a late id has something to land on, and before the
+            // sink is detached, so it still can. The engine's drain above returns on the pass that
+            // SUBMITS the last chunk's fingerprinting — the ids are ~300 ms behind it on the embed
+            // thread — so this is the only line that makes "the runs snapshotted below describe
+            // the whole session" true of its LAST chunk. Blocking, hence IO; the assignment's own
+            // Main hop is posted before this fence completes and therefore runs before this
+            // coroutine resumes (SpeakerAssigner.awaitIdle). Null for every session without the
+            // speaker pass — cloud, detection off — which then waits for nothing at all.
+            speakerAssigner?.let { assigner ->
+                val speakerStartNs = System.nanoTime()
+                val settled = withContext(Dispatchers.IO) { assigner.awaitIdle(SPEAKER_DRAIN_MS) }
+                android.util.Log.i(
+                    "WE-DIAG",
+                    "finalize-timing: speaker-drain=${(System.nanoTime() - speakerStartNs) / 1_000_000}ms " +
+                        "settled=$settled",
+                )
+            }
+
             // ---- W2 single delivery: the ONE external write of the session. Runs BEFORE
             // teardownRealtime, because teardown ends the injection-session binding captured
             // at beginInjectionSession and the SESSION_BOUND write must resolve against it.
@@ -5821,10 +5857,14 @@ class FloatingBubbleService : Service(),
      *
      * ONE case mixes them, and it is upstream of here: when `injectTextWithResult` degrades to
      * CLIPBOARD_ONLY it has already put the string it was given — [full] — on the clipboard
-     * itself. That write is inside the accessibility service's paste strategy and cannot be
-     * handed a different string than the one it tried to type, so a field session that cannot be
-     * typed into gets the label-free text on the clipboard. Stated rather than hidden; the three
-     * clipboard writes THIS method performs all use [export].
+     * itself. That write is inside the accessibility service's paste strategy and cannot be handed
+     * a different string than the one it tried to type. But CLIPBOARD_ONLY means *the user will
+     * paste this by hand*, so on that path the clipboard IS the delivery, and leaving [full] there
+     * would silently ignore the export switch in exactly the apps where it matters most. So that
+     * arm now writes [export] over it — the FOURTH clipboard write, and conditional: it fires only
+     * when the two strings actually differ, which (`Mode.Field` and `Mode.Export(labels = false)`
+     * render byte for byte the same) is precisely when the user's switch is on and a second speaker
+     * was confirmed. Every other session keeps the strategy's own payload, padding included.
      */
     private fun deliverFinalTranscript(full: String, export: String) {
         if (finalDelivered) return
@@ -5858,8 +5898,22 @@ class FloatingBubbleService : Service(),
                         // Typed where the user aimed it — no toast needed.
                     }
                     WhisperAccessibilityService.InjectionResult.CLIPBOARD_ONLY -> {
-                        // The strategy already left the FULL transcript on the clipboard.
+                        // The strategy already left the FULL transcript on the clipboard — the
+                        // label-free FIELD render — and on this path nothing will type it: the
+                        // user pastes it by hand, so that string is the delivery and §2's
+                        // clipboard row governs it. Write [export] over it, exactly as the FAILED
+                        // arm below does, but ONLY when it differs: Field and Export(labels=false)
+                        // are the same bytes, so a difference means the user's switch is on and a
+                        // second speaker was confirmed. When they agree, the strategy's payload is
+                        // strictly better — it was padded against the target field's existing text
+                        // — and is left alone.
                         sessionClipboardFallback = true
+                        if (export != full) {
+                            runCatching {
+                                val clip = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                clip.setPrimaryClip(android.content.ClipData.newPlainText("Transcript", export))
+                            }
+                        }
                         showToast("Can't type here — full transcript copied to clipboard")
                     }
                     WhisperAccessibilityService.InjectionResult.FAILED -> {

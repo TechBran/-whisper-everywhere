@@ -20,6 +20,11 @@ import java.io.File
  *  - flipping the latch on every chunk instead of once would re-emit the relabel line forever;
  *  - taking the runs snapshot BEFORE `close()` would save a history that is missing the last
  *    chunk of every session;
+ *  - taking it without WAITING for the speaker pass would leave the last chunk of every session
+ *    unassigned — the engine's drain returns on the pass that only SUBMITS that chunk's
+ *    fingerprinting — so the final paragraph break would go missing from the field, the clipboard
+ *    and the saved file, and a second speaker first confirmed on that chunk would never light the
+ *    labels at all;
  *  - passing the spans without asking whether detection is on would make "detection off changes
  *    nothing" an accident of the assigner being null rather than a decision.
  *
@@ -195,6 +200,25 @@ class SpeakerLabelsWiringPinTest {
         assertTrue(snapshot < confirmed)
         assertTrue("…and before the one external write", confirmed < delivery)
         assertTrue("…and before history is persisted", delivery < save)
+    }
+
+    @Test
+    fun theSpeakerPassIsFencedBetweenTheOrdererFlushAndTheSinkBeingDetached() {
+        // The two neighbours are the whole test. AFTER the flush, so every run of the session is
+        // in the sink and a late id has something to land on; BEFORE the detach, so it still can
+        // — `transcriptSink = null` makes the assigner's callback a `return@launch`, which is how
+        // the last chunk's ids were being dropped on the floor of every session.
+        val flush = indexOfOrFail("            deliverReleasedText(segmentOrderer.flush())\n")
+        val fence = indexOfOrFail("assigner.awaitIdle(SPEAKER_DRAIN_MS)")
+        val detach = indexOfOrFail("            val finishedSink = transcriptSink\n")
+        assertTrue("the fence follows the orderer's flush", flush < fence)
+        assertTrue("…and precedes the detach, close and snapshot", fence < detach)
+        assertEquals("ONE speaker fence", 1, liveCount("awaitIdle(SPEAKER_DRAIN_MS)"))
+        assertEquals("…with its bound named once", 1, liveCount("private val SPEAKER_DRAIN_MS"))
+        // Off Main: it blocks, and Main is where the whole finalize continuation runs.
+        indexOfOrFail("withContext(Dispatchers.IO) { assigner.awaitIdle(SPEAKER_DRAIN_MS) }")
+        // And it is skipped entirely when the session has no speaker pass (cloud, detection off).
+        indexOfOrFail("            speakerAssigner?.let { assigner ->\n")
     }
 
     @Test

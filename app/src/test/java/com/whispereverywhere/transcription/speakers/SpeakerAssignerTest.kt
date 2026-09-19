@@ -165,6 +165,75 @@ class SpeakerAssignerTest {
         assertEquals("…and after the work it had queued", 1, voices.lengths.size)
     }
 
+    // ------------------------------------------------------------------ the stop-tap fence
+
+    @Test
+    fun awaitIdleReturnsOnlyAfterTheQueuedChunkHasBeenFingerprintedAndPublished() {
+        // The defect this fence closes: the service's finalize waits on the ENGINE's drain, which
+        // returns on the same pass that SUBMITS the last chunk here — so the snapshot of the runs
+        // used by the delivery, the clipboard and history was taken while the final chunk's ids
+        // were still in flight, and the last thing said in a session inherited the previous
+        // speaker's number. "Published", not merely "computed": onAssigned runs inside the task,
+        // so a caller that has cleared this fence has already seen every assignment.
+        val entered = CountDownLatch(1)
+        val voices = object : VoicePrints {
+            override fun embed(pcm: FloatArray, sampleRate: Int): FloatArray? {
+                entered.countDown()
+                Thread.sleep(300) // the ~300 ms the real embedder costs
+                return unit(0.0)
+            }
+            override fun release() = Unit
+        }
+        val published = AtomicReference<SpeakerAssignment?>(null)
+        val assigner = SpeakerAssigner(voices = voices, onAssigned = { published.set(it) })
+        try {
+            assigner.assign(9L, buffer(4f), listOf(seg(0f, 2f)))
+            assertTrue("the embed actually started", entered.await(5, TimeUnit.SECONDS))
+            assertNull("…and is still running, so nothing is published yet", published.get())
+            assertTrue("the fence drained", assigner.awaitIdle(5_000))
+            assertEquals("the assignment is published by the time the fence clears", 9L, published.get()?.seq)
+            assertEquals(listOf(1), published.get()?.ids)
+        } finally {
+            assigner.release()
+        }
+    }
+
+    @Test
+    fun awaitIdleAnswersFalseOnTheTimeoutAndCostsNothingWhenThereIsNoWork() {
+        val blocked = CountDownLatch(1)
+        val voices = object : VoicePrints {
+            override fun embed(pcm: FloatArray, sampleRate: Int): FloatArray? {
+                blocked.await(5, TimeUnit.SECONDS) // a hung embedder
+                return null
+            }
+            override fun release() = Unit
+        }
+        val assigner = SpeakerAssigner(voices = voices, onAssigned = {})
+        try {
+            // Idle: the fence is a barrier task, so an assigner with nothing queued clears at once.
+            assertTrue(assigner.awaitIdle(2_000))
+            assigner.assign(1L, buffer(4f), listOf(seg(0f, 2f)))
+            // Bounded: a hung embed costs the caller the timeout and its labels, never its text.
+            assertFalse("the fence does not wait forever", assigner.awaitIdle(150))
+        } finally {
+            blocked.countDown()
+            assigner.release()
+        }
+    }
+
+    @Test
+    fun awaitIdleAfterReleaseIsTrueBecauseNothingCanStillBeInFlight() {
+        // The teardown order is release-then-nothing, but onDestroy and the fatal drain can reach
+        // the finalize block in any order; a rejected barrier must read as "drained", never hang
+        // and never throw on the caller's thread.
+        val voices = FakeVoices { unit(0.0) }
+        val assigner = SpeakerAssigner(voices = voices, onAssigned = {})
+        assigner.assign(1L, buffer(3f), listOf(seg(0f, 2f)))
+        assigner.release()
+        assertTrue(voices.released.await(5, TimeUnit.SECONDS))
+        assertTrue(assigner.awaitIdle(2_000))
+    }
+
     // ------------------------------------------------------------------ the three per-segment fates
 
     @Test

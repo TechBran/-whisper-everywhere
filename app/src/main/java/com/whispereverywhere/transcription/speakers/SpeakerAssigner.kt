@@ -1,7 +1,10 @@
 package com.whispereverywhere.transcription.speakers
 
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 
 /**
  * ONE committed chunk's voices, fingerprinted and numbered — off the whisper thread (4.10 Task 3,
@@ -113,6 +116,47 @@ class SpeakerAssigner(
             executor.execute {
                 runCatching { fingerprint(seq, samples, vad) }
             }
+        }
+    }
+
+    /**
+     * Blocks the CALLING thread until everything already queued on the embed thread has run, or
+     * [timeoutMs] elapses; true if it drained. MUST be called off the main thread.
+     *
+     * It exists for ONE moment — the stop tap — and for one reason. The final chunk's [assign] is
+     * submitted at the very end of `LocalWhisperEngine.runSegment`, on the same native-executor
+     * pass that lets the ENGINE's `awaitIdle` fence return; so the service's finalize, which waits
+     * on that fence and nothing else, used to run flush → close → snapshot while the last chunk's
+     * embedding was still ~300 ms out on this thread. Its ids then landed on a detached sink and
+     * were dropped, and the last thing said in the session went out to the field, the clipboard
+     * and history wearing the PREVIOUS speaker's number — and, if that chunk was also the one that
+     * confirmed the second speaker, the session rendered as plain 4.9 text with no paragraph and
+     * no label anywhere. This is the second fence, and it is the same barrier task the engine uses:
+     * a single-thread FIFO executor is idle of prior work exactly when a task submitted behind it
+     * runs.
+     *
+     * What it guarantees is stronger than "the executor is idle": [onAssigned] is invoked INSIDE
+     * the task it belongs to, so every assignment of the session has already been *published* when
+     * this returns. For the production consumer that publication is a `Dispatchers.Main` post from
+     * this thread, which therefore sits in the main queue AHEAD of the continuation that resumes
+     * the caller — so a caller that awaits this off Main and resumes on Main observes every
+     * assignment, not merely their submission.
+     *
+     * Bounded, never load-bearing: on a timeout the caller loses labels for the last chunk exactly
+     * as it did before this fence existed. Text is never involved.
+     */
+    fun awaitIdle(timeoutMs: Long): Boolean {
+        val latch = CountDownLatch(1)
+        try {
+            executor.execute { latch.countDown() }
+        } catch (t: RejectedExecutionException) {
+            return true // already released — nothing can still be in flight
+        }
+        return try {
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (t: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
         }
     }
 

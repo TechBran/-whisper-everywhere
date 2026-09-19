@@ -16,7 +16,8 @@ import org.junit.Test
  * A source pin, the house instrument for `FloatingBubbleService` (an Android service no JVM test
  * can construct): live lines only, symbol-scoped, LF-normalised. The other half of the brief's
  * §4 — "no new behaviour when the service IS enabled" — is held here too: both injection sites
- * and all three clipboard writes are counted exactly as they were before this build.
+ * and every clipboard write are counted exactly as they were before this build (three at 4.3.3;
+ * FOUR since 4.10 gave the CLIPBOARD_ONLY degrade its own export write — see below).
  */
 class AccessibilityOptionalDeliveryPinTest {
 
@@ -127,26 +128,48 @@ class AccessibilityOptionalDeliveryPinTest {
     @Test
     fun with_the_service_enabled_the_delivery_body_is_the_w2_body_site_for_site() {
         // Brief §4: "No new behaviour when the service IS enabled". The two injection sites
-        // (SESSION_BOUND, FINALIZE_FOCUS) and the three clipboard writes (FAILED fallback,
-        // FINALIZE_FOCUS's copy, the target-less consolidated copy) are exactly the W2 set —
-        // a site added or removed here changes the with-service behaviour and trips this.
+        // (SESSION_BOUND, FINALIZE_FOCUS) and the clipboard writes (FAILED fallback,
+        // FINALIZE_FOCUS's copy, the target-less consolidated copy — and, since 4.10, the
+        // CLIPBOARD_ONLY degrade) are exactly the delivery set: a site added or removed here
+        // changes the with-service behaviour and trips this.
         //
-        // (4.10) The COUNTS are the contract and they have not moved; WHAT each site writes has.
-        // The injections take `full` — the sink's file, rendered in FIELD mode: paragraphs at
-        // speaker changes, never a label. The clipboard writes take `export` — the same runs with
-        // labels behind the user's switch. That split is why the two needles below name different
-        // arguments, and a site that wrote the wrong one of the two would put `Speaker 1:` into
-        // somebody's text field (or strip it from a copy the user asked to have it in) with every
-        // count in this file still green.
+        // (4.10) The injections take `full` — the sink's file, rendered in FIELD mode: paragraphs
+        // at speaker changes, never a label. The clipboard writes take `export` — the same runs
+        // with labels behind the user's switch. That split is why the two needles below name
+        // different arguments, and a site that wrote the wrong one of the two would put
+        // `Speaker 1:` into somebody's text field (or strip it from a copy the user asked to have
+        // it in) with every count in this file still green.
+        //
+        // THE FOURTH WRITE, and why this number moved once. CLIPBOARD_ONLY means the paste
+        // strategy gave up and the user will paste by hand — so the string it left behind (`full`,
+        // label-free by construction) IS the delivery, and §2's clipboard row governs it. Before
+        // 4.10 that arm wrote nothing and a user with the export switch ON got an unlabelled
+        // clipboard in exactly the document/social apps where the clipboard is the only delivery.
+        // Restoring it to three means restoring that bug.
         assertEquals(
             "two injection sites, as before",
             2,
             liveLines(delivery, "WhisperAccessibilityService.injectTextWithResult(full)").size,
         )
         assertEquals(
-            "three clipboard writes, as before",
-            3,
+            "four clipboard writes: the 4.3.3 three, plus the CLIPBOARD_ONLY degrade's export",
+            4,
             liveLines(delivery, "clip.setPrimaryClip(android.content.ClipData.newPlainText(\"Transcript\", export))").size,
+        )
+        // …and the new one is the CLIPBOARD_ONLY arm's, guarded so that a session whose export
+        // render is byte-identical to the delivered text keeps the strategy's own padded payload.
+        val degraded = delivery.substring(
+            delivery.indexOf("WhisperAccessibilityService.InjectionResult.CLIPBOARD_ONLY -> {"),
+        )
+        assertEquals(
+            "the degrade writes the export, and only when it differs from the delivered text",
+            1,
+            liveLines(degraded, "if (export != full) {").size,
+        )
+        assertTrue(
+            "the write precedes the toast that claims the transcript is on the clipboard",
+            offsetOfLive(degraded, "clip.setPrimaryClip(") <
+                offsetOfLive(degraded, "\"Can't type here — full transcript copied to clipboard\""),
         )
         assertEquals(
             "the target-less branch is still the consolidated copy the service-off plan lands in",

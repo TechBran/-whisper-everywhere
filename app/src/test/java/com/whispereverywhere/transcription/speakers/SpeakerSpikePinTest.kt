@@ -196,11 +196,24 @@ class SpeakerSpikePinTest {
         val queueOnly = between(
             assigner,
             "fun assign(seq: Long, samples: FloatArray, vad: List<VadSeg>) {",
-            "* Ends this assigner.",
+            "* Blocks the CALLING thread",
             ASSIGNER,
         )
         assertEquals("assign() never touches the dump", 0, count(queueOnly, "dump"))
         assertEquals("…it only hands the chunk over", 1, count(queueOnly, "executor.execute {"))
+
+        // The stop-tap fence is the THIRD caller of this executor (4.10 — the service waits for
+        // the last chunk's ids before it snapshots the runs), and it is held to the same rule:
+        // a barrier task and nothing else. A write or a flush here would run the dump from the
+        // finalize coroutine's IO thread instead of the embed thread this section is about.
+        val fence = between(
+            assigner,
+            "fun awaitIdle(timeoutMs: Long): Boolean {",
+            "* Ends this assigner.",
+            ASSIGNER,
+        )
+        assertEquals("the fence never touches the dump", 0, count(fence, "dump"))
+        assertEquals("…it only queues a barrier", 1, count(fence, "executor.execute {"))
 
         // The close is queued on the SAME executor, so it can never run underneath a write: the
         // last chunk of a session is already queued behind the user's stop tap.
