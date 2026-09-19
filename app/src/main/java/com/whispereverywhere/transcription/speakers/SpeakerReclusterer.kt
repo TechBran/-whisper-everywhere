@@ -85,13 +85,18 @@ data class WindowKey(val seq: Long, val windowIndex: Int)
  *
  * ### Cost, stated as arithmetic
  *
- * O(n²) in the fingerprint count, which is why the input is capped at
+ * The similarity matrix is O(n²) in the fingerprint count, which is why the input is capped at
  * [MAX_RECLUSTER_FINGERPRINTS]. At the cap that is 600·599/2 ≈ 180 000 pairs, each a dot product
- * of 192 floats — about 34.5 million multiply-adds — plus a merge loop that rescans the live
- * pairs each round (bounded by the same 180 000 and shrinking). On the owner's Tab that is a few
- * hundred milliseconds, on the `speaker-embed` thread, below text that was delivered long ago.
- * 600 windows is roughly 25 minutes of speech; past it the OLDEST are dropped, and the windows
- * they name simply keep the label they were last given.
+ * of 192 floats — about 34.5 million multiply-adds.
+ *
+ * The merge loop is the bigger term and it is worth stating honestly: it rescans the live pairs
+ * every round, so its worst case (everything collapsing into one cluster, 598 merges) is
+ * Σ k²/2 ≈ n³/6 ≈ 3.6·10⁷ divide-and-compares — of the same order as the matrix, and on a
+ * conversation far cheaper, because the loop stops the moment no pair reaches [RECLUSTER_SIM].
+ * Together, a few hundred milliseconds at the cap on the owner's Tab, on the `speaker-embed`
+ * thread, below text that was delivered long ago. 600 windows is roughly 25 minutes of speech;
+ * past it the OLDEST are dropped, and the windows they name simply keep the label they were last
+ * given.
  *
  * Pure: no Android, no I/O, no state, no thread of its own. Like [SpeakerTracker] and
  * [SpeakerLabels], every judgement it makes is reachable from a JUnit test with vectors whose

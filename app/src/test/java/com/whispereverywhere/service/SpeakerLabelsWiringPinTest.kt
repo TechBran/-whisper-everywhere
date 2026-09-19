@@ -250,4 +250,55 @@ class SpeakerLabelsWiringPinTest {
             count("if (historyText.isNotBlank()) {"),
         )
     }
+
+    // ------------------------------------------------------------------ the second look (session 6)
+
+    @Test
+    fun theRetrospectiveRelabelReachesTheSinkPerWINDOWAndOnlyEverRaisesTheLatch() {
+        // The pass answers per window because no id-level map can split an id that swallowed two
+        // voices — session 6's 03:27 dump is exactly that shape. Passing anything but
+        // `windowLabels` here (the `map`, say) would compile and would silently reintroduce the
+        // limit the window map exists to remove.
+        indexOfOrFail("                        sink.relabel(relabel.windowLabels)")
+        assertEquals("ONE relabel site", 1, count("sink.relabel("))
+        // The labels land BEFORE the latch is asked to show them, exactly as the per-chunk path
+        // stamps ids before flipping: a panel told to render labels over the old ids would show
+        // the wrong speakers for one frame.
+        val relabel = indexOfOrFail("sink.relabel(relabel.windowLabels)")
+        val raise = indexOfOrFail("if (relabel.confirmedCount >= SpeakerLabels.MIN_CONFIRMED_SPEAKERS) {")
+        assertTrue("the windows are relabelled before the panel is told to show labels", relabel < raise)
+        // And the threshold is the formatter's own constant, not a literal 2 beside it.
+        assertEquals(1, count("relabel.confirmedCount >= SpeakerLabels.MIN_CONFIRMED_SPEAKERS"))
+    }
+
+    @Test
+    fun theLatchHasTwoAskersOneRaiserAndNoLowerer() {
+        // Since session 6 the latch can be earned two ways — the online tracker confirming a
+        // second speaker, and the retrospective pass finding one — and neither may undo the
+        // other. One helper owns the flip, it only ever passes `true`, and the diag line rides
+        // on whether the flip MOVED so it stays once per session however many askers there are.
+        indexOfOrFail("    private fun raiseSpeakerLabels(")
+        assertEquals("one declaration plus two callers", 3, count("raiseSpeakerLabels("))
+        assertEquals(1, count("setLabelsVisible("))
+        assertEquals(0, count("setLabelsVisible(false)"))
+        assertEquals("the relabel line is still emitted from exactly one place", 1, count("SpeakerDiag.relabelLine("))
+    }
+
+    @Test
+    fun theFinalizeFenceIsWhereTheLastPassRunsSoTheExportsSeeIt() {
+        // The order the session's four surfaces agree on: the orderer's flush puts every run in
+        // the sink, the fence runs the last embedding AND the last retrospective pass, and only
+        // then is the sink detached, closed and snapshotted. The runs snapshot below the fence is
+        // what the clipboard and history are rendered from, so a pass outside it would ship the
+        // panel one set of speakers and the transcript another.
+        val flush = indexOfOrFail("            deliverReleasedText(segmentOrderer.flush())\n")
+        val fence = indexOfOrFail("assigner.awaitIdle(SPEAKER_DRAIN_MS)")
+        val detach = indexOfOrFail("            val finishedSink = transcriptSink\n")
+        val snapshot = indexOfOrFail("            val sessionRuns = finishedSink?.runs() ?: emptyList()\n")
+        assertTrue(flush < fence)
+        assertTrue(fence < detach)
+        assertTrue(detach < snapshot)
+        // `SpeakerWiringPinTest` holds the other half: that the fence's barrier task runs the
+        // pass before it counts down. Together they are "the exports see the last pass".
+    }
 }

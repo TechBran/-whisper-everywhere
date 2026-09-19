@@ -73,6 +73,7 @@ class SpeakerWiringPinTest {
     private val service by lazy { collapsed("src/main/java/com/whispereverywhere/service/FloatingBubbleService.kt") }
     private val engine by lazy { collapsed("src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt") }
     private val assigner by lazy { collapsed("src/main/java/com/whispereverywhere/transcription/speakers/SpeakerAssigner.kt") }
+    private val reclusterer by lazy { collapsed("src/main/java/com/whispereverywhere/transcription/speakers/SpeakerReclusterer.kt") }
     private val tee by lazy { collapsed("src/main/java/com/whispereverywhere/transcription/stream/PreviewTeeEngine.kt") }
     private val native by lazy { collapsed("src/main/java/com/whispereverywhere/whisper/WhisperNative.kt") }
     private val cpp by lazy { collapsed("src/main/cpp/whisper_jni.cpp") }
@@ -216,6 +217,77 @@ class SpeakerWiringPinTest {
         assertEquals(0, count(assigner, ADAPTER))
     }
 
+
+    // ------------------------------------------------------------------ the second look (session 6)
+
+    @Test
+    fun theRetrospectivePassIsPureAndOwnsNoThreadOfItsOwn() {
+        // It is O(n²) over up to 600 fingerprints — the one piece of the feature that could
+        // plausibly be "helped" onto a thread pool or a coroutine, and the one place that would
+        // be wrong: it re-seeds the tracker, and the tracker is confined to the embed thread by
+        // the argument that makes its "not synchronised" honest. A thread in this file would put
+        // two writers on that state with every unit test still green.
+        assertEquals(0, count(reclusterer, "import android."))
+        assertEquals(0, count(reclusterer, "Executor"))
+        assertEquals(0, count(reclusterer, "Thread"))
+        assertEquals(0, count(reclusterer, "Dispatchers"))
+        assertEquals(0, count(reclusterer, "suspend "))
+        assertEquals(0, count(reclusterer, "k2fsa"))
+        assertEquals(0, count(reclusterer, ADAPTER))
+    }
+
+    @Test
+    fun theRetrospectivePassIsCALLEDFromTheEmbedThreadAndNowhereElse() {
+        // ONE caller in the whole app, and it is the object that owns the `speaker-embed`
+        // executor. On Main the pass would block the panel it is about to repaint; on the
+        // whisper thread it would sit inside the commit floors spec §3.3 measured without it.
+        assertEquals("the assigner is the only caller", 1, count(assigner, "SpeakerReclusterer.recluster("))
+        assertEquals(0, count(service, "SpeakerReclusterer.recluster("))
+        assertEquals(0, count(engine, "SpeakerReclusterer.recluster("))
+        // The service receives the ANSWER and never runs the pass: a relabel arrives as a
+        // message on the same Main hop an assignment does.
+        at(startRecording, "onRelabel = { relabel ->", "startRecording")
+        // Its own private entry point is declared once and called twice — the chunk counter and
+        // the finalize fence — and both are inside a body that runs on the embed executor.
+        assertEquals("one declaration plus two calls", 3, count(assigner, "recluster()"))
+        at(assigner, "if (++chunksSinceRecluster >= SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS) recluster()", "SpeakerAssigner.kt")
+    }
+
+    @Test
+    fun theFinalizeFenceRunsTheLastPassBEFOREItCountsDown() {
+        // The sink is detached the instant the fence returns (`SpeakerLabelsWiringPinTest`), so
+        // a pass published after the countdown would land on a `return@launch` and the delivery,
+        // the clipboard and history would ship the online labels while the panel showed the
+        // corrected ones. Order inside the barrier task is the whole guarantee.
+        val fence = between(assigner, "fun awaitIdle(timeoutMs: Long): Boolean {", "fun release() {", "SpeakerAssigner.kt")
+        val submit = at(fence, "executor.execute {", "awaitIdle")
+        val pass = at(fence, "runCatching { recluster() }", "awaitIdle")
+        val countdown = at(fence, "latch.countDown()", "awaitIdle")
+        assertTrue("the pass is inside the barrier task", submit < pass)
+        assertTrue("…and completes before the fence is released", pass < countdown)
+    }
+
+    @Test
+    fun theKeptFingerprintsAreCappedSoASessionCannotGrowWithoutBound() {
+        // A three-hour session is thousands of windows at 192 floats each, and the pass is
+        // O(n²) besides. The cap is the reclusterer's, read here rather than restated, so the
+        // memory bound and the cost bound can never drift apart.
+        at(assigner, "SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS", "SpeakerAssigner.kt")
+        at(assigner, "session.subList(0, excess).clear()", "SpeakerAssigner.kt")
+    }
+
+    @Test
+    fun theDumpHeaderCarriesTheRulesOfThePassItRanUnder() {
+        // A jsonl from a reclustering build and one from the online-only build describe two
+        // different label histories for the same audio: `assigned` in the first was decided by a
+        // tracker that had already been re-seeded. The header is the only place a later reader
+        // can tell which one it is holding, and these three are read from the constants so the
+        // record moves with them.
+        at(assigner, "reclusterSim = SpeakerReclusterer.RECLUSTER_SIM", "SpeakerAssigner.kt")
+        at(assigner, "minClusterSeconds = SpeakerReclusterer.MIN_CLUSTER_SECONDS", "SpeakerAssigner.kt")
+        at(assigner, "reclusterEvery = SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS", "SpeakerAssigner.kt")
+    }
+
     // ------------------------------------------------------------------ the untouched preview
 
     @Test
@@ -261,6 +333,13 @@ class SpeakerWiringPinTest {
         )
         assertTrue(
             buildFile.contains("\"src/main/java/com/whispereverywhere/transcription/stream/PreviewTeeEngine.kt\""),
+        )
+        // And the RECLUSTERER, by the same rule: this file now reads it as text for its purity
+        // zero-counts (no thread, no Android, no sherpa), and a zero-count over comments is
+        // satisfied by a comment — the comment-shaped mutation that compiles to a byte-identical
+        // class and would otherwise leave :app:testDebugUnitTest UP-TO-DATE.
+        assertTrue(
+            buildFile.contains("\"src/main/java/com/whispereverywhere/transcription/speakers/SpeakerReclusterer.kt\""),
         )
     }
 }

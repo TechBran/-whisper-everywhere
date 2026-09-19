@@ -468,6 +468,14 @@ tasks.withType<Test>().configureEach {
         // pins exists to catch is exactly the comment-shaped one that compiles to a byte-identical
         // class and leaves :app:testDebugUnitTest UP-TO-DATE.
         "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerAssigner.kt",
+        // (4.10 spike session 6) The RECLUSTERER, by this list's stated rule. `SpeakerWiringPinTest`
+        // reads it as text for the pins that keep the retrospective pass pure — no thread of its
+        // own, no `import android.`, no sherpa — because it re-seeds a tracker that is confined
+        // to the `speaker-embed` executor, and a thread added here would put two writers on that
+        // state with every behavioural test still green. Those are zero-counts, which a comment
+        // satisfies, so the mutation the pin exists to catch is exactly the comment-shaped one
+        // that compiles to a byte-identical class.
+        "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerReclusterer.kt",
         "src/main/java/com/whispereverywhere/transcription/stream/PreviewTeeEngine.kt",
         // (4.10 spike session 2) THE DUMP's two files, by this list's stated rule.
         // `SpeakerSpikePinTest` reads both as text, and every pin on them is the shape that
