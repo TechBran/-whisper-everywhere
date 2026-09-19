@@ -185,6 +185,36 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 100 = 4.10.0 — the MINOR moves, because the app gains a capability.** 99 went to
+ * PRODUCTION as 4.9.1 on 2026-09-17, uploaded by the owner, so it is spent twice over, as 82 and
+ * 84 were: Play refuses a second upload at the same code, and every installed phone already
+ * carries it. 100 is the plain next integer. **And the NAME is a minor, not a patch**, because
+ * what 4.10.0 adds is not a fix to anything 4.9 did: committed text is split into paragraphs at
+ * every change of speaker and labelled `Speaker N:` in the transcript panel once a second voice
+ * is confirmed, with the first paragraph relabelled from the session's start at the moment of
+ * confirmation. The whole of it rests on a bundled 40.3 MB speaker-embedding model (NVIDIA NeMo
+ * TitaNet-small) that no previous build shipped, so the base module grows by that much.
+ *
+ * **The one-voice case is the one that makes this safe to ship, and it is a NON-change:** with a
+ * single speaker all session the output is 4.9's byte for byte — no label, no extra break —
+ * because the panel shows nothing until a second voice is CONFIRMED. So is a cloud session, and
+ * so is the live preview strip. Two settings decide the rest: *"Detect speakers"* defaults **on**
+ * (off restores 4.9 everywhere and never loads the model), and *"Speaker labels in copied and
+ * saved text"* defaults **off** — the clipboard and saved transcripts always get the paragraph
+ * breaks and get the labels only when it is flipped, applied at export time so transcripts
+ * already on disk follow the switch.
+ *
+ * **Two things a promotion has to read before it happens, and neither is a build gate.** The
+ * model is **CC-BY-4.0**: the attribution that licence asks for is PAID in `oss_licenses.html`
+ * (the adapter's own pin test reads that page and fails the build if it leaves), but its row in
+ * `docs/LANGUAGE-CLEARANCE.md` reads **PENDING OWNER SIGN-OFF** — nothing in this repository
+ * records an owner decision on it, and the seven language packs set the order: notice first,
+ * decision after. And the spike that chose the model wrote fingerprints and, behind a flag file,
+ * SPEECH AUDIO; `SpeakerSpike.SPEAKER_SPIKE` is `false` in this build, which compiles the writers
+ * away, and the purge is unconditional so a device that ran a spike build off the internal track
+ * is cleaned at its first launch on 100. Every bump still re-arms GpuPolicy's canary latches
+ * (below), unchanged.
+ *
  * **What 82 buys, stated precisely.** It buys an upgrade over the 81 build now sitting on the
  * track AND on the owner's phone: 82 > 81, so the next track install replaces it — which is a real
  * change from 4.2's position, where u4 (uninstall before the track install) was MANDATORY because
@@ -205,15 +235,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_9_1_at_version_code_99() {
+    fun release_identity_is_4_10_0_at_version_code_100() {
         assertEquals(
-            "versionName must be 4.9.1 for this release (app/build.gradle.kts defaultConfig)",
-            "4.9.1",
+            "versionName must be 4.10.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.10.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 99 for this release (app/build.gradle.kts defaultConfig)",
-            99,
+            "versionCode must be 100 for this release (app/build.gradle.kts defaultConfig). " +
+                "99 = 4.9.1 is IN PRODUCTION since 2026-09-17, so it is spent: Play refuses a " +
+                "second upload at the same code, and every installed phone already carries it",
+            100,
             BuildConfig.VERSION_CODE,
         )
     }
