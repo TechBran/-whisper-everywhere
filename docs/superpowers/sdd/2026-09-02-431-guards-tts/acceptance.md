@@ -1493,11 +1493,28 @@ the panel shows nothing at all until a **second** voice is CONFIRMED (a second q
 not a single word). Cloud sessions and the live-words strip are untouched in every case.
 
 **What the measurements actually support, and this section must not be read as claiming more**
-(`docs/measurements/2026-09-18-speaker-spike.md`, sessions 3-6, all on the Tab S10+):
+(`docs/measurements/2026-09-18-speaker-spike.md`, sessions 3-6, all on the Tab S10+ — read the
+attributions below literally, because those sessions did not all run the same configuration and
+the best of them did not run this one):
 
-- separation is good on clear multi-speaker audio: on three clips with one, two and three real
-  voices the tracker recovered 1 / 2 / 3, no spurious speaker opened, and a retrospective
-  clustering agreed with the online ids on 86 % of pairs in the three-voice clip;
+- **the one clean separation result is session 3's alone, and it was taken under constants 4.10.0
+  does not ship.** On three clips with one, two and three real voices the tracker recovered
+  1 / 2 / 3, no spurious speaker opened, and a retrospective clustering agreed with the online ids
+  on 86 % of pairs in the three-voice clip — at `MIN_OPEN 2.0 s`, `LONG_SEGMENT 5.0 s`,
+  `MIN_WINDOW 1.5 s`, one fingerprint per VAD segment, and no retrospective pass in the app at
+  all. What ships is session 5's windowing plus a reclusterer that has never run on a device:
+  `SpeakerTracker.MIN_MATCH 1.0 / MIN_OPEN 1.5 / MIN_UPDATE 2.0`, `SpeakerSpans.LONG_SEGMENT 2.0 /
+  MIN_WINDOW 1.0`, `SpeakerReclusterer.RECLUSTER_SIM 0.30`. Session 3's numbers are not a
+  measurement of the shipped build and must not be quoted as one.
+- **the most recent device evidence on the shipped windowing is session 6, and all three of its
+  dumps were bad.** 03:02: seven ids opened, four of them near-singletons — "the tracker
+  chattered", which is spurious speakers opening, the exact thing session 3 did not see. 03:05:
+  the online blocks look like real turn-taking but "the global structure is weak" (within-speaker
+  similarity only ~0.35 on 2-3 s windows). 03:27: "one big run-on paragraph" — the online matcher
+  locked onto one id, though the same fingerprints cut 40/14 retrospectively. The reclusterer at
+  0.30 is the answer written for those three dumps, and **testing whether it is the answer is what
+  AO1-AO6 are for.** Nothing in this repository yet says the shipped configuration separates
+  speakers on a device.
 - **an interruption shorter than about two seconds is attributed to the current speaker.** Your
   own ruling on that limit: *"if we can detect that, great; if not, we'll live with it."*
 - **a label can correct itself a few seconds later.** Every few chunks, and once at stop, the
