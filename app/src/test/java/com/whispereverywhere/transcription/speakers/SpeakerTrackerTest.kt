@@ -321,18 +321,53 @@ class SpeakerTrackerTest {
         assertEquals("it inherits the floor, it does not recognise", 2, tracker.assign(unit(0.0), tinySeg))
     }
 
+    @Test fun aSegmentAtTheMATCHFloorRecognisesAndOneJustUnderItCannot() {
+        // The same boundary argument one tier down, and the lowest gate's `>=` is only pinned
+        // here: every other duration any test passes to [SpeakerTracker.assign] sits clear of
+        // 1.0 s on one side or the other, so `>` would go unnoticed everywhere else.
+        //
+        // Speaker 2 holds the floor and the probe IS speaker 1's voice exactly, so the two rules
+        // give different answers: recognised is 1, inherited is 2.
+        val at = SpeakerTracker()
+        assertEquals(1, at.assign(unit(0.0), longSeg))
+        assertEquals(2, at.assign(unit(90.0), longSeg))
+        assertEquals(
+            "exactly MIN_MATCH_SECONDS is recognised",
+            1,
+            at.assign(unit(0.0), SpeakerTracker.MIN_MATCH_SECONDS),
+        )
+        assertEquals("…and recognising is the whole of what this tier may do", 2, at.speakerCount)
+
+        val under = SpeakerTracker()
+        assertEquals(1, under.assign(unit(0.0), longSeg))
+        assertEquals(2, under.assign(unit(90.0), longSeg))
+        assertEquals(
+            "a hundredth of a second under it, the same perfect match inherits",
+            2,
+            under.assign(unit(0.0), SpeakerTracker.MIN_MATCH_SECONDS - 0.01f),
+        )
+    }
+
     @Test fun aSegmentAtTheOPENFloorOpensASpeakerAndOneJustUnderItCannot() {
-        // The boundary of the middle gate, both sides, with `>=` meaning what it says. 1.6 s is
-        // the session-4 case: under session 2's 2.0 s floor this voice was never heard from.
+        // The boundary of the middle gate, both sides, AT the constant — because `>=` is the
+        // whole of session 4's answer to the 20:39 dump (eleven of fifteen segments between 1 and
+        // 2 s), and a floor written `>` spends exactly the boundary case and nothing else. A
+        // nearby value like 1.6 s asserts the tier and leaves the comparator free; the duration
+        // is therefore READ off [SpeakerTracker], so a round that moves the floor moves the edge
+        // this test stands on with it.
         val opens = SpeakerTracker()
         assertEquals(1, opens.assign(unit(0.0), longSeg))
-        assertEquals("1.6 s of a stranger opens a speaker", 2, opens.assign(unit(90.0), 1.6f))
+        assertEquals(
+            "a stranger at exactly MIN_OPEN_SECONDS opens a speaker",
+            2,
+            opens.assign(unit(90.0), SpeakerTracker.MIN_OPEN_SECONDS),
+        )
         assertEquals(2, opens.speakerCount)
 
         val cannot = SpeakerTracker()
         assertEquals(1, cannot.assign(unit(0.0), longSeg))
         assertEquals(1, cannot.assign(unit(90.0), SpeakerTracker.MIN_OPEN_SECONDS - 0.01f))
-        assertEquals(1, cannot.speakerCount)
+        assertEquals("…and a hundredth of a second under it cannot", 1, cannot.speakerCount)
     }
 
     @Test fun aSegmentUnderTheUPDATEFloorNeverJoinsTheRecentSetAndOneAtItDoes() {
