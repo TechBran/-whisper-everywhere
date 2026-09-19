@@ -39,19 +39,23 @@ import com.whispereverywhere.npu.NpuAssetStage
  * 130-300 ms per fingerprint on the Tab carries over. It costs 10.7 MB more in the APK than CAM++
  * did — the one price of the swap, and the base module has the room (spec §3.4).
  *
- * ### Its licence is CC-BY-4.0, and the attribution is OWED
+ * ### Its licence is CC-BY-4.0, and the attribution is PAID
  *
  * NVIDIA NeMo TitaNet-small is **CC-BY-4.0**, which requires attribution — and unlike CAM++'s
  * Apache-2.0 that attribution has to be VISIBLE to the user, not merely permitted. So:
  *
- *  - an attribution line for NVIDIA NeMo TitaNet-small is **owed in
- *    `app/src/main/assets/oss_licenses.html`** before this model reaches production, and it is not
- *    written yet: this task deliberately does not edit that file, so the debt is stated here where
- *    the model is named;
+ *  - the attribution line for NVIDIA NeMo TitaNet-small is **paid, see oss_licenses.html** — a
+ *    **Speaker labels** section in `app/src/main/assets/oss_licenses.html` (4.10.0), naming
+ *    NVIDIA, the NVIDIA NeMo toolkit, CC BY 4.0, both filenames with the shipped digest, what was
+ *    changed (the name, and nothing else), the model card and the licence text.
+ *    `SpeakerEmbedderPinTest` reads that page and fails the build if any of it leaves;
  *  - the **clearance-sheet row is the PRODUCTION GATE** (spec §3.4, the discipline
  *    `docs/LANGUAGE-CLEARANCE.md` already applies to every streaming pack): the spike may run on
  *    an uncleared model, the store build may not. A build gate would stop the measurement this
- *    model exists to serve; a production gate stops the only thing that actually matters.
+ *    model exists to serve; a production gate stops the only thing that actually matters. That row
+ *    exists now and reads **PENDING OWNER SIGN-OFF**: paying the attribution discharges the
+ *    licence's one term, which is not the same act as the owner accepting the basis — the seven
+ *    language packs were cleared in exactly that order, the notice first and the decision after.
  *
  * ### 192 floats wide — read off the graph, not off the family name
  *

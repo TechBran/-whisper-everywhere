@@ -244,6 +244,27 @@
         </ul>
     </div>
 
+    <h2>Speaker labels</h2>
+    <p>When more than one person is heard, the app starts a new paragraph at each change of
+        speaker and labels them in the transcript window. Telling one voice from another is done
+        by a second, small model that is bundled inside the app itself — there is nothing to
+        download, nothing is sent anywhere, and no audio is kept.</p>
+    <div class="license"><b>NVIDIA NeMo TitaNet-small</b> (NVIDIA Corporation) — <b>Creative
+        Commons Attribution 4.0 International (CC BY 4.0)</b>, under which attribution is a term
+        rather than a nicety, so it is given: the speaker-embedding model
+        <code>nemo_en_titanet_small.onnx</code>, published by <b>NVIDIA</b> as part of the
+        <b>NVIDIA NeMo</b> toolkit, ships in this app's own assets as
+        <code>speaker_titanet_small_16k.onnx</code> (40,257,283&nbsp;B, <code>sha256
+        ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e</code>). <b>What was
+        changed, as CC BY 4.0 requires us to state: the file is renamed, and nothing else.</b> The
+        bytes are the published ONNX export, byte-for-byte, and the app refuses to load any other
+        — that digest is recorded in this app's own source and checked against the shipped asset
+        before a release is built. We do not re-train, re-export, re-quantise or otherwise alter
+        it, and this app has never held the recordings NVIDIA trained it on. The model card is at
+        <a href="https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small">catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small</a>
+        — the same address the ONNX graph carries in its own metadata — and the licence text at
+        <a href="https://creativecommons.org/licenses/by/4.0/">creativecommons.org/licenses/by/4.0/</a></div>
+
     <h2>Read-aloud (text-to-speech)</h2>
     <div class="license"><b>sherpa-onnx</b> (k2-fsa / Xiaomi Corporation) — Apache License 2.0.
         On-device TTS runtime.

@@ -117,6 +117,29 @@ string in `StreamingPackClearance.kt` is the reason of record.
 `zh`, and the pack behind it is the bilingual Chinese-English export — the only pack in the catalogue
 that puts anything on the strip when an English speaker talks mid-Chinese.
 
+### The bundled SPEAKER model — the one row here that is not a language pack (4.10.0)
+
+4.10.0 bundles a **speaker-embedding** model in the base module so the app can tell one voice from
+another and label the paragraphs. It is not a preview pack: it is not in
+`StreamingPackCatalog.packs`, it is not downloaded, and **it deliberately has no row in
+`PackClearanceRecord`** — that record and its `PRODUCTION_CLEARED` switch are per LANGUAGE, the
+suite holds a join between them and the catalogue, and an eighth entry naming something that is not
+a language would break the one assertion that stops a language shipping uncleared. So it is
+recorded **here**, in the same four columns, and the gate on it is this document and the owner
+reading it — not a test.
+
+| language | verdict | granted by | what was ACCEPTED with it |
+|---|---|---|---|
+| **the speaker model** (not a language) — NVIDIA NeMo **TitaNet-small**, `nemo_en_titanet_small.onnx`, bundled as `app/src/main/assets/speaker_titanet_small_16k.onnx`, 40,257,283 B, `sha256 ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e`. Licence as published: **CC-BY-4.0** | **PENDING OWNER SIGN-OFF** — the attribution the licence asks for is **PAID and shipping**, which is the condition and not the clearance | **nobody, as of 2026-09-19.** No owner decision on this model is recorded anywhere in this repository. The condition is discharged: `app/src/main/assets/oss_licenses.html` carries a **Speaker labels** section naming NVIDIA, NVIDIA NeMo, CC BY 4.0, the model card and the licence text, held by `SpeakerEmbedderPinTest` | that the grant is read off **NVIDIA's own published model card and the ONNX graph's own metadata**, not off a reply from NVIDIA — **nobody was written to**, and nothing needs to be: CC-BY-4.0 is a public licence whose only term we can fail is attribution. What is unwitnessed is that the card's declaration is the card's own. And that the **corpus** NVIDIA trained it on is **undisclosed** on that card — `ru`'s and `zh`'s shape exactly, and acceptable on the same basis or on none |
+
+**What this row gates is what AL0 gates: a production promotion, never the internal track.** The
+model is in every build and always has been, exactly as the six languages were in every build while
+five clearances were outstanding — that is what lets it be heard before it is decided. Nothing the
+app runs consults this row.
+
+`[ ] signed off — promotion may proceed`
+`[ ] not signed off — INTERNAL TRACK ONLY`
+
 ---
 
 ## When an answer arrives: the three edits, and one line nothing enforces
@@ -315,6 +338,7 @@ Before promoting a release from the internal track to production:
    | the corpora that ask for credit, each named as its licence asks: LibriSpeech (CC BY 4.0) to its four authors by name, YODAS2 (CC BY 3.0), FLEURS (CC BY 4.0), Common Voice (CC0, credited anyway and *marked* as voluntary), **KsponSpeech + AI Hub (aihub.or.kr)** as the condition it is; and the two rows that disclose **no** corpus, labelled undisclosed | `OssNoticeTest.theCorporaThatAskForCreditAreCreditedByTheNameEachAsksFor` — the undisclosed set is derived from this record, so a row becoming disclosed forces the page's sentence to be rewritten on purpose |
    | §4(b): what we actually change — **selection, naming, packaging**, and nothing else. All 28 files are downloaded byte-for-byte at the pinned revision and refused on a digest mismatch; the `int8` export is the upstream publisher's, and the Russian decoder is not quantised at all | `OssNoticeTest.theModificationsStatedAreTheOnesWeActuallyMake` — the naming half is derived from `PackFile.path` vs `name`, and a **forbidden-phrase scan** fails the build if the page starts claiming a modification we do not make |
    | it is **reachable**: a Settings row → `onNavigateToLicenses` → the `open_source_licenses` route → *this* asset | `OssNoticeTest.theLicencesScreenIsReachableFromSettingsAndOpensThisAsset` — four one-line links, each of which breaks silently |
+   | **(4.10.0) the `Speaker labels` section**, paying CC-BY-4.0 for the bundled NVIDIA NeMo TitaNet-small: the creator by name, the work, the licence by its full name with a link to its text, the statement of what was changed (**the filename, and nothing else**), both filenames and the shipped `sha256`, and NVIDIA's model card | `SpeakerEmbedderPinTest.theAttributionThisCcByModelAsksForIsPAIDOnThePageTheUserCanOpen` — the same shape as the pack rows: a presence check on the committed page. It also asserts the adapter's KDoc no longer says the line is owed, and that this document carries the model's **PENDING OWNER SIGN-OFF** row, so a green suite can never be read as the clearance |
 
    **What none of that establishes, and what two inspections did.** Every row above reads
    `app/src/main/assets/oss_licenses.html` **in the source tree**. A green suite is not legal clearance,
@@ -325,6 +349,16 @@ Before promoting a release from the internal track to production:
    |---|---|---|
    | the **4.5.1/93 RELEASE bundle** — the artefact the controller built and verified: `bundleRelease`, 5,438,505,736 B, `sha256 4a168f0a1794cb4fc2a13501ca382fd59d4b848516cd8d7a9c1f705782e2cd65` | `base/assets/oss_licenses.html`, 12,492 B, `sha256 7901187a688a45c0478e1b165b67d1e59ed5af86bc1e519bbb5172b89913e524` — **byte-identical** to that release's own committed page (its CRLF working-tree form) | the RELEASE path carries this asset into `base/` **unmodified**, with `isMinifyEnabled` and `isShrinkResources` both on. It says nothing about 4.5.2's notices: that bundle was built before them |
    | a **DEBUG bundle** built from this branch at `0663afe` — the three payload gates excluded with `-x` and all ten asset packs therefore empty, which is the only bundle this worktree can build | `base/assets/oss_licenses.html`, **39,024 B**, `sha256 73ecd96b27544a57cd7355086356f17c51096a1225a1ec174fef9d26d50ee11c` — byte-identical to the committed page in its CRLF working-tree form, which is what the asset merge copies and therefore what a bundle from this machine carries. Every notice element probed PRESENT inside the packaged entry (both licence texts with the Apache APPENDIX line and ggml's real copyright line, all seven `id="pack-*"` rows carrying seven distinct 40-character revisions, KsponSpeech + aihub.or.kr + the NIA credit, the five corpora, the §4(b) statement) and a deliberately wrong control probe MISSING; and the Settings row → route → asset chain's four strings present in the packaged dex | **this exact page** reaches `base/assets/` of a bundle built from this branch, intact to the byte |
+
+   **The page CHANGED at 4.10.0/100, after both inspections above, and neither of them describes
+   it any more.** 4.10.0 bundles NVIDIA NeMo TitaNet-small for the speaker labels; CC-BY-4.0 makes
+   attribution a term, so the page gained a **Speaker labels** section paying it. The committed
+   page is now **40,899 B**, `sha256 e52b058adafd89bf5412ac2d3ac1704d1fca800f4b01a15abe31374c3d8b5319`
+   in the CRLF working-tree form the asset merge copies. **Those two numbers are DERIVED from the
+   file in this tree and read out of no artefact at all** — no bundle has been opened on this page,
+   and the two rows above stand as what they always were: observations of 2026-09-13 on the page as
+   it stood at `0663afe`. The gap below therefore widens rather than closing: the one
+   `bundleRelease` read that would shut it must now be of a 4.10.0 bundle.
 
    **And the gap, stated as a gap: no release bundle of 4.5.2 has been opened, because none has been
    built.** A debug bundle is not a release bundle — different build type, no R8, the payload gates

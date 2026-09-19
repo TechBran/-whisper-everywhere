@@ -238,31 +238,92 @@ class SpeakerEmbedderPinTest {
      * written down where the obligated file is named — the discipline `docs/LANGUAGE-CLEARANCE.md`
      * already applies to every streaming pack.
      *
-     * The swap traded CAM++'s Apache-2.0 for a licence with a USER-VISIBLE condition, and the
-     * attribution line is deliberately NOT written in this task. So the debt itself is pinned: the
-     * adapter has to say that the line is owed in `oss_licenses.html` and that the clearance-sheet
-     * row — not this test, and not the build — is what gates production. A production gate rather
-     * than a build gate because the spike must still be runnable on an uncleared model; that is
-     * the whole reason the debt is allowed to exist at all.
+     * **The debt is PAID at 4.10.0, so what is pinned changes from the debt to the payment.** The
+     * swap traded CAM++'s Apache-2.0 for a licence with a USER-VISIBLE condition, and through the
+     * spike the adapter carried a sentence saying the line was still owed. A sentence is not an
+     * attribution; the page is. So this test now reads the page the user can actually open and
+     * asserts every element CC BY 4.0 asks for is in it — the author, the work, the licence by its
+     * full name, a link to the licence, and a statement of what was changed — plus the two
+     * filenames and the digest, so that a model swap that leaves this section behind credits
+     * NVIDIA for bytes that are not NVIDIA's.
+     *
+     * **A presence check on the committed page and nothing more**, exactly like every row of
+     * `OssNoticeTest`: that the asset reaches a bundle's `base/` is a separate fact with separate
+     * evidence (`OssNoticePackagingTest`, and the inspection table in the clearance document).
+     *
+     * **And the clearance row is still the production gate, which paying the licence does not
+     * move.** Two different acts: discharging the one term CC-BY-4.0 imposes, and the owner
+     * accepting the basis on which an unanswered, undisclosed-corpus model ships to the public.
+     * The seven language packs went in that order — notice first, decision after — and the
+     * adapter has to keep saying which of the two is the gate.
      */
     @Test
-    fun theAdapterStatesTheAttributionThatIsSTILLOWEDForACcByModel() {
+    fun theAttributionThisCcByModelAsksForIsPAIDOnThePageTheUserCanOpen() {
         for (phrase in listOf(
             "CC-BY-4.0",
             "oss_licenses.html",
+            "paid, see oss_licenses.html",
             "clearance-sheet row is the PRODUCTION GATE",
         )) {
             assertTrue(
-                "SpeakerEmbedder.kt's KDoc must state: <<$phrase>>. TitaNet-small is CC-BY-4.0 " +
-                    "and its attribution is not in the OSS notices yet; the sentence that says so " +
-                    "is the only thing standing between that debt and a store build.",
+                "SpeakerEmbedder.kt's KDoc must state: <<$phrase>>. TitaNet-small is CC-BY-4.0, " +
+                    "the notices are where that is paid, and the clearance row — not this test " +
+                    "and not the build — is what gates production.",
                 phrase in doc,
             )
         }
         assertFalse(
-            "and the notices must not be claimed as done while they are not: this task did not " +
-                "edit oss_licenses.html, and a KDoc saying it did is worse than one saying nothing",
-            "already in oss_licenses.html" in doc,
+            "the KDoc still says the attribution is OWED while the page pays it. A stale debt " +
+                "reads as an outstanding one and the next round pays it twice, or reverts it",
+            "attribution is OWED" in doc || "owed in" in doc,
+        )
+
+        // The page itself. CC BY 4.0 §3(a): the creator, the work, the licence with a URI, and an
+        // indication that the material was modified.
+        val page = source(NOTICE).readText().replace("\r\n", "\n")
+        // Whitespace-collapsed, for the reason OssNoticeTest collapses the sheet: the page wraps
+        // its prose at ~100 columns, so the licence's full name and the digest each straddle a
+        // line break and a literal needle would be asserting the line width, not the notice.
+        val section = page.substringAfter("<h2>Speaker labels</h2>", "")
+            .substringBefore("<h2>", "")
+            .replace(Regex("""\s+"""), " ")
+        assertTrue(
+            "oss_licenses.html has no <h2>Speaker labels</h2> section. CC-BY-4.0 is the one " +
+                "licence in this app whose term is user-visible, and a bundled model with no row " +
+                "on the licences page is the condition unpaid",
+            section.isNotBlank(),
+        )
+        for (element in listOf(
+            "NVIDIA",                                        // the creator, named
+            "NVIDIA NeMo",                                   // the work's publisher and toolkit
+            "TitaNet-small",                                 // the work
+            "CC BY 4.0",                                     // the licence, by the name it asks for
+            "Creative Commons Attribution 4.0 International",
+            "https://creativecommons.org/licenses/by/4.0/",  // the licence's URI
+            "changed",                                       // the modification statement
+            "nemo_en_titanet_small.onnx",                    // upstream's filename…
+            ASSET_NAME,                                      // …and ours, because the name is what changed
+            ASSET_SHA256,                                    // the bytes the credit is for
+            "catalog.ngc.nvidia.com",                        // the model card
+        )) {
+            assertTrue(
+                "the Speaker labels section of oss_licenses.html must carry <<$element>> — " +
+                    "CC BY 4.0 asks for the creator, the work, the licence by name with a link, " +
+                    "and a statement of what was changed, and this app owes all four for a model " +
+                    "it bundles. Found: $section",
+                section.contains(element),
+            )
+        }
+
+        // The clearance row, which is the OTHER half and is not this one. Naming it here keeps a
+        // green suite from reading as a clearance: the licence's term is paid, the owner's
+        // sign-off on an unanswered, undisclosed-corpus model is not.
+        val clearance = source(CLEARANCE).readText().replace("\r\n", "\n")
+        assertTrue(
+            "docs/LANGUAGE-CLEARANCE.md must carry the speaker model's row — paying the " +
+                "attribution is the licence's term, not the owner's decision, and the production " +
+                "gate is his",
+            clearance.contains("TitaNet-small") && clearance.contains("PENDING OWNER SIGN-OFF"),
         )
     }
 
@@ -327,6 +388,10 @@ class SpeakerEmbedderPinTest {
         const val ADAPTER = "src/main/java/com/whispereverywhere/transcription/speakers/SpeakerEmbedder.kt"
         const val CLASS = "class SpeakerEmbedder("
         const val ASSET_NAME = "speaker_titanet_small_16k.onnx"
+
+        /** The licences page the CC-BY-4.0 term is paid on, and the sheet the gate is read from. */
+        const val NOTICE = "src/main/assets/oss_licenses.html"
+        const val CLEARANCE = "docs/LANGUAGE-CLEARANCE.md"
         const val ASSET_BYTES = 40_257_283L
         const val ASSET_SHA256 = "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e"
 
