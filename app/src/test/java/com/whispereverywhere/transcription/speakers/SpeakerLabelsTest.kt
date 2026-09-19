@@ -303,6 +303,59 @@ class SpeakerLabelsTest {
         }
     }
 
+    @Test fun the_search_brackets_the_window_by_TEXT_ALONE_and_the_separators_are_extra() {
+        // WHAT THE BRACKET ACTUALLY GUARANTEES (round 1, 2026-09-19). The KDoc used to promise
+        // "a window's worth of characters plus one run". It is not that: the lower bracket bounds
+        // the candidates' run TEXT at the cap and charges nothing for the separators, so the
+        // widest string the search can build is the cap PLUS a break and a label for every run
+        // inside the window. Bounded by the window, yes — but by its run COUNT, not its length.
+        val cap = 20_000
+        val perRun = SpeakerLabels.PARAGRAPH_BREAK.length + SpeakerLabels.label(1).length
+        // Two speakers throughout, so every label is the same width and re-compacting a sublist
+        // cannot change a LENGTH — which is the only thing this test measures.
+        fun shape(runLength: Int, count: Int, changeEvery: Int) = (1..count).map {
+            run(it.toLong(), 0, "w".repeat(runLength), if (((it - 1) / changeEvery) % 2 == 0) 1 else 2)
+        }
+        // The reference twin of the private `lo` walk: the widest suffix whose TEXT alone fits.
+        fun lowerBracket(runs: List<Run>): Int {
+            var lo = runs.size - 1
+            var floor = runs[lo].text.length
+            while (lo > 0 && floor + runs[lo - 1].text.length <= cap) {
+                lo--
+                floor += runs[lo].text.length
+            }
+            return lo
+        }
+        // build(from = lo) is the widest the search can reach; rendering that sublist is the
+        // same string, so its length is the same number.
+        fun widestBuild(runs: List<Run>): Int = SpeakerLabels.render(
+            runs.subList(lowerBracket(runs), runs.size), SpeakerLabels.Mode.Panel(labels = true), 2,
+        ).length
+
+        // The app's shape: per-sentence runs, a speaker change every few of them. Over the cap —
+        // the separators are not free — but only just, which is what the sentence intends.
+        val sentences = shape(runLength = 40, count = 6_000, changeEvery = 4)
+        val sentenceWidest = widestBuild(sentences)
+        assertTrue("the separators are not free: $sentenceWidest", sentenceWidest > cap)
+        assertTrue("per-sentence runs stay near the cap: $sentenceWidest", sentenceWidest < cap * 6 / 5)
+
+        // The pathological shape: one character per run, a new speaker every run. The run COUNT
+        // is what blows up, and with it the build — several times the cap, which for a session
+        // this short is the whole session. "A window plus one run" would be off by 60,000.
+        val grains = shape(runLength = 1, count = 6_000, changeEvery = 1)
+        val grainWidest = widestBuild(grains)
+        assertTrue("one-character runs break the old claim: $grainWidest", grainWidest > cap * 2)
+
+        // Both obey the stated formula, and neither is a function of the session's length.
+        for (runs in listOf(sentences, grains)) {
+            val window = runs.size - lowerBracket(runs)
+            assertTrue(
+                "widest=${widestBuild(runs)} cap=$cap window=$window",
+                widestBuild(runs) <= cap + window * perRun,
+            )
+        }
+    }
+
     @Test fun one_run_is_never_dropped_however_small_the_cap() {
         val one = listOf(run(1, 0, "alone", 1))
         assertEquals("Speaker 1: alone", SpeakerLabels.renderTail(one, SpeakerLabels.Mode.Panel(labels = true), 2, 100))

@@ -148,7 +148,19 @@ object SpeakerLabels {
      *    names a suffix that fits;
      *  - the LOWER end is the text-only walk, which under-estimates each run (a run contributes at
      *    least its own characters) and therefore names a suffix that cannot fit.
-     * Every candidate between them renders to at most a window's worth of characters plus one run.
+     *
+     * What that bracket actually guarantees, stated exactly, because it is the whole safety
+     * argument: `lo` bounds the candidates' run TEXT at [maxChars] and charges NOTHING for the
+     * separators [build] adds, so the widest string the search can build is `maxChars` plus one
+     * [PARAGRAPH_BREAK] and one label per run inside the window — not "a window plus one run".
+     * (A run that continues its paragraph adds a single joining space instead, which is smaller,
+     * so break-plus-label per run is the honest ceiling.)
+     * It is bounded by the window rather than by the session only because the window's run COUNT
+     * is: with the app's per-sentence runs (tens of characters each) the widest build lands a few
+     * percent over the cap, while a pathological stream of one-character runs alternating speakers
+     * puts the count at [maxChars] itself and the widest build at a multiple of it — which, for a
+     * session no longer than that, is the whole session. Empty runs are free in the string ([build]
+     * skips them) but not in the walk: `lo` steps past them for nothing, since their text is 0.
      */
     private fun renderTailStart(runs: List<Run>, numbers: IntArray, labels: Boolean, maxChars: Int): Int {
         val last = runs.size - 1

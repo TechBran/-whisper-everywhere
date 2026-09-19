@@ -116,9 +116,17 @@ object TranscriptScrubberMath {
      * reader — or a dragged scrubber — back to the bottom for a change they could not even see.
      *
      * So: follow the newest line only for a reader who was already there ([wasAtBottom]); anyone
-     * else keeps the offset they chose, clamped to whatever the content is now. A relabel that
-     * does not change the text's length cannot move the view at all, because both branches
-     * return where it already was.
+     * else keeps the offset they chose, clamped to whatever the content is now.
+     *
+     * What a length-preserving relabel does to the view therefore depends on which side of
+     * [atBottom]'s slack the reader sits. Exactly on `maxScroll`, or anywhere above the slack,
+     * both branches return where the view already was and nothing moves — which is the case the
+     * owner reported. INSIDE the slack it does move: a reader 1..(slack-1) px short of the bottom
+     * is [wasAtBottom], so this returns `maxScroll` and those last pixels are taken up. With
+     * `PANEL_FOLLOW_SLACK_DP = 24dp` (72px at density 3) against the panel's 14sp line (~17dp)
+     * that is up to about a line and a half of travel. It is the slack's intent rather than a
+     * leak — a reader that close to the end is still riding it, and the snap is toward the
+     * newest word, never away from what they were reading.
      */
     fun followScrollY(wasAtBottom: Boolean, previousScrollY: Int, maxScroll: Int): Int =
         if (wasAtBottom) maxScroll else previousScrollY.coerceIn(0, maxScroll.coerceAtLeast(0))
