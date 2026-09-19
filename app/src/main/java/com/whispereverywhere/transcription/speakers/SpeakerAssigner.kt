@@ -237,7 +237,11 @@ class SpeakerAssigner(
      *     the "original" and "trimmed" offsets the CPU route carries separately are here the same
      *     number and are not pretended to be two.
      *  3. **The same fingerprinting, the same tracker, the same gates** as [assign]. The tracker
-     *     is not forked and does not know which route fed it.
+     *     is not forked and does not know which route fed it — and it is fed SPEECH seconds here
+     *     exactly as it is there, because this route's coalescing is the one thing that can make
+     *     a window span more time than it holds voice. See [SpeakerWindow.speechSamples] and
+     *     [SpeakerSpans.MAX_COALESCE_GAP_SECONDS], which between them keep a pause from opening
+     *     a speaker.
      *  4. **ONE id for the whole chunk** — the id of the window holding the most speech, ties to
      *     the earliest — published as [SpeakerAssignment.wholeChunkWindow]. The decoder gives no
      *     text offsets, so a chunk's text cannot be split between two speakers on this tier and
@@ -368,7 +372,16 @@ class SpeakerAssigner(
         for ((index, window) in windows.withIndex()) {
             val from = window.origStart.coerceIn(0, samples.size)
             val to = window.origEnd.coerceIn(from, samples.size)
-            val seconds = (to - from) / SAMPLE_RATE.toFloat()
+            // SPEECH seconds, never the wall span, and the two differ on exactly one route: the
+            // NPU one, where a coalesced window spans the pause between the segments it joined
+            // ([SpeakerWindow.speechSamples]). Everything below is a question about voice — is
+            // there enough of it to fingerprint, may it match / open / teach a speaker, and which
+            // window speaks for the chunk — so a pause must not be allowed to answer any of them.
+            // On the geometry route `speechSamples` IS the span by construction, so the CPU and
+            // GPU tiers read the same number they read in 4.10. The clamp is the same one `from`
+            // and `to` get: a window naming samples this chunk does not have cannot claim seconds
+            // it does not have either.
+            val seconds = window.speechSamples.coerceIn(0, to - from) / SAMPLE_RATE.toFloat()
             durations += seconds
 
             if (seconds < SpeakerTracker.MIN_EMBED_SECONDS) {
@@ -453,11 +466,14 @@ class SpeakerAssigner(
                 // coalesced).
                 segs = segs,
                 ids = ids,
-                // THE CHUNK'S ONE ID, on the NPU route only. The window holding the most speech
-                // wins it; a tie goes to the EARLIEST, which is `maxByOrNull`'s own rule and is
-                // stated rather than inherited because it is the difference between two labels
-                // on a chunk that alternates evenly. Null on the geometry route, where the ids
-                // above each own their own stretch of text and nothing has to be picked.
+                // THE CHUNK'S ONE ID, on the NPU route only. The window holding the most SPEECH
+                // wins it — `durations` is speech seconds, not spans, which on this route is the
+                // difference between the voice that spoke longest and the voice that happened to
+                // sit next to the longest pause. A tie goes to the EARLIEST, which is
+                // `maxByOrNull`'s own rule and is stated rather than inherited because it is the
+                // difference between two labels on a chunk that alternates evenly. Null on the
+                // geometry route, where the ids above each own their own stretch of text and
+                // nothing has to be picked.
                 wholeChunkWindow = when (route) {
                     Route.GEOMETRY -> null
                     Route.WHOLE_CHUNK -> dominant(durations)
@@ -487,6 +503,12 @@ class SpeakerAssigner(
      * [durations] is `stats.durationsSec`, one entry per window in chunk order, so the answer is
      * an index into [SpeakerAssignment.ids] and into the chunk's remembered [WindowKey]s alike —
      * which is what lets the retrospective pass reach the run this index put on screen.
+     *
+     * Those entries are SPEECH seconds, not the windows' wall spans, and on this route the two
+     * are different numbers: a coalesced window spans the pause it joined across. Ranking on the
+     * span would hand the chunk to whichever voice happened to sit next to a silence — a window
+     * holding 1.4 s of voice either side of a pause outranking one holding 3.0 s — which is the
+     * opposite of the rule this function is named for. See [SpeakerWindow.speechSamples].
      *
      * Strictly `>`, so an even split between two windows names the FIRST. That is the arbitrary
      * half of the rule and it is arbitrary on purpose: what matters is that it is fixed, because
@@ -849,7 +871,11 @@ data class SpeakerRelabel(
  *        speaker at the moment it was assigned, or `NaN` when no similarity was measured — a
  *        window under the embed floor, a refused embedding, or the first speaker of a session,
  *        who has nobody to be compared with. This is the column `T_SAME` / `T_NEW` come from.
- * @param durationsSec per window, its length in seconds on the original timeline.
+ * @param durationsSec per window, the SPEECH it holds, in seconds on the original timeline —
+ *        [SpeakerWindow.speechSamples], which is the window's span everywhere except a coalesced
+ *        window on the NPU route. It is the number the tracker's gates were actually decided on,
+ *        which is why it is this one and not the span: the `dur=` column of the diag line and the
+ *        spike dump's `durSec` have to answer for the verdict beside them.
  * @param includesModelLoad true for the ONE chunk of a session whose [embedMs] also paid the
  *        lazy model load — 40.3 MB of asset read plus an ONNX session init, hundreds of
  *        milliseconds on top of one inference. It is here so that chunk is not read as CAM++

@@ -66,6 +66,30 @@ data class SpeakerWindow(
     val vadIndex: Int,
     val origStart: Int,
     val origEnd: Int,
+    /**
+     * HOW MANY OF THIS WINDOW'S SAMPLES ARE SPEECH, as opposed to how many it SPANS — and the
+     * difference is exactly the silence [wholeChunkWindows] folded in when it coalesced a short
+     * segment into its predecessor (4.10, round 1 of review).
+     *
+     * It exists because three separate decisions are made on "how long is this window", and all
+     * three are questions about SPEECH, never about wall time: [SpeakerTracker.MIN_EMBED_SECONDS]
+     * (is there enough voice here to fingerprint at all), [SpeakerTracker.assign]'s three graded
+     * gates (may this window match / open / teach a speaker), and the NPU route's dominant-window
+     * pick (which voice speaks for the chunk's one label). Handing any of them a span that
+     * includes a pause lets a window with 1.4 s of voice in it open a speaker and outvote one
+     * with 3.0 s.
+     *
+     * **The default IS the right answer on the geometry route**, and that is not a convenience:
+     * [windows] only ever SPLITS a VAD segment, never joins two, so every pause inside one of its
+     * windows is a pause Silero itself judged too short to end speech — at most
+     * `min_silence_duration_ms` (100 ms, whisper.cpp's default, which this app does not change).
+     * Span and speech are the same measurement there to within that, and writing the default as
+     * `origEnd - origStart` keeps the CPU and GPU tiers byte-for-byte what they were.
+     *
+     * [copy] does NOT recompute it — which is the point: the one caller that changes [origEnd]
+     * without adding speech is the coalescing merge, and it states the new sum itself.
+     */
+    val speechSamples: Int = origEnd - origStart,
 )
 
 /**
@@ -147,6 +171,35 @@ object SpeakerSpans {
      * tracker's, and a splitter that pre-judged would be a second set of gates nobody measured.
      */
     const val MIN_WINDOW_SECONDS: Float = 1.0f
+
+    /**
+     * **0.30 s** — the widest gap [wholeChunkWindows] will coalesce a short segment ACROSS
+     * (4.10, round 1 of review). Beyond it the short segment stands alone and inherits, exactly
+     * as a short leading segment does.
+     *
+     * The NPU route's merge is the only place in this file that joins two SEPARATE speech
+     * segments, and that is what makes a bound necessary here and unnecessary in [windows].
+     * [windows] splits one segment and never joins two, so the longest pause it can fold into a
+     * window is `min_silence_duration_ms` — 100 ms, whisper.cpp's default, which this app does
+     * not change — because a longer silence is what ENDED the segment. The gap between two
+     * segments has no such ceiling: it is bounded only by the 6-8 s chunk. Unbounded, a 0.3 s
+     * back-channel three seconds after the previous sentence produced a "window" that was
+     * two-thirds room tone, and that window was then handed to the embedder as a fingerprint and
+     * to the tracker as its duration — enough to clear all three graded gates on 1.4 s of voice.
+     *
+     * Where 0.30 comes from: the bounds this route is given are Silero's PADDED ones
+     * (`speech_pad_ms = 150`, applied at both ends), so the gap that survives between two
+     * segments is the real silence MINUS 300 ms. A padded gap of 0.30 s is therefore about
+     * 0.60 s of actual silence — already six times the longest pause the geometry route can fold
+     * into one window, so the bound is generous towards merging rather than against it. A pause
+     * longer than that is a turn boundary, not a breath.
+     *
+     * It is not a tuned constant and there is no measurement behind the exact figure; it is a
+     * ceiling chosen to keep this route's windows comparable to the other route's. The device
+     * session can move it, and [speechSamples] means the dominant-window pick is right either
+     * way.
+     */
+    const val MAX_COALESCE_GAP_SECONDS: Float = 0.30f
 
     /** 16 kHz: whisper reports centiseconds, the VAD bounds are samples. The one conversion. */
     private const val SAMPLES_PER_CENTISECOND = 160
@@ -298,9 +351,21 @@ object SpeakerSpans {
      * The FIRST segment has no predecessor, so a short opener stands alone and takes fate 1 —
      * the same answer the CPU route gives a short leading VAD segment.
      *
-     * The merged window spans from its predecessor's start to the joining segment's end, PAUSE
-     * INCLUDED, exactly as [windows]' rule 3 hands the embedder everything between the sentences
-     * it coalesced. The silence BETWEEN separate windows is left out, also exactly as there.
+     * **The merge is BOUNDED, and that is the one place this route may not simply copy [windows]**
+     * (round 1 of review). There, rule 3 hands the embedder everything between two sentences it
+     * coalesced and the pause is harmless, because both sentences live inside ONE VAD segment and
+     * the pause is therefore under `min_silence_duration_ms`. Here the two sides of the join are
+     * separate segments and the silence between them is, by construction, silence Silero judged
+     * long enough to END speech — bounded by nothing but the chunk. So a join happens only across
+     * at most [MAX_COALESCE_GAP_SECONDS]; past that the short segment stands alone and inherits.
+     * Without the bound a 0.3 s back-channel could drag three seconds of room tone into a
+     * "window" that was then fingerprinted as a voice and counted as three seconds of it.
+     *
+     * The merged window spans from its predecessor's start to the joining segment's end, pause
+     * included — the embedder still gets one contiguous slice — but it carries the SUM of the
+     * speech it actually holds in [SpeakerWindow.speechSamples], and that sum, never the span, is
+     * what the gates and the dominant-window pick are decided on. The silence BETWEEN separate
+     * windows is left out, exactly as in [windows].
      *
      * [SpeakerWindow.vadIndex] is the index of the speech segment a window STARTS at, so it is
      * strictly increasing and a coalesced window is named by its first segment. The chunk's raw
@@ -313,14 +378,30 @@ object SpeakerSpans {
         val n = raw.size / 2
         if (n == 0) return emptyList()
         val minWindowSamples = (MIN_WINDOW_SECONDS * SAMPLE_RATE).toInt()
+        val maxGapSamples = (MAX_COALESCE_GAP_SECONDS * SAMPLE_RATE).toInt()
         val out = ArrayList<SpeakerWindow>(n)
         for (i in 0 until n) {
             val start = raw[i * 2]
             val end = raw[i * 2 + 1]
             if (end <= start) continue
             val previous = out.lastOrNull()
-            if (previous != null && end - start < minWindowSamples) {
-                out[out.size - 1] = previous.copy(origEnd = end)
+            // `start - previous.origEnd` can be NEGATIVE: the 150 ms pads at each end are applied
+            // per segment, so two close segments can be handed over overlapping. That is a gap of
+            // zero for this test and not a reason to refuse the join.
+            val gap = (start - (previous?.origEnd ?: start)).coerceAtLeast(0)
+            if (previous != null && end - start < minWindowSamples && gap <= maxGapSamples) {
+                out[out.size - 1] = previous.copy(
+                    // `maxOf` for the same reason `gap` has a floor: padded bounds can overlap,
+                    // and a joining segment that ends inside its predecessor must not SHORTEN
+                    // the window it joined. Defensive — the VAD's ends are monotonic — but an
+                    // inverted window would reach the embedder as a zero-length slice.
+                    origEnd = maxOf(previous.origEnd, end),
+                    // The SPEECH it now holds — its own plus this segment's, and not the pause
+                    // between them. This is the number every gate downstream is decided on. An
+                    // overlap makes it a slight OVER-count; the assigner clamps it to the span
+                    // it is given, which is the same clamp the window's own bounds get.
+                    speechSamples = previous.speechSamples + (end - start),
+                )
                 continue
             }
             out += SpeakerWindow(vadIndex = i, origStart = start, origEnd = end)

@@ -620,12 +620,63 @@ class SpeakerSpansTest {
     @Test
     fun aSegmentShorterThanTheWindowFloorJoinsItsPredecessorPauseIncluded() {
         // MIN_WINDOW_SECONDS is the tracker's lowest gate, so a window under it can say nothing
-        // at all. Three back-channels become one window that can — and it spans the pauses
-        // between them, exactly as the geometry route's own partition does.
+        // at all. Three back-channels become one window that can — and it SPANS the pauses
+        // between them, exactly as the geometry route's own partition does, while carrying the
+        // SPEECH it actually holds: 2.0 + 0.4 + 0.3 = 2.7 s inside a 3.1 s span. The span is
+        // what the embedder slices; the sum is what every gate is decided on.
         assertEquals(
-            listOf(SpeakerWindow(0, 0, (3.1f * RATE).toInt())),
+            listOf(
+                SpeakerWindow(
+                    vadIndex = 0,
+                    origStart = 0,
+                    origEnd = (3.1f * RATE).toInt(),
+                    speechSamples = (2.7f * RATE).toInt(),
+                ),
+            ),
             SpeakerSpans.wholeChunkWindows(pairs(0f to 2f, 2.2f to 2.6f, 2.8f to 3.1f)),
         )
+    }
+
+    @Test
+    fun aShortSegmentACROSSAWIDEGAPStandsAloneInsteadOfDraggingTheSilenceIn() {
+        // THE BOUND (round 1 of review). The geometry route can only ever fold a pause Silero
+        // judged too short to END speech — `min_silence_duration_ms`, 100 ms — into a window,
+        // because it splits one segment and never joins two. Here the two sides are SEPARATE
+        // segments, so the silence between them is bounded by nothing but the chunk.
+        //
+        // Unbounded, this input produced ONE window 0.0-4.3 s holding 1.4 s of voice, and it then
+        // (a) went to the embedder as a fingerprint that was two-thirds room tone and (b) told
+        // the tracker "4.3 seconds", clearing all three graded gates. It also outranked the 3.0 s
+        // window beside it for the chunk's one label. Bounded, the 0.3 s segment stands alone and
+        // inherits, exactly as a short LEADING segment does.
+        val windows = SpeakerSpans.wholeChunkWindows(pairs(0f to 1.1f, 4f to 4.3f, 4.5f to 7.5f))
+        assertEquals(
+            listOf(
+                SpeakerWindow(0, 0, (1.1f * RATE).toInt()),
+                SpeakerWindow(1, (4f * RATE).toInt(), (4.3f * RATE).toInt()),
+                SpeakerWindow(2, (4.5f * RATE).toInt(), (7.5f * RATE).toInt()),
+            ),
+            windows,
+        )
+        assertTrue(
+            "no window claims speech it does not hold",
+            windows.all { it.speechSamples == it.origEnd - it.origStart },
+        )
+    }
+
+    @Test
+    fun theOVERLAPTwoPaddedSegmentsCanHaveIsAGapOfZeroAndNotARefusal() {
+        // `speech_pad_ms = 150` is applied to each segment independently, so two close segments
+        // can be handed over touching or overlapping. A negative gap is zero, not a reason to
+        // refuse the join — and the merged speech sum is still the sum of the two pairs, which
+        // for an overlap is slightly more than the span. The gate clamp in the assigner is what
+        // keeps that honest.
+        val windows = SpeakerSpans.wholeChunkWindows(
+            intArrayOf(0, (2f * RATE).toInt(), (1.9f * RATE).toInt(), (2.4f * RATE).toInt()),
+        )
+        assertEquals(1, windows.size)
+        assertEquals((2.4f * RATE).toInt(), windows.single().origEnd)
+        assertEquals((2.5f * RATE).toInt(), windows.single().speechSamples)
     }
 
     @Test

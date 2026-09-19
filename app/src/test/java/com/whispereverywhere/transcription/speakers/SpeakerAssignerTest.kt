@@ -960,6 +960,60 @@ class SpeakerAssignerTest {
     }
 
     @Test
+    fun theDominantWindowIsTheONEWITHTHEMOSTSPEECHAndNotTheOneWithTheWIDESTSPAN() {
+        // THE DEFECT ROUND 1 FOUND. `dominant` ranks `stats.durationsSec`, and until this round
+        // that list held wall SPANS — which stop being the same number as "how much speech" the
+        // moment a window coalesces a short segment across a pause.
+        //
+        // Window 0 is 0.0-2.45 s, of which 2.2 s is voice (2.0 + a 0.2 s back-channel across a
+        // 0.25 s gap). Window 1 is 3.0-5.3 s, all 2.3 s of it voice. The wider window is 0; the
+        // one that did more of the talking is 1, and it is 1 that must speak for the chunk —
+        // otherwise the whole chunk's text wears the label of the quieter voice and the louder
+        // one gets nothing.
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignWholeChunkOnce(
+            voices = voices,
+            samples = buffer(6f),
+            segments = pairs(0f to 2f, 2.25f to 2.45f, 3f to 5.3f),
+        )
+        assertEquals("three speech segments, two windows", 3, assignment?.segs)
+        assertEquals(listOf(1, 2), assignment?.ids)
+        assertEquals(
+            "2.3 s of speech beats 2.2 s of speech inside a 2.45 s span",
+            1, assignment?.wholeChunkWindow,
+        )
+        val durations = assignment!!.stats.durationsSec
+        assertEquals("the coalesced window reports its SPEECH, not its span", 2.2f, durations[0], 0.01f)
+        assertEquals(2.3f, durations[1], 0.01f)
+    }
+
+    @Test
+    fun aCoalescedWindowCANNOTOPENASpeakerOnSecondsItSpentInSilence() {
+        // The other half of the same defect: `tracker.assign(embedding, seconds)` was told the
+        // SPAN, so a window holding 1.4 s of voice either side of a pause cleared MIN_OPEN
+        // (1.5 s) — and on the geometry route all three graded gates are gates on SPEECH. Told
+        // the truth, this window is in the MATCH-ONLY tier with nobody to match, so it is
+        // unlabelled (0) and opens nothing, exactly as a 1.4 s window elsewhere would be.
+        val voices = FakeVoices { unit(0.0) }
+        val assignment = assignWholeChunkOnce(
+            voices = voices,
+            samples = buffer(4f),
+            segments = pairs(0f to 1.2f, 1.45f to 1.65f),
+        )
+        assertEquals("one coalesced window", 1, assignment?.ids?.size)
+        assertEquals(
+            "…and it is still EMBEDDED — 1.4 s clears MIN_EMBED — over its whole span",
+            1, voices.lengths.size,
+        )
+        assertEquals((1.65f * RATE).toInt(), voices.lengths[0])
+        assertEquals(
+            "…but it may not open a speaker on 1.65 s of wall clock holding 1.4 s of voice",
+            listOf(0), assignment?.ids,
+        )
+        assertEquals(1.4f, assignment!!.stats.durationsSec[0], 0.01f)
+    }
+
+    @Test
     fun aChunkWithNoSpeechPublishesNOTHING() {
         // Spec §2: "no segments" is not "one speaker". An empty segmentation is also what a
         // missing or unloadable VAD model answers, and neither may invent a speaker.
