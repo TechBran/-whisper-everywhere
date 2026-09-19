@@ -476,6 +476,11 @@ class SpeakerTracker(
          * fifteen segments were under the old single 2.0 s gate, on *"clearly distinct voices"*,
          * and nothing could be labelled at all. A one-second fingerprint is too thin to CLAIM a
          * person exists; it is thick enough to recognise one who already does.
+         *
+         * Since the 2026-09-18 late session it is also `SpeakerSpans.MIN_WINDOW_SECONDS`, the
+         * shortest window the sentence splitter will cut. That is not a coincidence either: the
+         * splitter cuts a window exactly when this tier can do something with it, and the refusal
+         * to open, confirm or teach off one stays HERE, where it was measured.
          */
         const val MIN_MATCH_SECONDS: Float = 1.0f
 

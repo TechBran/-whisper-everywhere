@@ -17,13 +17,13 @@ import java.util.Locale
  * the chunks where something moved — see the field's own comment below for why it is not always
  * printed.
  *
- * The third is the shape spike session 4's SPLIT takes: two VAD segments, five windows, because
- * one of the segments ran past `SpeakerSpans.LONG_SEGMENT_SECONDS` with several whisper segments
- * inside it and was fingerprinted per sentence instead of per pause. `windows > segs` is the one
- * visible sign in this line that a segment long enough to hide a second voice was cut rather
- * than left whole. It is also the MEASUREMENT: session 4 could not show failure mode B happening
- * (its one long dump was a single narrator), so how often `windows` exceeds `segs`, and what the
- * `ids=` under a split segment then say, is how a later session finds out whether it does.
+ * The third is the shape the SPLIT takes: two VAD segments, five windows, because a segment
+ * reached `SpeakerSpans.LONG_SEGMENT_SECONDS` with several whisper segments inside it and was
+ * fingerprinted per sentence instead of per pause. Since the 2026-09-18 late session that floor
+ * is 2.0 s, so `windows > segs` is the NORMAL shape of a conversational chunk rather than a rare
+ * event — which makes this line the measurement of two different things at once: how much
+ * sentence-level cutting a session does, and (read against `embedMs=`) how close its chunks come
+ * to the finalize fence now that a chunk costs one fingerprint per sentence.
  *
  * It is a formatter with a test because the line is an INSTRUMENT, not a log. `T_SAME` / `T_NEW`
  * are set from the `best=` column of a real session (spec §3.2 step 3 defers them to the spike

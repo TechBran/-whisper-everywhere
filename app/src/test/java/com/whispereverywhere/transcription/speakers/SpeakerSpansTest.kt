@@ -3,6 +3,8 @@ package com.whispereverywhere.transcription.speakers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * 4.10 Task 1: the pure half of the speaker pipeline — the native segment geometry
@@ -11,14 +13,18 @@ import org.junit.Test
  *
  * THE WINDOWS ARE SPIKE SESSION 4's answer to failure mode B — the endpointer cuts on silence,
  * so when nobody pauses it can hand over six to fourteen seconds in one segment, and two voices
- * sharing those seconds would share one fingerprint. A segment past `LONG_SEGMENT_SECONDS` with
- * two or more whisper segments in it is cut along whisper's own boundaries, which are the only
- * boundaries in this pipeline placed by something that listened to the words.
+ * sharing those seconds would share one fingerprint. A segment of at least `LONG_SEGMENT_SECONDS`
+ * with two or more whisper segments in it is cut along whisper's own boundaries, which are the
+ * only boundaries in this pipeline placed by something that listened to the words.
  *
- * That failure was NOT demonstrated by session 4's dumps — its one long session turned out to be
- * a single narrator — so the tests below are about the split being CORRECT and BOUNDED rather
- * than about a bug being fixed: the offsets, the coalescing, the partition, and the two guards
- * that keep every ordinary chunk fingerprinted exactly as it was.
+ * Session 4 set that floor at 5.0 s because failure mode B was never demonstrated — its one long
+ * session turned out to be a single narrator — and the tests below were written about a split
+ * that had to be CORRECT and BOUNDED. **The 2026-09-18 late session unbounded it**: the owner's
+ * 02:12 dump held 218 windows at a median of 3.0 s, so the 5 s floor cut almost nothing and a new
+ * speaker's first sentence kept landing inside the previous speaker's window. At 2.0 s / 1.0 s
+ * the split is the ordinary case, and these tests are re-pinned to it: a window is a SENTENCE in
+ * nearly every segment, and the "one window" cases below are now the genuinely uncuttable ones —
+ * a segment under two seconds, a segment with one sentence, a segment with none.
  *
  * THE TWO TIMELINES ARE THE WHOLE SUBJECT, and mixing them is the defect this class exists to
  * catch. A VAD segment carries FOUR numbers: where it sat in the RAW chunk (what a speaker
@@ -112,14 +118,44 @@ class SpeakerSpansTest {
     // ------------------------------------------------------------- windows (spike session 4)
 
     @Test
-    fun aVadSegmentOfFiveSecondsOrLessIsOneWindowHoweverManySentencesAreInIt() {
-        // The long-segment floor is on the SEGMENT. Four seconds with two whisper segments in it
-        // is the ordinary shape of every dump that WORKED (20:23, 20:27: medians 2.7-3.1 s), and
-        // cutting it would buy another 130-300 ms of embedding and no separation.
+    fun aVadSegmentUNDERTwoSecondsIsOneWindowHoweverManySentencesAreInIt() {
+        // The long-segment floor is on the SEGMENT, and below it there is nothing to cut into:
+        // 1.8 s cannot hold two windows of MIN_WINDOW_SECONDS. This is the only "too short to
+        // split" case left after the 2026-09-18 late session — four seconds, which used to be
+        // this test, is now firmly on the cut side.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 28_800, 0, 28_800)))
+        val raw = whisperRaw(listOf(0 to 80, 90 to 180), listOf(0 to 10, 10 to 20))
+
+        assertEquals(listOf(SpeakerWindow(0, 0, 28_800)), SpeakerSpans.windows(raw, vad))
+    }
+
+    @Test
+    fun aFourSecondSegmentWithTwoSentencesIsCUT_whichIsTheWholeOfTheLateSessionsChange() {
+        // THE REGRESSION THE OWNER HEARD, as one assertion. The 02:12 dump's median window was
+        // 3.0 s and 131 of its 218 windows were 2.5 s or longer; under the old 5.0 s floor a
+        // chunk of exactly this shape was ONE fingerprint, so when the second sentence was the
+        // other person's opening line it silently took the first speaker's label.
         val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 4 * RATE, 0, 4 * RATE)))
         val raw = whisperRaw(listOf(0 to 180, 190 to 400), listOf(0 to 10, 10 to 20))
 
-        assertEquals(listOf(SpeakerWindow(0, 0, 4 * RATE)), SpeakerSpans.windows(raw, vad))
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 30_400), SpeakerWindow(0, 30_400, 4 * RATE)),
+            SpeakerSpans.windows(raw, vad),
+        )
+    }
+
+    @Test
+    fun theFloorIsINCLUSIVE_soExactlyTwoSecondsWithTwoSentencesIsTwoWindows() {
+        // 2.0 s is the SMALLEST segment that can hold two windows at MIN_WINDOW_SECONDS, which
+        // is the only reason the floor sits there; excluding the boundary would exclude the one
+        // case the number was chosen for.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 2 * RATE, 0, 2 * RATE)))
+        val raw = whisperRaw(listOf(0 to 100, 100 to 200), listOf(0 to 10, 10 to 20))
+
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, RATE), SpeakerWindow(0, RATE, 2 * RATE)),
+            SpeakerSpans.windows(raw, vad),
+        )
     }
 
     @Test
@@ -163,31 +199,50 @@ class SpeakerSpansTest {
 
     @Test
     fun shortWhisperSegmentsAreCOALESCEDUntilAWindowIsWorthFingerprinting() {
-        // MIN_WINDOW_SECONDS is MIN_OPEN_SECONDS: a window under it could never open a speaker or
-        // confirm one, so cutting it costs an embedding and buys a window that can only inherit.
-        // Two one-second sentences therefore share the first window; the two-second ones do not.
+        // MIN_WINDOW_SECONDS is MIN_MATCH_SECONDS since the 2026-09-18 late session: a window
+        // under it is below the embedder floor too, so cutting it costs an embedding and buys a
+        // window that can only inherit. Two half-second sentences therefore share the first
+        // window; every sentence that clears a second on its own keeps its own — which at 1.0 s
+        // is most of them, and is exactly the point of the change.
         val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 12 * RATE, 0, 12 * RATE)))
         val raw = whisperRaw(
-            listOf(0 to 100, 100 to 200, 200 to 400, 400 to 600, 600 to 1_200),
+            listOf(0 to 50, 50 to 100, 100 to 300, 300 to 500, 500 to 1_200),
             List(5) { it * 10 to it * 10 + 10 },
         )
 
         assertEquals(
             listOf(
-                SpeakerWindow(0, 0, 32_000),         // 1 s + 1 s, coalesced
-                SpeakerWindow(0, 32_000, 64_000),    // 2 s
-                SpeakerWindow(0, 64_000, 96_000),    // 2 s
-                SpeakerWindow(0, 96_000, 12 * RATE), // 6 s
+                SpeakerWindow(0, 0, 16_000),         // 0.5 s + 0.5 s, coalesced
+                SpeakerWindow(0, 16_000, 48_000),    // 2 s
+                SpeakerWindow(0, 48_000, 80_000),    // 2 s
+                SpeakerWindow(0, 80_000, 12 * RATE), // 7 s
             ),
             SpeakerSpans.windows(raw, vad),
         )
     }
 
     @Test
+    fun aOneSecondSentenceIsItsOwnWindowRatherThanBeingCoalescedAway() {
+        // The floor is 1.0 s, INCLUSIVE, and it has to be: the sentence that goes missing at a
+        // speaker change is usually a short one ("Yeah, but did it?"), and coalescing it into
+        // the previous speaker's window is precisely the boundary lag the late session is about.
+        // The tracker's MATCH-ONLY tier then decides what it may do — see the composed test.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 3 * RATE, 0, 3 * RATE)))
+        val raw = whisperRaw(listOf(0 to 100, 100 to 300), listOf(0 to 10, 10 to 20))
+
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, RATE), SpeakerWindow(0, RATE, 3 * RATE)),
+            SpeakerSpans.windows(raw, vad),
+        )
+    }
+
+    @Test
     fun aTrailingRemainderTooShortToStandAloneJoinsTheWindowBeforeIt() {
-        // Half a second of "yeah" at the end of a long segment is not a window. Left alone it
-        // would be an embedding the tracker's MIN_OPEN gate then refuses to act on — the cost of
-        // a decision with the decision removed.
+        // Half a second of "yeah" at the end of a long segment is not a window — the rule is
+        // unchanged by the late session, only its floor moved to 1.0 s. Left alone it would be
+        // an embedding under the tracker's MIN_EMBED floor, which is the cost of a decision with
+        // the decision removed: the window could only ever inherit the label before it, which is
+        // exactly what joining the previous window gives it for free.
         val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 12 * RATE, 0, 12 * RATE)))
         val raw = whisperRaw(
             listOf(0 to 200, 200 to 400, 400 to 1_150, 1_150 to 1_200),
@@ -296,9 +351,12 @@ class SpeakerSpansTest {
 
     @Test
     fun adjacentSegmentsInTheSameVadSegmentMergeUnderTextJoinRules() {
-        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 48_000, 0, 48_000)))
+        // 1.8 s: under LONG_SEGMENT_SECONDS, so the three sentences share ONE window and the
+        // merge is reachable at all. Above the floor they would be three windows and three
+        // spans — which is the split working, not this rule failing.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 28_800, 0, 28_800)))
         val (bytes, ranges) = encode(" one", " two", ", three")
-        val raw = whisperRaw(listOf(0 to 100, 100 to 200, 200 to 300), ranges)
+        val raw = whisperRaw(listOf(0 to 60, 60 to 120, 120 to 180), ranges)
 
         // TextJoin: a space between "one" and "two"; NONE before a run that opens with closing
         // punctuation. A plain " " join would read "one two , three".
@@ -391,10 +449,12 @@ class SpeakerSpansTest {
             SpeakerSpans.spans(raw, bytes, vad),
         )
 
-        // …and the mirror: the SAME two sentences inside a four-second segment are one window and
-        // therefore still one span. The split is the only thing that separated them.
-        val shortVad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 4 * RATE, 0, 4 * RATE)))
-        val shortRaw = whisperRaw(listOf(0 to 180, 190 to 400), ranges)
+        // …and the mirror: the SAME two sentences inside a 1.8 s segment are one window and
+        // therefore still one span. The split is the only thing that separated them. This used
+        // to be a FOUR-second segment; at the late session's 2.0 s floor four seconds is cut,
+        // and 1.8 s is what "too short to cut" now means.
+        val shortVad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 28_800, 0, 28_800)))
+        val shortRaw = whisperRaw(listOf(0 to 80, 90 to 180), ranges)
         assertEquals(
             listOf(SpeakerSpan(0, "Hello there. Hi, how are you?")),
             SpeakerSpans.spans(shortRaw, bytes, shortVad),
@@ -428,5 +488,109 @@ class SpeakerSpansTest {
         val raw = intArrayOf(0, 100, 0, 9_999)
 
         assertEquals(listOf(SpeakerSpan(0, "short")), SpeakerSpans.spans(raw, bytes, vad))
+    }
+
+    // ------------------------------------ the splitter and the tracker, composed (late session)
+
+    /** A unit vector at [deg]: `cos(unit(a), unit(b))` is exactly `cos(a - b)`, as in the tracker's test. */
+    private fun unit(deg: Double): FloatArray {
+        val r = Math.toRadians(deg)
+        return floatArrayOf(cos(r).toFloat(), sin(r).toFloat())
+    }
+
+    @Test
+    fun aShortSentenceWindowIsMATCHEDToAKnownSpeakerButCannotOPENOne() {
+        // THE TWO HALVES OF THE LATE SESSION'S CHANGE, in one test, because neither half is
+        // right alone. MIN_WINDOW_SECONDS 1.0 exists so that a 1.0-1.5 s sentence is CUT and
+        // handed over at all; the tracker's MATCH-ONLY tier exists so that what is handed over
+        // can be recognised without being allowed to claim a person. If this splitter refused
+        // the short window itself it would be a second set of duration gates, sitting in front
+        // of the measured ones and never measured against anything.
+        //
+        // A 3.2 s VAD segment holding sentences of 1.2 s and 2.0 s — the ordinary 2.5-5 s shape
+        // that was 131 of the 02:12 dump's 218 windows, and the shape that used to be ONE
+        // fingerprint wearing one speaker's label.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 51_200, 0, 51_200)))
+        val raw = whisperRaw(listOf(0 to 120, 120 to 320), listOf(0 to 10, 10 to 20))
+        val windows = SpeakerSpans.windows(raw, vad)
+
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 19_200), SpeakerWindow(0, 19_200, 51_200)),
+            windows,
+        )
+        val seconds = windows.map { (it.origEnd - it.origStart) / RATE.toFloat() }
+        assertEquals("the short sentence keeps its own window", 1.2f, seconds[0], 1e-4f)
+        assertEquals(2.0f, seconds[1], 1e-4f)
+
+        // A session with ONE known speaker, opened on audio long enough to be allowed to.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), 2.5f))
+
+        // Window 0, 1.2 s of the SAME voice: RECOGNISED — that is the whole gain. Under the old
+        // 1.5 s window floor this sentence never existed as a window at all.
+        assertEquals(1, tracker.assign(unit(10.0), seconds[0]))
+        assertTrue(
+            "…on a similarity it actually measured",
+            tracker.lastBestSimilarity >= SpeakerTracker.T_SAME,
+        )
+        assertEquals("and no speaker was opened by a 1.2 s window", 1, tracker.speakerCount)
+
+        // The same 1.2 s window with a STRANGER in it: below T_SAME, so it inherits the label
+        // before it and opens nobody. The splitter handed it over; the TRACKER refused it.
+        assertEquals(1, tracker.assign(unit(100.0), seconds[0]))
+        assertEquals("a 1.2 s window may never claim a person", 1, tracker.speakerCount)
+
+        // Window 1, 2.0 s of that same stranger, DOES open speaker 2. The only difference
+        // between the two calls is the duration, and the only thing that read it is the
+        // tracker's MIN_OPEN gate.
+        assertEquals(2, tracker.assign(unit(100.0), seconds[1]))
+        assertEquals(2, tracker.speakerCount)
+    }
+
+    // ------------------------------------------------------------------ the settlement
+
+    @Test
+    fun theWindowConstantsAreTheONESTheMeasurementDocSettled() {
+        // THE SOURCE: docs/measurements/2026-09-18-speaker-spike.md — **session 4** for the RULE
+        // (a multi-sentence segment is fingerprinted per sentence, cut on whisper's own
+        // boundaries, which are the only boundaries here placed by something that listened to
+        // the words) and the **2026-09-18 LATE** session, beside it, for both VALUES.
+        //
+        // Session 4 could not demonstrate failure mode B — its one long dump was a single
+        // narrator — so it bounded the cut at 5.0 s / 1.5 s and left ordinary turn-taking
+        // exactly as it was. The late session measured what that cost on the owner's own
+        // conversation: 218 fingerprint windows, median 3.0 s, 131 of them 2.5 s or longer and
+        // only 26 over five. The cut fired on about a tenth of the audio, and the rest of it is
+        // what he heard — "the boundaries is where the speaker switch is just not catching the
+        // beginning of when someone starts to speak".
+        //
+        // Neither number may move again without a new dump, and neither is free-standing: 2.0 s
+        // is exactly two windows' worth, which is what makes it the smallest segment with a cut
+        // in it, and 1.0 s is the tracker's lowest gate, which is what makes a window worth
+        // cutting at all.
+        assertEquals("LONG_SEGMENT_SECONDS", 2.0f, SpeakerSpans.LONG_SEGMENT_SECONDS, 0f)
+        assertEquals("MIN_WINDOW_SECONDS", 1.0f, SpeakerSpans.MIN_WINDOW_SECONDS, 0f)
+        assertEquals(
+            "the shortest window is the tracker's lowest gate, not a number of its own",
+            SpeakerTracker.MIN_MATCH_SECONDS,
+            SpeakerSpans.MIN_WINDOW_SECONDS,
+            0f,
+        )
+        assertEquals(
+            "…and the embedder floor too, so every window a split makes is really fingerprinted",
+            SpeakerTracker.MIN_EMBED_SECONDS,
+            SpeakerSpans.MIN_WINDOW_SECONDS,
+            0f,
+        )
+        assertEquals(
+            "the segment floor is two windows' worth — the smallest segment that can hold a cut",
+            2f * SpeakerSpans.MIN_WINDOW_SECONDS,
+            SpeakerSpans.LONG_SEGMENT_SECONDS,
+            0f,
+        )
+        assertTrue(
+            "a window may be shorter than the segment floor; that is the whole of the split",
+            SpeakerSpans.MIN_WINDOW_SECONDS < SpeakerSpans.LONG_SEGMENT_SECONDS,
+        )
     }
 }

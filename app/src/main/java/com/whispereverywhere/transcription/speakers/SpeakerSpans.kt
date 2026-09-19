@@ -25,7 +25,8 @@ data class VadSeg(
 )
 
 /**
- * ONE stretch of a chunk's ORIGINAL audio that gets ONE voice fingerprint (4.10, spike session 4).
+ * ONE stretch of a chunk's ORIGINAL audio that gets ONE voice fingerprint (4.10, spike session 4;
+ * widened from the rare long segment to nearly every one by the 2026-09-18 LATE session).
  *
  * Until session 4 this was always a whole [VadSeg] and the type did not exist. The RISK it exists
  * for is failure mode B: the endpointer cuts on silence, so when nobody pauses it can hand over
@@ -34,17 +35,28 @@ data class VadSeg(
  * of two people at once. The owner's own reading of his 20:31 session was *"the VAD doesn't seem
  * to chunk on the boundaries"*, and this is that cut, made where whisper already found one.
  *
- * **What the data does and does not say.** 20:31 turned out to be the ONE-VOICE clip (the owner,
- * later the same evening: a long narration with a single narrator), so its 0.84 pairwise median
- * was the tracker being RIGHT and failure mode B is **not demonstrated** by that night's dumps.
- * This split is therefore DESIGN for a shape the endpointer can obviously produce — a podcast
- * guest's two-minute answer would otherwise be one fingerprint — and it is bounded to exactly
- * that shape for the same reason: over five seconds, two or more whisper segments, and nothing
- * else changes. Failure mode A, the short-turn starvation the graded gates answer, is the
- * demonstrated one.
+ * **Session 4 bounded the cut to a shape it could not demonstrate; the 2026-09-18 LATE session
+ * measured what that bound cost.** 20:31 turned out to be the ONE-VOICE clip (the owner, later
+ * the same evening: a long narration with a single narrator), so its 0.84 pairwise median was the
+ * tracker being RIGHT and failure mode B was **not demonstrated** by that night's dumps. The
+ * split was therefore set to fire only past five seconds — design for a podcast guest's
+ * two-minute answer, deliberately conservative. Then the graded-gates build went out and the
+ * owner reported the residue: *"it is working a lot better for quick back and forths … the
+ * boundaries is where the speaker switch is just not catching the beginning of when someone
+ * starts to speak … the bulk of it, yes, is correct."* His 02:12 dump says why in one number: 218
+ * fingerprint windows, **median 3.0 s**, and only 26 of them over five seconds. The per-sentence
+ * cut applied to about a tenth of the audio, so across the 2.5-5 s majority a new speaker's FIRST
+ * sentence sat inside the previous speaker's window and wore the previous speaker's label. That
+ * is the whole of the lag he heard, and it is why [SpeakerSpans.LONG_SEGMENT_SECONDS] is now
+ * 2.0 s: a window is a SENTENCE in nearly every segment, and a sentence boundary is where a new
+ * speaker usually begins.
  *
- * A window is therefore a VAD segment, or a slice of a long one along its whisper-segment
- * boundaries. [origStart] / [origEnd] index the RAW chunk, like [VadSeg.origStart] and for the
+ * What is left over is a genuine interruption MID-sentence, which no boundary whisper drew can
+ * catch — that would need word-level change-point detection, and it is the next lever rather than
+ * a defect in this one.
+ *
+ * A window is therefore a VAD segment, or a slice of one along its whisper-segment boundaries.
+ * [origStart] / [origEnd] index the RAW chunk, like [VadSeg.origStart] and for the
  * same reason: the trimmed buffer whisper saw does not outlive the JNI call.
  *
  * [vadIndex] is kept because a window is still *of* a segment — the diag line counts both, and
@@ -92,33 +104,49 @@ data class SpeakerSpan(val windowIndex: Int, val text: String)
 object SpeakerSpans {
 
     /**
-     * **5.0 s** — past this, a VAD segment holding two or more whisper segments is fingerprinted
-     * per whisper segment instead of once (spike session 4, failure mode B).
+     * **2.0 s** — at or past this, a VAD segment holding two or more whisper segments is
+     * fingerprinted per whisper segment instead of once (spike session 4, failure mode B; this
+     * VALUE from the 2026-09-18 late session).
      *
-     * It is a floor on the SEGMENT, not on the window: below it the old single fingerprint is
-     * kept byte for byte, because splitting a four-second segment buys nothing — a single speaker
-     * rarely alternates inside one — and costs another 130-300 ms of embedding.
+     * It is a floor on the SEGMENT, not on the window, and it is INCLUSIVE: a segment of exactly
+     * two seconds with two sentences in it is cut. Below it the single fingerprint is kept byte
+     * for byte, and it has to be — a segment under 2.0 s cannot hold two windows at
+     * [MIN_WINDOW_SECONDS], so there is nothing to cut it into.
      *
-     * Where the number comes from, honestly: session 4's five dumps split into two populations by
-     * segment length. The three ordinary conversational ones ran 2.7-3.1 s median with p90s
-     * around 7 s; the long one ran 6.3 s median, 14.3 s p90. 5 s sits between them rather than
-     * inside either, so the split fires on the shape that can hide a second voice and leaves
-     * ordinary turn-taking exactly as it was. It is NOT a threshold fitted to a failure — the
-     * long dump turned out to be one narrator — which is why it is deliberately conservative.
+     * Where the number comes from, and why it moved. Session 4 read its five dumps as two
+     * populations by segment length — three ordinary conversational ones at 2.7-3.1 s median,
+     * one long one at 6.3 s median and 14.3 s p90 — and put the floor at 5 s, BETWEEN them, so
+     * the cut fired only on the shape that can hide a second voice and ordinary turn-taking was
+     * left exactly as it was. That was the conservative call for a failure mode the data had not
+     * demonstrated. The 2026-09-18 late session then measured the cost of leaving turn-taking
+     * alone: 218 windows, median 3.0 s, 131 of them at 2.5 s or longer and only 26 over five, so
+     * the cut applied to about a tenth of the audio and the label change lagged a new speaker's
+     * first sentence almost everywhere else. 2.0 s is not a new population boundary; it is the
+     * SMALLEST segment that can hold two windows, which is the honest place for a floor whose
+     * only job now is to say "there is a second window to cut here".
      */
-    const val LONG_SEGMENT_SECONDS: Float = 5.0f
+    const val LONG_SEGMENT_SECONDS: Float = 2.0f
 
     /**
-     * **1.5 s** — the shortest window a split may produce. Adjacent whisper segments are
+     * **1.0 s** — the shortest window a split may produce. Adjacent whisper segments are
      * coalesced until the window reaches it, and a trailing short remainder joins the window
      * before it rather than standing alone.
      *
-     * It is [SpeakerTracker.MIN_OPEN_SECONDS] on purpose: a window shorter than that could never
-     * open a speaker or confirm one, so cutting one costs an embedding and buys a segment that
-     * can only ever inherit. Splitting is a way of ASKING WHO IS SPEAKING, and a window that is
-     * not allowed to answer is not worth cutting.
+     * It is [SpeakerTracker.MIN_MATCH_SECONDS], the LOWEST of the tracker's three graded gates,
+     * and that is the whole rule: a window is worth cutting exactly when the tracker is allowed
+     * to say something about it. It is also [SpeakerTracker.MIN_EMBED_SECONDS], so every window a
+     * split produces is actually fingerprinted rather than silently inheriting.
+     *
+     * It was [SpeakerTracker.MIN_OPEN_SECONDS] until the 2026-09-18 late session, on the argument
+     * that a window which could never OPEN a speaker was not worth an embedding. The graded gates
+     * make that argument wrong: a 1.0-1.5 s window is in the MATCH-ONLY tier, so it CAN take a
+     * known speaker's number on a confident match — and that is exactly the case the late session
+     * is about, a short opening sentence from the other person. Such a window still cannot open a
+     * speaker, confirm one or teach one, and that refusal belongs to [SpeakerTracker.assign] and
+     * not to this splitter. The splitter's job is to hand the sentence over; judging it is the
+     * tracker's, and a splitter that pre-judged would be a second set of gates nobody measured.
      */
-    const val MIN_WINDOW_SECONDS: Float = 1.5f
+    const val MIN_WINDOW_SECONDS: Float = 1.0f
 
     /** 16 kHz: whisper reports centiseconds, the VAD bounds are samples. The one conversion. */
     private const val SAMPLES_PER_CENTISECOND = 160
@@ -154,10 +182,10 @@ object SpeakerSpans {
     }
 
     /**
-     * THE CHUNK'S FINGERPRINT WINDOWS, in chunk order — one per VAD segment, except for the long
-     * ones (spike session 4, failure mode B).
+     * THE CHUNK'S FINGERPRINT WINDOWS, in chunk order — one per SENTENCE in nearly every segment
+     * since the 2026-09-18 late session, one per VAD segment only where there is nothing to cut.
      *
-     * A VAD segment is split when BOTH are true: it is longer than [LONG_SEGMENT_SECONDS], and
+     * A VAD segment is split when BOTH are true: it is at least [LONG_SEGMENT_SECONDS] long, and
      * whisper found two or more segments inside it. Both terms matter. Length alone is no reason
      * to cut — a single speaker's eight-second sentence is one voice and one fingerprint is the
      * right answer for it. And a cut has to be made SOMEWHERE defensible: whisper's own segment
@@ -172,14 +200,17 @@ object SpeakerSpans {
      *     between segments do not accumulate into the answer.
      *  2. Whisper segments are COALESCED in time order until the speech they span reaches
      *     [MIN_WINDOW_SECONDS]; then the next one starts a window. A trailing remainder that did
-     *     not reach it joins the window before it rather than standing alone.
+     *     not reach it joins the window before it rather than standing alone. At 1.0 s that
+     *     coalescing is rare — most sentences clear it on their own — which is the point: one
+     *     window per sentence is the shape a speaker change can be seen in.
      *  3. The windows then PARTITION the VAD segment with no audio left out: the first starts at
      *     `origStart`, the last ends at `origEnd`, and each interior boundary is the mapped start
      *     of the first whisper segment of the window after it. The coalescing measured SPEECH;
      *     the boundaries hand the embedder everything between, pauses included.
      *
      * A segment that is not split yields exactly `SpeakerWindow(i, origStart, origEnd)` — the
-     * pre-session-4 shape, so a chunk with no long segment in it is byte-for-byte what it was.
+     * pre-session-4 shape, which is still the answer for a short segment, a one-sentence segment
+     * and a segment whisper decoded nothing in.
      *
      * @param raw `[t0cs, t1cs, byteStart, byteEnd]` * n, in TEXT order, from `lastWhisperSegments`.
      * @param vad the same chunk's [vadSegments]. EMPTY yields no windows: there is no timeline.
@@ -208,7 +239,10 @@ object SpeakerSpans {
             val seg = vad[i]
             val whole = SpeakerWindow(vadIndex = i, origStart = seg.origStart, origEnd = seg.origEnd)
             val ws = speech[i]
-            if (seg.origEnd - seg.origStart <= longSegmentSamples || ws.size < 2) {
+            // The floor is INCLUSIVE: 2.0 s is the smallest segment that can hold two windows at
+            // MIN_WINDOW_SECONDS, so a segment exactly that long with two sentences in it is
+            // exactly the case the late session asked to be cut, not the case to exclude.
+            if (seg.origEnd - seg.origStart < longSegmentSamples || ws.size < 2) {
                 out += whole
                 continue
             }

@@ -80,10 +80,12 @@ class SpeakerDiagTest {
 
     @Test
     fun segsAndWindowsAreTWONumbersAndTheirDifferenceIsWhatSession4Reads() {
-        // Failure mode B's whole measurement. Two VAD segments, five windows, because one of them
-        // ran past LONG_SEGMENT_SECONDS with several sentences in it and was fingerprinted per
+        // Failure mode B's whole measurement. Two VAD segments, five windows, because a segment
+        // reached LONG_SEGMENT_SECONDS with several sentences in it and was fingerprinted per
         // sentence. Printing only one of the two numbers would make the split invisible in a log
-        // that is the only instrument the owner's device sessions produce.
+        // that is the only instrument the owner's device sessions produce — and since the
+        // 2026-09-18 late session dropped that floor to 2.0 s this is the NORMAL shape of a
+        // conversational chunk, so the pair is also how a chunk's embedding cost is read.
         val line = SpeakerDiag.line(
             assignment(
                 segs = 2,

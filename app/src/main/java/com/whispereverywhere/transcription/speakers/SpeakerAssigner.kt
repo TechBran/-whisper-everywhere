@@ -19,8 +19,8 @@ import java.util.concurrent.TimeUnit
  *
  * ### The per-WINDOW rule, and the three fates of a window
  *
- * For each [SpeakerWindow] of the chunk, in chunk order — one per VAD segment, except for the
- * long ones spike session 4 splits along whisper's own segment boundaries ([SpeakerSpans.windows]):
+ * For each [SpeakerWindow] of the chunk, in chunk order — since the 2026-09-18 late session that
+ * is one per SENTENCE in nearly every segment, not one per VAD segment ([SpeakerSpans.windows]):
  *
  *  1. **Shorter than [SpeakerTracker.MIN_EMBED_SECONDS]** — never fingerprinted. It inherits the
  *     label of the segment before it ([SpeakerTracker.currentSpeaker], which is 0 before anything
@@ -36,6 +36,24 @@ import java.util.concurrent.TimeUnit
  *  3. **Fingerprinted, and the embedder answered null** — the model is missing, refused, or
  *     native code threw. The label is left exactly where it was. A session on a device that
  *     cannot load the model loses LABELS, never text.
+ *
+ * ### WHAT A CHUNK NOW COSTS, and the one thing that can be lost by it
+ *
+ * [SpeakerSpans.LONG_SEGMENT_SECONDS] fell to 2.0 s and [SpeakerSpans.MIN_WINDOW_SECONDS] to
+ * 1.0 s on 2026-09-18 late, so the count this loop runs is no longer "VAD segments, plus a slice
+ * or two on the rare long one" — it is **roughly the number of SENTENCES in the chunk**. On the
+ * owner's Tab a fingerprint is 130-300 ms, so a five-sentence chunk is 0.7-1.5 s of embedding
+ * where it used to be one or two. All of it is on this object's own thread, below text that has
+ * already been delivered, so nothing about the commit floors or a word of transcript moves.
+ *
+ * The ONE place it can be felt is the stop tap. [awaitIdle] is called there with the service's
+ * `SPEAKER_DRAIN_MS` (2 500 ms), so a final chunk carrying more than about **eight windows** can
+ * still be embedding when the fence expires — and then, exactly as before the fence existed, that
+ * chunk's ids land on a detached sink and the last thing said in the session wears the previous
+ * speaker's number. That is the ACCEPTED TRADE for now: a sentence-accurate boundary everywhere
+ * against a last chunk that may go unlabelled on a long uninterrupted finish. It is bounded (text
+ * is never involved), it is measurable from `embedMs=` in the diag line against the window count
+ * beside it, and the fence is the number to raise if the field says it bites.
  *
  * And then, ONCE per chunk after all of them, [SpeakerTracker.endChunk] runs the merge pass and
  * whatever it moved rides out on the same callback as `remaps`. That ordering is the design of
@@ -274,7 +292,7 @@ class SpeakerAssigner(
                 // The VAD segments BEHIND those windows. Windows are emitted in segment order and
                 // every segment produces at least one, so counting the distinct segment indices
                 // is the segment count — and the diag line prints both, because `windows > segs`
-                // is the only visible sign that a long segment was cut at all.
+                // is the only visible sign of how much of this chunk was cut per sentence.
                 segs = windows.distinctBy { it.vadIndex }.size,
                 ids = ids,
                 remaps = remaps,
@@ -350,10 +368,12 @@ class SpeakerAssigner(
  *
  * @param seq the chunk's segment sequence number, so this joins `segment-timing:` and `queue:` on
  *        the one key every 3.7 diagnostic already shares.
- * @param segs how many VAD SEGMENTS produced the windows below. Equal to `ids.size` for every
- *        chunk with no long segment in it, and smaller for one that spike session 4 split — the
- *        only visible sign, in a line of numbers, that a long segment was cut at all — and so
- *        the column a later session reads to find out how often that shape actually occurs.
+ * @param segs how many VAD SEGMENTS produced the windows below. Equal to `ids.size` only for a
+ *        chunk nothing was cut in; since the 2026-09-18 late session it is normally SMALLER than
+ *        `ids.size`, because a multi-sentence segment of 2.0 s or more is fingerprinted per
+ *        sentence. `windows - segs` is therefore no longer a rare event to be spotted but the
+ *        per-chunk measure of how much sentence-level cutting this session is doing — and, read
+ *        against `embedMs`, the column that says whether a chunk is near the finalize fence.
  * @param ids ONE id per FINGERPRINT WINDOW, in chunk order: 1-based, or **0** for a window that
  *        could not be attributed at all (no fingerprint and no previous speaker to inherit from).
  *        A reader must treat 0 as "unlabelled", never as speaker 1 — spec §2 forbids a label on a
@@ -387,9 +407,11 @@ data class SpeakerAssignment(
  *
  * @param embedMs the chunk's TOTAL embedding cost, milliseconds, excluding the windows that were
  *        never fingerprinted. The budget it is read against: median under 100 ms per window,
- *        worst under 300 ms. Spike session 4's split raises the COUNT per long chunk, never the
- *        per-window cost, and all of it stays on the embed thread — which is why the finalize
- *        fence rose to 2.5 s and the commit floors did not move.
+ *        worst under 300 ms. The split raises the COUNT per chunk, never the per-window cost, and
+ *        all of it stays on the embed thread — which is why the finalize fence rose to 2.5 s and
+ *        the commit floors did not move. Since the 2026-09-18 late session that count is roughly
+ *        the chunk's SENTENCE count, so this is also the number that says how close the last
+ *        chunk of a session came to the fence: see [SpeakerAssigner]'s KDoc for the trade.
  * @param best per window, the cosine similarity of its fingerprint against the CLOSEST known
  *        speaker at the moment it was assigned, or `NaN` when no similarity was measured — a
  *        window under the embed floor, a refused embedding, or the first speaker of a session,

@@ -163,12 +163,18 @@ class SpeakerSpikeDumpTest {
         // is one fingerprint WINDOW now, so those two rules are what decide whether `seg`/`durSec`
         // /`origStart`/`origEnd` describe a whole VAD segment or a slice of one. A dump without
         // them is header-identical to a session-3 dump whose columns meant something else.
+        //
+        // They read the constants, so this assertion moves with them — and it MUST, because the
+        // 2026-09-18 late session moved them (5.0/1.5 -> 2.0/1.0) on the strength of the 02:12
+        // dump's own window-length distribution. A jsonl from before that change and one from
+        // after it describe two different partitions of the same audio, and the header is the
+        // only place a later reader can tell which one it is holding.
         assertEquals(
             "{\"session\":1737000000000,\"model\":\"speaker_titanet_small_16k.onnx\",\"dim\":192," +
                 "\"tSame\":0.5000,\"tNew\":0.3000,\"minEmbed\":1.0000,\"minMatch\":1.0000," +
                 "\"minOpen\":1.5000,\"minUpdate\":2.0000," +
                 "\"recentK\":5,\"confirmN\":2,\"cap\":8," +
-                "\"longSegment\":5.0000,\"minWindow\":1.5000}",
+                "\"longSegment\":2.0000,\"minWindow\":1.0000}",
             SpikeJson.header(
                 session = 1_737_000_000_000L,
                 model = SpeakerSpike.MODEL_ASSET,

@@ -524,7 +524,8 @@ class SpeakerAssignerTest {
         //
         // ONE VAD segment of twelve seconds holding TWO whisper segments: 0.00-5.50 s and
         // 5.60-12.00 s on the trimmed timeline, which here is the original one. Both clear
-        // MIN_WINDOW_SECONDS, so the split is two windows, cut at the second sentence's own
+        // MIN_WINDOW_SECONDS several times over, so the split is two windows, cut at the
+        // second sentence's own
         // start — 89 600 samples — with the first window taking the segment's start and the
         // second its end, so no audio is dropped between them.
         val vad = SpeakerSpans.vadSegments(intArrayOf(0, 12 * RATE, 0, 12 * RATE))
@@ -551,13 +552,15 @@ class SpeakerAssignerTest {
 
     @Test
     fun aShortSegmentOrALoneWhisperSegmentIsStillFingerprintedExactlyOnce() {
-        // The two halves of the guard, so the split cannot spread to chunks it was not measured
-        // on. A 4 s segment with two whisper segments in it is UNDER the long floor; a 12 s one
-        // with a single whisper segment has nowhere defensible to cut.
-        val shortSegment = SpeakerSpans.vadSegments(intArrayOf(0, 4 * RATE, 0, 4 * RATE))
+        // The two halves of the guard, which the 2026-09-18 late session narrowed but did not
+        // remove. A 1.8 s segment cannot hold two windows at MIN_WINDOW_SECONDS, so there is
+        // nothing to cut it into; a 12 s one with a single whisper segment has nowhere
+        // defensible to cut. (This used to be a 4 s segment — at the late session's 2.0 s floor
+        // four seconds with two sentences in it is cut, which is the change.)
+        val shortSegment = SpeakerSpans.vadSegments(intArrayOf(0, 28_800, 0, 28_800))
         assertEquals(
-            listOf(SpeakerWindow(0, 0, 4 * RATE)),
-            SpeakerSpans.windows(intArrayOf(0, 180, 0, 10, 190, 400, 10, 20), shortSegment),
+            listOf(SpeakerWindow(0, 0, 28_800)),
+            SpeakerSpans.windows(intArrayOf(0, 80, 0, 10, 90, 180, 10, 20), shortSegment),
         )
 
         val oneSentence = SpeakerSpans.vadSegments(intArrayOf(0, 12 * RATE, 0, 12 * RATE))
