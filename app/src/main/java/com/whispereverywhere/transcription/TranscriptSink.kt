@@ -51,7 +51,7 @@ import java.io.FileWriter
  */
 class TranscriptSink(
     private val sessionFile: File,
-    private val previewCapChars: Int = 4000,
+    private val previewCapChars: Int = PREVIEW_CAP_CHARS,
 ) {
     private val _preview = MutableStateFlow("")
     val preview: StateFlow<String> = _preview
@@ -248,5 +248,31 @@ class TranscriptSink(
         } else {
             tail.toString()
         }
+    }
+
+    companion object {
+
+        /**
+         * THE PANEL'S WINDOW — how many characters of the session the bubble's transcript panel
+         * can show at once. About 25 minutes of speech at a normal speaking rate.
+         *
+         * It is NOT the transcript, and that distinction is the whole reason the number can be
+         * this large without costing anything permanent. The RECORD is two things, both already
+         * complete: [sessionFile] on disk, written chunk by chunk as the words arrive, and the
+         * `runs` list in memory, which holds the session's whole text because the four
+         * after-the-fact passes above (ids, merges, the latch, the retrospective relabel) all
+         * need to rewrite text the user has already read. Nothing trims either one. This
+         * constant governs only how much of that record is rendered into [preview] — so raising
+         * it costs one larger string per repaint and no new retention whatsoever.
+         *
+         * It was 4,000 from the original bounded-memory sink (commit 39f151f), chosen when the
+         * panel was a plain incremental tail. The runs render changed what 4,000 buys: paragraph
+         * breaks and `Speaker N: ` labels spend the same characters, and with per-sentence
+         * windows the runs are short and numerous — so the owner watched the earlier part of a
+         * few-minutes session vanish from the panel while it was still on disk and still in
+         * memory (2026-09-19: *"the earlier parts of the transcript are disappearing … when I
+         * scroll back up"*). The cap was the only thing throwing that text away.
+         */
+        const val PREVIEW_CAP_CHARS: Int = 20_000
     }
 }

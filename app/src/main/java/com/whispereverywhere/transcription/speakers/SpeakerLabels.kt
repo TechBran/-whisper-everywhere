@@ -91,10 +91,10 @@ object SpeakerLabels {
     }
 
     /**
-     * The same table, applied to the NEWEST [maxChars] characters or so — the bubble panel's
-     * bounded window (`TranscriptSink`'s preview).
+     * The same table, applied to the NEWEST [maxChars] characters — the bubble panel's bounded
+     * window (`TranscriptSink`'s preview).
      *
-     * Two properties make this more than `render(...).takeLast(maxChars)`:
+     * Three properties make this more than `render(...).takeLast(maxChars)`:
      *  - **the cut is at a RUN boundary**, so a `Speaker N: ` prefix is never separated from the
      *     paragraph it introduces and no paragraph ever starts mid-word. The one exception is a
      *     single run longer than the whole window, which is truncated from the FRONT and keeps
@@ -102,7 +102,15 @@ object SpeakerLabels {
      *  - **the numbering is computed over ALL of [runs]**, not over the visible tail, so the
      *     third speaker of a session reads `Speaker 3:` even when the first two have scrolled out
      *     of the window. Numbering touches ids only; no string is built outside the tail, which
-     *     is what keeps an append O(window) rather than O(session).
+     *     is what keeps an append O(window) rather than O(session);
+     *  - **the fit is EXACT**: the suffix returned is the WIDEST one whose RENDERED length fits,
+     *     not the widest one whose upper bound does. That difference used to throw away real
+     *     text (2026-09-19): the bound charges every run for a paragraph break and a label, and
+     *     with per-sentence windows most runs render with neither — so the bound could
+     *     over-estimate a window by 80% and the panel showed a fifth of what it had room for.
+     *
+     * The exact search is a binary search over [build], bracketed so every string it builds is
+     * window-sized rather than session-sized (see [renderTailStart]).
      */
     fun renderTail(runs: List<Run>, mode: Mode, confirmedCount: Int, maxChars: Int): String {
         if (maxChars <= 0 || runs.isEmpty()) return ""
@@ -112,17 +120,7 @@ object SpeakerLabels {
         }
         val numbers = displayNumbers(runs)
         val labels = labelsVisible(mode)
-        // The widest suffix whose UPPER BOUND fits, and never fewer than one run. `cost` is an
-        // over-estimate of a run's contribution (its text, the widest separator, its label), so a
-        // bound within the cap proves the rendered string is too.
-        var from = runs.size - 1
-        var bound = cost(runs[from], numbers[from], labels)
-        while (from > 0) {
-            val next = cost(runs[from - 1], numbers[from - 1], labels)
-            if (bound + next > maxChars) break
-            bound += next
-            from--
-        }
+        val from = renderTailStart(runs, numbers, labels, maxChars)
         var text = build(runs, numbers, labels, from, dropLeadingChars = 0)
         if (text.length > maxChars) {
             // Only reachable for the single oversized run: its text is cut from the front by
@@ -133,6 +131,59 @@ object SpeakerLabels {
         // give back the newest characters with no label at all rather than half of one.
         if (text.length > maxChars) text = runs.last().text.takeLast(maxChars)
         return text
+    }
+
+    /**
+     * THE EXACT FIT: the smallest `from` in `0..runs.lastIndex` whose rendered suffix fits
+     * [maxChars] — and [runs].lastIndex when not even the newest run alone does (never fewer
+     * than one run, so the caller's front-truncation has something to truncate).
+     *
+     * A binary search is sound here because the rendered length is MONOTONE in `from`: prepending
+     * run `i-1` to the suffix starting at `i` either leaves the string untouched (an empty run,
+     * which [build] skips) or adds that run's text plus, at most, one separator — and it never
+     * shortens what follows, because the paragraph state at run `i` is the same either way.
+     *
+     * The search is bracketed so it never builds the whole session:
+     *  - the UPPER end is the old [cost] walk, which over-estimates each run and therefore always
+     *    names a suffix that fits;
+     *  - the LOWER end is the text-only walk, which under-estimates each run (a run contributes at
+     *    least its own characters) and therefore names a suffix that cannot fit.
+     * Every candidate between them renders to at most a window's worth of characters plus one run.
+     */
+    private fun renderTailStart(runs: List<Run>, numbers: IntArray, labels: Boolean, maxChars: Int): Int {
+        val last = runs.size - 1
+        // hi: the widest suffix whose UPPER BOUND fits — guaranteed to fit, so the search always
+        // has an answer (except the oversized single run, where hi is `last` and nothing fits).
+        var hi = last
+        var bound = cost(runs[hi], numbers[hi], labels)
+        while (hi > 0) {
+            val next = cost(runs[hi - 1], numbers[hi - 1], labels)
+            if (bound + next > maxChars) break
+            bound += next
+            hi--
+        }
+        if (hi == 0) return 0
+        // lo: the widest suffix whose TEXT ALONE fits. One run further back cannot fit however
+        // the separators fall, so the answer is in lo..hi and no build reaches below lo.
+        var lo = last
+        var floor = runs[last].text.length
+        while (lo > 0) {
+            val next = runs[lo - 1].text.length
+            if (floor + next > maxChars) break
+            floor += next
+            lo--
+        }
+        var best = last
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            if (build(runs, numbers, labels, mid, dropLeadingChars = 0).length <= maxChars) {
+                best = mid
+                hi = mid - 1
+            } else {
+                lo = mid + 1
+            }
+        }
+        return best
     }
 
     // ------------------------------------------------------------------ the three rules

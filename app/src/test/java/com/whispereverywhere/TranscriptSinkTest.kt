@@ -294,6 +294,31 @@ class TranscriptSinkTest {
         assertEquals(listOf(1, 1), sink.runs().map { it.speakerId })
     }
 
+    @Test fun the_panels_window_is_twenty_thousand_characters_not_four() {
+        // THE 2026-09-19 REPORT: "the earlier parts of the transcript are disappearing … when I
+        // scroll back up". 4,000 was the original bounded-memory sink's number, from before the
+        // panel was rendered from runs; a few minutes of per-sentence windows with labels and
+        // paragraph breaks spent it in a hurry. The record was never in danger — the file and
+        // the runs both hold everything — so the window is the only thing that had to move.
+        assertEquals(20_000, TranscriptSink.PREVIEW_CAP_CHARS)
+
+        val f = tmp()
+        val sink = TranscriptSink(f)
+        // ~9,000 characters of two-speaker session: past the OLD cap by more than double.
+        for (i in 1..200) {
+            val text = "Sentence number $i of a long conversation."
+            sink.append(seq = i.toLong(), spans = listOf(SpeakerSpan(0, text)), text = text)
+            sink.assign(seq = i.toLong(), ids = listOf(if (i % 3 == 0) 2 else 1), remap = emptyMap())
+        }
+        sink.setLabelsVisible(true)
+        val preview = sink.preview.value
+        assertTrue("the fixture must clear the old cap", preview.length > 4_000)
+        assertTrue("and stay inside the new one", preview.length <= 20_000)
+        assertTrue("the session's FIRST words are still in the panel", preview.contains("Sentence number 1 of"))
+        assertTrue("and its last", preview.contains("Sentence number 200 of"))
+        sink.close()
+    }
+
     @Test fun an_empty_relabel_changes_nothing_at_all() {
         val f = tmp()
         val sink = TranscriptSink(f)
