@@ -4511,7 +4511,16 @@ class FloatingBubbleService : Service(),
                     serviceScope.launch(Dispatchers.Main) {
                         WhisperNative.diag(SpeakerDiag.line(assignment))
                         val sink = transcriptSink ?: return@launch
-                        sink.assign(assignment.seq, assignment.ids, assignment.remaps)
+                        // `wholeChunkWindow` is null on the CPU and GPU tiers and carries the
+                        // NPU tier's one-label-per-chunk answer (4.10, the Fold6 defect). It is
+                        // passed through rather than interpreted here: the sink knows what a run
+                        // is and this callback does not.
+                        sink.assign(
+                            assignment.seq,
+                            assignment.ids,
+                            assignment.remaps,
+                            assignment.wholeChunkWindow,
+                        )
                         // THE RELABEL, and the one place in this app that rewrites text the user
                         // has already read: the moment a second speaker is confirmed the panel is
                         // re-rendered from the session's start WITH labels, first paragraph

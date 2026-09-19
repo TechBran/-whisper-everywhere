@@ -441,13 +441,19 @@ class NativeSegmentStatsContractTest {
         // then reach lastSegmentStats as vadIn=0 vadOut=0, which is the one reading these counters
         // cannot disambiguate on their own — the log line is the disambiguator, so it has to be in
         // the same capture as the counters it explains.
+        // The two FAILURE lines live one level down, in the shared segmenter `we_vad_segment`,
+        // since 4.10 gave the NPU tier a VAD of its own: the init and the segmentation call were
+        // factored there so both callers run one body with one set of knobs. Their TEXT is
+        // unchanged — that is the whole contract here — and a WE-DIAG capture still shows all
+        // three lines together, which is what the counters beside them need.
+        val segmenter = cppBody("static whisper_vad_segments *we_vad_segment(")
         live(
-            body,
+            segmenter,
             """LOGDIAGE\("VAD init failed for %s""",
             "the VAD init failure line"
         )
         live(
-            body,
+            segmenter,
             """LOGDIAGE\("VAD segmentation failed""",
             "the VAD segmentation failure line"
         )
@@ -456,7 +462,9 @@ class NativeSegmentStatsContractTest {
                 "carried — only tag and level moved — so every existing grep still matches and " +
                 "the B' wallMs measurement is not silently dropped in the move. No LOGI or LOGE " +
                 "spelling of any of them may survive.",
-            !containsLiveLine(body, "LOGI(\"VAD: ") && !containsLiveLine(body, "LOGE(\"VAD ")
+            !containsLiveLine(body, "LOGI(\"VAD: ") && !containsLiveLine(body, "LOGE(\"VAD ") &&
+                !containsLiveLine(segmenter, "LOGI(\"VAD: ") &&
+                !containsLiveLine(segmenter, "LOGE(\"VAD ")
         )
     }
 

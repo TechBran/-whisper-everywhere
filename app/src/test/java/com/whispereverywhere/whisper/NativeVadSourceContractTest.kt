@@ -61,14 +61,26 @@ class NativeVadSourceContractTest {
         readNormalized("src/main/java/com/whispereverywhere/whisper/WhisperNative.kt")
     }
 
-    /** we_vad_filter's body: the only column-0 `}` in that function is its closing brace. */
+    /**
+     * THE SHARED SEGMENTER's body — where the batch filter's context creation and its onset knobs
+     * actually live since 4.10 gave the NPU tier a VAD of its own.
+     *
+     * It was `we_vad_filter`'s own body until then. The NPU tier needs the SAME segmentation
+     * without the filtering (its decoder publishes no geometry to slice audio by), so the context
+     * creation, `vcp.n_threads = 1`, `vp.threshold` and `vp.speech_pad_ms` were factored into
+     * `we_vad_segment` and both callers go through it. That is the point of the move and it is
+     * what these assertions now guard: one body, one set of knobs, so the two callers cannot be
+     * tuned apart. `we_vad_filter` keeps the stitching and the geometry, which its own pins hold.
+     *
+     * The only column-0 `}` in that function is its closing brace.
+     */
     private fun weVadFilterBody(): String {
-        val anchor = "static bool we_vad_filter("
+        val anchor = "static whisper_vad_segments *we_vad_segment("
         val start = jni.indexOf(anchor)
         assertTrue(
             "anchor \"$anchor\" is missing from whisper_jni.cpp. indexOf() returns -1 when the " +
                 "anchor is absent, so substring(start + anchor.length) silently rebases the scope " +
-                "to the top of the file — ~130 unrelated lines ahead of we_vad_filter — and every " +
+                "to the top of the file — ~130 unrelated lines ahead of the segmenter — and every " +
                 "assertion below then passes on text borrowed from unrelated functions instead of " +
                 "failing.",
             start >= 0
@@ -77,7 +89,7 @@ class NativeVadSourceContractTest {
         assertTrue(
             "no column-0 \"\\n}\\n\" follows \"$anchor\". substringBefore() returns its RECEIVER " +
                 "when the delimiter is absent, so the scope would silently widen to everything " +
-                "from we_vad_filter to end-of-file.",
+                "from the segmenter to end-of-file.",
             body.contains("\n}\n")
         )
         return body.substringBefore("\n}\n")
@@ -215,7 +227,7 @@ class NativeVadSourceContractTest {
         val create = Regex("""(?m)^[ \t]*g_vad_ctx = whisper_vad_init_from_file_with_params""")
             .find(filter)
         assertTrue(
-            "we_vad_filter must assign g_vad_ctx from whisper_vad_init_from_file_with_params on a " +
+            "we_vad_segment must assign g_vad_ctx from whisper_vad_init_from_file_with_params on a " +
                 "LIVE line. Without it there is no create index, so the ordering claim below would " +
                 "be comparing against a position that does not exist.",
             create != null
@@ -254,7 +266,7 @@ class NativeVadSourceContractTest {
         val body = weVadFilterBody()
         val pin = Regex("""(?m)^[ \t]*vcp\.n_threads = 1;""").find(body)
         assertTrue(
-            "we_vad_filter must set vcp.n_threads = 1 before creating the batch VAD context. " +
+            "we_vad_segment must set vcp.n_threads = 1 before creating the batch VAD context. " +
                 "ggml_backend_cpu_set_threadpool is never called for a VAD context, so " +
                 "ggml_graph_compute takes the disposable-threadpool path and spawns + joins " +
                 "n_threads-1 real pthreads PER GRAPH COMPUTE (ggml-cpu.c:3320-3325, joined at " +
@@ -283,7 +295,8 @@ class NativeVadSourceContractTest {
         // knobs, or a later edit could drift them, and the only failure would be a contradiction
         // in a comment. They are the filter's, and they stay.
         assertTrue(
-            "we_vad_filter must keep vp.threshold = 0.40f. The batch filter keeps its own " +
+            "we_vad_segment must keep vp.threshold = 0.40f — for BOTH its callers since 4.10. " +
+                "The batch filter keeps its own " +
                 "0.40 / 150 ms tuning — the probe decides WHEN to cut, the filter decides WHAT " +
                 "reaches the encoder — and EndpointerTuning.ONSET_THRESHOLD is 0.50 precisely " +
                 "because the two are independent knobs on independent jobs (the filter's 0.40 " +
@@ -292,7 +305,7 @@ class NativeVadSourceContractTest {
             Regex("""vp\.threshold\s*=\s*0\.40f""").containsMatchIn(body)
         )
         assertTrue(
-            "we_vad_filter must keep vp.speech_pad_ms = 150. It is the other half of the same " +
+            "we_vad_segment must keep vp.speech_pad_ms = 150. It is the other half of the same " +
                 "binding untouchable, and EndpointerTuning.HANGOVER_MS is chosen partly " +
                 "to leave trailing audio for this padding to expand into — shrink one without " +
                 "the other and the commit boundary eats the word it was protecting.",

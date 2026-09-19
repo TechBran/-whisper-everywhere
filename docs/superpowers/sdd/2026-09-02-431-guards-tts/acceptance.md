@@ -1616,6 +1616,27 @@ AO6. **A long session's panel keeps its earlier text and does not yank your scro
     FAIL: earlier text disappearing; the view snapping to the bottom while you are reading above
     it; the scrollbar fighting you.
     `[ ] PASS  [ ] FAIL`
+AO7. **THE NPU TIER GETS LABELS AT ALL — at chunk granularity (4.10.1).** On the **Z Fold6**,
+    which is NPU-capable and therefore offered `npu-turbo` and no CPU rung at all (the 4.3
+    one-tier rule), run the same two-voice audio as AO2 with **Detect speakers ON**. This is the
+    row that exists because 4.10.0/100 produced **no speaker changes whatsoever** on that device:
+    the pipeline hung off whisper.cpp's segment geometry and the NPU path publishes none.
+    EXPECTED: **paragraph changes with labels, landing on COMMIT boundaries (6-8 s) rather than
+    on sentence boundaries** — that is the whole of the ruling, and a change that arrives a
+    sentence or two late is a PASS here, not a failure. Everything else is AO2: the first
+    paragraph is rewritten when the second speaker is confirmed, the numbers restart at 1 next
+    session, the export switch still governs the clipboard and the file.
+    WHAT TO LOOK FOR: `adb logcat -s WE-DIAG` shows `speaker: … route=vad pick=N` on every chunk
+    (never `route=geom` unless the tier declined mid-session and fell back to whisper.cpp, which
+    is a legitimate mixed session), and a `VAD-standalone: … wallMs=` line beside each one — that
+    number plus `embedMs=` is the per-chunk speaker cost to read against the 3,000 ms finalize
+    fence.
+    THEN THE NON-CHANGE, on the same device: run **one voice** for a minute. EXPECTED: no label
+    and no speaker paragraph anywhere — a chunk is not a speaker.
+    FAIL: no labels at all (the defect this row exists for); a label on the one-voice run; a
+    chunk's text split across two labels on this tier (its decoder gives no timestamps, so it
+    cannot be and a split would mean the wrong route ran); the commit cadence visibly slowing.
+    `[ ] PASS  [ ] FAIL   (two voices: ____ / one voice: ____ / route= seen: ____ / VAD-standalone wallMs: ____ / embedMs: ____)`
 
 ### Known limitations of §AO, stated rather than discovered later
 
@@ -1629,6 +1650,18 @@ AO6. **A long session's panel keeps its earlier text and does not yank your scro
   interruption is the case that stays wrong, and only word-level change detection would catch it.
   That is the next lever, and it is not in this build.
 - **Nothing here has been run on the Z Fold6.** Every number in the spike is from the Tab S10+.
+  AO7 is the first row that has to be, and 4.10.0/100 on that device is where the NPU tier's
+  defect was found.
+- **The NPU tier labels a whole CHUNK, never a sentence inside it.** Its decoder publishes no
+  token or sentence timestamps, so the chunk's text cannot be cut between two voices: the chunk
+  takes the id of the window holding the most speech in it. The audio is still fingerprinted per
+  window — the tracker learns both voices, and the retrospective pass can still correct the
+  chunk — but a turn taken mid-chunk is attributed to whoever spoke longer. It is the owner's
+  ruling of 2026-09-19 ("at the chunk level … at least that would be good enough") and it is a
+  ceiling on that tier until something gives it timestamps.
+- **The NPU tier pays a SECOND VAD pass per chunk**, about 60 ms on the embed thread, because the
+  bounds the CPU tier gets free from `transcribeRaw` do not exist there. It is below delivered
+  text and inside the same finalize fence as the embeddings; AO7 records the number.
 - **Cost, for context if a session feels slower:** 130-300 ms per fingerprint on the Tab, a median
   of four per chunk and at most eight, all on the embedder's own thread; no chunk came near the
   2.5 s finalize fence. If the last chunk of a session ever loses its labels, that fence is the

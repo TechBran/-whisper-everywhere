@@ -109,3 +109,26 @@ Four defects in the first cut, all found by review and fixed before the owner ra
 4. **The re-seed seeded the confirmation counter with the cluster's window count**, which is ≥ `CONFIRM_N` for any cluster, so an unconfirmed re-seeded voice confirmed on its next *single* segment — half the evidence the online path asks for, and the opposite of what the code's own comment claimed. **A confirmed cluster now parks at the bar; an unconfirmed one starts at zero.**
 
 None of this changes the reading above: word-level timing is still not the lever for the three session-6 failures. It stays the lever for a mid-sentence interruption, after the second look has been measured in the owner's hands.
+
+## Session 7 — the Fold6, and the tier the whole feature had never run on (2026-09-19)
+
+**The report.** The owner installed **4.10.0/100** from the internal track on his **Z Fold6** and got **no speaker changes at all** — not a late one, not a wrong one: none.
+
+**The cause, verified in code before anything was changed.** The speaker pipeline hangs off whisper.cpp's segment geometry — `we_vad_filter`'s speech bounds and whisper's own segment timestamps, exported as `WhisperNative.lastVadSegments` / `lastWhisperSegments`. `NpuWhisperBackend.lastGeometry` answers `fallbackBackend?.lastGeometry(fallbackCtx)`, which is **null while the NPU arm is live** — by design, and correctly documented there: that path runs its own encoder and decoder on the HTP and never calls the whisper.cpp VAD filter at all. `LocalWhisperEngine` then skipped the assigner (`if (windows != null && samples != null)`). The Fold6 is NPU-capable, so the 4.3 one-tier rule offers it `npu-turbo` and no CPU rung; the Tab S10+ has no NPU tier, which is exactly why every one of sessions 1-6 worked.
+
+**The owner's ruling (2026-09-19):** give the NPU tier labels **at chunk granularity** — *"at the chunk level … at least that would be good enough."*
+
+**What shipped for it (4.10.1).** A standalone `WhisperNative.vadSegmentsOf(samples, vadModelPath)` — the same Silero segmenter and the same `0.40 / 150 ms` knobs as the batch filter, factored into one native body so the two cannot drift — run on the `speaker-embed` thread, below delivered text. Its `[start, end]` pairs become fingerprint windows (short ones coalesced into their predecessor), every window is fingerprinted and drives the same tracker through the same gates, and the chunk's committed text takes the id of the **window holding the most speech** (ties to the earliest). The dominant window's INDEX rides out with the id, so the run stays addressable by `WindowKey(seq, windowIndex)` and the retrospective pass corrects NPU sessions like any other. Nothing about the CPU or GPU tiers changes: the route is chosen on "did the backend publish geometry", not on "did this chunk produce windows".
+
+**To be filled from the device session (acceptance §AO7).** Everything below is a blank until the Fold6 runs it — no number here is predicted from the Tab.
+
+| what | where to read it | value |
+|---|---|---|
+| chunks that took the VAD route | `speaker: … route=vad` count vs `route=geom` | |
+| standalone VAD cost per chunk | `VAD-standalone: … wallMs=` | |
+| embedding cost per chunk | `speaker: … embedMs=` | |
+| windows per chunk, and segments behind them | `speaker: … segs= windows=` | |
+| which window won the chunk | `speaker: … pick=` | |
+| two voices: do paragraph changes appear, and how late | the panel, against the audio | |
+| one voice: no labels at all | the panel | |
+| the two costs together against the 3,000 ms finalize fence | `wallMs=` + `embedMs=` on the LAST chunk | |

@@ -79,3 +79,21 @@ On the Tab S10+ and the Z Fold6: embedding cost per segment with the real chunk 
 1. Default of "Detect speakers": on (proposed) or off.
 2. The label text: `Speaker 1:` (proposed) or `Speaker 1 —`.
 3. Whether the panel should also show a small marker at a speaker change while only one speaker has been confirmed (proposed: no — nothing until the second voice).
+
+## 8. The NPU tier — chunk granularity (added 2026-09-19, after the Fold6 report)
+
+**The defect.** Everything in §3 hangs off whisper.cpp's segment geometry, and the NPU tier publishes none: it runs its own encoder and decoder on the HTP and never calls the whisper.cpp VAD filter, so `NpuWhisperBackend.lastGeometry` is null while that arm is live and the engine skipped the assigner. An NPU-capable device is offered that tier and no CPU rung (the 4.3 one-tier rule), so on the owner's Z Fold6 the whole feature was inert. See `docs/measurements/2026-09-18-speaker-spike.md`, session 7.
+
+**The ruling (owner, 2026-09-19):** labels on that tier **at chunk granularity** — *"at the chunk level … at least that would be good enough."*
+
+**What "chunk granularity" means, exactly.** The QNN decoder exposes no token or sentence timestamps, so a chunk's TEXT cannot be split between two speakers there. The AUDIO still can be, and is: a standalone Silero pass recovers the chunk's speech bounds, each window is fingerprinted, and the tracker decides each one exactly as it does on the CPU tier. What differs is only the last step — the chunk's committed text takes **one** id, the id of the window holding the most speech in it (ties to the earliest). Speaker changes therefore land on **commit boundaries (6-8 s)** instead of sentence boundaries.
+
+**Everything else is shared, and deliberately so.** One segmenter with one set of onset knobs in the JNI (`we_vad_segment`, both callers through it); the same `SpeakerTracker` with the same graded gates, band and recent sets; the same `remember`-everything rule, so the retrospective pass corrects NPU sessions too; the same runs, the same panel relabel, the same exports. The chunk's one run carries the DOMINANT WINDOW'S INDEX rather than no index at all, which is what keeps `SpeakerReclusterer`'s per-window relabel able to reach it — a run the pass cannot name keeps an id from a numbering the next re-seed supersedes, which is somebody else's number.
+
+**The route is chosen on the BACKEND's answer, not on the chunk's.** Geometry published → today's per-window call, unchanged. No geometry at all → the whole-chunk call. A chunk that HAS geometry which produced no windows or no spans (an empty VAD, a stale snapshot, spans that could not reproduce the text) keeps today's answer — no labels for that chunk — rather than acquiring a second VAD pass and a whole-chunk label.
+
+**What it costs, and where.** One extra Silero pass per committed chunk, ~60 ms for 6-8 s of audio (the same work the existing `VAD:` lines report), on the `speaker-embed` thread, below text that has already been delivered — never on the whisper or audio thread. It shares the finalize fence with the embeddings.
+
+**Files:** `whisper_jni.cpp` (`we_vad_segment` + the `vadSegmentsOf` export), `WhisperNative.kt`, `SpeakerSpans.wholeChunkWindows`, `SpeakerAssigner.assignWholeChunk` + `SpeakerAssignment.wholeChunkWindow`, `SpeakerRuns.applyWholeChunk`, `TranscriptSink.assign`, `LocalWhisperEngine` (the route), `FloatingBubbleService` (pass-through). Acceptance: §AO7.
+
+**What it does not fix.** A turn taken in the middle of a chunk is attributed to whoever spoke longer in it. That is the ceiling of this tier until something gives its decoder timestamps, and it is the honest reading of the ruling rather than a defect to be filed.

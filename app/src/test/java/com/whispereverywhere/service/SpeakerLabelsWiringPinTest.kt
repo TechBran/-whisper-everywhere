@@ -160,7 +160,12 @@ class SpeakerLabelsWiringPinTest {
         assertEquals("one declaration plus two callers", 3, count("raiseSpeakerLabels("))
         indexOfOrFail("                        if (assignment.confirmed) raiseSpeakerLabels(sink)")
         assertEquals("ONE assign site", 1, count("sink.assign("))
-        val assign = indexOfOrFail("sink.assign(assignment.seq, assignment.ids, assignment.remaps)")
+        val assign = indexOfOrFail("sink.assign(")
+        // …and every part of the assignment goes through it, the NPU tier's one-label-per-chunk
+        // answer included (4.10, the Fold6 defect). A caller that dropped `wholeChunkWindow`
+        // would leave that tier's runs unindexed and therefore beyond the retrospective pass.
+        indexOfOrFail("                            assignment.remaps,")
+        indexOfOrFail("                            assignment.wholeChunkWindow,")
         val flip = indexOfOrFail("if (assignment.confirmed) raiseSpeakerLabels(sink)")
         assertTrue("the ids are stamped before the panel is told to show them", assign < flip)
     }

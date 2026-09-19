@@ -191,11 +191,11 @@ class SpeakerWiringPinTest {
     @Test
     fun theAssignerIsHandedTheORIGINALSamplesAndOnlyForAnOutcomeThatCarriesGeometry() {
         // `windows` is null for every backend with no native VAD filter (cloud, the NPU tier
-        // while it is live) and for a chunk the VAD found no speech in; both must produce today's
-        // session. It is the list the SPANS were cut against, built once in `textOutcome` — a
-        // second one computed here could disagree with it and put one window's id on another's
-        // text (spike session 4).
-        at(engine, "(outcome as? SegmentOutcome.Text)?.windows", "LocalWhisperEngine.kt")
+        // while it is live) and for a chunk the VAD found no speech in. It is the list the SPANS
+        // were cut against, built once in `textOutcome` — a second one computed here could
+        // disagree with it and put one window's id on another's text (spike session 4).
+        at(engine, "val committed = outcome as? SegmentOutcome.Text", "LocalWhisperEngine.kt")
+        at(engine, "val windows = committed?.windows", "LocalWhisperEngine.kt")
         assertEquals(
             "the window list is built at ONE place and shared",
             1,
@@ -204,6 +204,75 @@ class SpeakerWiringPinTest {
         // The stale-session guard is the same identity check the resolution path uses: a dead
         // session's late segment must not feed the NEW session's tracker.
         at(engine, "if (assigner != null && listener === myListener) {", "LocalWhisperEngine.kt")
+    }
+
+    // ------------------------------------- the NPU route (4.10, the Fold6 defect)
+
+    @Test
+    fun theCpuTiersRouteIsFIRSTAndIsTHEONEThatRunsWheneverThereIsGeometry() {
+        // THE REGRESSION THIS EXISTS FOR. The NPU tier's route labels a WHOLE CHUNK with one
+        // speaker, because its decoder publishes no text offsets. If it ever ran for a chunk that
+        // HAS geometry, a sentence-labelled chunk would silently collapse to a single speaker —
+        // and every id involved would still be a real id, so nothing downstream would report it.
+        //
+        // Two structural facts keep that impossible, and both are asserted here rather than
+        // inferred: the per-window call is the `if`, and the whole-chunk call is inside the
+        // `else if` behind `!hadGeometry`.
+        val perWindow = at(engine, "assigner.assign(seq, samples, windows)", "LocalWhisperEngine.kt")
+        val wholeChunk = at(
+            engine, "assigner.assignWholeChunk(seq, samples, it)", "LocalWhisperEngine.kt",
+        )
+        assertTrue("the geometry route is decided first", perWindow < wholeChunk)
+        assertEquals("ONE per-window call site", 1, count(engine, "assigner.assign(seq"))
+        assertEquals("ONE whole-chunk call site", 1, count(engine, "assigner.assignWholeChunk("))
+
+        val fork = engine.substring(perWindow, wholeChunk)
+        assertTrue(
+            "the whole-chunk route is reachable ONLY through an else-if: a second independent " +
+                "`if` would let a chunk take both routes and publish two contradictory answers " +
+                "for the same seq",
+            fork.contains("} else if ("),
+        )
+        assertTrue(
+            "…and that else-if is gated on `!hadGeometry`. Gating it on `windows == null` " +
+                "instead would drag in every CPU chunk whose geometry produced no windows or no " +
+                "spans — a stale snapshot, an empty VAD, a span set that could not reproduce the " +
+                "text — and give each of them a second VAD pass and a whole-chunk label where " +
+                "today they correctly get nothing.",
+            fork.contains("!hadGeometry"),
+        )
+        assertEquals(
+            "`hadGeometry` is written at exactly ONE place, off the backend's own answer",
+            1, count(engine, "backend.lastGeometry(ctx).also { hadGeometry = it != null }"),
+        )
+    }
+
+    @Test
+    fun theWholeChunkRouteUsesTheSEAMSOwnVadPathAndSkipsWhenThereIsNone() {
+        // The same VAD model path the backend seam hands `transcribeRaw`, and a null one means
+        // the device has no VAD model at all — the route is SKIPPED rather than handed an
+        // invented path, which native would answer with an init failure and a log line per chunk.
+        at(engine, "vadModelPath()?.let { assigner.assignWholeChunk(seq, samples, it) }",
+            "LocalWhisperEngine.kt")
+        assertEquals(
+            "the seam is `VadModel.path()` and it is named in exactly ONE place — the default of " +
+                "the injected provider. A second, direct read anywhere else would be a second " +
+                "answer to the same question, and only one of them would be the one a test can " +
+                "drive.",
+            1, count(engine, "VadModel.path()"),
+        )
+    }
+
+    @Test
+    fun theWholeChunkAnswerReachesTheSinkWithoutBeingInterpretedOnTheWay() {
+        // The callback's job is to hop to Main and hand over; deciding what a whole-chunk pick
+        // MEANS belongs to SpeakerRuns, which is the only object that knows what a run is.
+        at(startRecording, "assignment.wholeChunkWindow,", "startRecording")
+        assertEquals(
+            "the service reads the field once and never branches on it",
+            1, count(service, "assignment.wholeChunkWindow"),
+        )
+        assertEquals(0, count(service, "SpeakerRuns"))
     }
 
     @Test
