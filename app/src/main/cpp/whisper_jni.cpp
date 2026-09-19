@@ -318,8 +318,10 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
 // WHEN to cut, the FILTER decides WHAT audio inside the cut reaches the encoder. Independent
 // jobs, independent knobs - the filter keeps its own 0.40 / 150 ms onset tuning untouched.
 //
-// PROBE SAFETY: these four functions run OUTSIDE NativeComputeGate. Every other whisper call in
-// this process is wrapped by it; the probe alone is not. The argument:
+// PROBE SAFETY: these four functions run OUTSIDE NativeComputeGate, and since 4.10 so does a
+// fifth un-gated whisper entry point, vadSegmentsOf - see point 5 and the AMENDMENT below, which
+// are the audit this block demands of anything that follows it through. Every whisper_full, load
+// and release in this process is still wrapped by the gate. The argument:
 //   1. The gate exists for exactly two named reasons (NativeComputeGate.kt:15-21): concurrent
 //      submits on the shared Adreno OpenCL command queue racing GpuPolicy's crash sentinel, and
 //      two full contexts doubling the KV/compute buffers inside a foreground service.
@@ -335,14 +337,36 @@ static bool we_vad_filter(const std::string &vadPath, std::vector<float> &pcm) {
 //      (NativeComputeGate.kt:34), so each 32 ms frame would queue behind whatever holds it: a
 //      4-15 s whisper_full, or one of BatchTranscriber's ~54 s per-chunk holds. That is precisely
 //      the stall 3.7 exists to remove, recreated inside the mechanism meant to remove it.
-//   5. The bypass is not free, and this is its bill. Every process-wide singleton these four
-//      functions touch loses the gate's implicit serialisation and has to carry its own. Today
-//      that is exactly one: we_install_native_logging's once-guard, which vadProbeInit is the
-//      first caller to reach un-gated - it is a std::atomic<bool> exchange for that reason and
-//      must stay one. Anything added to this surface that writes shared process state owes the
-//      same audit; the argument above is only as good as this list is complete.
-// Nothing else may follow the probe through this hole: NativeComputeGate still wraps every
-// whisper_full, load and release.
+//   5. The bypass is not free, and this is its bill. Every process-wide singleton an un-gated
+//      function touches loses the gate's implicit serialisation and has to carry its own. For
+//      these four that is exactly one: we_install_native_logging's once-guard, which vadProbeInit
+//      is the first caller to reach un-gated - it is a std::atomic<bool> exchange for that reason
+//      and must stay one. Anything added to this surface that writes shared process state owes
+//      the same audit; the argument above is only as good as this list is complete.
+//
+// AMENDMENT (4.10, the NPU tier's speaker labels): vadSegmentsOf is the fifth un-gated whisper_vad
+// entry point, and it is NOT a probe function - it is listed here because this is the place the
+// next person auditing the gate will look, and the list above claiming to be complete is exactly
+// how a sixth one gets added without an argument. What it does differently, and why it is still
+// safe:
+//   a. It SHARES the batch filter's cached context and path (g_vad_ctx / g_vad_path) rather than
+//      owning one like the probe does. That is state which, before 4.10, was only ever touched
+//      inside a NativeComputeGate hold, so the gate's serialisation is gone and something has to
+//      replace it. g_vad_mutex does, and that is the whole substitution: vadSegmentsOf takes it
+//      for its entire body, exactly as we_vad_filter does, so the LSTM reset and the probs resize
+//      at the top of whisper_vad_detect_speech can never run under a concurrent caller. Reason 2
+//      above (no OpenCL) and reason 3 (own CPU backend, own buffers) carry over unchanged, so the
+//      gate was buying serialisation here and nothing else.
+//   b. It reaches we_install_native_logging's once-guard un-gated too, which is the same
+//      std::atomic<bool> exchange point 5 names and needs no second argument.
+//   c. LOCK ORDER, which is now load-bearing and must never invert: g_vad_mutex -> g_geom_mutex.
+//      we_vad_filter takes g_vad_mutex for its whole body and nests g_geom_mutex inside it for
+//      the stitch loop; vadSegmentsOf takes g_vad_mutex and never touches g_geom_mutex at all
+//      (it writes no g_last_* global - see its own header). Nothing in this file takes them in
+//      the other order, and SegmentGeometryPinTest fails if vadSegmentsOf acquires the geometry
+//      mutex. g_probe_mutex remains disjoint from both, as the paragraph below says.
+// Nothing else may follow the probe through this hole without being written down here:
+// NativeComputeGate still wraps every whisper_full, load and release.
 //
 // Thread-safety here is g_probe_mutex, which guards ONLY these four functions and the probe
 // context. It is never taken while g_vad_mutex is held and never the reverse, so the two VAD

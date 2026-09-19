@@ -161,9 +161,16 @@ class SpeakerLabelsWiringPinTest {
         indexOfOrFail("                        if (assignment.confirmed) raiseSpeakerLabels(sink)")
         assertEquals("ONE assign site", 1, count("sink.assign("))
         val assign = indexOfOrFail("sink.assign(")
-        // …and every part of the assignment goes through it, the NPU tier's one-label-per-chunk
-        // answer included (4.10, the Fold6 defect). A caller that dropped `wholeChunkWindow`
-        // would leave that tier's runs unindexed and therefore beyond the retrospective pass.
+        // …and EVERY argument of that call is pinned, one line each — the NPU tier's
+        // one-label-per-chunk answer included (4.10, the Fold6 defect). A caller that dropped
+        // `wholeChunkWindow` would leave that tier's runs unindexed and therefore beyond the
+        // retrospective pass; one that passed the chunk's own `seq` variable, or a filtered id
+        // list, in place of the assignment's own would compile and ship silently. The service
+        // has no behavioural test — the two behavioural speaker tests build their own
+        // assignments and never touch this class — so this is the only guard there is, and it is
+        // worth nothing if it anchors on the call name alone (round 1 of review: it did).
+        indexOfOrFail("                            assignment.seq,")
+        indexOfOrFail("                            assignment.ids,")
         indexOfOrFail("                            assignment.remaps,")
         indexOfOrFail("                            assignment.wholeChunkWindow,")
         val flip = indexOfOrFail("if (assignment.confirmed) raiseSpeakerLabels(sink)")

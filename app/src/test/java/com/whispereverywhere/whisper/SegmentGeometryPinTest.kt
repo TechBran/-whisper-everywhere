@@ -290,6 +290,36 @@ class SegmentGeometryPinTest {
     }
 
     @Test
+    fun theProbeSafetyBlockNAMESTheFifthUnGatedCallerItNowHas() {
+        // The PROBE SAFETY block is the audit anything un-gated owes, and its point 5 says in
+        // terms that "the argument above is only as good as this list is complete". Round 1 of
+        // review found the list stale: `vadSegmentsOf` is a fifth un-gated whisper_vad entry
+        // point and, unlike the four probe functions, it SHARES the batch filter's cached
+        // context — process state that before 4.10 was only ever touched inside a
+        // NativeComputeGate hold. The next person auditing the gate reads that block, so the
+        // block has to say so.
+        val start = jni.indexOf("// PROBE SAFETY:")
+        assertTrue("the PROBE SAFETY block is gone from whisper_jni.cpp", start >= 0)
+        val block = jni.substring(start, jni.indexOf("static std::mutex", start))
+        listOf(
+            "vadSegmentsOf" to
+                "the name of the fifth un-gated caller",
+            "g_vad_mutex" to
+                "what replaces the gate's serialisation for it — the one thing the shared " +
+                    "g_vad_ctx needs and the gate used to supply",
+            "g_vad_mutex -> g_geom_mutex" to
+                "the lock order it must never invert",
+        ).forEach { (needle, what) ->
+            assertTrue(
+                "the PROBE SAFETY block must record $what. Without it the block reads as " +
+                    "\"these four functions\" plus \"nothing else may follow the probe through " +
+                    "this hole\", and a reader concludes no such caller exists.",
+                block.contains(needle),
+            )
+        }
+    }
+
+    @Test
     fun theClearSitsAboveEveryReturnInTranscribeRaw_soNoChunkInheritsThePreviousChunksBounds() {
         val body = transcribeRawBody()
         val firstReturn = live(body, """return\b""", "transcribeRaw's first return statement")
