@@ -1475,3 +1475,147 @@ track yes, production no** — and unlike §AL, that was not a state a document 
 the accuracy pass on small-q8 and medium-q8, and then your word on the switch. **Since 4.9.0 it
 names all three and the gate reports `Promotable`** — on your report of 2026-09-17
 (*"all three actually work very well"*) and your recorded ruling on turbo's margin (AN0 above).
+
+---
+
+## AO — speaker labels (4.10.0 / 100; the first build of this capability anybody has been handed as a release)
+
+**What 4.10.0 adds.** When more than one person is heard, committed text is split into a new
+paragraph at every change of speaker and each paragraph starts `Speaker N:` in the transcript
+window. Speaker numbers are per session and restart at 1; a speaker who comes back keeps their
+number; at most eight. Telling the voices apart is a **bundled 40.3 MB** model (NVIDIA NeMo
+TitaNet-small) that fingerprints roughly one window per sentence on a thread of its own — never
+the whisper thread, so nothing about commit cadence should move.
+
+**The rule that makes the whole thing safe, and the first row below is the one that proves it:**
+with ONE voice the output is 4.9's byte for byte. No label, no extra paragraph break, nothing —
+the panel shows nothing at all until a **second** voice is CONFIRMED (a second qualifying segment,
+not a single word). Cloud sessions and the live-words strip are untouched in every case.
+
+**What the measurements actually support, and this section must not be read as claiming more**
+(`docs/measurements/2026-09-18-speaker-spike.md`, sessions 3-6, all on the Tab S10+):
+
+- separation is good on clear multi-speaker audio: on three clips with one, two and three real
+  voices the tracker recovered 1 / 2 / 3, no spurious speaker opened, and a retrospective
+  clustering agreed with the online ids on 86 % of pairs in the three-voice clip;
+- **an interruption shorter than about two seconds is attributed to the current speaker.** Your
+  own ruling on that limit: *"if we can detect that, great; if not, we'll live with it."*
+- **a label can correct itself a few seconds later.** Every few chunks, and once at stop, the
+  session's fingerprints are re-clustered and the panel is relabelled through the same path the
+  live tracker uses. That is deliberate — it is the only thing that undoes the failure you met on
+  2026-09-19 (*"every once in a while no speaker changes being detected at all, one big run-on
+  paragraph"*), where the online matcher locked onto one id while the two voices were plainly
+  separable in the same fingerprints (the 03:27 dump cut 40/14 retrospectively). **Nobody has run
+  the retrospective pass on a device.** Every session below is its first device evidence, and a
+  label that changes a few seconds after it appeared is expected behaviour, not a row failing.
+
+### AO0 — THE PROMOTION GATE. Read this before promoting, not after
+
+**This is not a device row.** The bundled model is **CC-BY-4.0**, and that licence's one term is
+user-visible attribution. Two different things have to be true, and only one of them is:
+
+- **PAID:** `app/src/main/assets/oss_licenses.html` carries a **Speaker labels** section naming
+  NVIDIA, the NVIDIA NeMo toolkit, the licence by its full name with a link to its text, both
+  filenames with the shipped `sha256`, NVIDIA's model card, and the statement of what was changed
+  (the filename, and nothing else). The suite fails the build if any of that leaves.
+- **NOT SIGNED OFF:** the model's row in `docs/LANGUAGE-CLEARANCE.md` reads **PENDING OWNER
+  SIGN-OFF**. Nothing in this repository records a decision by you on it. What it asks you to
+  accept is written there and is the shape you already accepted for `ru` and `zh`: the grant is
+  read off NVIDIA's own published model card and the ONNX graph's own metadata — nobody was
+  written to, and CC-BY-4.0 needs nobody to be — and **the corpus NVIDIA trained it on is
+  undisclosed** on that card.
+
+Paying a licence's term is not the same act as accepting that basis, and the seven language packs
+went in exactly this order: notice first, decision after.
+
+`[ ] signed off — promotion to production may proceed`
+`[ ] not signed off — INTERNAL TRACK ONLY (the model ships in every build either way; nothing the app runs consults this)`
+
+**And the spike is disarmed, which is a thing to know rather than a thing to check.** The builds
+that chose this model wrote per-window fingerprints and, behind an `adb`-created flag file, the
+speech audio they came from. `SpeakerSpike.SPEAKER_SPIKE` is `false` in 4.10.0, which compiles
+every writer away, and the purge is now unconditional — so the first launch of 100 on a device
+that ran a spike build deletes whatever that build left behind. If a dump is wanted again for a
+future model comparison, it is one constant and a rebuild; `SpeakerSpike.kt` says so in the file.
+
+### The six rows
+
+Do them with a local tier (small, medium or turbo — not a cloud provider, which is untouched) and
+with **Detect speakers ON**, which is the default. AO1 to AO4 want the transcript window open.
+
+AO1. **One voice — the non-change.** Dictate alone, or play a single-narrator video, for a minute
+    or two. EXPECTED: **no `Speaker` label anywhere, and no paragraph breaks you did not dictate**
+    — the panel looks exactly like 4.9. This is the row that says the feature is safe to leave on
+    for the majority of users who never record two people, so it is worth doing first and worth
+    doing twice. A long single-narrator video is the sharpest version of it: the 20:31 session of
+    2026-09-18 was one, and the tracker was right about it.
+    FAIL: a `Speaker 1:` appears at all, or the text is broken into paragraphs.
+    `[ ] PASS  [ ] FAIL`
+AO2. **Two voices — the labels arrive, and the first paragraph is rewritten.** A two-person
+    interview, or a conversation in the room. EXPECTED: the first speaker's text arrives with **no
+    label**; the moment the second voice is CONFIRMED the panel is **re-rendered from the
+    session's start**, so the earlier paragraph now reads `Speaker 1:` and the new one
+    `Speaker 2:`. From then on a new paragraph starts at each change. WHAT TO LOOK FOR: that the
+    relabel happens **once**; that it does not lose or duplicate any text you had already read;
+    and that when speaker 1 comes back they are `Speaker 1:` again rather than a new number. Note
+    roughly how many seconds of the second voice it took.
+    FAIL: no labels on clearly different voices; the first paragraph left unlabelled after the
+    second speaker is labelled; a returning speaker given a new number; the TEXT changing and not
+    only its labels.
+    `[ ] PASS  [ ] FAIL   second voice confirmed after ____ s`
+AO3. **A text field gets paragraphs and never labels.** With a keyboard up and a real input field
+    focused, dictate a two-person exchange and let it type. EXPECTED: the injected text carries
+    **paragraph breaks at the speaker changes and no `Speaker N:` anywhere** — your ruling that a
+    text field is not a transcript. WHAT TO LOOK FOR: the breaks are there (it is not one blob)
+    and the labels are not.
+    FAIL: labels in the field, or one run-on paragraph where the panel showed several.
+    `[ ] PASS  [ ] FAIL`
+AO4. **The clipboard and the saved transcript follow the export switch, and only that switch.**
+    Run a two-voice session with **"Speaker labels in copied and saved text" OFF** (the default):
+    copy the result, and open the saved transcript — EXPECTED: **paragraph breaks, no labels**, in
+    both. Then turn the switch ON in Settings and open **that same saved transcript again** —
+    EXPECTED: it now shows the labels, because the switch is applied when a transcript is exported
+    rather than when it was saved. Then copy a new session — EXPECTED: labels in the clipboard too.
+    FAIL: labels in either destination with the switch off; a transcript saved before the switch
+    that cannot gain them; the paragraph breaks disappearing along with the labels.
+    `[ ] PASS  [ ] FAIL   (off: ____ / on: ____ / an older transcript re-exports with labels: ____)`
+AO5. **Detect speakers OFF is 4.9, everywhere.** Turn the switch off and run the same two-voice
+    audio. EXPECTED: **no labels and no speaker paragraph breaks on any surface** — panel, field,
+    clipboard, saved transcript — and the model is not loaded at all, so if anything about
+    start-up or commit timing felt different with it on, this is the comparison that says so.
+    WHAT TO LOOK FOR: that turning it off takes effect **from the next recording** and needs no
+    restart.
+    FAIL: a label anywhere; the setting only taking hold after an app restart.
+    `[ ] PASS  [ ] FAIL`
+AO6. **A long session's panel keeps its earlier text and does not yank your scroll.** Run ten
+    minutes or more of two-voice audio and, partway through, **scroll the transcript window back
+    up and read** while it keeps transcribing. EXPECTED: the earlier text is **still there** (the
+    panel holds a 20,000-character window and trims on an exact fit, so what is above must not
+    vanish out from under you), and the view **stays where you put it** — new commits and the
+    periodic relabels must not scroll you to the bottom. Let go at the bottom and it follows the
+    newest line again. WHAT TO LOOK FOR ESPECIALLY: this is the session in which a **relabel**
+    arrives carrying no new words at all — if the panel jumps at a moment when nothing was added,
+    that is the failure. Also grab the scrollbar and slide it; it should win over everything.
+    FAIL: earlier text disappearing; the view snapping to the bottom while you are reading above
+    it; the scrollbar fighting you.
+    `[ ] PASS  [ ] FAIL`
+
+### Known limitations of §AO, stated rather than discovered later
+
+- **The retrospective pass has never run on a device.** It was designed from the dumps of
+  2026-09-19 and reviewed once before any device session; four defects were found and fixed in
+  that review, three of them the same sentence — a retrospective pass renumbers the id space, so a
+  label it does not rewrite is not stale, it is somebody else's. AO2 and AO6 are its first
+  evidence.
+- **Boundaries land on sentence edges, not inside them.** Fingerprint windows follow whisper's
+  sentence boundaries, which is usually where a new speaker starts. A genuine mid-sentence
+  interruption is the case that stays wrong, and only word-level change detection would catch it.
+  That is the next lever, and it is not in this build.
+- **Nothing here has been run on the Z Fold6.** Every number in the spike is from the Tab S10+.
+- **Cost, for context if a session feels slower:** 130-300 ms per fingerprint on the Tab, a median
+  of four per chunk and at most eight, all on the embedder's own thread; no chunk came near the
+  2.5 s finalize fence. If the last chunk of a session ever loses its labels, that fence is the
+  suspect — say so, with the session length and how busy the audio was.
+- **It is an English speaker-recognition model.** Nobody has tried it on another language's audio.
+  It may well work — it fingerprints voices, not words — and it may not. There is no row above for
+  it because there is no evidence either way to write one from.
