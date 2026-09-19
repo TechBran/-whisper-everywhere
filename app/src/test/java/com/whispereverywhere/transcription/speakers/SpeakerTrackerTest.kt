@@ -8,7 +8,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * [SpeakerTracker] — every rule session 2 of `docs/measurements/2026-09-18-speaker-spike.md`
+ * [SpeakerTracker] — every rule sessions 2 and 4 of `docs/measurements/2026-09-18-speaker-spike.md`
  * settled, on vectors whose similarities are arithmetic rather than measured (4.10 Task 2).
  *
  * ### Why synthetic vectors, and why THREE fixtures rather than one
@@ -50,9 +50,10 @@ import kotlin.math.sin
  * The three dumped sessions' real fingerprints are not replayed: they are CAM++ vectors, they live
  * outside the repo (`filesDir/speaker-spike`, pulled to the PC), and 512-float vectors cannot be
  * fed to a 192-float model's tracker anyway. What the repo can hold instead is the SETTLEMENT —
- * [theConstantsAreTheONESTheMeasurementDocSettled] pins all six numbers with the doc named as their
- * source, so a future round that nudges one is making a deliberate edit against a measurement
- * rather than drifting.
+ * [theConstantsAreTheONESTheMeasurementDocSettled] pins all eight numbers with the doc named as
+ * their source, so a future round that nudges one is making a deliberate edit against a
+ * measurement rather than drifting. Session 4 is the round that split the one duration gate into
+ * three, and it is named there too.
  */
 class SpeakerTrackerTest {
 
@@ -98,11 +99,18 @@ class SpeakerTrackerTest {
     /** The cone's axis — 0.259 from each of its five vectors, 0.801 from their centroid. */
     private fun coneAxis(): FloatArray = axis(0, CONE_DIM)
 
-    /** A segment long enough to open a speaker, update one and earn credit. */
+    /** A segment long enough to open a speaker, update one and earn credit — the top tier. */
     private val longSeg = 2.0f
 
-    /** A segment too short to do any of those three things — the doc's accepted limit. */
+    /**
+     * The MATCH-ONLY tier (session 4): long enough to be recognised, too short to open a speaker,
+     * confirm one or teach one. `shortSeg` keeps its name because that is what every test below
+     * asks of it — "and it still cannot do the three things".
+     */
     private val shortSeg = 1.4f
+
+    /** Under [SpeakerTracker.MIN_MATCH_SECONDS]: it inherits and decides nothing at all. */
+    private val tinySeg = 0.8f
 
     /** One of nine mutually orthogonal vectors, for the cap. */
     private fun basis(index: Int, dim: Int = 9): FloatArray =
@@ -265,7 +273,100 @@ class SpeakerTrackerTest {
         assertEquals("0.2924 is below T_NEW and opens a speaker", 2, outside.assign(unit(73.0), longSeg))
     }
 
-    // ------------------------------------------------------------------ under 2.0 s
+    // -------------------------------------------- the THREE graded duration gates (session 4)
+
+    @Test fun aMATCHONLYSegmentTakesTheSpeakerItRECOGNISESWithoutCONFIRMINGHim() {
+        // THE 20:39 FIX, in one test. Session 2's single 2.0 s gate made this segment inherit
+        // whoever spoke last; eleven of fifteen segments in that dump were here, on "clearly
+        // distinct voices", and the session produced no labels at all.
+        //
+        // Speaker 1 holds 0°, speaker 2 holds 90°, and speaker 1 spoke last — so "inherit" and
+        // "recognise" give DIFFERENT answers and the assertion is about which rule ran. The
+        // 1.2 s probe at 53° is 0.799 against speaker 2 and 0.602 against speaker 1.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(2, tracker.assign(unit(90.0), longSeg))
+        assertEquals("speaker 1 holds the floor going in", 1, tracker.assign(unit(0.0), longSeg))
+        assertEquals("one confirmed speaker so far", 1, tracker.confirmedCount)
+
+        assertEquals("1.2 s is enough to be RECOGNISED", 2, tracker.assign(unit(53.0), 1.2f))
+        assertEquals(0.799f, tracker.lastBestSimilarity, 0.002f)
+        assertEquals("…and not enough to CONFIRM: speaker 2 still has one qualifying segment", 1, tracker.confirmedCount)
+        assertFalse("so the panel still shows nothing", tracker.secondSpeakerConfirmed)
+        assertEquals("and it opened nobody", 2, tracker.speakerCount)
+
+        // 1.6 s of the same voice clears MIN_OPEN_SECONDS, and THAT one counts.
+        assertEquals(2, tracker.assign(unit(90.0), 1.6f))
+        assertEquals("the second qualifying segment confirms speaker 2", 2, tracker.confirmedCount)
+        assertTrue(tracker.secondSpeakerConfirmed)
+    }
+
+    @Test fun aMATCHONLYSegmentThatRecognisesNobodyInheritsRatherThanOpening() {
+        // The other half of the tier: below T_SAME there is no band and no new speaker, only the
+        // speaker who already had the floor. 1.2 s at 90° is 0.0 against the only known voice —
+        // far enough to open one at 1.6 s, and not allowed to here.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(1, tracker.assign(unit(90.0), 1.2f))
+        assertEquals("a segment this short may never claim a person", 1, tracker.speakerCount)
+    }
+
+    @Test fun underTheMATCHFloorItInheritsEvenFromAPerfectMatch() {
+        // MIN_MATCH_SECONDS is itself a gate, and this is the case that fails without it: the
+        // 0.8 s segment IS speaker 1's voice exactly, and it is still labelled 2 — because
+        // speaker 2 has the floor and 0.8 s of audio is a vector with no speaker in it.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(2, tracker.assign(unit(90.0), longSeg))
+        assertEquals("it inherits the floor, it does not recognise", 2, tracker.assign(unit(0.0), tinySeg))
+    }
+
+    @Test fun aSegmentAtTheOPENFloorOpensASpeakerAndOneJustUnderItCannot() {
+        // The boundary of the middle gate, both sides, with `>=` meaning what it says. 1.6 s is
+        // the session-4 case: under session 2's 2.0 s floor this voice was never heard from.
+        val opens = SpeakerTracker()
+        assertEquals(1, opens.assign(unit(0.0), longSeg))
+        assertEquals("1.6 s of a stranger opens a speaker", 2, opens.assign(unit(90.0), 1.6f))
+        assertEquals(2, opens.speakerCount)
+
+        val cannot = SpeakerTracker()
+        assertEquals(1, cannot.assign(unit(0.0), longSeg))
+        assertEquals(1, cannot.assign(unit(90.0), SpeakerTracker.MIN_OPEN_SECONDS - 0.01f))
+        assertEquals(1, cannot.speakerCount)
+    }
+
+    @Test fun aSegmentUnderTheUPDATEFloorNeverJoinsTheRecentSetAndOneAtItDoes() {
+        // THE THIRD GATE, asserted from both sides on the same geometry — and the only way to see
+        // a recent set from outside is to probe it.
+        //
+        // Speaker 1 opens at 0°. A 50° segment matches it (0.643) and is labelled 1 either way.
+        // The probe at 100° is -0.174 against 0° (below T_NEW: it OPENS) and 0.643 against 50°
+        // (above T_SAME: it MATCHES). So the probe's answer is a direct reading of whether the
+        // 50° fingerprint was learned.
+        val short = SpeakerTracker()
+        assertEquals(1, short.assign(unit(0.0), longSeg))
+        assertEquals(1, short.assign(unit(50.0), 1.6f))
+        assertEquals("1.6 s earned the label and the confirmation…", 1, short.confirmedCount)
+        assertEquals("…but taught speaker 1 nothing", 2, short.assign(unit(100.0), longSeg))
+
+        val long = SpeakerTracker()
+        assertEquals(1, long.assign(unit(0.0), longSeg))
+        assertEquals(1, long.assign(unit(50.0), 2.1f))
+        assertEquals("2.1 s is learned, so the probe is speaker 1 after all", 1, long.assign(unit(100.0), longSeg))
+        assertEquals(1, long.speakerCount)
+    }
+
+    @Test fun theFingerprintThatOPENSASpeakerIsAlwaysLearnedEvenBelowTheUpdateFloor() {
+        // The one exception to MIN_UPDATE_SECONDS, and it is structural rather than a preference:
+        // a speaker with an empty recent set can never be matched by anybody and has no centroid
+        // for the merge pass. A 1.6 s opener is therefore defined by a fingerprint it would not
+        // have been allowed to ADD — asserted here so the exception is a decision on the record.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(2, tracker.assign(unit(90.0), 1.6f))
+        assertEquals("the opener is speaker 2's only fingerprint, and it answers", 2, tracker.assign(unit(90.0), longSeg))
+        assertEquals(1f, tracker.lastBestSimilarity, 0.002f)
+    }
 
     @Test fun aShortSegmentFarFromEveryoneTakesTheCurrentSpeakerAndOpensNothing() {
         // 1.4 s, orthogonal to the only known voice — the one input that WOULD open a speaker if
@@ -275,19 +376,6 @@ class SpeakerTrackerTest {
         assertEquals(1, tracker.assign(unit(0.0), longSeg))
         assertEquals(1, tracker.assign(unit(90.0), shortSeg))
         assertEquals("a short segment can never open a speaker", 1, tracker.speakerCount)
-    }
-
-    @Test fun aSegmentJustUnderTheOpenMinimumStillCannotOpenOneAndAtItCan() {
-        // The boundary, both sides of it. The gate is >=, not >.
-        val below = SpeakerTracker()
-        below.assign(unit(0.0), longSeg)
-        assertEquals(1, below.assign(unit(90.0), SpeakerTracker.MIN_OPEN_SECONDS - 0.01f))
-        assertEquals(1, below.speakerCount)
-
-        val at = SpeakerTracker()
-        at.assign(unit(0.0), longSeg)
-        assertEquals(2, at.assign(unit(90.0), SpeakerTracker.MIN_OPEN_SECONDS))
-        assertEquals(2, at.speakerCount)
     }
 
     @Test fun aShortSegmentNeverJOINSTheSpeakerItInheritsEither() {
@@ -646,9 +734,9 @@ class SpeakerTrackerTest {
         assertEquals(0.407f, tracker.lastBestSimilarity, 0.002f)
     }
 
-    @Test fun aSegmentTooShortToDECIDEStillPublishesTheSimilarityItMeasured() {
+    @Test fun aSegmentTooShortToOPENStillPublishesTheSimilarityItMeasured() {
         // The embedder was paid for this vector — MIN_EMBED_SECONDS is 1.0 s, below MIN_OPEN's
-        // 2.0 — and the reading is a row in the distribution even though the rule ignored it.
+        // 1.5 — and the reading is a row in the distribution whatever tier decided the label.
         val tracker = SpeakerTracker()
         tracker.assign(unit(0.0), longSeg)
         assertEquals(1, tracker.assign(unit(30.0), shortSeg))
@@ -674,28 +762,49 @@ class SpeakerTrackerTest {
     // ------------------------------------------------------------------ the settlement
 
     @Test fun theConstantsAreTheONESTheMeasurementDocSettled() {
-        // THE SOURCE OF ALL SIX: docs/measurements/2026-09-18-speaker-spike.md, "Session 2 — the
-        // fingerprint dump, and the offline model comparison". Three clips of exactly one, two and
-        // three speakers; 132 segments' fingerprints and audio pulled to the PC; five embedding
-        // models scored; the rules below are the ones that produced 1/2/3 in simulation on that
+        // THE SOURCE: docs/measurements/2026-09-18-speaker-spike.md.
+        //
+        // The BAND, the recent-window, the confirm count and the cap come from **session 2** —
+        // "the fingerprint dump, and the offline model comparison": three clips of exactly one,
+        // two and three speakers; 132 segments' fingerprints and audio pulled to the PC; five
+        // embedding models scored; these are the rules that produced 1/2/3 in simulation on that
         // data, and the band is the CENTRE of the twelve pairs that worked.
         //
-        // The three dumped sessions themselves are NOT replayable here — those fingerprints are
+        // The THREE DURATION GATES come from **session 4** — "the labels build in the owner's
+        // hands", failure mode A. Session 2's single 2.0 s gate was measured on clips whose
+        // segments ran 2.4-7 s; the 20:39 dump had eleven of fifteen segments under it, on
+        // clearly distinct voices, and produced no labels at all. 1.0 / 1.5 / 2.0 is that one
+        // gate split into the three rights it was conflating.
+        //
+        // The dumped sessions themselves are NOT replayable here — session 2's fingerprints are
         // CAM++'s 512-float vectors and they live outside the repo — so this assertion is the
-        // repo's whole memory of the measurement. Every one of these numbers had a DIFFERENT value
-        // that same morning (0.55 / 0.45 / EMA 0.2 / 1.5 s), reasoned from the spec and wrong
-        // enough to turn one voice into five speakers. None of them may move again without a new
-        // measurement.
+        // repo's whole memory of the measurement. Every one of these numbers had a DIFFERENT
+        // value at some point that day (0.55 / 0.45 / EMA 0.2 / one 2.0 s gate), reasoned from
+        // the spec and wrong enough to turn one voice into five speakers, and then wrong enough
+        // to turn five turns into one. None of them may move again without a new measurement.
         assertEquals("T_SAME", 0.50f, SpeakerTracker.T_SAME, 0f)
         assertEquals("T_NEW", 0.30f, SpeakerTracker.T_NEW, 0f)
-        assertEquals("MIN_OPEN_SECONDS", 2.0f, SpeakerTracker.MIN_OPEN_SECONDS, 0f)
+        assertEquals("MIN_MATCH_SECONDS", 1.0f, SpeakerTracker.MIN_MATCH_SECONDS, 0f)
+        assertEquals("MIN_OPEN_SECONDS", 1.5f, SpeakerTracker.MIN_OPEN_SECONDS, 0f)
+        assertEquals("MIN_UPDATE_SECONDS", 2.0f, SpeakerTracker.MIN_UPDATE_SECONDS, 0f)
         assertEquals("RECENT_K", 5, SpeakerTracker.RECENT_K)
         assertEquals("CONFIRM_N", 2, SpeakerTracker.CONFIRM_N)
         assertEquals("MAX_SPEAKERS", 8, SpeakerTracker.MAX_SPEAKERS)
-        // The embed floor is NOT one of the six: it stayed at 1.0 s, so that a 1-2 s segment is
-        // still fingerprinted and still lands in the spike's distribution even though it can
-        // decide nothing.
+        // The embed floor is NOT one of the eight, and since session 4 it is no longer a number
+        // with nothing behind it: it is MIN_MATCH_SECONDS, because the shortest segment worth
+        // paying an embedder for is exactly the shortest one whose answer can be used.
         assertEquals("MIN_EMBED_SECONDS", 1.0f, SpeakerTracker.MIN_EMBED_SECONDS, 0f)
+        assertEquals(
+            "the embed floor and the match floor are the same number on purpose",
+            SpeakerTracker.MIN_MATCH_SECONDS,
+            SpeakerTracker.MIN_EMBED_SECONDS,
+            0f,
+        )
+        assertTrue(
+            "the gates are graded, never equal and never crossed",
+            SpeakerTracker.MIN_MATCH_SECONDS < SpeakerTracker.MIN_OPEN_SECONDS &&
+                SpeakerTracker.MIN_OPEN_SECONDS < SpeakerTracker.MIN_UPDATE_SECONDS,
+        )
 
         // …and a default-constructed tracker actually runs on them.
         val tracker = SpeakerTracker()

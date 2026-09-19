@@ -101,7 +101,8 @@ class SpeakerSpikeDumpTest {
                 "…and the header is written by the same formatter",
                 SpikeJson.header(
                     session = 1L, model = "m", dim = 192,
-                    tSame = 0.55f, tNew = 0.45f, minEmbed = 1.0f, minOpen = 2.0f,
+                    tSame = 0.55f, tNew = 0.45f,
+                    minEmbed = 1.0f, minMatch = 1.0f, minOpen = 2.0f, minUpdate = 2.0f,
                     recentK = 5, confirmN = 2, cap = 8,
                 ).contains("\"tSame\":0.5500"),
             )
@@ -158,7 +159,8 @@ class SpeakerSpikeDumpTest {
         // rules at once, so the band alone no longer identifies a build.
         assertEquals(
             "{\"session\":1737000000000,\"model\":\"speaker_titanet_small_16k.onnx\",\"dim\":192," +
-                "\"tSame\":0.5000,\"tNew\":0.3000,\"minEmbed\":1.0000,\"minOpen\":2.0000," +
+                "\"tSame\":0.5000,\"tNew\":0.3000,\"minEmbed\":1.0000,\"minMatch\":1.0000," +
+                "\"minOpen\":1.5000,\"minUpdate\":2.0000," +
                 "\"recentK\":5,\"confirmN\":2,\"cap\":8}",
             SpikeJson.header(
                 session = 1_737_000_000_000L,
@@ -167,7 +169,9 @@ class SpeakerSpikeDumpTest {
                 tSame = SpeakerTracker.T_SAME,
                 tNew = SpeakerTracker.T_NEW,
                 minEmbed = SpeakerTracker.MIN_EMBED_SECONDS,
+                minMatch = SpeakerTracker.MIN_MATCH_SECONDS,
                 minOpen = SpeakerTracker.MIN_OPEN_SECONDS,
+                minUpdate = SpeakerTracker.MIN_UPDATE_SECONDS,
                 recentK = SpeakerTracker.RECENT_K,
                 confirmN = SpeakerTracker.CONFIRM_N,
                 cap = SpeakerTracker.MAX_SPEAKERS,
@@ -349,7 +353,9 @@ class SpeakerSpikeDumpTest {
         tSame = SpeakerTracker.T_SAME,
         tNew = SpeakerTracker.T_NEW,
         minEmbed = SpeakerTracker.MIN_EMBED_SECONDS,
+        minMatch = SpeakerTracker.MIN_MATCH_SECONDS,
         minOpen = SpeakerTracker.MIN_OPEN_SECONDS,
+        minUpdate = SpeakerTracker.MIN_UPDATE_SECONDS,
         recentK = SpeakerTracker.RECENT_K,
         confirmN = SpeakerTracker.CONFIRM_N,
         cap = SpeakerTracker.MAX_SPEAKERS,

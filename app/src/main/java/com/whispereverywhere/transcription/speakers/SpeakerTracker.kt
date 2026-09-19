@@ -20,7 +20,9 @@ import kotlin.math.sqrt
  * fingerprints and audio to the PC, scored five embedding models on them and simulated tracker
  * rules offline. What survived is below, and it is the whole of what survived:
  *
- *  - [MIN_OPEN_SECONDS] **2.0 s** — a shorter segment never opens a speaker and never updates one.
+ *  - [MIN_MATCH_SECONDS] **1.0 s** / [MIN_OPEN_SECONDS] **1.5 s** / [MIN_UPDATE_SECONDS] **2.0 s**
+ *    — the THREE graded duration gates (session 4; see below). Session 2 had one gate at 2.0 s
+ *    doing all three jobs, and session 4 showed what that costs on conversational audio.
  *  - [RECENT_K] **5** — matching is the MAXIMUM similarity over a speaker's last five
  *    fingerprints. The running-mean centroid is gone as the match basis.
  *  - [T_SAME] **0.50** / [T_NEW] **0.30** — the centre of the working region, twelve of whose
@@ -28,7 +30,7 @@ import kotlin.math.sqrt
  *  - [CONFIRM_N] **2** — qualifying segments before a speaker is CONFIRMED.
  *  - [MAX_SPEAKERS] **8** — unchanged, the spec's cap.
  *
- * `SpeakerTrackerTest.theConstantsAreTheONESTheMeasurementDocSettled` pins all six against that
+ * `SpeakerTrackerTest.theConstantsAreTheONESTheMeasurementDocSettled` pins all eight against that
  * doc, because the one way this file can be silently wrong again is a number nudged by somebody
  * reasoning rather than measuring.
  *
@@ -56,21 +58,42 @@ import kotlin.math.sqrt
  *    between two voices, so every later segment of both is borderline against it and the
  *    transcript alternates speakers mid-sentence.
  *
- * ### Under 2.0 s: it inherits, and it teaches nothing
+ * ### THE THREE DURATION GATES — what a segment's length buys it (session 4)
  *
- * A segment shorter than [MIN_OPEN_SECONDS] is assigned [currentSpeaker] — full stop. It cannot
- * open a speaker, it cannot be credited to one, and its fingerprint never enters anyone's recent
- * set even when it matches perfectly. Session 1's spurious speakers were singletons opened on
- * 1.0-1.1 s segments, and the embedding of a second and a half of speech is a vector with very
- * little speaker in it — which is worse than no answer, because it looks like an answer.
+ * Session 2 shipped ONE gate at 2.0 s that governed three separate rights at once, and session 4
+ * put that in the owner's hands: the 20:39 dump held *"clearly distinct voices"* and **eleven of
+ * fifteen segments under 2.0 s**, so nothing could open, nothing could confirm, and the whole
+ * session rendered with no labels at all — *"I couldn't get any different speakers"*. The gate is
+ * now graded, because the three rights need different amounts of evidence:
  *
- * The similarity is still MEASURED and published on [lastBestSimilarity]: the spike reads that
- * column as a distribution, and a reading that was taken is a reading worth having even when the
- * decision ignored it.
+ * | length | recognised? | may open / confirm? | joins the recent set? |
+ * |---|---|---|---|
+ * | < 1.0 s ([MIN_MATCH_SECONDS]) | no — inherits | no | no |
+ * | 1.0-1.5 s | **yes**, at >= [tSame] | no | no |
+ * | 1.5-2.0 s ([MIN_OPEN_SECONDS]) | yes | **yes** | no (except the opener itself) |
+ * | >= 2.0 s ([MIN_UPDATE_SECONDS]) | yes | yes | **yes** |
+ *
+ * The order of the three is the argument. RECOGNISING a person who already exists is the cheapest
+ * claim — the speaker's recent set is doing the work and a one-second fingerprint only has to beat
+ * [tSame] against it — so it is allowed first. CLAIMING a new person costs a whole id and every
+ * later segment is matched against the fingerprint that opened it, so it waits for 1.5 s.
+ * TEACHING is the most expensive of all and stays at session 2's 2.0 s for session 1's reason: a
+ * short fingerprint taken over music, laughter or applause that enters a speaker's recent set
+ * drags the whole speaker off the voice, and the recent set is the only thing ever matched
+ * against.
+ *
+ * A segment in the MATCH-ONLY tier that does not reach [tSame] inherits [currentSpeaker] — there
+ * is no band to fall into and no new speaker to open, so the two outcomes are "that one" and "the
+ * one before".
+ *
+ * The similarity is still MEASURED and published on [lastBestSimilarity] at every tier: the spike
+ * reads that column as a distribution, and a reading that was taken is a reading worth having even
+ * when the decision ignored it.
  *
  * **The accepted limit, in the owner's own words** (*"if we can detect that, great; if not, we'll
- * live with it"*): an interruption shorter than two seconds is labelled as the current speaker.
- * That is not a bug to be fixed later, it is the trade this rule makes on purpose.
+ * live with it"*): an interruption shorter than a second is labelled as the current speaker. That
+ * is not a bug to be fixed later, it is the trade this rule makes on purpose — session 4 only
+ * moved where it sits.
  *
  * The one place a short segment still decides something is the very first one of a session: there
  * is nobody to inherit from, so [assign] answers **0** — "unlabelled" — and the caller lets the
@@ -81,9 +104,9 @@ import kotlin.math.sqrt
  *
  * A speaker becomes CONFIRMED on its [confirmN]'th qualifying segment — a segment of at least
  * [MIN_OPEN_SECONDS] that either opened it or matched it at >= [tSame]. A band assignment, an
- * over-cap guess and anything under 2.0 s are not qualifying: they are the three cases the tracker
- * was explicitly unsure about, and counting them as evidence of a person is how one wrong label
- * becomes a wrong speaker for the rest of a session.
+ * over-cap guess and everything in the MATCH-ONLY tier are not qualifying: they are the three
+ * cases the tracker was explicitly unsure about, and counting them as evidence of a person is how
+ * one wrong label becomes a wrong speaker for the rest of a session.
  *
  * Then, after every chunk ([endChunk]), every UNCONFIRMED speaker whose centroid is within
  * [tSame] of a CONFIRMED speaker's centroid is **merged into it**: its fingerprints move across and
@@ -204,9 +227,10 @@ class SpeakerTracker(
     fun remap(): Map<Int, Int> = LinkedHashMap(merges)
 
     /**
-     * Assigns [embedding] — one VAD segment's voice fingerprint — to a 1-based speaker id.
-     * [durationSec] is that segment's length in seconds, and it is a gate on THREE things: opening
-     * a speaker, updating one, and earning a confirmation.
+     * Assigns [embedding] — one fingerprint window's voice — to a 1-based speaker id.
+     * [durationSec] is that window's length in seconds, and it is a GRADED gate: the three floors
+     * [MIN_MATCH_SECONDS], [MIN_OPEN_SECONDS] and [MIN_UPDATE_SECONDS] buy, in turn, the right to
+     * be recognised, the right to claim a new person, and the right to teach.
      *
      * Returns 0 only when nothing has been assigned yet and this segment cannot start a session —
      * an unusable embedding, or one shorter than [MIN_OPEN_SECONDS].
@@ -217,12 +241,14 @@ class SpeakerTracker(
         // `best=` column has to say so rather than repeat the last real number it saw.
         lastBest = Float.NaN
         val v = normalised(embedding) ?: return current
-        val qualifies = durationSec >= MIN_OPEN_SECONDS
+        val mayMatch = durationSec >= MIN_MATCH_SECONDS
+        val mayOpen = durationSec >= MIN_OPEN_SECONDS
+        val mayUpdate = durationSec >= MIN_UPDATE_SECONDS
 
-        // Nobody yet. A 2 s segment starts the session; anything shorter leaves it unlabelled,
+        // Nobody yet. A 1.5 s segment starts the session; anything shorter leaves it unlabelled,
         // because there is no current speaker to inherit from and half a second of audio is not
         // evidence of a person. The caller reads 0 as "unlabelled" and lets the run inherit.
-        if (voices.isEmpty()) return if (qualifies) open(v) else current
+        if (voices.isEmpty()) return if (mayOpen) open(v) else current
         if (v.size != dim) return current
 
         var bestIndex = -1
@@ -244,18 +270,24 @@ class SpeakerTracker(
 
         val liveCount = speakerCount
         val id: Int = when {
-            // Under 2.0 s: inherit, teach nothing. FIRST, so it outranks even a perfect match —
-            // a short segment must not be credited toward a confirmation either.
-            !qualifies -> current.takeIf { it > 0 } ?: (bestIndex + 1)
+            // Under 1.0 s: inherit, decide nothing. FIRST, so it outranks even a perfect match.
+            !mayMatch -> inherit(bestIndex)
+            // 1.0-1.5 s — the MATCH-ONLY tier (session 4). A confident match takes that
+            // speaker's number and NOTHING else happens: no open, no update, no credit toward a
+            // confirmation. Anything less confident inherits, band or not, because the two
+            // decisions this tier is barred from making are exactly the two the lower bands ask
+            // for. This is the tier that makes rapid turn-taking labellable at all: the 20:39
+            // dump had eleven of fifteen segments here.
+            !mayOpen -> if (best >= tSame) bestIndex + 1 else inherit(bestIndex)
             best >= tSame -> {
-                credit(bestIndex, v)
+                credit(bestIndex, v, learn = mayUpdate)
                 bestIndex + 1
             }
             best < tNew && liveCount < maxSpeakers -> return open(v)
             // At the cap the closest live speaker takes it, and learns nothing from it.
             best < tNew -> bestIndex + 1
             // The hysteresis band: the current speaker keeps the floor, and no set moves.
-            else -> current.takeIf { it > 0 } ?: (bestIndex + 1)
+            else -> inherit(bestIndex)
         }
         current = id
         return id
@@ -327,6 +359,16 @@ class SpeakerTracker(
 
     // ------------------------------------------------------------------ internals
 
+    /** The current speaker, or — defensively, since a non-empty slot list always has one — the best. */
+    private fun inherit(bestIndex: Int): Int = current.takeIf { it > 0 } ?: (bestIndex + 1)
+
+    /**
+     * Opens a speaker on [v], which becomes its FIRST recent fingerprint — the one exception to
+     * [MIN_UPDATE_SECONDS], and a necessary one: a speaker whose recent set is empty can never be
+     * matched by anybody and has no centroid for the merge pass to weigh. A 1.5-2.0 s opener is
+     * therefore defined by a fingerprint it would not have been allowed to ADD, and that is the
+     * price of letting a short turn claim a person at all.
+     */
     private fun open(v: FloatArray): Int {
         if (voices.isEmpty()) dim = v.size
         voices += Voice(v)
@@ -335,10 +377,14 @@ class SpeakerTracker(
         return current
     }
 
-    /** A confident match on a qualifying segment: the fingerprint joins the set and earns credit. */
-    private fun credit(index: Int, v: FloatArray) {
+    /**
+     * A confident match on a segment long enough to OPEN: it earns credit toward a confirmation
+     * always, and joins the speaker's recent set only when [learn] — i.e. only at
+     * [MIN_UPDATE_SECONDS] and above. The two rights were one until session 4 split them.
+     */
+    private fun credit(index: Int, v: FloatArray, learn: Boolean) {
         val voice = voices[index]
-        push(voice, v)
+        if (learn) push(voice, v)
         voice.qualifying++
         confirmIfEarned(voice)
     }
@@ -415,16 +461,46 @@ class SpeakerTracker(
          * inherits the label of the segment before it and never reaches [assign] — an embedding of
          * a fraction of a second is a vector with no speaker in it.
          *
-         * It stays at 1.0 s rather than rising to [MIN_OPEN_SECONDS]: a 1-2 s segment can decide
-         * nothing, but its similarity is still a row in the distribution the spike is read from.
+         * It is the same number as [MIN_MATCH_SECONDS], and since session 4 that is no longer a
+         * coincidence to be explained away: every segment this floor pays an embedder for can now
+         * do something with the answer.
          */
         const val MIN_EMBED_SECONDS: Float = 1.0f
 
         /**
-         * **2.0 s** — the shortest segment that may OPEN a speaker, UPDATE one, or earn a
-         * confirmation. Session 2 of `docs/measurements/2026-09-18-speaker-spike.md`.
+         * **1.0 s** — the shortest segment that may be MATCHED to an existing speaker: assigned
+         * the best-scoring one when that score is at least [T_SAME], and the current speaker
+         * otherwise. It opens nobody, updates nobody and earns no confirmation.
+         *
+         * Session 4 of `docs/measurements/2026-09-18-speaker-spike.md`, the 20:39 dump: eleven of
+         * fifteen segments were under the old single 2.0 s gate, on *"clearly distinct voices"*,
+         * and nothing could be labelled at all. A one-second fingerprint is too thin to CLAIM a
+         * person exists; it is thick enough to recognise one who already does.
          */
-        const val MIN_OPEN_SECONDS: Float = 2.0f
+        const val MIN_MATCH_SECONDS: Float = 1.0f
+
+        /**
+         * **1.5 s** — the shortest segment that may OPEN a new speaker (when its best similarity
+         * is below [T_NEW]) or count toward a [CONFIRM_N]. Session 4 of
+         * `docs/measurements/2026-09-18-speaker-spike.md`.
+         *
+         * It was 2.0 s from session 2 until session 4 starved on rapid turn-taking. Claiming a new
+         * person still needs more evidence than recognising a known one, which is why this sits
+         * above [MIN_MATCH_SECONDS] rather than joining it.
+         */
+        const val MIN_OPEN_SECONDS: Float = 1.5f
+
+        /**
+         * **2.0 s** — the shortest segment whose fingerprint is pushed into an existing speaker's
+         * recent set. Session 2's floor, kept at session 2's value and for session 1's reason: a
+         * short fingerprint taken over music or laughter that JOINS a speaker's state makes every
+         * later genuine segment of that voice look foreign, and the recent set is the only thing
+         * that is matched against.
+         *
+         * The one fingerprint that enters a set without clearing this bar is the one that OPENED
+         * the speaker — see [assign].
+         */
+        const val MIN_UPDATE_SECONDS: Float = 2.0f
 
         /**
          * **5** — how many of a speaker's most recent fingerprints a match is the maximum over.

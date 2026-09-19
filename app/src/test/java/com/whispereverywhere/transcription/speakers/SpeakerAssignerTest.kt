@@ -340,17 +340,19 @@ class SpeakerAssignerTest {
 
     @Test
     fun theConfirmedFlagIsTheTrackersLatchAndNothingElse() {
-        // A 1.5 s second voice does NOT confirm — MIN_OPEN_SECONDS is 2.0, so it cannot even open
-        // a speaker and takes the current one's label. Spike session 2's rule, and the owner's
-        // accepted limit: an interruption shorter than two seconds is the current speaker.
+        // A 1.4 s second voice does NOT confirm — MIN_OPEN_SECONDS is 1.5 since spike session 4,
+        // so this one is in the MATCH-ONLY tier: it cannot open a speaker and, being nowhere near
+        // the one voice known so far, takes that speaker's label. The owner's accepted limit,
+        // moved to where session 4 put it: an interruption shorter than a second and a half
+        // cannot claim a person.
         val shy = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
         val first = assignOneChunk(
             voices = shy,
             samples = buffer(8f),
-            vad = listOf(seg(0f, 2f), seg(3f, 4.5f)),
+            vad = listOf(seg(0f, 2f), seg(3f, 4.4f)),
         )
         assertEquals(listOf(1, 1), first?.ids)
-        assertFalse("a 1.5 s interjection opens nobody", first!!.confirmed)
+        assertFalse("a 1.4 s interjection opens nobody", first!!.confirmed)
 
         // Two 2 s segments EACH: the latch is two CONFIRMED speakers now, not two speakers.
         val bold = FakeVoices { index -> if (index % 2 == 0) unit(0.0) else unit(90.0) }

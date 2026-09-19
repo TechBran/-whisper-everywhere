@@ -174,9 +174,9 @@ object SpikeJson {
      *
      * Every RULE the session ran under, not only its two thresholds. Session 2 changed four of
      * them at once — the open floor, the recent-fingerprint window, the confirm count and the
-     * band — so a header that carried the band alone would leave a dump indistinguishable from
-     * one taken under a different tracker, which is the one thing a tuning loop cannot recover
-     * from.
+     * band — and session 4 split that one open floor into THREE graded gates, so a header that
+     * carried the band alone would leave a dump indistinguishable from one taken under a
+     * different tracker, which is the one thing a tuning loop cannot recover from.
      */
     fun header(
         session: Long,
@@ -185,7 +185,9 @@ object SpikeJson {
         tSame: Float,
         tNew: Float,
         minEmbed: Float,
+        minMatch: Float,
         minOpen: Float,
+        minUpdate: Float,
         recentK: Int,
         confirmN: Int,
         cap: Int,
@@ -196,7 +198,9 @@ object SpikeJson {
         append(",\"tSame\":").append(num(tSame))
         append(",\"tNew\":").append(num(tNew))
         append(",\"minEmbed\":").append(num(minEmbed))
+        append(",\"minMatch\":").append(num(minMatch))
         append(",\"minOpen\":").append(num(minOpen))
+        append(",\"minUpdate\":").append(num(minUpdate))
         append(",\"recentK\":").append(recentK)
         append(",\"confirmN\":").append(confirmN)
         append(",\"cap\":").append(cap)
@@ -359,7 +363,9 @@ class SpeakerSpikeDump(
     private val tSame: Float,
     private val tNew: Float,
     private val minEmbed: Float,
+    private val minMatch: Float,
     private val minOpen: Float,
+    private val minUpdate: Float,
     private val recentK: Int,
     private val confirmN: Int,
     private val cap: Int,
@@ -438,7 +444,9 @@ class SpeakerSpikeDump(
             tSame = tSame,
             tNew = tNew,
             minEmbed = minEmbed,
+            minMatch = minMatch,
             minOpen = minOpen,
+            minUpdate = minUpdate,
             recentK = recentK,
             confirmN = confirmN,
             cap = cap,

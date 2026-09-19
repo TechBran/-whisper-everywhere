@@ -27,10 +27,11 @@ import java.util.concurrent.TimeUnit
  *     fraction of a second does not fail, it answers a vector with no speaker in it, which is the
  *     worst of the three outcomes because it looks like an answer.
  *  2. **Fingerprinted, and the embedder answered** — [SpeakerTracker.assign] decides, and its
- *     three-band rule is where every judgement the user can see is made. A segment between
- *     [SpeakerTracker.MIN_EMBED_SECONDS] and [SpeakerTracker.MIN_OPEN_SECONDS] is still
- *     fingerprinted and still measured, but it can only ever inherit: the cost buys a row in the
- *     spike's distribution, not a decision.
+ *     three-band rule crossed with its three duration gates is where every judgement the user can
+ *     see is made. A segment between [SpeakerTracker.MIN_EMBED_SECONDS] and
+ *     [SpeakerTracker.MIN_OPEN_SECONDS] is in the MATCH-ONLY tier (session 4): it can take an
+ *     existing speaker's number on a confident match, but it can never open one, confirm one or
+ *     teach one.
  *  3. **Fingerprinted, and the embedder answered null** — the model is missing, refused, or
  *     native code threw. The label is left exactly where it was. A session on a device that
  *     cannot load the model loses LABELS, never text.
@@ -306,7 +307,9 @@ class SpeakerAssigner(
             tSame = tracker.tSame,
             tNew = tracker.tNew,
             minEmbed = SpeakerTracker.MIN_EMBED_SECONDS,
+            minMatch = SpeakerTracker.MIN_MATCH_SECONDS,
             minOpen = SpeakerTracker.MIN_OPEN_SECONDS,
+            minUpdate = SpeakerTracker.MIN_UPDATE_SECONDS,
             recentK = tracker.recentK,
             confirmN = tracker.confirmN,
             cap = tracker.maxSpeakers,
