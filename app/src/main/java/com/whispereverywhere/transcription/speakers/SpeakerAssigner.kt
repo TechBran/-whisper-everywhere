@@ -1,5 +1,6 @@
 package com.whispereverywhere.transcription.speakers
 
+import com.whispereverywhere.whisper.WhisperNative
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -156,7 +157,35 @@ class SpeakerAssigner(
      * so its header can never describe a band the session did not run under.
      */
     private val spike: SpeakerSpikeDirs? = null,
+    /**
+     * THE NPU TIER'S VAD, and the only native call this class makes besides the embedder
+     * ([assignWholeChunk]). A LAMBDA rather than a direct `WhisperNative` call so that every test
+     * in this file stays on a plain JVM: `WhisperNative`'s initialiser is
+     * `System.loadLibrary("whisper_jni")`, which throws `UnsatisfiedLinkError` off a device — and
+     * merely CONSTRUCTING this default does not touch that object, because a lambda's body runs
+     * only when it is invoked.
+     */
+    private val segmenter: (FloatArray, String) -> IntArray = { pcm, path ->
+        WhisperNative.vadSegmentsOf(pcm, path)
+    },
 ) {
+
+    /**
+     * WHERE A CHUNK'S WINDOWS CAME FROM — and therefore whether the chunk's TEXT can be split
+     * between two speakers (4.10, the Fold6 defect).
+     *
+     * [GEOMETRY] is the CPU and GPU tiers: whisper.cpp ran its VAD filter and its decoder, so the
+     * chunk arrives with both a speech partition and per-segment text offsets, and each window
+     * gets its own stretch of text. Nothing about it has changed.
+     *
+     * [WHOLE_CHUNK] is the NPU tier. The QNN decoder exposes no token or sentence timestamps, so
+     * there is no way to say which words belong to which window — the audio can still be
+     * fingerprinted per window, and is, but the chunk's committed text can only wear ONE label.
+     * Speaker changes therefore land on chunk boundaries (6-8 s) instead of sentence boundaries,
+     * which is the owner's ruling of 2026-09-19: *"at the chunk level … at least that would be
+     * good enough."*
+     */
+    private enum class Route { GEOMETRY, WHOLE_CHUNK }
 
     /**
      * Queues one committed chunk. Returns immediately — always.
@@ -176,7 +205,64 @@ class SpeakerAssigner(
         // the native executor after teardown already detached this assigner. Silent by design.
         runCatching {
             executor.execute {
-                runCatching { fingerprint(seq, samples, windows) }
+                runCatching {
+                    // The VAD SEGMENTS behind those windows. Windows are emitted in segment order
+                    // and every segment produces at least one, so counting the distinct segment
+                    // indices is the segment count.
+                    val segs = windows.distinctBy { it.vadIndex }.size
+                    fingerprint(seq, samples, windows, Route.GEOMETRY, segs)
+                }
+            }
+        }
+    }
+
+    /**
+     * Queues one committed chunk that arrived with NO GEOMETRY — the NPU tier (4.10, the Fold6
+     * defect). Returns immediately, like [assign], and runs everything below on the same
+     * `speaker-embed` thread.
+     *
+     * `NpuWhisperBackend.lastGeometry` answers null while the NPU arm is live, and correctly: that
+     * path runs its own encoder and decoder on the HTP and never calls whisper.cpp's VAD filter,
+     * so there are no speech bounds to publish. The engine therefore skipped the assigner
+     * entirely, and on an NPU-capable device — where the 4.3 one-tier rule offers no CPU rung —
+     * the owner got no speaker changes at all. This route recovers what it can.
+     *
+     * What it does, in order:
+     *  1. **A SECOND VAD RUN**, `WhisperNative.vadSegmentsOf(samples, vadModelPath)`, on this
+     *     thread. It costs what the `VAD: … wallMs=` lines already report for the same work —
+     *     about 60 ms for a 6-8 s chunk — and it is paid here, below delivered text, rather than
+     *     on the whisper thread whose cadence floors were measured without it.
+     *  2. **Windows** from those bounds ([SpeakerSpans.wholeChunkWindows]). There is ONE timeline
+     *     on this route — [samples]' own — because nothing is stitched and nothing is swapped, so
+     *     the "original" and "trimmed" offsets the CPU route carries separately are here the same
+     *     number and are not pretended to be two.
+     *  3. **The same fingerprinting, the same tracker, the same gates** as [assign]. The tracker
+     *     is not forked and does not know which route fed it.
+     *  4. **ONE id for the whole chunk** — the id of the window holding the most speech, ties to
+     *     the earliest — published as [SpeakerAssignment.wholeChunkWindow]. The decoder gives no
+     *     text offsets, so a chunk's text cannot be split between two speakers on this tier and
+     *     the honest answer is the dominant voice in it.
+     *
+     * NO SPEECH PUBLISHES NOTHING. An empty segmentation — no speech, a missing or unloadable VAD
+     * model, a failed pass — produces no callback at all, exactly as an empty `windows` does in
+     * [assign]: spec §2 forbids reading "no segments" as "one speaker".
+     *
+     * [vadModelPath] must be the `VadModel.path()` the backend seam already uses. There is no
+     * fallback path to invent here: a caller without one must not call this.
+     */
+    fun assignWholeChunk(seq: Long, samples: FloatArray, vadModelPath: String) {
+        if (samples.isEmpty() || vadModelPath.isEmpty()) return
+        runCatching {
+            executor.execute {
+                runCatching {
+                    val raw = segmenter(samples, vadModelPath)
+                    val windows = SpeakerSpans.wholeChunkWindows(raw)
+                    if (windows.isEmpty()) return@runCatching
+                    // `raw.size / 2` is the SPEECH SEGMENT count, which coalescing can make
+                    // larger than the window count — the opposite of the geometry route, where
+                    // splitting makes windows the larger of the two. Both are printed.
+                    fingerprint(seq, samples, windows, Route.WHOLE_CHUNK, raw.size / 2)
+                }
             }
         }
     }
@@ -259,7 +345,13 @@ class SpeakerAssigner(
 
     // ------------------------------------------------------------------ on the embed thread
 
-    private fun fingerprint(seq: Long, samples: FloatArray, windows: List<SpeakerWindow>) {
+    private fun fingerprint(
+        seq: Long,
+        samples: FloatArray,
+        windows: List<SpeakerWindow>,
+        route: Route,
+        segs: Int,
+    ) {
         val ids = ArrayList<Int>(windows.size)
         val best = ArrayList<Float>(windows.size)
         val durations = ArrayList<Float>(windows.size)
@@ -355,12 +447,21 @@ class SpeakerAssigner(
         onAssigned(
             SpeakerAssignment(
                 seq = seq,
-                // The VAD segments BEHIND those windows. Windows are emitted in segment order and
-                // every segment produces at least one, so counting the distinct segment indices
-                // is the segment count — and the diag line prints both, because `windows > segs`
-                // is the only visible sign of how much of this chunk was cut per sentence.
-                segs = windows.distinctBy { it.vadIndex }.size,
+                // The VAD segments behind those windows — the diag line prints both, because
+                // `windows > segs` is the only visible sign of how much of this chunk was cut
+                // per sentence (and `windows < segs`, on the NPU route, of how much of it was
+                // coalesced).
+                segs = segs,
                 ids = ids,
+                // THE CHUNK'S ONE ID, on the NPU route only. The window holding the most speech
+                // wins it; a tie goes to the EARLIEST, which is `maxByOrNull`'s own rule and is
+                // stated rather than inherited because it is the difference between two labels
+                // on a chunk that alternates evenly. Null on the geometry route, where the ids
+                // above each own their own stretch of text and nothing has to be picked.
+                wholeChunkWindow = when (route) {
+                    Route.GEOMETRY -> null
+                    Route.WHOLE_CHUNK -> dominant(durations)
+                },
                 remaps = remaps,
                 // Read AFTER the merge pass: a chunk's verdict is the one that stands at the end
                 // of it, not the one that stood mid-loop.
@@ -377,6 +478,27 @@ class SpeakerAssigner(
         // THE SECOND LOOK, every [SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS] chunks and AFTER the
         // chunk's own ids have been published: online first, then the correction. Spike session 6.
         if (++chunksSinceRecluster >= SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS) recluster()
+    }
+
+    /**
+     * WHICH WINDOW SPEAKS FOR THE WHOLE CHUNK: the one holding the most speech, ties to the
+     * EARLIEST (4.10, the NPU route).
+     *
+     * [durations] is `stats.durationsSec`, one entry per window in chunk order, so the answer is
+     * an index into [SpeakerAssignment.ids] and into the chunk's remembered [WindowKey]s alike —
+     * which is what lets the retrospective pass reach the run this index put on screen.
+     *
+     * Strictly `>`, so an even split between two windows names the FIRST. That is the arbitrary
+     * half of the rule and it is arbitrary on purpose: what matters is that it is fixed, because
+     * the alternative is a chunk whose label flips between two builds on the same audio.
+     *
+     * Null only for a chunk with no windows at all, which the callers already refuse.
+     */
+    private fun dominant(durations: List<Float>): Int? {
+        if (durations.isEmpty()) return null
+        var best = 0
+        for (i in durations.indices) if (durations[i] > durations[best]) best = i
+        return best
     }
 
     // ------------------------------------------------------------------ the retrospective pass
@@ -645,6 +767,21 @@ class SpeakerAssigner(
  *        [SpeakerTracker.MIN_OPEN_SECONDS]. Until it is true the panel shows no label at all and a
  *        one-speaker session is byte-for-byte today's output.
  * @param stats the numbers the device session measures, one row per segment.
+ * @param wholeChunkWindow **null on the geometry route and non-null on the NPU one** — the index
+ *        in [ids] whose id the WHOLE chunk takes (4.10, the Fold6 defect).
+ *
+ *        It is the one field that changes what a reader DOES with [ids] rather than adding to
+ *        them, and both meanings are needed because both tiers are live in one session after a
+ *        fallback. Null: the chunk's text is cut per window and each id owns its own stretch —
+ *        the CPU and GPU behaviour, unchanged. Non-null: the QNN decoder gave no text offsets, so
+ *        there is no cut to make and the chunk's committed text wears `ids[wholeChunkWindow]`
+ *        alone. The other ids are still real — they were fingerprinted, they taught the tracker,
+ *        and they are in the diag line — they simply have no text to sit on.
+ *
+ *        It doubles as the whole chunk's WINDOW INDEX, and that is the load-bearing half:
+ *        `TranscriptSink.assign` stamps it onto the chunk's single run, so the retrospective
+ *        pass's `windowLabels` — which is keyed by `WindowKey(seq, windowIndex)` — reaches that
+ *        run unchanged and corrects it like any other.
  *
  * There is NO text field, by design: see [SpeakerAssigner]'s KDoc.
  */
@@ -655,6 +792,7 @@ data class SpeakerAssignment(
     val confirmed: Boolean,
     val stats: SpeakerAssignStats,
     val remaps: Map<Int, Int> = emptyMap(),
+    val wholeChunkWindow: Int? = null,
 )
 
 /**

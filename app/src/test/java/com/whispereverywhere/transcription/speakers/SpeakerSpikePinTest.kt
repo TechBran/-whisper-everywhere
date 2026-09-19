@@ -339,11 +339,28 @@ class SpeakerSpikePinTest {
         val queueOnly = between(
             assigner,
             "fun assign(seq: Long, samples: FloatArray, windows: List<SpeakerWindow>) {",
-            "* Blocks the CALLING thread",
+            "Queues one committed chunk that arrived with NO GEOMETRY",
             ASSIGNER,
         )
         assertEquals("assign() never touches the dump", 0, count(queueOnly, "dump"))
         assertEquals("…it only hands the chunk over", 1, count(queueOnly, "executor.execute {"))
+
+        // …and so is the NPU route's own entry point (4.10, the Fold6 defect), which is reached
+        // from the SAME whisper thread. It does MORE work than `assign` — a second ~60 ms VAD
+        // pass and the window building — and every bit of it is inside the queued task, which is
+        // the only reason the commit floors are untouched by a tier that has no geometry.
+        val npuQueueOnly = between(
+            assigner,
+            "fun assignWholeChunk(seq: Long, samples: FloatArray, vadModelPath: String) {",
+            "* Blocks the CALLING thread",
+            ASSIGNER,
+        )
+        assertEquals("assignWholeChunk() never touches the dump", 0, count(npuQueueOnly, "dump"))
+        assertEquals("…it only hands the chunk over", 1, count(npuQueueOnly, "executor.execute {"))
+        assertTrue(
+            "the VAD runs INSIDE the queued task, never on the caller's thread",
+            npuQueueOnly.indexOf("executor.execute {") < npuQueueOnly.indexOf("segmenter("),
+        )
 
         // The stop-tap fence is the THIRD caller of this executor (4.10 — the service waits for
         // the last chunk's ids before it snapshots the runs), and it is held to the same rule:

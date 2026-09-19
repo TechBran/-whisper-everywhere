@@ -39,6 +39,7 @@ class SpeakerDiagTest {
         durationsSec: List<Float> = listOf(3.24f, 1.06f, 2.4f),
         includesModelLoad: Boolean = false,
         remaps: Map<Int, Int> = emptyMap(),
+        wholeChunkWindow: Int? = null,
     ) = SpeakerAssignment(
         seq = seq,
         segs = segs,
@@ -51,12 +52,13 @@ class SpeakerDiagTest {
             includesModelLoad = includesModelLoad,
         ),
         remaps = remaps,
+        wholeChunkWindow = wholeChunkWindow,
     )
 
     @Test
     fun theLineIsTheSpikesOwnShapeFieldForField() {
         assertEquals(
-            "speaker: seq=12 segs=3 windows=3 embedMs=214 ids=[1,1,2] best=[-,0.88,0.31] dur=[3.2,1.1,2.4] confirmed=1 load=0",
+            "speaker: seq=12 segs=3 windows=3 embedMs=214 ids=[1,1,2] best=[-,0.88,0.31] dur=[3.2,1.1,2.4] confirmed=1 load=0 route=geom",
             SpeakerDiag.line(assignment()),
         )
     }
@@ -124,8 +126,8 @@ class SpeakerDiagTest {
         // The flag is after `confirmed=`, so anything reading the plan's fields positionally
         // is unaffected by its existence. It is last on every chunk that merged nothing, which is
         // almost all of them; `remaps=` goes after it on the rest.
-        assertTrue(SpeakerDiag.line(assignment(includesModelLoad = true)).endsWith(" load=1"))
-        assertTrue(SpeakerDiag.line(assignment(includesModelLoad = false)).endsWith(" load=0"))
+        assertTrue("load=1 route=geom" in SpeakerDiag.line(assignment(includesModelLoad = true)))
+        assertTrue("load=0 route=geom" in SpeakerDiag.line(assignment(includesModelLoad = false)))
         assertTrue("confirmed= stays just before it", "confirmed=1 load=" in SpeakerDiag.line(assignment()))
     }
 
@@ -156,13 +158,13 @@ class SpeakerDiagTest {
     @Test
     fun thereIsNoSPACEInsideAColumnSoOneLineIsOneRecordForAWhitespaceSplit() {
         val fields = SpeakerDiag.line(assignment()).split(" ")
-        assertEquals(10, fields.size)
+        assertEquals(11, fields.size)
         for (field in fields.drop(1)) {
             assertTrue("every field is key=value: $field", field.count { it == '=' } == 1)
         }
         // …and eleven on a chunk that merged, with the same rule holding for the new column.
         val merged = SpeakerDiag.line(assignment(remaps = mapOf(3 to 1, 5 to 2))).split(" ")
-        assertEquals(11, merged.size)
+        assertEquals(12, merged.size)
         for (field in merged.drop(1)) {
             assertTrue("every field is key=value: $field", field.count { it == '=' } == 1)
         }
@@ -177,13 +179,73 @@ class SpeakerDiagTest {
         // `-` already means "not measured" in the `best=` column beside it.
         val merged = SpeakerDiag.line(assignment(remaps = mapOf(3 to 1, 5 to 2)))
         assertTrue(merged, merged.endsWith(" remaps=[3>1,5>2]"))
-        assertTrue("…and it comes after load=, so every fixed field stays positional", "load=0 remaps=" in merged)
+        assertTrue("…and it comes after the fixed fields, so every one of them stays positional", "route=geom remaps=" in merged)
 
         // Absent, not empty, on the overwhelming majority of chunks: eighteen `remaps=[]` per
         // session would bury the one line worth reading.
         val quiet = SpeakerDiag.line(assignment())
         assertFalse(quiet, "remaps" in quiet)
-        assertTrue(quiet, quiet.endsWith(" load=0"))
+        assertTrue(quiet, quiet.endsWith(" route=geom"))
+    }
+
+    // --- the route (4.10, the Fold6 defect) ------------------------------------
+
+    @Test
+    fun theROUTEIsPrintedOnEVERYChunkBecauseOneSessionCanCarryBoth() {
+        // A mid-session NPU decline falls back to whisper.cpp, which publishes geometry again —
+        // so a session's lines can be `route=vad` then `route=geom`, and "no field" cannot be
+        // allowed to mean either one. A truncated line would otherwise read as a CPU chunk.
+        assertTrue("route=geom" in SpeakerDiag.line(assignment()))
+        assertTrue("route=vad" in SpeakerDiag.line(assignment(wholeChunkWindow = 1)))
+        assertFalse(
+            "…and the two are distinguishable by a whole-word grep",
+            "route=geom" in SpeakerDiag.line(assignment(wholeChunkWindow = 1)),
+        )
+    }
+
+    @Test
+    fun theNpuLineNamesWHICHWindowTheChunksTextWears() {
+        // On that tier the decoder publishes no token timestamps, so the chunk's text cannot be
+        // cut between the ids beside it; `pick=` is the only thing that says which of them the
+        // reader will actually see on screen.
+        assertEquals(
+            "speaker: seq=15 segs=4 windows=3 embedMs=286 ids=[2,1,1] best=[0.31,0.88,0.91] " +
+                "dur=[1.4,2.9,1.2] confirmed=1 load=0 route=vad pick=1",
+            SpeakerDiag.line(
+                assignment(
+                    seq = 15L,
+                    segs = 4,
+                    ids = listOf(2, 1, 1),
+                    embedMs = 286L,
+                    best = listOf(0.31f, 0.88f, 0.91f),
+                    durationsSec = listOf(1.4f, 2.9f, 1.2f),
+                    wholeChunkWindow = 1,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun pickIsAbsentOnTheGeometryRouteBecauseNothingIsPickedThere() {
+        // A `pick=-` column would invite a reader to look for a chosen window on a tier that
+        // labels every sentence separately — and the CPU tier's line must keep saying exactly
+        // what it said, plus the route it was always on.
+        val cpu = SpeakerDiag.line(assignment())
+        assertFalse(cpu, "pick=" in cpu)
+        assertTrue(cpu, cpu.endsWith(" route=geom"))
+        assertTrue("pick=0" in SpeakerDiag.line(assignment(wholeChunkWindow = 0)))
+    }
+
+    @Test
+    fun theNpuRoutesFieldsStillSplitOnWhitespaceAndStillCarryNoTranscript() {
+        val fields = SpeakerDiag.line(
+            assignment(wholeChunkWindow = 2, remaps = mapOf(3 to 1)),
+        ).split(" ")
+        assertEquals("tag + ten fixed fields + pick= + remaps=", 13, fields.size)
+        for (field in fields.drop(1)) {
+            assertTrue("every field is key=value: $field", field.count { it == '=' } == 1)
+        }
+        assertTrue(fields.last().startsWith("remaps="))
     }
 
     // --- the relabel line (Task 5) ---------------------------------------------

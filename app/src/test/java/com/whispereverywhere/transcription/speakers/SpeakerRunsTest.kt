@@ -262,4 +262,57 @@ class SpeakerRunsTest {
         assertNull(all[0].speakerId)
         assertEquals(2, all[1].speakerId)
     }
+
+    // ------------------------------- the NPU tier's one run (4.10, the Fold6 defect)
+
+    @Test fun a_whole_chunk_run_learns_its_window_and_its_speaker_after_the_text() {
+        // The NPU chunk arrives with no spans, so `of` gives it one run at NO_WINDOW_INDEX. The
+        // embed thread answers ~60 ms later with the dominant window and its id, and both are
+        // written here — the index because the retrospective pass addresses runs by window.
+        val runs = SpeakerRuns.of(1, "the whole chunk", spans = null)
+        assertEquals(SpeakerRuns.NO_WINDOW_INDEX, runs.single().windowIndex)
+        SpeakerRuns.applyWholeChunk(runs, seq = 1, windowIndex = 2, id = 3)
+        assertEquals(2, runs.single().windowIndex)
+        assertEquals(3, runs.single().speakerId)
+        // …and that is exactly what makes the second look reach it.
+        SpeakerRuns.applyWindowLabels(runs, mapOf(WindowKey(1L, 2) to 1))
+        assertEquals(1, runs.single().speakerId)
+    }
+
+    @Test fun a_whole_chunk_stamp_never_touches_a_run_that_already_has_a_window() {
+        // The CPU tier's runs are born with their window indices. This route must not reach
+        // them — a chunk labelled per sentence collapsing to one speaker is the exact regression
+        // the geometry route exists to avoid — and the same guard makes a second call a no-op.
+        val cpu = SpeakerRuns.of(1, "A B", listOf(span(0, "A"), span(1, "B")))
+        SpeakerRuns.applyAssignment(cpu, 1, listOf(1, 2))
+        SpeakerRuns.applyWholeChunk(cpu, seq = 1, windowIndex = 0, id = 9)
+        assertEquals(listOf(0, 1), cpu.map { it.windowIndex })
+        assertEquals(listOf(1, 2), cpu.map { it.speakerId })
+    }
+
+    @Test fun a_whole_chunk_stamp_is_scoped_to_its_own_chunk() {
+        val all = SpeakerRuns.of(1, "A", spans = null) + SpeakerRuns.of(2, "B", spans = null)
+        SpeakerRuns.applyWholeChunk(all, seq = 2, windowIndex = 0, id = 4)
+        assertEquals(SpeakerRuns.NO_WINDOW_INDEX, all[0].windowIndex)
+        assertNull(all[0].speakerId)
+        assertEquals(0, all[1].windowIndex)
+        assertEquals(4, all[1].speakerId)
+    }
+
+    @Test fun an_unattributed_whole_chunk_still_gets_its_window_but_never_speaker_one() {
+        // 0 is the tracker's "could not attribute this at all" and is dropped at the door, as in
+        // applyAssignment. The INDEX is written anyway: the run must stay nameable so a later
+        // pass can label it, which is the whole reason the index is carried.
+        val runs = SpeakerRuns.of(1, "A", spans = null)
+        SpeakerRuns.applyWholeChunk(runs, seq = 1, windowIndex = 1, id = 0)
+        assertEquals(1, runs.single().windowIndex)
+        assertNull(runs.single().speakerId)
+    }
+
+    @Test fun a_negative_window_index_is_the_caller_saying_it_has_no_answer() {
+        val runs = SpeakerRuns.of(1, "A", spans = null)
+        SpeakerRuns.applyWholeChunk(runs, seq = 1, windowIndex = -1, id = 2)
+        assertEquals(SpeakerRuns.NO_WINDOW_INDEX, runs.single().windowIndex)
+        assertNull(runs.single().speakerId)
+    }
 }

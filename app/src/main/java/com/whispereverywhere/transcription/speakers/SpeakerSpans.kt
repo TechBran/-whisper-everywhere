@@ -280,6 +280,55 @@ object SpeakerSpans {
     }
 
     /**
+     * THE NPU TIER'S WINDOWS — built from `WhisperNative.vadSegmentsOf`'s `[start, end]` sample
+     * pairs alone, with no whisper geometry anywhere in the answer (4.10, the Fold6 defect).
+     *
+     * [windows] above needs two things this tier cannot give it: VAD segments on BOTH timelines,
+     * and whisper's own segment boundaries to cut the long ones along. The QNN decoder exposes no
+     * token or sentence timestamps at all, so there is nothing to cut a segment along and no
+     * second timeline to map through — **[raw] is already on the caller's original timeline**,
+     * which is why a [SpeakerWindow] comes straight out of a pair. Saying it plainly here is
+     * better than a [VadSeg] whose trimmed half is a copy of its original half: that would look
+     * like two measurements agreeing when it is one measurement written twice.
+     *
+     * The ONE rule that carries over from [windows] is the short-window one, and it carries over
+     * because it is about the EMBEDDER rather than about whisper: a segment shorter than
+     * [MIN_WINDOW_SECONDS] joins its predecessor, so a burst of half-second back-channels becomes
+     * one fingerprintable window instead of three that each inherit a label without being heard.
+     * The FIRST segment has no predecessor, so a short opener stands alone and takes fate 1 —
+     * the same answer the CPU route gives a short leading VAD segment.
+     *
+     * The merged window spans from its predecessor's start to the joining segment's end, PAUSE
+     * INCLUDED, exactly as [windows]' rule 3 hands the embedder everything between the sentences
+     * it coalesced. The silence BETWEEN separate windows is left out, also exactly as there.
+     *
+     * [SpeakerWindow.vadIndex] is the index of the speech segment a window STARTS at, so it is
+     * strictly increasing and a coalesced window is named by its first segment. The chunk's raw
+     * segment count is `raw.size / 2` and is the assigner's `segs=`; a degenerate pair is dropped
+     * rather than repaired.
+     *
+     * A trailing odd int is DROPPED: half a segment is not a segment.
+     */
+    fun wholeChunkWindows(raw: IntArray): List<SpeakerWindow> {
+        val n = raw.size / 2
+        if (n == 0) return emptyList()
+        val minWindowSamples = (MIN_WINDOW_SECONDS * SAMPLE_RATE).toInt()
+        val out = ArrayList<SpeakerWindow>(n)
+        for (i in 0 until n) {
+            val start = raw[i * 2]
+            val end = raw[i * 2 + 1]
+            if (end <= start) continue
+            val previous = out.lastOrNull()
+            if (previous != null && end - start < minWindowSamples) {
+                out[out.size - 1] = previous.copy(origEnd = end)
+                continue
+            }
+            out += SpeakerWindow(vadIndex = i, origStart = start, origEnd = end)
+        }
+        return out
+    }
+
+    /**
      * Cuts [bytes] — the UTF-8 `transcribeRaw` returned — into spans, one per run of decoded
      * segments that share a fingerprint WINDOW.
      *

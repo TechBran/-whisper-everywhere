@@ -869,6 +869,203 @@ class SpeakerAssignerTest {
         assertEquals(3, assignment?.ids?.size)
     }
 
+    // ------------------------------------------------- the NPU route (4.10, the Fold6 defect)
+
+    /**
+     * Runs ONE chunk through [SpeakerAssigner.assignWholeChunk] with a FAKE segmenter standing in
+     * for `WhisperNative.vadSegmentsOf`, which cannot be called off a device.
+     *
+     * [segments] is what that native call would have answered: `[start, end]` SAMPLE PAIRS on the
+     * chunk's own timeline — two ints per segment, because there is no stitched buffer on this
+     * route and therefore no second timeline.
+     */
+    private fun assignWholeChunkOnce(
+        voices: VoicePrints,
+        samples: FloatArray,
+        segments: IntArray,
+        tracker: SpeakerTracker = SpeakerTracker(),
+        seq: Long = 7L,
+        vadModelPath: String = "/data/vad/silero.bin",
+        timeoutMs: Long = 5_000,
+    ): SpeakerAssignment? {
+        val arrived = CountDownLatch(1)
+        val seen = AtomicReference<SpeakerAssignment?>(null)
+        val assigner = SpeakerAssigner(
+            voices = voices,
+            onAssigned = { seen.set(it); arrived.countDown() },
+            tracker = tracker,
+            segmenter = { _, _ -> segments },
+        )
+        try {
+            assigner.assignWholeChunk(seq, samples, vadModelPath)
+            arrived.await(timeoutMs, TimeUnit.MILLISECONDS)
+        } finally {
+            assigner.release()
+        }
+        return seen.get()
+    }
+
+    /** `[start, end]` sample pairs, from seconds — the fake native segmenter's answer. */
+    private fun pairs(vararg bounds: Pair<Float, Float>): IntArray =
+        IntArray(bounds.size * 2) { i ->
+            val (startSec, endSec) = bounds[i / 2]
+            (((if (i % 2 == 0) startSec else endSec)) * RATE).toInt()
+        }
+
+    @Test
+    fun theWholeChunkTakesTheIdOfTheWindowHOLDINGTHEMOSTSPEECH() {
+        // The QNN decoder publishes no token timestamps, so this chunk's TEXT cannot be split.
+        // Two windows, two voices, and the LONGER one speaks for the chunk — that is the whole of
+        // the owner's "at the chunk level … at least that would be good enough".
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignWholeChunkOnce(
+            voices = voices,
+            samples = buffer(10f),
+            segments = pairs(0f to 2f, 3f to 8f),
+        )
+        assertEquals("both windows are still fingerprinted and still teach the tracker",
+            listOf(1, 2), assignment?.ids)
+        assertEquals("the 5 s window wins over the 2 s one", 1, assignment?.wholeChunkWindow)
+        assertEquals("two speech segments behind two windows", 2, assignment?.segs)
+    }
+
+    @Test
+    fun anEvenSplitNamesTheEARLIESTWindowSoOneAudioCannotProduceTwoAnswers() {
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignWholeChunkOnce(
+            voices = voices,
+            samples = buffer(10f),
+            segments = pairs(0f to 3f, 4f to 7f),
+        )
+        assertEquals(listOf(1, 2), assignment?.ids)
+        assertEquals("a tie goes to the earliest, always", 0, assignment?.wholeChunkWindow)
+    }
+
+    @Test
+    fun aShortSegmentJoinsItsPredecessorRatherThanInheritingAlone() {
+        // The coalescing rule is the one thing that carries over from the geometry route, and it
+        // carries over because it is about the EMBEDDER: three half-second back-channels are one
+        // fingerprintable window, not three that inherit a label without being heard.
+        val voices = FakeVoices { unit(0.0) }
+        val assignment = assignWholeChunkOnce(
+            voices = voices,
+            samples = buffer(10f),
+            segments = pairs(0f to 2f, 2.2f to 2.6f, 2.8f to 3.1f),
+        )
+        assertEquals("three speech segments…", 3, assignment?.segs)
+        assertEquals("…coalesced into one window", 1, assignment?.ids?.size)
+        assertEquals(0, assignment?.wholeChunkWindow)
+        assertEquals("one embed, over the merged span including its pauses", 1, voices.lengths.size)
+        assertEquals((3.1f * RATE).toInt(), voices.lengths[0])
+    }
+
+    @Test
+    fun aChunkWithNoSpeechPublishesNOTHING() {
+        // Spec §2: "no segments" is not "one speaker". An empty segmentation is also what a
+        // missing or unloadable VAD model answers, and neither may invent a speaker.
+        val voices = FakeVoices { unit(0.0) }
+        val assignment = assignWholeChunkOnce(
+            voices = voices,
+            samples = buffer(10f),
+            segments = IntArray(0),
+            timeoutMs = 400,
+        )
+        assertNull("no callback at all for a chunk with no speech", assignment)
+        assertEquals("and nothing was fingerprinted", 0, voices.lengths.size)
+    }
+
+    @Test
+    fun theDominantWindowsKEYIsWhatTheRetrospectivePassLaterRewrites() {
+        // The published index is an index into `ids`, and therefore into the chunk's WindowKeys:
+        // `TranscriptSink.assign` stamps it onto the chunk's one run, so a later `windowLabels`
+        // relabel — keyed on WindowKey(seq, windowIndex) — reaches that run like any other. If
+        // the index published here were not a real window index, the pass would silently miss
+        // every NPU chunk and those runs would keep ids from a superseded numbering.
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignWholeChunkOnce(
+            voices = voices,
+            samples = buffer(10f),
+            segments = pairs(0f to 2f, 3f to 8f),
+            seq = 42L,
+        )
+        assertNotNull(assignment)
+        val pick = assignment!!.wholeChunkWindow
+        assertNotNull(pick)
+        assertTrue("the pick indexes the ids it was chosen from", pick!! in assignment.ids.indices)
+
+        val runs = listOf(Run(seq = 42L, windowIndex = SpeakerRuns.NO_WINDOW_INDEX, text = "hi"))
+        SpeakerRuns.applyWholeChunk(
+            runs, seq = 42L, windowIndex = pick, id = assignment.ids[pick],
+        )
+        assertEquals(2, runs[0].speakerId)
+        SpeakerRuns.applyWindowLabels(runs, mapOf(WindowKey(42L, pick) to 5))
+        assertEquals("the pass reaches the NPU chunk's run", 5, runs[0].speakerId)
+    }
+
+    @Test
+    fun theWholeChunkRouteRunsOffTheCallersThreadAndAsksForThePathItWasGiven() {
+        val voices = FakeVoices { unit(0.0) }
+        val caller = Thread.currentThread().name
+        val arrived = CountDownLatch(1)
+        val askedPath = AtomicReference<String?>(null)
+        val askedThread = AtomicReference<String?>(null)
+        val assigner = SpeakerAssigner(
+            voices = voices,
+            onAssigned = { arrived.countDown() },
+            segmenter = { _, path ->
+                askedPath.set(path)
+                askedThread.set(Thread.currentThread().name)
+                pairs(0f to 3f)
+            },
+        )
+        try {
+            assigner.assignWholeChunk(9L, buffer(5f), "/data/vad/silero.bin")
+            assertTrue(arrived.await(5_000, TimeUnit.MILLISECONDS))
+        } finally {
+            assigner.release()
+        }
+        assertEquals("/data/vad/silero.bin", askedPath.get())
+        assertEquals(
+            "the ~60 ms VAD is paid on the embed thread, never the whisper one",
+            "speaker-embed", askedThread.get(),
+        )
+        assertFalse("speaker-embed" == caller)
+    }
+
+    @Test
+    fun anAbsentVadPathIsSkippedRatherThanInvented() {
+        val voices = FakeVoices { unit(0.0) }
+        val called = AtomicLong(0)
+        val assigner = SpeakerAssigner(
+            voices = voices,
+            onAssigned = {},
+            segmenter = { _, _ -> called.incrementAndGet(); pairs(0f to 3f) },
+        )
+        try {
+            assigner.assignWholeChunk(9L, buffer(5f), "")
+            assigner.assignWholeChunk(10L, FloatArray(0), "/data/vad/silero.bin")
+            assertTrue(assigner.awaitIdle(5_000))
+        } finally {
+            assigner.release()
+        }
+        assertEquals("neither an empty path nor an empty buffer reaches the segmenter", 0L, called.get())
+    }
+
+    @Test
+    fun theGeometryRouteNEVERPublishesAWholeChunkPick() {
+        // THE CPU TIER MUST NOT CHANGE. `wholeChunkWindow` is the one field that alters what a
+        // reader does with `ids`, and a non-null one on the geometry route would collapse a
+        // sentence-labelled chunk to a single speaker — silently, because every id in it is real.
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignOneChunk(
+            voices = voices,
+            samples = buffer(10f),
+            windows = segs(0f to 2f, 3f to 8f),
+        )
+        assertEquals(listOf(1, 2), assignment?.ids)
+        assertNull("the geometry route picks nothing", assignment?.wholeChunkWindow)
+    }
+
     private companion object {
         const val RATE = 16_000
 

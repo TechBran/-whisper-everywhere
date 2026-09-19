@@ -593,4 +593,78 @@ class SpeakerSpansTest {
             SpeakerSpans.MIN_WINDOW_SECONDS < SpeakerSpans.LONG_SEGMENT_SECONDS,
         )
     }
+
+    // ------------------------------------- the NPU tier's windows (4.10, the Fold6 defect)
+
+    /** `[start, end]` sample pairs, from seconds — what `WhisperNative.vadSegmentsOf` answers. */
+    private fun pairs(vararg bounds: Pair<Float, Float>): IntArray =
+        IntArray(bounds.size * 2) { i ->
+            val (startSec, endSec) = bounds[i / 2]
+            ((if (i % 2 == 0) startSec else endSec) * RATE).toInt()
+        }
+
+    @Test
+    fun wholeChunkWindowsAreTheSegmentsThemselvesBecauseThereIsOnlyONETimeline() {
+        // Nothing is stitched on this route and nothing is swapped, so a pair IS a window. The
+        // `vadIndex` is the position, which is what makes a coalesced window nameable by the
+        // segment it starts at.
+        assertEquals(
+            listOf(
+                SpeakerWindow(0, 0, 2 * RATE),
+                SpeakerWindow(1, 3 * RATE, 8 * RATE),
+            ),
+            SpeakerSpans.wholeChunkWindows(pairs(0f to 2f, 3f to 8f)),
+        )
+    }
+
+    @Test
+    fun aSegmentShorterThanTheWindowFloorJoinsItsPredecessorPauseIncluded() {
+        // MIN_WINDOW_SECONDS is the tracker's lowest gate, so a window under it can say nothing
+        // at all. Three back-channels become one window that can — and it spans the pauses
+        // between them, exactly as the geometry route's own partition does.
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, (3.1f * RATE).toInt())),
+            SpeakerSpans.wholeChunkWindows(pairs(0f to 2f, 2.2f to 2.6f, 2.8f to 3.1f)),
+        )
+    }
+
+    @Test
+    fun aSHORTLEADERHasNoPredecessorAndStandsAloneLikeTheGeometryRoutesFirstSegment() {
+        // It will inherit rather than be fingerprinted (fate 1), which is the same answer the CPU
+        // route gives a short leading VAD segment. Joining it FORWARDS would be a second rule
+        // nobody measured, and it would also make the first window's bounds depend on the second.
+        assertEquals(
+            listOf(
+                SpeakerWindow(0, 0, (0.4f * RATE).toInt()),
+                SpeakerWindow(1, 1 * RATE, 4 * RATE),
+            ),
+            SpeakerSpans.wholeChunkWindows(pairs(0f to 0.4f, 1f to 4f)),
+        )
+    }
+
+    @Test
+    fun anEmptyOrDegenerateSegmentationYieldsNoWindowsAtAll() {
+        // Spec §2 forbids reading "no segments" as "one speaker" — there is no timeline to
+        // attribute anything to, so there is nothing to publish.
+        assertEquals(emptyList<SpeakerWindow>(), SpeakerSpans.wholeChunkWindows(IntArray(0)))
+        // A trailing odd int is half a segment and is dropped rather than repaired.
+        assertEquals(emptyList<SpeakerWindow>(), SpeakerSpans.wholeChunkWindows(intArrayOf(0)))
+        // An empty or inverted pair is dropped too: it would hand the embedder a zero-length
+        // slice and a NaN duration.
+        assertEquals(
+            listOf(SpeakerWindow(1, 0, 2 * RATE)),
+            SpeakerSpans.wholeChunkWindows(intArrayOf(5 * RATE, 5 * RATE, 0, 2 * RATE)),
+        )
+    }
+
+    @Test
+    fun theTwoRoutesShareTheWindowFLOORAndNothingElse() {
+        // The short-window rule is about the EMBEDDER and carries over; the SPLIT is about
+        // whisper's own segment boundaries and cannot, because the QNN decoder publishes none.
+        // A whole-chunk window is therefore never shorter than the floor unless it is the
+        // chunk's first segment.
+        val windows = SpeakerSpans.wholeChunkWindows(pairs(0f to 2f, 2.1f to 2.4f))
+        val seconds = (windows.single().origEnd - windows.single().origStart) / RATE.toFloat()
+        assertTrue(seconds >= SpeakerSpans.MIN_WINDOW_SECONDS)
+    }
 }

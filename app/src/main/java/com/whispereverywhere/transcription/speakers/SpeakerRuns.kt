@@ -20,17 +20,25 @@ import com.whispereverywhere.text.TextJoin
  *
  * @param seq the committed chunk's segment sequence number.
  * @param windowIndex the chunk's FINGERPRINT WINDOW this text was attributed to, or
- *        [SpeakerRuns.NO_WINDOW_INDEX] for a run that carries a whole chunk with no geometry
- *        behind it (cloud, the NPU tier, detection off, or a chunk whose spans could not
- *        reproduce its text — see [SpeakerRuns.of]). Such a run can never be assigned, and that
- *        is the point: it renders as today's plain text forever.
+ *        [SpeakerRuns.NO_WINDOW_INDEX] for a run that carries a whole chunk with nothing behind
+ *        it yet (cloud, detection off, or a chunk whose spans could not reproduce its text — see
+ *        [SpeakerRuns.of]).
  *
  *        It was the VAD segment's index until spike session 4 split long segments into several
  *        windows; the two agree for every chunk that has no long segment in it.
+ *
+ *        **MUTABLE since 4.10's NPU route, and for the same timing reason [speakerId] is.** On
+ *        the CPU and GPU tiers a run is born knowing its window, because the spans that cut it
+ *        carry the index. The NPU tier has no spans to cut with: its chunk arrives as ONE run
+ *        with [SpeakerRuns.NO_WINDOW_INDEX], and which window speaks for it is only known ~60 ms
+ *        later, when the VAD and the embeddings come back off the speaker thread
+ *        ([SpeakerRuns.applyWholeChunk] is the one writer). Leaving it -1 forever would have cost
+ *        that run the retrospective pass, which addresses runs by `WindowKey(seq, windowIndex)`
+ *        and can only correct what it can name.
  */
 data class Run(
     val seq: Long,
-    val windowIndex: Int,
+    var windowIndex: Int,
     val text: String,
     var speakerId: Int? = null,
 )
@@ -106,6 +114,44 @@ object SpeakerRuns {
     }
 
     /**
+     * THE NPU TIER'S STAMP: one chunk, one speaker, one run (4.10, the Fold6 defect).
+     *
+     * The QNN decoder exposes no token or sentence timestamps, so that tier's chunk reaches [of]
+     * with no spans and becomes exactly one run carrying [NO_WINDOW_INDEX]. This is where that
+     * run learns the two things the embed thread worked out ~60 ms after the text was already on
+     * screen: **which window speaks for the chunk** ([windowIndex], the one holding the most
+     * speech) and **whose voice it was** ([id]).
+     *
+     * ### Why the window index is written and not just the speaker
+     *
+     * The id alone would label the run today and lose it tomorrow. The retrospective pass
+     * renumbers the id space and rewrites runs BY WINDOW ([applyWindowLabels], keyed on
+     * `WindowKey(seq, windowIndex)`), so a run left at [NO_WINDOW_INDEX] is one the pass can
+     * never name — it would keep an id issued before the renumbering, which afterwards usually
+     * denotes a different person. Writing the DOMINANT window's index is what puts this chunk
+     * back under the same correction as every other, which is the whole reason the NPU route
+     * costs nothing downstream.
+     *
+     * ### What it refuses
+     *
+     * - a run of another chunk, and a run that already has a window — the latter is the CPU
+     *   tier's, and this must never reach it; it is also what makes a second call a no-op;
+     * - a negative [windowIndex], which is the caller saying it has no answer;
+     * - an [id] of `0`, dropped at the door exactly as in [applyAssignment]: 0 is the tracker's
+     *   "could not attribute this at all", never speaker 1. The index is still written — the run
+     *   is nameable even when it is not yet named, so a later pass can still label it.
+     */
+    fun applyWholeChunk(runs: List<Run>, seq: Long, windowIndex: Int, id: Int) {
+        if (windowIndex < 0) return
+        for (run in runs) {
+            if (run.seq != seq) continue
+            if (run.windowIndex != NO_WINDOW_INDEX) continue
+            run.windowIndex = windowIndex
+            if (id > 0) run.speakerId = id
+        }
+    }
+
+    /**
      * THE SECOND LOOK's patch: a label per fingerprint WINDOW, applied to every run of the
      * session it names (spike session 6).
      *
@@ -128,8 +174,10 @@ object SpeakerRuns {
      * paragraph break in a session the pass says has two voices.
      *
      * So exactly three kinds of run go unnamed, and each is a run nothing could name:
-     *  - a run with [NO_WINDOW_INDEX] (cloud, the NPU tier, a chunk whose spans could not
-     *    reproduce its text) belongs to no window and can never be labelled;
+     *  - a run still at [NO_WINDOW_INDEX] (cloud, detection off, a chunk whose spans could not
+     *    reproduce its text) belongs to no window and can never be labelled. An NPU-tier run is
+     *    NOT in this class: [applyWholeChunk] gives it its dominant window's index the moment the
+     *    embed thread answers, precisely so that this method reaches it;
      *  - a window past the assigner's retention bound (`SpeakerAssigner.MAX_RETAINED_WINDOWS`,
      *    roughly four hours of speech) keeps the label it has, which is where the accounting
      *    honestly stops;

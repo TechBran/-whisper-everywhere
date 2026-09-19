@@ -139,13 +139,33 @@ class TranscriptSink(
      * online-then-refine pass, not a race (see `SpeakerRuns.applyRemap`). The remap is applied
      * after the stamp so a chunk whose own ids were just superseded is corrected in the same call.
      *
+     * [wholeChunkWindow] is `SpeakerAssignment.wholeChunkWindow`: null on the CPU and GPU tiers,
+     * where the ids above each own their own stretch of text, and on the NPU tier the index in
+     * [ids] whose id the WHOLE chunk takes (4.10, the Fold6 defect). That tier's decoder exposes
+     * no text offsets, so its chunk arrived as one unindexed run and this is where it learns both
+     * its window and its speaker — see `SpeakerRuns.applyWholeChunk` for why the window matters
+     * as much as the id.
+     *
      * Accepted after [close] and deliberately so: the last chunk of a session resolves behind the
      * stop tap, and its ids are worth having for the history render even though the delivered file
      * has already been written.
      */
     @Synchronized
-    fun assign(seq: Long, ids: List<Int>, remap: Map<Int, Int>) {
+    fun assign(seq: Long, ids: List<Int>, remap: Map<Int, Int>, wholeChunkWindow: Int? = null) {
         SpeakerRuns.applyAssignment(runs, seq = seq, ids = ids)
+        // AFTER the per-window stamp and BEFORE the remap. After, because on this route the
+        // per-window stamp finds nothing to do (the chunk's one run has no window yet) and this
+        // is what gives it one; before, because the merges reach backwards across the whole
+        // session and must correct the id this call just wrote, in this call, exactly as they
+        // correct the ids above it.
+        if (wholeChunkWindow != null) {
+            SpeakerRuns.applyWholeChunk(
+                runs,
+                seq = seq,
+                windowIndex = wholeChunkWindow,
+                id = ids.getOrElse(wholeChunkWindow) { 0 },
+            )
+        }
         SpeakerRuns.applyRemap(runs, remap)
         repaint()
     }
