@@ -17,9 +17,11 @@ import java.util.Locale
  *
  * Two properties are asserted harder than the rest:
  *
- *  - **The columns are parallel.** `ids=`, `best=` and `dur=` carry one entry per VAD segment, in
- *    chunk order, always — including the segments that were never fingerprinted, which is where a
- *    skipping implementation would silently misalign the table.
+ *  - **The columns are parallel.** `ids=`, `best=` and `dur=` carry one entry per FINGERPRINT
+ *    WINDOW, in chunk order, always — including the windows that were never fingerprinted, which
+ *    is where a skipping implementation would silently misalign the table. `windows=` is that
+ *    length and `segs=` is the number of VAD segments behind it; their DIFFERENCE is what spike
+ *    session 4 reads, so neither may be dropped for the other.
  *  - **Not one character of transcript.** The whole feature is about text, and this is the only
  *    thing it prints. The line is numbers, brackets and its own field names; the assertion below
  *    is over the *inputs* a chunk carries, because the type makes text unreachable — there is no
@@ -29,6 +31,7 @@ class SpeakerDiagTest {
 
     private fun assignment(
         seq: Long = 12L,
+        segs: Int = 3,
         ids: List<Int> = listOf(1, 1, 2),
         confirmed: Boolean = true,
         embedMs: Long = 214L,
@@ -38,6 +41,7 @@ class SpeakerDiagTest {
         remaps: Map<Int, Int> = emptyMap(),
     ) = SpeakerAssignment(
         seq = seq,
+        segs = segs,
         ids = ids,
         confirmed = confirmed,
         stats = SpeakerAssignStats(
@@ -52,7 +56,7 @@ class SpeakerDiagTest {
     @Test
     fun theLineIsTheSpikesOwnShapeFieldForField() {
         assertEquals(
-            "speaker: seq=12 segs=3 embedMs=214 ids=[1,1,2] best=[-,0.88,0.31] dur=[3.2,1.1,2.4] confirmed=1 load=0",
+            "speaker: seq=12 segs=3 windows=3 embedMs=214 ids=[1,1,2] best=[-,0.88,0.31] dur=[3.2,1.1,2.4] confirmed=1 load=0",
             SpeakerDiag.line(assignment()),
         )
     }
@@ -64,22 +68,42 @@ class SpeakerDiagTest {
     }
 
     @Test
-    fun segsIsTheSEGMENTCountAndTheThreeColumnsAreParallelToIt() {
+    fun windowsIsTheCOLUMNLengthAndTheThreeColumnsAreParallelToIt() {
         val line = SpeakerDiag.line(
-            assignment(ids = listOf(1), best = listOf(0.9f), durationsSec = listOf(1.5f)),
+            assignment(segs = 1, ids = listOf(1), best = listOf(0.9f), durationsSec = listOf(1.5f)),
         )
-        assertTrue(line, "segs=1" in line)
+        assertTrue(line, "windows=1" in line)
         assertTrue(line, "ids=[1]" in line)
         assertTrue(line, "best=[0.90]" in line)
         assertTrue(line, "dur=[1.5]" in line)
     }
 
     @Test
+    fun segsAndWindowsAreTWONumbersAndTheirDifferenceIsWhatSession4Reads() {
+        // Failure mode B's whole measurement. Two VAD segments, five windows, because one of them
+        // ran past LONG_SEGMENT_SECONDS with several sentences in it and was fingerprinted per
+        // sentence. Printing only one of the two numbers would make the split invisible in a log
+        // that is the only instrument the owner's device sessions produce.
+        val line = SpeakerDiag.line(
+            assignment(
+                segs = 2,
+                ids = listOf(1, 2, 1, 2, 1),
+                best = listOf(Float.NaN, 0.21f, 0.84f, 0.90f, 0.79f),
+                durationsSec = listOf(4.1f, 2.0f, 2.3f, 3.0f, 2.6f),
+            ),
+        )
+        assertTrue(line, "segs=2 windows=5" in line)
+
+        // …and they agree, chunk after chunk, on a session that never hits a long segment.
+        assertTrue(SpeakerDiag.line(assignment()), "segs=3 windows=3" in SpeakerDiag.line(assignment()))
+    }
+
+    @Test
     fun aChunkWithNoSegmentsRendersEmptyColumnsRatherThanADash() {
         val line = SpeakerDiag.line(
-            assignment(ids = emptyList(), best = emptyList(), durationsSec = emptyList()),
+            assignment(segs = 0, ids = emptyList(), best = emptyList(), durationsSec = emptyList()),
         )
-        assertTrue(line, "segs=0" in line)
+        assertTrue(line, "windows=0" in line)
         assertTrue(line, "ids=[]" in line)
         assertTrue(line, "best=[]" in line)
         assertTrue(line, "dur=[]" in line)
@@ -95,12 +119,12 @@ class SpeakerDiagTest {
 
     @Test
     fun theOneChunkThatPaidTheModelLoadSaysSoSoItIsNotReadAsCamPlusBeingSlow() {
-        // The flag is after `confirmed=`, so anything reading the plan's eight fields positionally
+        // The flag is after `confirmed=`, so anything reading the plan's fields positionally
         // is unaffected by its existence. It is last on every chunk that merged nothing, which is
         // almost all of them; `remaps=` goes after it on the rest.
         assertTrue(SpeakerDiag.line(assignment(includesModelLoad = true)).endsWith(" load=1"))
         assertTrue(SpeakerDiag.line(assignment(includesModelLoad = false)).endsWith(" load=0"))
-        assertTrue("confirmed= stays the eighth field", "confirmed=1 load=" in SpeakerDiag.line(assignment()))
+        assertTrue("confirmed= stays just before it", "confirmed=1 load=" in SpeakerDiag.line(assignment()))
     }
 
     @Test
@@ -130,13 +154,13 @@ class SpeakerDiagTest {
     @Test
     fun thereIsNoSPACEInsideAColumnSoOneLineIsOneRecordForAWhitespaceSplit() {
         val fields = SpeakerDiag.line(assignment()).split(" ")
-        assertEquals(9, fields.size)
+        assertEquals(10, fields.size)
         for (field in fields.drop(1)) {
             assertTrue("every field is key=value: $field", field.count { it == '=' } == 1)
         }
-        // …and ten on a chunk that merged, with the same rule holding for the new column.
+        // …and eleven on a chunk that merged, with the same rule holding for the new column.
         val merged = SpeakerDiag.line(assignment(remaps = mapOf(3 to 1, 5 to 2))).split(" ")
-        assertEquals(10, merged.size)
+        assertEquals(11, merged.size)
         for (field in merged.drop(1)) {
             assertTrue("every field is key=value: $field", field.count { it == '=' } == 1)
         }
@@ -151,7 +175,7 @@ class SpeakerDiagTest {
         // `-` already means "not measured" in the `best=` column beside it.
         val merged = SpeakerDiag.line(assignment(remaps = mapOf(3 to 1, 5 to 2)))
         assertTrue(merged, merged.endsWith(" remaps=[3>1,5>2]"))
-        assertTrue("…and it comes after load=, so the plan's eight fields stay positional", "load=0 remaps=" in merged)
+        assertTrue("…and it comes after load=, so every fixed field stays positional", "load=0 remaps=" in merged)
 
         // Absent, not empty, on the overwhelming majority of chunks: eighteen `remaps=[]` per
         // session would bury the one line worth reading.

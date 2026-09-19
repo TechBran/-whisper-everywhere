@@ -131,7 +131,7 @@ class TranscriptSink(
     /**
      * One chunk's speaker ids, arriving after its text has already been delivered and painted.
      *
-     * [ids] carries one id per VAD segment in chunk order and [remap] the tracker's accumulated
+     * [ids] carries one id per FINGERPRINT WINDOW in chunk order and [remap] the tracker's accumulated
      * merges, which reach BACKWARDS across the whole session — that is the design of the
      * online-then-refine pass, not a race (see `SpeakerRuns.applyRemap`). The remap is applied
      * after the stamp so a chunk whose own ids were just superseded is corrected in the same call.

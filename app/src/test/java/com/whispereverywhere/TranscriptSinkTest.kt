@@ -107,8 +107,8 @@ class TranscriptSinkTest {
     // --- 4.10: runs, the late assignment, and the two renders -------------------
 
     private val twoVoices = listOf(
-        SpeakerSpan(vadIndex = 0, text = "Hello there."),
-        SpeakerSpan(vadIndex = 1, text = "Hi, how are you?"),
+        SpeakerSpan(windowIndex = 0, text = "Hello there."),
+        SpeakerSpan(windowIndex = 1, text = "Hi, how are you?"),
     )
     private val twoVoicesText = "Hello there. Hi, how are you?"
 
@@ -118,7 +118,7 @@ class TranscriptSinkTest {
         sink.append(seq = 2, spans = null, text = "A cloud chunk.")
         assertEquals(3, sink.runCount)
         val runs = sink.runs()
-        assertEquals(listOf(0, 1, SpeakerRuns.NO_VAD_INDEX), runs.map { it.vadIndex })
+        assertEquals(listOf(0, 1, SpeakerRuns.NO_WINDOW_INDEX), runs.map { it.windowIndex })
         assertEquals(listOf(1L, 1L, 2L), runs.map { it.seq })
         assertTrue("nothing is assigned until the embedder answers", runs.all { it.speakerId == null })
         sink.close()

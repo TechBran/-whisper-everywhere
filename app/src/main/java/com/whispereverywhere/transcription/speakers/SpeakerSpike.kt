@@ -118,9 +118,9 @@ object SpeakerSpike {
 /**
  * ONE fingerprint, as the tuning loop on the PC needs to read it (4.10 speaker spike, session 2).
  *
- * One of these exists for every VAD segment that was actually FINGERPRINTED — a segment under
- * [SpeakerTracker.MIN_EMBED_SECONDS] and a segment whose embedding came back null have no vector
- * and therefore no row. Everything the offline tuner needs to re-decide the segment is here:
+ * One of these exists for every fingerprint WINDOW that was actually FINGERPRINTED — a window
+ * under [SpeakerTracker.MIN_EMBED_SECONDS] and one whose embedding came back null have no vector
+ * and therefore no row. Everything the offline tuner needs to re-decide the window is here:
  *
  *  - [emb] is the input to every one of the five changes the spike doc asks for;
  *  - [assigned] and [best] are what the SHIPPED tracker decided, so a candidate can be scored

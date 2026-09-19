@@ -1,7 +1,7 @@
 package com.whispereverywhere.transcription
 
 import com.whispereverywhere.transcription.speakers.SpeakerSpan
-import com.whispereverywhere.transcription.speakers.VadSeg
+import com.whispereverywhere.transcription.speakers.SpeakerWindow
 import com.whispereverywhere.util.RetryPolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -9,8 +9,12 @@ import org.junit.Test
 
 /**
  * 4.10 Task 1, the seam half: the local engine reads the native segment geometry through
- * [WhisperBackend.lastGeometry] and hands the service `(vadIndex, text)` spans BESIDE the text it
- * already delivered — `SegmentOutcome.Text.text` is untouched, byte for byte.
+ * [WhisperBackend.lastGeometry] and hands the service `(windowIndex, text)` spans BESIDE the text
+ * it already delivered — `SegmentOutcome.Text.text` is untouched, byte for byte.
+ *
+ * Since spike session 4 the engine also builds the chunk's FINGERPRINT WINDOWS here, once, and
+ * carries them on the same outcome: the spans are cut against that list and the assigner
+ * fingerprints it, so a second list computed anywhere else could not disagree with this one.
  *
  * WHY THE DEFAULT MATTERS AS MUCH AS THE WIRING: every backend without native geometry (the NPU
  * tier while it is live, the cloud engines, every fake in this suite) inherits
@@ -74,12 +78,13 @@ class LocalWhisperEngineSpeakerSpansTest {
 
         assertEquals("the committed text is what it always was", "Hello world.", outcome.text)
         assertEquals(
-            listOf(SpeakerSpan(vadIndex = 0, text = "Hello"), SpeakerSpan(1, "world.")),
+            listOf(SpeakerSpan(windowIndex = 0, text = "Hello"), SpeakerSpan(1, "world.")),
             outcome.spans,
         )
         assertEquals(
-            listOf(VadSeg(0, 32_000, 0, 32_000), VadSeg(40_000, 72_000, 33_600, 65_600)),
-            outcome.vad,
+            "two short segments, so one window each and the window index IS the vad index",
+            listOf(SpeakerWindow(0, 0, 32_000), SpeakerWindow(1, 40_000, 72_000)),
+            outcome.windows,
         )
         assertEquals("read once per segment, after the transcribe", 1, backend.geometryQueries)
     }
@@ -89,7 +94,7 @@ class LocalWhisperEngineSpeakerSpansTest {
         val outcome = resolveOne(FakeWhisperBackend(text = "hello world"))
         assertEquals(SegmentOutcome.Text("hello world"), outcome)
         assertNull((outcome as SegmentOutcome.Text).spans)
-        assertNull(outcome.vad)
+        assertNull(outcome.windows)
     }
 
     @Test
@@ -109,7 +114,33 @@ class LocalWhisperEngineSpeakerSpansTest {
         val outcome = resolveOne(backend) as SegmentOutcome.Text
         assertEquals("no vad here", outcome.text)
         assertNull(outcome.spans)
-        assertNull(outcome.vad)
+        assertNull(outcome.windows)
+    }
+
+    @Test
+    fun aLongSegmentArrivesAsSEVERALWindowsAndItsSpansDoNotMerge() {
+        // Spike session 4 end to end through the engine seam. ONE twelve-second VAD segment with
+        // two sentences in it: two windows, two spans, and the second span's index is 1 — which
+        // under the pre-session-4 rule would have been 0 for both, one merged span, one label.
+        val backend = GeometryBackend(
+            text = " Hello there. Hi, how are you?",
+            geometry = SegmentGeometry(
+                vadSegments = intArrayOf(0, 192_000, 0, 192_000),
+                whisperSegments = intArrayOf(0, 550, 0, 13, 560, 1_200, 13, 30),
+            ),
+        )
+
+        val outcome = resolveOne(backend) as SegmentOutcome.Text
+
+        assertEquals("Hello there. Hi, how are you?", outcome.text)
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 89_600), SpeakerWindow(0, 89_600, 192_000)),
+            outcome.windows,
+        )
+        assertEquals(
+            listOf(SpeakerSpan(0, "Hello there."), SpeakerSpan(1, "Hi, how are you?")),
+            outcome.spans,
+        )
     }
 
     @Test

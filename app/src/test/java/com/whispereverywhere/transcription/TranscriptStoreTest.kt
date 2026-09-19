@@ -91,7 +91,7 @@ class TranscriptStoreTest {
 
     private fun runs(vararg pairs: Pair<Int, String>): List<Run> =
         pairs.map { (speaker, text) ->
-            Run(seq = 0L, vadIndex = 0, text = text, speakerId = speaker.takeIf { it > 0 })
+            Run(seq = 0L, windowIndex = 0, text = text, speakerId = speaker.takeIf { it > 0 })
         }
 
     private fun sidecar(stamp: Long) = File(tmp.root, "$stamp${TranscriptStore.SIDECAR_SUFFIX}")

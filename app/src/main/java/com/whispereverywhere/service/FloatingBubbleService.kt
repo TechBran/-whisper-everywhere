@@ -1219,14 +1219,23 @@ class FloatingBubbleService : Service(),
      * releases the engine's own drain fence, so without this wait the final chunk is
      * DETERMINISTICALLY unassigned in the runs the delivery, the clipboard and history are
      * rendered from (`SpeakerAssigner.awaitIdle`). Sized off the budget the spike measured — worst
-     * segment under 300 ms, no chunk over 1 s, plus the one-time model load a session that
-     * fingerprints late might still be paying — and generous by a margin because the cost of
-     * overshooting is milliseconds of stop latency on the IO thread while the cost of undershooting
-     * is the session's last paragraph break. A one-speaker session pays only the residual embed of
-     * its last chunk; nothing waits for this timeout unless the embedder has hung, and a timeout
-     * loses labels for one chunk, never text.
+     * window under 300 ms, plus the one-time model load a session that fingerprints late might
+     * still be paying — and generous by a margin because the cost of overshooting is milliseconds
+     * of stop latency on the IO thread while the cost of undershooting is the session's last
+     * paragraph break. A one-speaker session pays only the residual embed of its last chunk;
+     * nothing waits for this timeout unless the embedder has hung, and a timeout loses labels for
+     * one chunk, never text.
+     *
+     * **1 500 → 2 500 ms at spike session 4.** The old bound assumed one fingerprint per VAD
+     * segment and "no chunk over 1 s" of embedding. Failure mode B's fix cuts a long segment into
+     * one window per whisper segment, so the LAST chunk of a session — the stop-tap tail, which
+     * is exactly the chunk this fence exists for — can now carry several windows where it carried
+     * one: five windows at the measured 130-300 ms each is 0.7-1.5 s on its own, and it is the
+     * whole of it that must land before the snapshot. 2.5 s covers that plus a late model load.
+     * Nobody waits the extra second unless the work is genuinely outstanding: this returns the
+     * moment the embed queue drains.
      */
-    private val SPEAKER_DRAIN_MS = 1_500L
+    private val SPEAKER_DRAIN_MS = 2_500L
 
     /**
      * Client-VAD live (Gemini, 4.3.4): how long the finalize drain waits for the provider's final

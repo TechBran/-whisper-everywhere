@@ -195,7 +195,7 @@ class SpeakerSpikePinTest {
         // only QUEUE: a write or a flush there would sit inside the commit floors of spec §3.3.
         val queueOnly = between(
             assigner,
-            "fun assign(seq: Long, samples: FloatArray, vad: List<VadSeg>) {",
+            "fun assign(seq: Long, samples: FloatArray, windows: List<SpeakerWindow>) {",
             "* Blocks the CALLING thread",
             ASSIGNER,
         )

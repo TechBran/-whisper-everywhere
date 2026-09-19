@@ -16,7 +16,7 @@ import org.junit.Test
 class SpeakerLabelsTest {
 
     private fun run(seq: Long, vad: Int, text: String, speaker: Int?) =
-        Run(seq = seq, vadIndex = vad, text = text, speakerId = speaker)
+        Run(seq = seq, windowIndex = vad, text = text, speakerId = speaker)
 
     /** THE EXAMPLE: two speakers, three runs, the second speaker interrupting and the first back. */
     private fun twoSpeakersThreeRuns() = listOf(

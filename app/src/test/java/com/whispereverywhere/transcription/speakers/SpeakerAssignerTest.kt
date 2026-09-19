@@ -75,13 +75,32 @@ class SpeakerAssignerTest {
     /** Samples enough for every segment any test here asks for. */
     private fun buffer(seconds: Float) = FloatArray((RATE * seconds).toInt()) { 0.1f }
 
-    /** A VAD segment on the original timeline; the trimmed halves are irrelevant to this class. */
-    private fun seg(startSec: Float, endSec: Float) = VadSeg(
-        origStart = (startSec * RATE).toInt(),
-        origEnd = (endSec * RATE).toInt(),
-        trimmedStart = 0,
-        trimmedEnd = 0,
-    )
+    /** The same, but each sample's VALUE is its index — so a slice reports where it came from. */
+    private fun ramp(seconds: Float) = FloatArray((RATE * seconds).toInt()) { it.toFloat() }
+
+    /**
+     * One fingerprint window per VAD segment, on the original timeline — the UN-SPLIT shape, and
+     * the shape of every chunk in this file except [aLongSegmentIsFingerprintedPerWhisperSegment].
+     * The `vadIndex` is the position, which is what makes `segs` equal `windows` here.
+     */
+    private fun segs(vararg bounds: Pair<Float, Float>): List<SpeakerWindow> =
+        bounds.mapIndexed { index, (startSec, endSec) ->
+            SpeakerWindow(
+                vadIndex = index,
+                origStart = (startSec * RATE).toInt(),
+                origEnd = (endSec * RATE).toInt(),
+            )
+        }
+
+    /** Several windows cut out of ONE VAD segment — what spike session 4 does to a long one. */
+    private fun split(vadIndex: Int, vararg bounds: Pair<Float, Float>): List<SpeakerWindow> =
+        bounds.map { (startSec, endSec) ->
+            SpeakerWindow(
+                vadIndex = vadIndex,
+                origStart = (startSec * RATE).toInt(),
+                origEnd = (endSec * RATE).toInt(),
+            )
+        }
 
     /**
      * The seam's fake. Records the thread it was called on and the slice length it was handed —
@@ -90,12 +109,20 @@ class SpeakerAssignerTest {
     private class FakeVoices(private val answer: (Int) -> FloatArray?) : VoicePrints {
         val threads: MutableList<String> = Collections.synchronizedList(ArrayList())
         val lengths: MutableList<Int> = Collections.synchronizedList(ArrayList())
+
+        /**
+         * Each slice's FIRST sample value. Against a [ramp] buffer — where a sample's value is
+         * its index — that is the slice's offset into the chunk, which is the half of "the right
+         * sample range" that a length alone cannot show.
+         */
+        val starts: MutableList<Int> = Collections.synchronizedList(ArrayList())
         val released = CountDownLatch(1)
         @Volatile var releasedOn: String? = null
 
         override fun embed(pcm: FloatArray, sampleRate: Int): FloatArray? {
             threads += Thread.currentThread().name
             lengths += pcm.size
+            starts += pcm.firstOrNull()?.toInt() ?: -1
             return answer(lengths.size - 1)
         }
 
@@ -112,7 +139,7 @@ class SpeakerAssignerTest {
     private fun assignOneChunk(
         voices: VoicePrints,
         samples: FloatArray,
-        vad: List<VadSeg>,
+        windows: List<SpeakerWindow>,
         tracker: SpeakerTracker = SpeakerTracker(),
         seq: Long = 7L,
         clockNs: () -> Long = System::nanoTime,
@@ -127,7 +154,7 @@ class SpeakerAssignerTest {
             clockNs = clockNs,
         )
         try {
-            assigner.assign(seq, samples, vad)
+            assigner.assign(seq, samples, windows)
             arrived.await(timeoutMs, TimeUnit.MILLISECONDS)
         } finally {
             assigner.release()
@@ -144,7 +171,7 @@ class SpeakerAssignerTest {
         val assignment = assignOneChunk(
             voices = voices,
             samples = buffer(6f),
-            vad = listOf(seg(0f, 2f), seg(3f, 5f)),
+            windows = segs(0f to 2f, 3f to 5f),
         )
         assertEquals(listOf(1, 2), assignment?.ids)
         assertEquals(2, voices.threads.size)
@@ -158,7 +185,7 @@ class SpeakerAssignerTest {
     fun releaseFreesTheModelOnThatSameThreadAfterTheQueuedWork() {
         val voices = FakeVoices { unit(0.0) }
         val assigner = SpeakerAssigner(voices = voices, onAssigned = {})
-        assigner.assign(1L, buffer(3f), listOf(seg(0f, 2f)))
+        assigner.assign(1L, buffer(3f), segs(0f to 2f))
         assigner.release()
         assertTrue("the model is freed", voices.released.await(5, TimeUnit.SECONDS))
         assertEquals("…on the thread that loaded it", "speaker-embed", voices.releasedOn)
@@ -187,7 +214,7 @@ class SpeakerAssignerTest {
         val published = AtomicReference<SpeakerAssignment?>(null)
         val assigner = SpeakerAssigner(voices = voices, onAssigned = { published.set(it) })
         try {
-            assigner.assign(9L, buffer(4f), listOf(seg(0f, 2f)))
+            assigner.assign(9L, buffer(4f), segs(0f to 2f))
             assertTrue("the embed actually started", entered.await(5, TimeUnit.SECONDS))
             assertNull("…and is still running, so nothing is published yet", published.get())
             assertTrue("the fence drained", assigner.awaitIdle(5_000))
@@ -212,7 +239,7 @@ class SpeakerAssignerTest {
         try {
             // Idle: the fence is a barrier task, so an assigner with nothing queued clears at once.
             assertTrue(assigner.awaitIdle(2_000))
-            assigner.assign(1L, buffer(4f), listOf(seg(0f, 2f)))
+            assigner.assign(1L, buffer(4f), segs(0f to 2f))
             // Bounded: a hung embed costs the caller the timeout and its labels, never its text.
             assertFalse("the fence does not wait forever", assigner.awaitIdle(150))
         } finally {
@@ -228,7 +255,7 @@ class SpeakerAssignerTest {
         // and never throw on the caller's thread.
         val voices = FakeVoices { unit(0.0) }
         val assigner = SpeakerAssigner(voices = voices, onAssigned = {})
-        assigner.assign(1L, buffer(3f), listOf(seg(0f, 2f)))
+        assigner.assign(1L, buffer(3f), segs(0f to 2f))
         assigner.release()
         assertTrue(voices.released.await(5, TimeUnit.SECONDS))
         assertTrue(assigner.awaitIdle(2_000))
@@ -243,7 +270,7 @@ class SpeakerAssignerTest {
         val assignment = assignOneChunk(
             voices = voices,
             samples = buffer(10f),
-            vad = listOf(seg(0f, 2f), seg(2.5f, 3f), seg(4f, 6f)),
+            windows = segs(0f to 2f, 2.5f to 3f, 4f to 6f),
         )
         assertEquals("two embeds for three segments", 2, voices.lengths.size)
         assertEquals(listOf(1, 1, 2), assignment?.ids)
@@ -258,7 +285,7 @@ class SpeakerAssignerTest {
         val assignment = assignOneChunk(
             voices = voices,
             samples = buffer(10f),
-            vad = listOf(seg(0f, 2f), seg(3f, 5f), seg(6f, 8f)),
+            windows = segs(0f to 2f, 3f to 5f, 6f to 8f),
         )
         assertEquals("it was asked all three times", 3, voices.lengths.size)
         assertEquals(listOf(1, 1, 1), assignment?.ids)
@@ -273,7 +300,7 @@ class SpeakerAssignerTest {
         val assignment = assignOneChunk(
             voices = voices,
             samples = buffer(4f),
-            vad = listOf(seg(0f, 2f)),
+            windows = segs(0f to 2f),
         )
         assertEquals(listOf(0), assignment?.ids)
         assertFalse(assignment!!.confirmed)
@@ -290,10 +317,10 @@ class SpeakerAssignerTest {
         val assignment = assignOneChunk(
             voices = voices,
             samples = buffer(4f),
-            vad = listOf(
-                seg(1f, 3f),
-                seg(3f, 9f),
-                seg(10f, 12f),
+            windows = segs(
+                1f to 3f,
+                3f to 9f,
+                10f to 12f,
             ),
         )
         assertEquals(2 * RATE, voices.lengths[0])
@@ -310,7 +337,7 @@ class SpeakerAssignerTest {
         // nothing to say — and in particular no `confirmed=` verdict to publish.
         val voices = FakeVoices { unit(0.0) }
         assertNull(
-            assignOneChunk(voices = voices, samples = buffer(4f), vad = emptyList(), timeoutMs = 300),
+            assignOneChunk(voices = voices, samples = buffer(4f), windows = emptyList(), timeoutMs = 300),
         )
         assertEquals(0, voices.lengths.size)
     }
@@ -324,7 +351,7 @@ class SpeakerAssignerTest {
         val assignment = assignOneChunk(
             voices = voices,
             samples = buffer(12f),
-            vad = listOf(seg(0f, 2f), seg(2.2f, 2.6f), seg(4f, 7f)),
+            windows = segs(0f to 2f, 2.2f to 2.6f, 4f to 7f),
             // Every read advances 5 ms, so each embedded segment costs exactly 5 ms and the
             // skipped one costs nothing — the arithmetic the budget in plan Task 3 is read with.
             clockNs = { ticks.getAndAdd(5_000_000L) },
@@ -349,7 +376,7 @@ class SpeakerAssignerTest {
         val first = assignOneChunk(
             voices = shy,
             samples = buffer(8f),
-            vad = listOf(seg(0f, 2f), seg(3f, 4.4f)),
+            windows = segs(0f to 2f, 3f to 4.4f),
         )
         assertEquals(listOf(1, 1), first?.ids)
         assertFalse("a 1.4 s interjection opens nobody", first!!.confirmed)
@@ -359,7 +386,7 @@ class SpeakerAssignerTest {
         val second = assignOneChunk(
             voices = bold,
             samples = buffer(14f),
-            vad = listOf(seg(0f, 2f), seg(3f, 5f), seg(6f, 8f), seg(9f, 11f)),
+            windows = segs(0f to 2f, 3f to 5f, 6f to 8f, 9f to 11f),
         )
         assertEquals(listOf(1, 2, 1, 2), second?.ids)
         assertTrue("both have held the floor twice", second!!.confirmed)
@@ -369,7 +396,7 @@ class SpeakerAssignerTest {
         val third = assignOneChunk(
             voices = half,
             samples = buffer(8f),
-            vad = listOf(seg(0f, 2f), seg(3f, 5f)),
+            windows = segs(0f to 2f, 3f to 5f),
         )
         assertEquals(listOf(1, 2), third?.ids)
         assertFalse("two speakers, one segment each: no label yet", third!!.confirmed)
@@ -392,7 +419,7 @@ class SpeakerAssignerTest {
         val assignment = assignOneChunk(
             voices = voices,
             samples = buffer(20f),
-            vad = listOf(seg(0f, 2f), seg(3f, 5f), seg(6f, 8f), seg(9f, 11f), seg(12f, 14f), seg(15f, 17f)),
+            windows = segs(0f to 2f, 3f to 5f, 6f to 8f, 9f to 11f, 12f to 14f, 15f to 17f),
         )
         assertEquals(6, voices.lengths.size)
         assertEquals("online, the sixth segment was a new voice", listOf(1, 1, 1, 1, 1, 2), assignment?.ids)
@@ -410,7 +437,7 @@ class SpeakerAssignerTest {
         val assignment = assignOneChunk(
             voices = voices,
             samples = buffer(8f),
-            vad = listOf(seg(0f, 2f), seg(3f, 5f)),
+            windows = segs(0f to 2f, 3f to 5f),
         )
         assertEquals(emptyMap<Int, Int>(), assignment?.remaps)
         assertFalse(SpeakerDiag.line(assignment!!), "remaps" in SpeakerDiag.line(assignment))
@@ -428,8 +455,8 @@ class SpeakerAssignerTest {
             onAssigned = { seen += it; arrived.countDown() },
         )
         try {
-            assigner.assign(1L, buffer(8f), listOf(seg(0f, 2f), seg(3f, 5f)))
-            assigner.assign(2L, buffer(4f), listOf(seg(0f, 2f)))
+            assigner.assign(1L, buffer(8f), segs(0f to 2f, 3f to 5f))
+            assigner.assign(2L, buffer(4f), segs(0f to 2f))
             assertTrue(arrived.await(5, TimeUnit.SECONDS))
         } finally {
             assigner.release()
@@ -452,7 +479,7 @@ class SpeakerAssignerTest {
         val assignment = assignOneChunk(
             voices = voices,
             samples = buffer(6f),
-            vad = listOf(seg(0f, 0.4f), seg(1f, 1.5f), seg(2f, 2.9f)),
+            windows = segs(0f to 0.4f, 1f to 1.5f, 2f to 2.9f),
         )
         assertEquals(0, voices.lengths.size)
         assertEquals(0L, assignment?.stats?.embedMs)
@@ -474,15 +501,85 @@ class SpeakerAssignerTest {
         val arrived = CountDownLatch(1)
         val assigner = SpeakerAssigner(voices = boom, onAssigned = { arrived.countDown() })
         try {
-            assigner.assign(1L, buffer(4f), listOf(seg(0f, 2f)))
+            assigner.assign(1L, buffer(4f), segs(0f to 2f))
             assertFalse("a throwing chunk publishes nothing", arrived.await(300, TimeUnit.MILLISECONDS))
             // …and the NEXT chunk is still served by a live thread.
-            assigner.assign(2L, buffer(4f), listOf(seg(0f, 2f)))
+            assigner.assign(2L, buffer(4f), segs(0f to 2f))
             Thread.sleep(200)
             assertEquals(2, boom.calls)
         } finally {
             assigner.release()
         }
+    }
+
+    // ------------------------------------------ the long-segment split (spike session 4)
+
+    @Test
+    fun aLongSegmentIsFingerprintedPerWhisperSegment() {
+        // FAILURE MODE B's fix, end to end through the real geometry. Session 4's long dump ran
+        // to 14.3 s per segment, and a segment that long can hold a whole exchange; whether it
+        // DID was not shown (that dump was one narrator), so what is asserted here is that the
+        // cut lands where whisper put the sentence boundary and hands the embedder the right two
+        // ranges — not that a bug was caught.
+        //
+        // ONE VAD segment of twelve seconds holding TWO whisper segments: 0.00-5.50 s and
+        // 5.60-12.00 s on the trimmed timeline, which here is the original one. Both clear
+        // MIN_WINDOW_SECONDS, so the split is two windows, cut at the second sentence's own
+        // start — 89 600 samples — with the first window taking the segment's start and the
+        // second its end, so no audio is dropped between them.
+        val vad = SpeakerSpans.vadSegments(intArrayOf(0, 12 * RATE, 0, 12 * RATE))
+        val whisper = intArrayOf(0, 550, 0, 10, 560, 1_200, 10, 20)
+        val windows = SpeakerSpans.windows(whisper, vad)
+        assertEquals(
+            listOf(
+                SpeakerWindow(vadIndex = 0, origStart = 0, origEnd = 89_600),
+                SpeakerWindow(vadIndex = 0, origStart = 89_600, origEnd = 12 * RATE),
+            ),
+            windows,
+        )
+
+        // Two voices, one per window — which the single-fingerprint shape could not have found.
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignOneChunk(voices = voices, samples = ramp(12f), windows = windows)
+
+        assertEquals("TWO fingerprints out of one VAD segment", 2, voices.lengths.size)
+        assertEquals(listOf(0, 89_600), voices.starts)
+        assertEquals(listOf(89_600, 12 * RATE - 89_600), voices.lengths)
+        assertEquals(listOf(1, 2), assignment?.ids)
+        assertEquals("…and the line still says there was ONE segment behind them", 1, assignment?.segs)
+    }
+
+    @Test
+    fun aShortSegmentOrALoneWhisperSegmentIsStillFingerprintedExactlyOnce() {
+        // The two halves of the guard, so the split cannot spread to chunks it was not measured
+        // on. A 4 s segment with two whisper segments in it is UNDER the long floor; a 12 s one
+        // with a single whisper segment has nowhere defensible to cut.
+        val shortSegment = SpeakerSpans.vadSegments(intArrayOf(0, 4 * RATE, 0, 4 * RATE))
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 4 * RATE)),
+            SpeakerSpans.windows(intArrayOf(0, 180, 0, 10, 190, 400, 10, 20), shortSegment),
+        )
+
+        val oneSentence = SpeakerSpans.vadSegments(intArrayOf(0, 12 * RATE, 0, 12 * RATE))
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 12 * RATE)),
+            SpeakerSpans.windows(intArrayOf(0, 1_200, 0, 10), oneSentence),
+        )
+    }
+
+    @Test
+    fun theSegmentCountIsTheSEGMENTSBehindTheWindowsNotTheWindows() {
+        // `segs=` and `windows=` are two numbers in the diag line and their DIFFERENCE is the
+        // measurement session 4 asks for. Three windows cut out of one segment must not be read
+        // as three segments: the endpointer produced one.
+        val voices = FakeVoices { unit(0.0) }
+        val assignment = assignOneChunk(
+            voices = voices,
+            samples = buffer(12f),
+            windows = split(0, 0f to 4f, 4f to 8f, 8f to 12f),
+        )
+        assertEquals(1, assignment?.segs)
+        assertEquals(3, assignment?.ids?.size)
     }
 
     private companion object {

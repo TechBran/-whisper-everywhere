@@ -11,23 +11,28 @@ import org.junit.Test
  * The load-bearing test in this file is [spans_that_do_not_reproduce_the_text_lose_their_labels]:
  * it is what makes "one speaker all session = today's output byte for byte" a property of the
  * TYPE rather than of whisper's cleaning behaving the same per segment as it does per chunk.
+ *
+ * Since spike session 4 the index a run carries is its FINGERPRINT WINDOW, not its VAD segment,
+ * and the two differ exactly when a long segment was split. The gate above is unchanged by that
+ * and is asserted to be: a split chunk whose spans do not add up to its text still keeps its
+ * text and loses its labels.
  */
 class SpeakerRunsTest {
 
-    private fun span(index: Int, text: String) = SpeakerSpan(vadIndex = index, text = text)
+    private fun span(index: Int, text: String) = SpeakerSpan(windowIndex = index, text = text)
 
     // ------------------------------------------------------------------ of()
 
     @Test fun no_spans_is_one_plain_run_carrying_the_whole_chunk() {
         val runs = SpeakerRuns.of(seq = 7, text = "Hello world.", spans = null)
         assertEquals(1, runs.size)
-        assertEquals(Run(seq = 7, vadIndex = SpeakerRuns.NO_VAD_INDEX, text = "Hello world."), runs[0])
+        assertEquals(Run(seq = 7, windowIndex = SpeakerRuns.NO_WINDOW_INDEX, text = "Hello world."), runs[0])
         assertNull("a plain run is never assigned", runs[0].speakerId)
     }
 
     @Test fun an_empty_span_list_is_also_one_plain_run() {
         val runs = SpeakerRuns.of(seq = 1, text = "Hello world.", spans = emptyList())
-        assertEquals(listOf(Run(1, SpeakerRuns.NO_VAD_INDEX, "Hello world.")), runs)
+        assertEquals(listOf(Run(1, SpeakerRuns.NO_WINDOW_INDEX, "Hello world.")), runs)
     }
 
     @Test fun blank_text_yields_no_runs_at_all() {
@@ -38,7 +43,7 @@ class SpeakerRunsTest {
         )
     }
 
-    @Test fun one_run_per_span_in_text_order_keeping_the_vad_index() {
+    @Test fun one_run_per_span_in_text_order_keeping_the_window_index() {
         val runs = SpeakerRuns.of(
             seq = 12,
             text = "Hello there. Hi, how are you?",
@@ -68,17 +73,17 @@ class SpeakerRunsTest {
             text = "Hello there.",
             spans = listOf(span(0, "Hello"), span(1, "there. [noise")),
         )
-        assertEquals(listOf(Run(3, SpeakerRuns.NO_VAD_INDEX, "Hello there.")), runs)
+        assertEquals(listOf(Run(3, SpeakerRuns.NO_WINDOW_INDEX, "Hello there.")), runs)
     }
 
     @Test fun spans_that_all_clean_away_fall_back_to_the_plain_run() {
         val runs = SpeakerRuns.of(seq = 4, text = "Hello.", spans = listOf(span(0, "   "), span(1, "")))
-        assertEquals(listOf(Run(4, SpeakerRuns.NO_VAD_INDEX, "Hello.")), runs)
+        assertEquals(listOf(Run(4, SpeakerRuns.NO_WINDOW_INDEX, "Hello.")), runs)
     }
 
     // ------------------------------------------------------------------ applyAssignment()
 
-    @Test fun an_assignment_stamps_each_run_from_its_own_vad_index() {
+    @Test fun an_assignment_stamps_each_run_from_its_own_window_index() {
         val runs = SpeakerRuns.of(5, "A B", listOf(span(0, "A"), span(1, "B")))
         SpeakerRuns.applyAssignment(runs, seq = 5, ids = listOf(2, 1))
         assertEquals(listOf(2, 1), runs.map { it.speakerId })
@@ -111,6 +116,54 @@ class SpeakerRunsTest {
         val runs = SpeakerRuns.of(5, "A", spans = null)
         SpeakerRuns.applyAssignment(runs, seq = 5, ids = listOf(1, 2, 3))
         assertNull(runs[0].speakerId)
+    }
+
+    // ------------------------------------- the split chunk (spike session 4)
+
+    @Test fun two_spans_cut_out_of_ONE_vad_segment_take_the_ids_of_their_OWN_windows() {
+        // FAILURE MODE B's payoff, at the last step of the pipeline. The chunk's ids arrive one
+        // per WINDOW, and a long segment is several windows — so spans 0 and 1, which under the
+        // pre-session-4 rule shared a vad index and were a single merged span, now carry one
+        // speaker each. Reading `ids` positionally by VAD segment here would put speaker 1's
+        // number on both sentences, which is precisely the bug the split exists to remove.
+        val runs = SpeakerRuns.of(
+            seq = 8,
+            text = "Hello there. Hi, how are you?",
+            spans = listOf(span(0, "Hello there."), span(1, "Hi, how are you?")),
+        )
+        SpeakerRuns.applyAssignment(runs, seq = 8, ids = listOf(1, 2))
+        assertEquals(listOf(1, 2), runs.map { it.speakerId })
+        assertEquals(listOf(0, 1), runs.map { it.windowIndex })
+    }
+
+    @Test fun a_split_chunk_whose_spans_do_not_reproduce_its_text_still_loses_only_its_labels() {
+        // The text-exactness gate is untouched by the split, and that is worth an assertion of
+        // its own: more windows means more per-segment cleans, so more chances for the join to
+        // disagree with the whole-chunk clean by a character. Text is the product either way.
+        val runs = SpeakerRuns.of(
+            seq = 9,
+            text = "Hello there. Hi, how are you?",
+            spans = listOf(span(0, "Hello there."), span(1, "Hi, how are you? [noise")),
+        )
+        assertEquals(
+            listOf(Run(9, SpeakerRuns.NO_WINDOW_INDEX, "Hello there. Hi, how are you?")),
+            runs,
+        )
+        SpeakerRuns.applyAssignment(runs, seq = 9, ids = listOf(1, 2))
+        assertNull("a plain run can never be assigned, split or not", runs[0].speakerId)
+    }
+
+    @Test fun a_remap_reaches_every_window_of_a_split_segment_not_just_the_first() {
+        // The merge pass decides a speaker was never a separate person, and the ids it corrects
+        // may all sit inside ONE long VAD segment now — three windows of the same six seconds.
+        val runs = SpeakerRuns.of(
+            seq = 2,
+            text = "A B C",
+            spans = listOf(span(0, "A"), span(1, "B"), span(2, "C")),
+        )
+        SpeakerRuns.applyAssignment(runs, seq = 2, ids = listOf(1, 3, 3))
+        SpeakerRuns.applyRemap(runs, mapOf(3 to 1))
+        assertEquals(listOf(1, 1, 1), runs.map { it.speakerId })
     }
 
     // ------------------------------------------------------------------ applyRemap()

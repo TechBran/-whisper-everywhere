@@ -116,7 +116,7 @@ class TranscriptStore(
      * `confirmedCount = SpeakerLabels.MIN_CONFIRMED_SPEAKERS` and no second read of the file: the
      * §2 table's only threshold is "fewer than two", and this method has already answered it.
      *
-     * The runs come back with no [Run.seq] and no [Run.vadIndex]: nothing can assign a saved
+     * The runs come back with no [Run.seq] and no [Run.windowIndex]: nothing can assign a saved
      * transcript again, and the only thing a caller does with these is render them.
      * [Run.speakerId] is null for a run that was never attributed, exactly as it was live.
      */
@@ -133,7 +133,7 @@ class TranscriptStore(
         return parsed.runs.map {
             Run(
                 seq = 0L,
-                vadIndex = SpeakerRuns.NO_VAD_INDEX,
+                windowIndex = SpeakerRuns.NO_WINDOW_INDEX,
                 text = it.text,
                 speakerId = it.speaker.takeIf { id -> id > 0 },
             )

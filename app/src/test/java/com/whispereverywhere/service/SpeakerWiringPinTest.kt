@@ -174,7 +174,7 @@ class SpeakerWiringPinTest {
     fun theEngineRunsThePassBelowTheDeliveryAndNeverWaitsForIt() {
         at(engine, "var speakerAssigner: SpeakerAssigner? = null", "LocalWhisperEngine.kt")
         val resolve = at(engine, "resolve(seq, outcome, clearPreview = streamedPreview, myListener)", "LocalWhisperEngine.kt")
-        val pass = at(engine, "assigner.assign(seq, samples, vad)", "LocalWhisperEngine.kt")
+        val pass = at(engine, "assigner.assign(seq, samples, windows)", "LocalWhisperEngine.kt")
         assertTrue("the text is delivered before a single sample is fingerprinted", resolve < pass)
         assertEquals("ONE call site", 1, count(engine, "assigner.assign("))
         // Nothing in this engine ever blocks on the embed executor: the whole point of the seam is
@@ -186,9 +186,17 @@ class SpeakerWiringPinTest {
 
     @Test
     fun theAssignerIsHandedTheORIGINALSamplesAndOnlyForAnOutcomeThatCarriesGeometry() {
-        // `vad` is null for every backend with no native VAD filter (cloud, the NPU tier while it
-        // is live) and for a chunk the VAD found no speech in; both must produce today's session.
-        at(engine, "(outcome as? SegmentOutcome.Text)?.vad", "LocalWhisperEngine.kt")
+        // `windows` is null for every backend with no native VAD filter (cloud, the NPU tier
+        // while it is live) and for a chunk the VAD found no speech in; both must produce today's
+        // session. It is the list the SPANS were cut against, built once in `textOutcome` — a
+        // second one computed here could disagree with it and put one window's id on another's
+        // text (spike session 4).
+        at(engine, "(outcome as? SegmentOutcome.Text)?.windows", "LocalWhisperEngine.kt")
+        assertEquals(
+            "the window list is built at ONE place and shared",
+            1,
+            count(engine, "SpeakerSpans.windows("),
+        )
         // The stale-session guard is the same identity check the resolution path uses: a dead
         // session's late segment must not feed the NEW session's tracker.
         at(engine, "if (assigner != null && listener === myListener) {", "LocalWhisperEngine.kt")

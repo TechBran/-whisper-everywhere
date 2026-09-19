@@ -6,9 +6,9 @@ import com.whispereverywhere.text.TextJoin
  * ONE stretch of committed text with ONE speaker — the unit every 4.10 surface is rendered from
  * (plan Task 5).
  *
- * A [Run] is what a [SpeakerSpan] becomes once it has left the engine: the span's [vadIndex] is
- * kept, because the speaker ids arrive LATER and arrive indexed by it, and the chunk's [seq] is
- * kept, because that is the key the assignment arrives under. Text is already
+ * A [Run] is what a [SpeakerSpan] becomes once it has left the engine: the span's [windowIndex]
+ * is kept, because the speaker ids arrive LATER and arrive indexed by it, and the chunk's [seq]
+ * is kept, because that is the key the assignment arrives under. Text is already
  * `TextJoin.normalize`d, so a run is exactly what the user would see.
  *
  * [speakerId] is the one mutable field in the feature, and it is mutable for a reason that is
@@ -19,15 +19,18 @@ import com.whispereverywhere.text.TextJoin
  * dropped at the door by [SpeakerRuns.applyAssignment], because 0 is not a speaker.
  *
  * @param seq the committed chunk's segment sequence number.
- * @param vadIndex the chunk's VAD segment this text was attributed to, or [SpeakerRuns.NO_VAD_INDEX]
- *        for a run that carries a whole chunk with no geometry behind it (cloud, the NPU tier,
- *        detection off, or a chunk whose spans could not reproduce its text — see
- *        [SpeakerRuns.of]). Such a run can never be assigned, and that is the point: it renders as
- *        today's plain text forever.
+ * @param windowIndex the chunk's FINGERPRINT WINDOW this text was attributed to, or
+ *        [SpeakerRuns.NO_WINDOW_INDEX] for a run that carries a whole chunk with no geometry
+ *        behind it (cloud, the NPU tier, detection off, or a chunk whose spans could not
+ *        reproduce its text — see [SpeakerRuns.of]). Such a run can never be assigned, and that
+ *        is the point: it renders as today's plain text forever.
+ *
+ *        It was the VAD segment's index until spike session 4 split long segments into several
+ *        windows; the two agree for every chunk that has no long segment in it.
  */
 data class Run(
     val seq: Long,
-    val vadIndex: Int,
+    val windowIndex: Int,
     val text: String,
     var speakerId: Int? = null,
 )
@@ -38,8 +41,8 @@ data class Run(
  */
 object SpeakerRuns {
 
-    /** [Run.vadIndex] for a run that belongs to no VAD segment and therefore to no speaker. */
-    const val NO_VAD_INDEX: Int = -1
+    /** [Run.windowIndex] for a run that belongs to no window and therefore to no speaker. */
+    const val NO_WINDOW_INDEX: Int = -1
 
     /**
      * The runs of ONE committed chunk.
@@ -65,13 +68,13 @@ object SpeakerRuns {
     fun of(seq: Long, text: String, spans: List<SpeakerSpan>?): List<Run> {
         val whole = TextJoin.normalize(text)
         if (whole.isEmpty()) return emptyList()
-        val plain = listOf(Run(seq = seq, vadIndex = NO_VAD_INDEX, text = whole))
+        val plain = listOf(Run(seq = seq, windowIndex = NO_WINDOW_INDEX, text = whole))
         if (spans.isNullOrEmpty()) return plain
         val pieces = ArrayList<Run>(spans.size)
         for (span in spans) {
             val piece = TextJoin.normalize(span.text)
             if (piece.isEmpty()) continue
-            pieces += Run(seq = seq, vadIndex = span.vadIndex, text = piece)
+            pieces += Run(seq = seq, windowIndex = span.windowIndex, text = piece)
         }
         if (pieces.isEmpty()) return plain
         if (TextJoin.assemble(pieces.map { it.text }) != whole) return plain
@@ -81,11 +84,11 @@ object SpeakerRuns {
     /**
      * Stamps one chunk's speaker ids onto its runs — the late half of the pipeline.
      *
-     * [ids] is `SpeakerAssignment.ids`: one id per VAD segment, in chunk order, so a run's
-     * [Run.vadIndex] is its index into it. Everything that could be out of step is ignored rather
-     * than guessed:
+     * [ids] is `SpeakerAssignment.ids`: one id per FINGERPRINT WINDOW, in chunk order, so a
+     * run's [Run.windowIndex] is its index into it. Everything that could be out of step is
+     * ignored rather than guessed:
      *  - a run of another chunk (this is called with one seq at a time, on a whole session's runs);
-     *  - [NO_VAD_INDEX], or an index past the end of [ids] — a stale geometry snapshot;
+     *  - [NO_WINDOW_INDEX], or an index past the end of [ids] — a stale geometry snapshot;
      *  - an id of `0`, the tracker's "could not attribute this segment at all". Spec §2 forbids
      *    reading that as speaker 1, so the run keeps whatever it had (usually `null`) and inherits
      *    at render time.
@@ -94,7 +97,7 @@ object SpeakerRuns {
         if (ids.isEmpty()) return
         for (run in runs) {
             if (run.seq != seq) continue
-            val index = run.vadIndex
+            val index = run.windowIndex
             if (index < 0 || index >= ids.size) continue
             val id = ids[index]
             if (id > 0) run.speakerId = id

@@ -41,7 +41,7 @@ class SegmentOrderer(private val lostMarker: String = LOST_MARKER) {
      * [text] and [lostSegments] are the whole of the ordering contract and are untouched by 4.10.
      * [seq] and [spans] are PASSENGERS on it, for the speaker labels: the sink needs to know which
      * chunk the text came from, because its speaker ids arrive ~300 ms later keyed by that seq,
-     * and which stretches of it were which VAD segment.
+     * and which stretches of it were which FINGERPRINT WINDOW.
      *
      * Both ride only when the drain released EXACTLY ONE non-blank text segment and no loss
      * marker, and that condition is the honest one rather than a cautious one. A drain that

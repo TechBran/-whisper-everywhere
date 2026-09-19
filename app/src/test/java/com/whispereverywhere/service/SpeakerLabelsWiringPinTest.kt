@@ -215,6 +215,12 @@ class SpeakerLabelsWiringPinTest {
         assertTrue("…and precedes the detach, close and snapshot", fence < detach)
         assertEquals("ONE speaker fence", 1, liveCount("awaitIdle(SPEAKER_DRAIN_MS)"))
         assertEquals("…with its bound named once", 1, liveCount("private val SPEAKER_DRAIN_MS"))
+        // 2 500 ms since spike session 4. The old 1 500 was sized on ONE fingerprint per VAD
+        // segment; the long-segment split can put several windows in the last chunk of a session
+        // — which is exactly the chunk this fence exists for — and five at the measured 130-300 ms
+        // each is 0.7-1.5 s of embedding that must land before the snapshot is taken. Nobody
+        // waits the extra second unless the work is genuinely outstanding.
+        indexOfOrFail("private val SPEAKER_DRAIN_MS = 2_500L")
         // Off Main: it blocks, and Main is where the whole finalize continuation runs.
         indexOfOrFail("withContext(Dispatchers.IO) { assigner.awaitIdle(SPEAKER_DRAIN_MS) }")
         // And it is skipped entirely when the session has no speaker pass (cloud, detection off).

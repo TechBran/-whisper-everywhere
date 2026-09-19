@@ -1,7 +1,7 @@
 package com.whispereverywhere.transcription
 
 import com.whispereverywhere.transcription.speakers.SpeakerSpan
-import com.whispereverywhere.transcription.speakers.VadSeg
+import com.whispereverywhere.transcription.speakers.SpeakerWindow
 
 /**
  * How one committed audio segment ended. EVERY allocated seq must reach exactly one of these —
@@ -22,12 +22,16 @@ sealed interface SegmentOutcome {
      * equal to one this engine produces on a backend without geometry, and still delivers the
      * same bytes.
      *
-     * @param spans the chunk's text cut into `(vadIndex, text)` runs, in TEXT order. Concatenating
-     *        them under `TextJoin` reproduces [text] for every chunk whose geometry was coherent;
-     *        nothing depends on that, which is the point — a wrong span costs a paragraph break,
-     *        never a word.
-     * @param vad the chunk's VAD speech segments, in CHUNK order, so the assigner can find the
-     *        raw audio each span was decoded from. `spans`' `vadIndex` indexes THIS list.
+     * @param spans the chunk's text cut into `(windowIndex, text)` runs, in TEXT order.
+     *        Concatenating them under `TextJoin` reproduces [text] for every chunk whose geometry
+     *        was coherent; nothing depends on that, which is the point — a wrong span costs a
+     *        paragraph break, never a word.
+     * @param windows the chunk's FINGERPRINT WINDOWS, in CHUNK order, so the assigner can find
+     *        the raw audio each span was decoded from. `spans`' `windowIndex` indexes THIS list.
+     *        One window per VAD segment, except for the long ones spike session 4 splits along
+     *        whisper's own boundaries — the two lists are carried as ONE because a second,
+     *        independently recomputed partition that disagreed with this one would put the ids
+     *        of one window onto another's text.
      *
      * BOTH NULL OR BOTH SET, and null means "no geometry for this chunk" — the cloud engines, the
      * NPU tier while it is live, every fake, and any chunk the VAD did not run on. Null is NOT
@@ -37,7 +41,7 @@ sealed interface SegmentOutcome {
     data class Text(
         val text: String,
         val spans: List<SpeakerSpan>? = null,
-        val vad: List<VadSeg>? = null,
+        val windows: List<SpeakerWindow>? = null,
     ) : SegmentOutcome
     /** VAD/energy proved there was nothing to transcribe. Silent, contributes nothing. */
     data object EmptyExpected : SegmentOutcome

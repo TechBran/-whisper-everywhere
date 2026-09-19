@@ -7,14 +7,23 @@ import java.util.Locale
  * Task 4 reads it).
  *
  * ```
- * speaker: seq=12 segs=3 embedMs=214 ids=[1,1,2] best=[-,0.88,0.31] dur=[3.2,1.1,2.4] confirmed=1 load=0
- * speaker: seq=13 segs=2 embedMs=98 ids=[3,1] best=[0.41,0.92] dur=[2.6,3.1] confirmed=1 load=0 remaps=[3>1]
+ * speaker: seq=12 segs=3 windows=3 embedMs=214 ids=[1,1,2] best=[-,0.88,0.31] dur=[3.2,1.1,2.4] confirmed=1 load=0
+ * speaker: seq=13 segs=2 windows=2 embedMs=98 ids=[3,1] best=[0.41,0.92] dur=[2.6,3.1] confirmed=1 load=0 remaps=[3>1]
+ * speaker: seq=14 segs=2 windows=5 embedMs=712 ids=[1,2,1,2,1] best=[-,0.21,0.84,0.90,0.79] dur=[4.1,2.0,2.3,3.0,2.6] confirmed=1 load=0
  * ```
  *
  * The second line is the shape a MERGE takes (spike session 2): the chunk reported speaker 3 and
  * then the end-of-chunk pass decided speaker 3 was speaker 1 all along. `remaps=` appears only on
  * the chunks where something moved — see the field's own comment below for why it is not always
  * printed.
+ *
+ * The third is the shape spike session 4's SPLIT takes: two VAD segments, five windows, because
+ * one of the segments ran past `SpeakerSpans.LONG_SEGMENT_SECONDS` with several whisper segments
+ * inside it and was fingerprinted per sentence instead of per pause. `windows > segs` is the one
+ * visible sign in this line that a segment long enough to hide a second voice was cut rather
+ * than left whole. It is also the MEASUREMENT: session 4 could not show failure mode B happening
+ * (its one long dump was a single narrator), so how often `windows` exceeds `segs`, and what the
+ * `ids=` under a split segment then say, is how a later session finds out whether it does.
  *
  * It is a formatter with a test because the line is an INSTRUMENT, not a log. `T_SAME` / `T_NEW`
  * are set from the `best=` column of a real session (spec §3.2 step 3 defers them to the spike
@@ -28,16 +37,17 @@ import java.util.Locale
  *
  *  - **`seq=` first after the tag**, so the line joins `segment-timing:`, `queue:` and
  *    `perceived:` on the key those already share.
- *  - **Three parallel columns**, one entry each per VAD segment, in chunk order, ALWAYS —
- *    including the segments that inherited a label without being fingerprinted. `segs=` is that
- *    length, stated once so a truncated line is detectable.
+ *  - **Three parallel columns**, one entry each per FINGERPRINT WINDOW, in chunk order, ALWAYS —
+ *    including the windows that inherited a label without being fingerprinted. `windows=` is that
+ *    length, stated once so a truncated line is detectable; `segs=` is the number of VAD segments
+ *    those windows came out of, and the two are equal on every chunk that was not split.
  *  - **`-` for a similarity that was never measured**, never `0.00`. Zero is a real and
  *    meaningful reading — two orthogonal voices — and "not measured" must not borrow its glyph in
  *    a column that is about to become a threshold.
  *  - **`Locale.ROOT`**, because `String.format` without one takes the device's default and a
  *    comma decimal separator makes every number here unparseable.
- *  - **No spaces inside a column**, so one line splits into the `speaker:` tag and eight
- *    `key=value` fields — nine on the rare chunk that carries a `remaps=`.
+ *  - **No spaces inside a column**, so one line splits into the `speaker:` tag and nine
+ *    `key=value` fields — ten on the rare chunk that carries a `remaps=`.
  *  - **Not one character of transcript.** The type makes it unreachable: [SpeakerAssignment] has
  *    no text in it at all.
  *
@@ -57,7 +67,12 @@ object SpeakerDiag {
         return buildString {
             append(PREFIX)
             append(" seq=").append(assignment.seq)
-            append(" segs=").append(assignment.ids.size)
+            append(" segs=").append(assignment.segs)
+            // The COLUMN LENGTH, and the only field that says how many fingerprints this chunk
+            // actually paid for. It sits beside `segs=` rather than replacing it because their
+            // DIFFERENCE is the measurement session 4 asks for: how often the endpointer hands
+            // over a segment long enough to hold two voices.
+            append(" windows=").append(assignment.ids.size)
             append(" embedMs=").append(stats.embedMs)
             append(" ids=").append(column(assignment.ids) { it.toString() })
             append(" best=").append(column(stats.best) { similarity(it) })

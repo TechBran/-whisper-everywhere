@@ -124,7 +124,7 @@ class SpeakerEmbedder(private val app: Application) : VoicePrints {
     private var failed = false
 
     /**
-     * Fingerprints [pcm] — one VAD segment's samples from the ORIGINAL chunk timeline, mono float
+     * Fingerprints [pcm] — one fingerprint window's samples from the ORIGINAL chunk timeline, mono float
      * in [-1, 1] at [sampleRate]. Returns the embedding, or null if the model is unavailable, the
      * stream never became ready, or anything at all threw.
      */

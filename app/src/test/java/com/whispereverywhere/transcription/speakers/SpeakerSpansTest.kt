@@ -7,7 +7,18 @@ import org.junit.Test
 /**
  * 4.10 Task 1: the pure half of the speaker pipeline — the native segment geometry
  * ([com.whispereverywhere.whisper.WhisperNative.lastVadSegments] /
- * `lastWhisperSegments`) turned into `(vadIndex, text)` spans.
+ * `lastWhisperSegments`) turned into FINGERPRINT WINDOWS and `(windowIndex, text)` spans.
+ *
+ * THE WINDOWS ARE SPIKE SESSION 4's answer to failure mode B — the endpointer cuts on silence,
+ * so when nobody pauses it can hand over six to fourteen seconds in one segment, and two voices
+ * sharing those seconds would share one fingerprint. A segment past `LONG_SEGMENT_SECONDS` with
+ * two or more whisper segments in it is cut along whisper's own boundaries, which are the only
+ * boundaries in this pipeline placed by something that listened to the words.
+ *
+ * That failure was NOT demonstrated by session 4's dumps — its one long session turned out to be
+ * a single narrator — so the tests below are about the split being CORRECT and BOUNDED rather
+ * than about a bug being fixed: the offsets, the coalescing, the partition, and the two guards
+ * that keep every ordinary chunk fingerprinted exactly as it was.
  *
  * THE TWO TIMELINES ARE THE WHOLE SUBJECT, and mixing them is the defect this class exists to
  * catch. A VAD segment carries FOUR numbers: where it sat in the RAW chunk (what a speaker
@@ -28,6 +39,9 @@ class SpeakerSpansTest {
 
         /** `we_vad_filter`'s stitch gap — 100 ms of injected silence between segments. */
         const val GAP = 1600
+
+        /** The app's one sample rate, so a window test can be written in seconds. */
+        const val RATE = 16_000
     }
 
     /**
@@ -95,6 +109,135 @@ class SpeakerSpansTest {
         )
     }
 
+    // ------------------------------------------------------------- windows (spike session 4)
+
+    @Test
+    fun aVadSegmentOfFiveSecondsOrLessIsOneWindowHoweverManySentencesAreInIt() {
+        // The long-segment floor is on the SEGMENT. Four seconds with two whisper segments in it
+        // is the ordinary shape of every dump that WORKED (20:23, 20:27: medians 2.7-3.1 s), and
+        // cutting it would buy another 130-300 ms of embedding and no separation.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 4 * RATE, 0, 4 * RATE)))
+        val raw = whisperRaw(listOf(0 to 180, 190 to 400), listOf(0 to 10, 10 to 20))
+
+        assertEquals(listOf(SpeakerWindow(0, 0, 4 * RATE)), SpeakerSpans.windows(raw, vad))
+    }
+
+    @Test
+    fun aLongVadSegmentWithONEWhisperSegmentIsStillOneWindow() {
+        // The other term of the guard. A cut has to be made somewhere defensible, and whisper's
+        // segment boundaries are the only boundaries here that were placed by something that
+        // listened to the words. With one segment there is no such boundary inside.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 12 * RATE, 0, 12 * RATE)))
+        val raw = whisperRaw(listOf(0 to 1_200), listOf(0 to 10))
+
+        assertEquals(listOf(SpeakerWindow(0, 0, 12 * RATE)), SpeakerSpans.windows(raw, vad))
+    }
+
+    @Test
+    fun aLongSegmentsWindowsAreMappedBackThroughItsOwnOffset_notReadOffTheTrimmedTimeline() {
+        // THE ARITHMETIC THE 100 ms STITCH GAPS MAKE WRONG IF IT IS SKIPPED. Segment 1 sits at
+        // sample 100 000 of the RAW chunk and at 33 600 of the stitched buffer whisper timed its
+        // output against: an offset of 66 400 samples, which is what separates the audio a
+        // speaker embedder must be handed from the audio whisper thought it was reading.
+        //
+        // Reading the whisper timestamps as original samples — the mistake this test exists for —
+        // would hand the embedder the wrong two thirds of a minute-long chunk.
+        val vad = SpeakerSpans.vadSegments(
+            vadRaw(
+                VadSeg(0, 32_000, 0, 32_000),
+                VadSeg(100_000, 300_000, 33_600, 233_600),
+            )
+        )
+        // Two sentences inside segment 1: trimmed [33 600, 129 600) and [131 200, 233 600).
+        val raw = whisperRaw(listOf(210 to 810, 820 to 1_460), listOf(0 to 10, 10 to 20))
+
+        assertEquals(
+            listOf(
+                SpeakerWindow(vadIndex = 0, origStart = 0, origEnd = 32_000),
+                SpeakerWindow(vadIndex = 1, origStart = 100_000, origEnd = 197_600),
+                SpeakerWindow(vadIndex = 1, origStart = 197_600, origEnd = 300_000),
+            ),
+            SpeakerSpans.windows(raw, vad),
+        )
+    }
+
+    @Test
+    fun shortWhisperSegmentsAreCOALESCEDUntilAWindowIsWorthFingerprinting() {
+        // MIN_WINDOW_SECONDS is MIN_OPEN_SECONDS: a window under it could never open a speaker or
+        // confirm one, so cutting it costs an embedding and buys a window that can only inherit.
+        // Two one-second sentences therefore share the first window; the two-second ones do not.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 12 * RATE, 0, 12 * RATE)))
+        val raw = whisperRaw(
+            listOf(0 to 100, 100 to 200, 200 to 400, 400 to 600, 600 to 1_200),
+            List(5) { it * 10 to it * 10 + 10 },
+        )
+
+        assertEquals(
+            listOf(
+                SpeakerWindow(0, 0, 32_000),         // 1 s + 1 s, coalesced
+                SpeakerWindow(0, 32_000, 64_000),    // 2 s
+                SpeakerWindow(0, 64_000, 96_000),    // 2 s
+                SpeakerWindow(0, 96_000, 12 * RATE), // 6 s
+            ),
+            SpeakerSpans.windows(raw, vad),
+        )
+    }
+
+    @Test
+    fun aTrailingRemainderTooShortToStandAloneJoinsTheWindowBeforeIt() {
+        // Half a second of "yeah" at the end of a long segment is not a window. Left alone it
+        // would be an embedding the tracker's MIN_OPEN gate then refuses to act on — the cost of
+        // a decision with the decision removed.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 12 * RATE, 0, 12 * RATE)))
+        val raw = whisperRaw(
+            listOf(0 to 200, 200 to 400, 400 to 1_150, 1_150 to 1_200),
+            List(4) { it * 10 to it * 10 + 10 },
+        )
+
+        assertEquals(
+            listOf(
+                SpeakerWindow(0, 0, 32_000),
+                SpeakerWindow(0, 32_000, 64_000),
+                SpeakerWindow(0, 64_000, 12 * RATE), // 7.5 s and the 0.5 s remainder with it
+            ),
+            SpeakerSpans.windows(raw, vad),
+        )
+    }
+
+    @Test
+    fun theWindowsOfASegmentPartitionItSoNoAudioIsLeftUnfingerprinted() {
+        // The boundaries are whisper's starts, but the EDGES are the segment's own: the first
+        // window opens where the segment opens and the last closes where it closes, so the
+        // pauses between sentences — and the run-up before the first word — still reach an
+        // embedder. Splitting must not quietly drop audio the un-split shape included.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(5_000, 5_000 + 12 * RATE, 0, 12 * RATE)))
+        val raw = whisperRaw(listOf(20 to 550, 600 to 1_150), listOf(0 to 10, 10 to 20))
+
+        val windows = SpeakerSpans.windows(raw, vad)
+        assertEquals(2, windows.size)
+        assertEquals(5_000, windows.first().origStart)
+        assertEquals(5_000 + 12 * RATE, windows.last().origEnd)
+        assertEquals("no gap between them", windows[0].origEnd, windows[1].origStart)
+    }
+
+    @Test
+    fun noVadSegmentsMeansNoWindows_neverOneWindowForTheWholeChunk() {
+        assertEquals(emptyList<SpeakerWindow>(), SpeakerSpans.windows(IntArray(0), emptyList()))
+        assertEquals(
+            emptyList<SpeakerWindow>(),
+            SpeakerSpans.windows(whisperRaw(listOf(0 to 100), listOf(0 to 10)), emptyList()),
+        )
+    }
+
+    @Test
+    fun aSegmentWithNoWhisperSegmentAtAllIsStillOneWindowOverTheWholeOfIt() {
+        // The VAD heard speech and whisper decoded nothing there — a hum, a cough, a marker that
+        // cleaned away. There is no boundary to cut on, and the audio is still a voice.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 12 * RATE, 0, 12 * RATE)))
+
+        assertEquals(listOf(SpeakerWindow(0, 0, 12 * RATE)), SpeakerSpans.windows(IntArray(0), vad))
+    }
+
     // ------------------------------------------------------------------ spans
 
     @Test
@@ -109,7 +252,7 @@ class SpeakerSpansTest {
         val raw = whisperRaw(listOf(0 to 200, 210 to 410), ranges)
 
         assertEquals(
-            listOf(SpeakerSpan(vadIndex = 0, text = "Hello"), SpeakerSpan(1, "world.")),
+            listOf(SpeakerSpan(windowIndex = 0, text = "Hello"), SpeakerSpan(1, "world.")),
             SpeakerSpans.spans(raw, bytes, vad),
         )
     }
@@ -231,6 +374,48 @@ class SpeakerSpansTest {
         val raw = whisperRaw(listOf(0 to 100), ranges)
 
         assertEquals(emptyList<SpeakerSpan>(), SpeakerSpans.spans(raw, bytes, emptyList()))
+    }
+
+    @Test
+    fun twoSentencesInASPLITSegmentGetSEPARATESpansRatherThanMerging() {
+        // Rule 6 read against rule 5: the merge is by WINDOW now, so the whole point of having
+        // split a long segment survives into the text. Under the pre-session-4 rule these two
+        // whisper segments shared a VAD index and were joined into one span — one paragraph and
+        // one label, for what may well be two voices.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 12 * RATE, 0, 12 * RATE)))
+        val (bytes, ranges) = encode(" Hello there.", " Hi, how are you?")
+        val raw = whisperRaw(listOf(0 to 550, 560 to 1_200), ranges)
+
+        assertEquals(
+            listOf(SpeakerSpan(0, "Hello there."), SpeakerSpan(1, "Hi, how are you?")),
+            SpeakerSpans.spans(raw, bytes, vad),
+        )
+
+        // …and the mirror: the SAME two sentences inside a four-second segment are one window and
+        // therefore still one span. The split is the only thing that separated them.
+        val shortVad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 4 * RATE, 0, 4 * RATE)))
+        val shortRaw = whisperRaw(listOf(0 to 180, 190 to 400), ranges)
+        assertEquals(
+            listOf(SpeakerSpan(0, "Hello there. Hi, how are you?")),
+            SpeakerSpans.spans(shortRaw, bytes, shortVad),
+        )
+    }
+
+    @Test
+    fun aSpansWindowIsTheOneItsOWNMidpointFallsIn() {
+        // The boundary between two windows IS a whisper segment's own start, so a segment can
+        // never land on the wrong side of the cut that was made for it — asserted on the tight
+        // case, where the second sentence begins exactly where the first one ends.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 12 * RATE, 0, 12 * RATE)))
+        val (bytes, ranges) = encode(" first", " second")
+        val raw = whisperRaw(listOf(0 to 600, 600 to 1_200), ranges)
+
+        val windows = SpeakerSpans.windows(raw, vad)
+        assertEquals(listOf(SpeakerWindow(0, 0, 96_000), SpeakerWindow(0, 96_000, 192_000)), windows)
+        assertEquals(
+            listOf(SpeakerSpan(0, "first"), SpeakerSpan(1, "second")),
+            SpeakerSpans.spans(raw, bytes, vad, windows),
+        )
     }
 
     @Test

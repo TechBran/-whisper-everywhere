@@ -639,9 +639,9 @@ class LocalWhisperEngine(
         //    VAD found no speech in), and spec §2 forbids reading that as one speaker.
         val assigner = speakerAssigner
         if (assigner != null && listener === myListener) {
-            val vad = (outcome as? SegmentOutcome.Text)?.vad
+            val windows = (outcome as? SegmentOutcome.Text)?.windows
             val samples = chunkSamples
-            if (vad != null && samples != null) assigner.assign(seq, samples, vad)
+            if (windows != null && samples != null) assigner.assign(seq, samples, windows)
         }
     }
 
@@ -663,8 +663,14 @@ class LocalWhisperEngine(
      *    speaker, so there is nothing to attach;
      *  - the segments produced no spans — a geometry that maps onto no surviving text, which is
      *    what a stale snapshot looks like from here.
-     * A half-attached outcome (`vad` set, `spans` empty) would make the service's "does this chunk
-     * have speakers" test true for a chunk with nothing to label.
+     * A half-attached outcome (`windows` set, `spans` empty) would make the service's "does this
+     * chunk have speakers" test true for a chunk with nothing to label.
+     *
+     * The WINDOW list is built here, once, and handed to BOTH halves: the spans are cut against
+     * it and the assigner fingerprints it. Spike session 4 made that sharing load-bearing — a
+     * long VAD segment is now several windows, so a second list computed independently
+     * downstream could disagree with this one and put one window's speaker on another's
+     * sentence.
      */
     private fun textOutcome(
         cleaned: String,
@@ -674,15 +680,21 @@ class LocalWhisperEngine(
         if (geometry == null) return SegmentOutcome.Text(cleaned)
         val vad = SpeakerSpans.vadSegments(geometry.vadSegments)
         if (vad.isEmpty()) return SegmentOutcome.Text(cleaned)
+        val windows = SpeakerSpans.windows(raw = geometry.whisperSegments, vad = vad)
+        if (windows.isEmpty()) return SegmentOutcome.Text(cleaned)
         val spans = SpeakerSpans.spans(
             raw = geometry.whisperSegments,
             bytes = raw.toByteArray(Charsets.UTF_8),
             vad = vad,
+            windows = windows,
         )
         if (spans.isEmpty()) return SegmentOutcome.Text(cleaned)
         // Numbers only — a span's text IS user speech and never reaches a log line.
-        android.util.Log.i("WE-DIAG", "speaker-spans: vad=${vad.size} spans=${spans.size}")
-        return SegmentOutcome.Text(cleaned, spans = spans, vad = vad)
+        android.util.Log.i(
+            "WE-DIAG",
+            "speaker-spans: vad=${vad.size} windows=${windows.size} spans=${spans.size}",
+        )
+        return SegmentOutcome.Text(cleaned, spans = spans, windows = windows)
     }
 
     /**

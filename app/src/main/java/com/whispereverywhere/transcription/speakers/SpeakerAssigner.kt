@@ -17,9 +17,10 @@ import java.util.concurrent.TimeUnit
  * chunk's samples and the VAD geometry and walks away. Nothing here can delay a word of text: by
  * the time [assign] is called the text has already been delivered.
  *
- * ### The per-segment rule, and the three fates of a segment
+ * ### The per-WINDOW rule, and the three fates of a window
  *
- * For each [VadSeg] of the chunk, in chunk order:
+ * For each [SpeakerWindow] of the chunk, in chunk order — one per VAD segment, except for the
+ * long ones spike session 4 splits along whisper's own segment boundaries ([SpeakerSpans.windows]):
  *
  *  1. **Shorter than [SpeakerTracker.MIN_EMBED_SECONDS]** — never fingerprinted. It inherits the
  *     label of the segment before it ([SpeakerTracker.currentSpeaker], which is 0 before anything
@@ -43,17 +44,17 @@ import java.util.concurrent.TimeUnit
  *
  * ### The slice is on the ORIGINAL timeline, and it is clamped
  *
- * [VadSeg.origStart] / [VadSeg.origEnd] index the raw buffer the engine passed to the native
- * layer, which is the audio a speaker actually spoke — the stitched buffer whisper saw carries
- * 100 ms of injected silence between segments and does not outlive the JNI call. Those bounds
- * come from a PROCESS-GLOBAL snapshot (`WhisperNative.lastVadSegments`), so a stale one can name
- * samples this buffer does not have; the range is clamped rather than trusted, because the
+ * [SpeakerWindow.origStart] / [SpeakerWindow.origEnd] index the raw buffer the engine passed to
+ * the native layer, which is the audio a speaker actually spoke — the stitched buffer whisper saw
+ * carries 100 ms of injected silence between segments and does not outlive the JNI call. Those
+ * bounds come from a PROCESS-GLOBAL snapshot (`WhisperNative.lastVadSegments`), so a stale one can
+ * name samples this buffer does not have; the range is clamped rather than trusted, because the
  * alternative is an `IndexOutOfBoundsException` on the one thread the session's labels depend on.
  *
  * ### Nothing escapes this object but ids
  *
- * [onAssigned] carries a [SpeakerAssignment]: the seq, one id per VAD segment, the latch, and the
- * numbers the device session measures. It carries **no text** — and cannot, because
+ * [onAssigned] carries a [SpeakerAssignment]: the seq, one id per fingerprint window, the latch,
+ * and the numbers the device session measures. It carries **no text** — and cannot, because
  * [SpeakerAssignment] has no field for any. That is deliberate: the callback's first consumer is
  * a diagnostic line, and the product promise is that transcript content never reaches a log.
  *
@@ -102,20 +103,22 @@ class SpeakerAssigner(
     /**
      * Queues one committed chunk. Returns immediately — always.
      *
-     * [samples] is the RAW chunk the native layer transcribed and [vad] its speech segments, in
-     * chunk order, as published by `WhisperNative.lastVadSegments` and parsed by [SpeakerSpans].
+     * [samples] is the RAW chunk the native layer transcribed and [windows] its fingerprint
+     * windows, in chunk order, as built by [SpeakerSpans.windows] from
+     * `WhisperNative.lastVadSegments` and `lastWhisperSegments`. The caller passes the SAME list
+     * it cut the chunk's spans against: the ids published below are indexed by position in it.
      *
-     * An empty [vad] is dropped in silence and produces NO callback. Spec §2 forbids reading "no
-     * segments" as "one speaker": there is no timeline to attribute anything to, so there is also
-     * no `confirmed` verdict to publish about it.
+     * An empty [windows] is dropped in silence and produces NO callback. Spec §2 forbids reading
+     * "no segments" as "one speaker": there is no timeline to attribute anything to, so there is
+     * also no `confirmed` verdict to publish about it.
      */
-    fun assign(seq: Long, samples: FloatArray, vad: List<VadSeg>) {
-        if (vad.isEmpty() || samples.isEmpty()) return
+    fun assign(seq: Long, samples: FloatArray, windows: List<SpeakerWindow>) {
+        if (windows.isEmpty() || samples.isEmpty()) return
         // A rejected submission is the shutdown race and nothing else: a segment resolving out of
         // the native executor after teardown already detached this assigner. Silent by design.
         runCatching {
             executor.execute {
-                runCatching { fingerprint(seq, samples, vad) }
+                runCatching { fingerprint(seq, samples, windows) }
             }
         }
     }
@@ -183,10 +186,10 @@ class SpeakerAssigner(
 
     // ------------------------------------------------------------------ on the embed thread
 
-    private fun fingerprint(seq: Long, samples: FloatArray, vad: List<VadSeg>) {
-        val ids = ArrayList<Int>(vad.size)
-        val best = ArrayList<Float>(vad.size)
-        val durations = ArrayList<Float>(vad.size)
+    private fun fingerprint(seq: Long, samples: FloatArray, windows: List<SpeakerWindow>) {
+        val ids = ArrayList<Int>(windows.size)
+        val best = ArrayList<Float>(windows.size)
+        val durations = ArrayList<Float>(windows.size)
         var embedNs = 0L
         // Whether THIS chunk paid the session's one-time model load. [VoicePrints] loads lazily on
         // its first call, so the first fingerprint of a session costs 40.3 MB of asset read and an
@@ -197,9 +200,9 @@ class SpeakerAssigner(
         // the only build the owner can install.
         val paidTheLoad = !hasEmbedded
 
-        for ((index, segment) in vad.withIndex()) {
-            val from = segment.origStart.coerceIn(0, samples.size)
-            val to = segment.origEnd.coerceIn(from, samples.size)
+        for ((index, window) in windows.withIndex()) {
+            val from = window.origStart.coerceIn(0, samples.size)
+            val to = window.origEnd.coerceIn(from, samples.size)
             val seconds = (to - from) / SAMPLE_RATE.toFloat()
             durations += seconds
 
@@ -268,6 +271,11 @@ class SpeakerAssigner(
         onAssigned(
             SpeakerAssignment(
                 seq = seq,
+                // The VAD segments BEHIND those windows. Windows are emitted in segment order and
+                // every segment produces at least one, so counting the distinct segment indices
+                // is the segment count — and the diag line prints both, because `windows > segs`
+                // is the only visible sign that a long segment was cut at all.
+                segs = windows.distinctBy { it.vadIndex }.size,
                 ids = ids,
                 remaps = remaps,
                 // Read AFTER the merge pass: a chunk's verdict is the one that stands at the end
@@ -337,9 +345,13 @@ class SpeakerAssigner(
  *
  * @param seq the chunk's segment sequence number, so this joins `segment-timing:` and `queue:` on
  *        the one key every 3.7 diagnostic already shares.
- * @param ids ONE id per VAD segment, in chunk order: 1-based, or **0** for a segment that could
- *        not be attributed at all (no fingerprint and no previous speaker to inherit from). A
- *        reader must treat 0 as "unlabelled", never as speaker 1 — spec §2 forbids a label on a
+ * @param segs how many VAD SEGMENTS produced the windows below. Equal to `ids.size` for every
+ *        chunk with no long segment in it, and smaller for one that spike session 4 split — the
+ *        only visible sign, in a line of numbers, that a long segment was cut at all — and so
+ *        the column a later session reads to find out how often that shape actually occurs.
+ * @param ids ONE id per FINGERPRINT WINDOW, in chunk order: 1-based, or **0** for a window that
+ *        could not be attributed at all (no fingerprint and no previous speaker to inherit from).
+ *        A reader must treat 0 as "unlabelled", never as speaker 1 — spec §2 forbids a label on a
  *        session that has not earned one.
  * @param remaps what the end-of-chunk merge pass changed, `merged id -> survivor id`, and empty
  *        for almost every chunk. An entry says that an id in [ids] — possibly in an EARLIER
@@ -357,6 +369,7 @@ class SpeakerAssigner(
  */
 data class SpeakerAssignment(
     val seq: Long,
+    val segs: Int,
     val ids: List<Int>,
     val confirmed: Boolean,
     val stats: SpeakerAssignStats,
@@ -367,20 +380,23 @@ data class SpeakerAssignment(
  * The measurement half of a [SpeakerAssignment] — the three columns plan Task 4 sets the tracker's
  * thresholds from.
  *
- * @param embedMs the chunk's TOTAL embedding cost, milliseconds, excluding the segments that were
- *        never fingerprinted. The budget it is read against: median under 100 ms per segment,
- *        worst under 300 ms, no chunk over 1 s.
- * @param best per segment, the cosine similarity of its fingerprint against the CLOSEST known
+ * @param embedMs the chunk's TOTAL embedding cost, milliseconds, excluding the windows that were
+ *        never fingerprinted. The budget it is read against: median under 100 ms per window,
+ *        worst under 300 ms. Spike session 4's split raises the COUNT per long chunk, never the
+ *        per-window cost, and all of it stays on the embed thread — which is why the finalize
+ *        fence rose to 2.5 s and the commit floors did not move.
+ * @param best per window, the cosine similarity of its fingerprint against the CLOSEST known
  *        speaker at the moment it was assigned, or `NaN` when no similarity was measured — a
- *        segment under the embed floor, a refused embedding, or the first speaker of a session,
+ *        window under the embed floor, a refused embedding, or the first speaker of a session,
  *        who has nobody to be compared with. This is the column `T_SAME` / `T_NEW` come from.
- * @param durationsSec per segment, its length in seconds on the original timeline.
+ * @param durationsSec per window, its length in seconds on the original timeline.
  * @param includesModelLoad true for the ONE chunk of a session whose [embedMs] also paid the
  *        lazy model load — 40.3 MB of asset read plus an ONNX session init, hundreds of
  *        milliseconds on top of one inference. It is here so that chunk is not read as CAM++
  *        being slow: it is the difference between a go and a no-go on the model.
  *
- * All three lists carry one entry per VAD segment, always, so the columns are parallel to `ids`.
+ * All three lists carry one entry per fingerprint window, always, so the columns are parallel to
+ * `ids`.
  */
 data class SpeakerAssignStats(
     val embedMs: Long,
