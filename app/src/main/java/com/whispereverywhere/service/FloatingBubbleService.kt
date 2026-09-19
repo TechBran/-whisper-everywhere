@@ -4352,21 +4352,56 @@ class FloatingBubbleService : Service(),
         transcriptionDeltaText.visibility = View.GONE
         transcriptionPreviewContainer.visibility = View.VISIBLE
 
-        // Bounded-memory sink for the session; the file on disk is the full transcript.
+        // The session's sink; the file on disk is the full transcript and the panel shows its
+        // newest TranscriptSink.PREVIEW_CAP_CHARS.
         val sessionFile = java.io.File(filesDir, "transcript_session.txt").apply { if (exists()) delete() }
         val sink = com.whispereverywhere.transcription.TranscriptSink(sessionFile)
         transcriptSink = sink
         previewJob?.cancel()
         previewJob = serviceScope.launch(Dispatchers.Main) {
             sink.preview.collectLatest { text ->
+                // FOLLOW, DON'T YANK (owner, 2026-09-19: scrolling back up did not stay put).
+                // The whole panel is re-assigned on every repaint, and since the retrospective
+                // reclusterer a repaint can carry no new words at all — a relabel every few
+                // chunks, and one at stop. So the decision is made HERE, against the content as
+                // it stands BEFORE the text changes: only a reader already riding the newest
+                // line gets carried along. Everyone else — and anyone with a finger on the
+                // scrubber — keeps the offset they chose.
+                val was = transcriptionEditText.scrollY
+                val pinned = com.whispereverywhere.ui.components.TranscriptScrubberMath.atBottom(
+                    scrollY = was,
+                    maxScroll = com.whispereverywhere.ui.components.TranscriptScrubberMath.maxScroll(
+                        contentHeight = com.whispereverywhere.ui.components.TranscriptScrubberMath.contentHeight(
+                            layoutHeight = transcriptionEditText.layout?.height ?: 0,
+                            paddingTop = transcriptionEditText.paddingTop,
+                            paddingBottom = transcriptionEditText.paddingBottom,
+                        ),
+                        viewHeight = transcriptionEditText.height,
+                    ),
+                    thresholdPx = (PANEL_FOLLOW_SLACK_DP * resources.displayMetrics.density).toInt(),
+                )
                 transcriptionEditText.text = text
-                // TextView has no setSelection; scroll to reveal the newest text.
+                // TextView has no setSelection; the new content's extent is only known after
+                // the relayout this post waits for.
                 transcriptionEditText.post {
-                    val lc = transcriptionEditText.lineCount
                     val layout = transcriptionEditText.layout
-                    if (lc > 0 && layout != null) {
-                        val dy = layout.getLineBottom(lc - 1) - transcriptionEditText.height
-                        transcriptionEditText.scrollTo(0, dy.coerceAtLeast(0))
+                    if (layout != null && !transcriptScrubber.isScrubbing) {
+                        val max = com.whispereverywhere.ui.components.TranscriptScrubberMath.maxScroll(
+                            contentHeight = com.whispereverywhere.ui.components.TranscriptScrubberMath.contentHeight(
+                                layoutHeight = layout.height,
+                                paddingTop = transcriptionEditText.paddingTop,
+                                paddingBottom = transcriptionEditText.paddingBottom,
+                            ),
+                            viewHeight = transcriptionEditText.height,
+                        )
+                        transcriptionEditText.scrollTo(
+                            0,
+                            com.whispereverywhere.ui.components.TranscriptScrubberMath.followScrollY(
+                                wasAtBottom = pinned,
+                                previousScrollY = was,
+                                maxScroll = max,
+                            ),
+                        )
                     }
                 }
             }
@@ -6341,6 +6376,14 @@ class FloatingBubbleService : Service(),
 
     companion object {
         const val ACTION_STOP = "com.whispereverywhere.STOP_BUBBLE"
+
+        /**
+         * How close to the bottom still counts as "riding the newest line" in the transcript
+         * panel (`TranscriptScrubberMath.atBottom`). About one line of the panel's text: a view
+         * can settle a pixel or two off its own maximum after a relayout, and a reader one
+         * partial line from the end means "keep going" as plainly as one exactly on it.
+         */
+        const val PANEL_FOLLOW_SLACK_DP: Float = 24f
 
         fun start(context: Context) {
             val intent = Intent(context, FloatingBubbleService::class.java)

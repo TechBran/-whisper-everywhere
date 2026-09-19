@@ -22,9 +22,10 @@ import androidx.core.widget.doAfterTextChanged
  * scrollbar the two views have now (their `android:scrollbars` is `none`).
  *
  * ### Following, not fighting
- * The scrubber never scrolls the TextView unless a finger is DOWN on it. The service auto-scrolls
- * the committed text to its newest line on every commit and the live strip to its newest words
- * on every delta; those land as `scrollTo` calls, which fire the TextView's scroll-change
+ * The scrubber never scrolls the TextView unless a finger is DOWN on it. The service follows the
+ * committed text's newest line for a reader who is already at the bottom (and never while
+ * [isScrubbing]) and scrolls the live strip to its newest words on every delta; those land as
+ * `scrollTo` calls, which fire the TextView's scroll-change
  * listener, which re-syncs the thumb. A finger-scroll on the text itself (the committed view's
  * `ScrollingMovementMethod`) reaches this view the same way. Sync is also driven by layout
  * changes (the strip grows to `maxLines`), by text changes (a fixed-height view re-lays out its
@@ -64,6 +65,14 @@ class TranscriptScrubberView @JvmOverloads constructor(
 
     private var dragging = false
     private var grabOffset = 0f
+
+    /**
+     * A FINGER IS ON THE BAR. The service's panel collector reads this and does not auto-scroll
+     * while it is true: a repaint landing mid-drag would otherwise fight the thumb the user is
+     * holding. It is the same `dragging` the view's own [scrollToFinger] is guarded by, exposed
+     * rather than duplicated so there is one answer to the question.
+     */
+    val isScrubbing: Boolean get() = dragging
 
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = TRACK_COLOUR }
     private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = THUMB_COLOUR }

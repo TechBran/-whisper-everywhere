@@ -136,4 +136,35 @@ class TranscriptScrubberMathTest {
         assertEquals(252f, newTop, 0f)
         assertEquals(630, TranscriptScrubberMath.scrollYForThumbTop(newTop, track, thumb, maxScroll))
     }
+
+    // ------------------------------------------------------------------ following, not yanking
+
+    @Test fun riding_the_newest_line_means_at_the_bottom_or_within_the_slack() {
+        val slack = 48
+        assertTrue("exactly there", TranscriptScrubberMath.atBottom(maxScroll, maxScroll, slack))
+        assertTrue("one line short still means keep going", TranscriptScrubberMath.atBottom(maxScroll - 48, maxScroll, slack))
+        assertFalse("one pixel past the slack is reading", TranscriptScrubberMath.atBottom(maxScroll - 49, maxScroll, slack))
+        assertFalse("scrolled right back up", TranscriptScrubberMath.atBottom(0, maxScroll, slack))
+        // Content that fits has no bottom to be away from — and neither has a view with nothing
+        // laid out yet, which is the state every session's first repaint arrives in.
+        assertTrue(TranscriptScrubberMath.atBottom(0, 0, slack))
+        assertTrue(TranscriptScrubberMath.atBottom(0, 0, 0))
+        // Zero slack is exact, not accidentally permissive.
+        assertTrue(TranscriptScrubberMath.atBottom(maxScroll, maxScroll, 0))
+        assertFalse(TranscriptScrubberMath.atBottom(maxScroll - 1, maxScroll, 0))
+    }
+
+    @Test fun a_repaint_carries_the_reader_only_when_the_reader_was_already_at_the_bottom() {
+        // Pinned to the newest line: the panel grows by 200px and the view follows it down.
+        assertEquals(960, TranscriptScrubberMath.followScrollY(wasAtBottom = true, previousScrollY = 760, maxScroll = 960))
+        // Reading further up: the offset is kept, whatever the repaint did to the content.
+        assertEquals(200, TranscriptScrubberMath.followScrollY(wasAtBottom = false, previousScrollY = 200, maxScroll = 960))
+        // THE RELABEL CASE: the text's length did not change, so neither branch moves the view.
+        assertEquals(200, TranscriptScrubberMath.followScrollY(wasAtBottom = false, previousScrollY = 200, maxScroll = 760))
+        assertEquals(760, TranscriptScrubberMath.followScrollY(wasAtBottom = true, previousScrollY = 760, maxScroll = 760))
+        // A repaint that SHRINKS the content clamps rather than leaving the view past its end.
+        assertEquals(100, TranscriptScrubberMath.followScrollY(wasAtBottom = false, previousScrollY = 700, maxScroll = 100))
+        assertEquals(0, TranscriptScrubberMath.followScrollY(wasAtBottom = false, previousScrollY = 700, maxScroll = 0))
+        assertEquals(0, TranscriptScrubberMath.followScrollY(wasAtBottom = true, previousScrollY = 0, maxScroll = 0))
+    }
 }

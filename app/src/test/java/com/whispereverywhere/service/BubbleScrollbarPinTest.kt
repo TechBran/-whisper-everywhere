@@ -218,6 +218,48 @@ class BubbleScrollbarPinTest {
     }
 
     @Test
+    fun thePanelFollowsTheNewestLineOnlyWhenTheReaderIsAlreadyThere() {
+        // THE OWNER'S 2026-09-19 REPORT, the second half: "the earlier parts of the transcript
+        // are disappearing … when I scroll back up". The panel is re-assigned its whole text on
+        // every repaint, and since the retrospective reclusterer a repaint can carry no new
+        // words at all (a relabel every few chunks, and one at stop) — so an unconditional
+        // scroll-to-newest yanked a reader back to the bottom for a change they could not see,
+        // and fought the scrubber they were holding.
+        val start = serviceRaw.indexOf("            sink.preview.collectLatest { text ->")
+        assertTrue("the panel's preview collector is gone or renamed", start >= 0)
+        val collector = serviceRaw.substring(start, serviceRaw.indexOf("\n        }\n", start))
+        val flat = collector.replace(Regex("\\s+"), " ")
+
+        // 1. The position is read BEFORE the text changes — the only moment the question
+        //    "was the reader at the bottom?" has an answer.
+        val read = flat.indexOf("val was = transcriptionEditText.scrollY")
+        val pinned = flat.indexOf("val pinned = com.whispereverywhere.ui.components.TranscriptScrubberMath.atBottom(")
+        val setText = flat.indexOf("transcriptionEditText.text = text")
+        assertTrue("the pre-change scroll is read first", read >= 0 && read < setText)
+        assertTrue("and the at-bottom test is made on it, before the text changes", pinned in (read + 1) until setText)
+
+        // 2. Exactly ONE scrollTo on the panel in the whole service, it is in this collector,
+        //    and what it scrolls to is the maths' verdict — never a bare bottom.
+        assertEquals("one place scrolls the panel", 1, service.split("transcriptionEditText.scrollTo(").size - 1)
+        val scroll = flat.indexOf("transcriptionEditText.scrollTo(")
+        assertTrue("the one scrollTo is in the collector, after the text is set", scroll > setText)
+        assertTrue(
+            "the scroll target is followScrollY of the pre-change verdict",
+            flat.contains(
+                "com.whispereverywhere.ui.components.TranscriptScrubberMath.followScrollY( " +
+                    "wasAtBottom = pinned, previousScrollY = was, maxScroll = max, )",
+            ),
+        )
+
+        // 3. A finger on the scrubber wins outright: the collector does not scroll at all while
+        //    the bar is being dragged, and it asks the bar rather than keeping its own flag.
+        val guard = flat.indexOf("if (layout != null && !transcriptScrubber.isScrubbing)")
+        assertTrue("the scrubber guard precedes the scrollTo", guard in (setText + 1) until scroll)
+        assertTrue("isScrubbing is the view's own dragging state, not a copy",
+            scrubberSource.contains("val isScrubbing: Boolean get() = dragging"))
+    }
+
+    @Test
     fun theScrubberScrollsItsTextViewOnlyUnderAFinger() {
         // The panel auto-scrolls to its newest line on every commit and the strip to its newest
         // words on every delta. The scrubber must FOLLOW that, never fight it: its one scrollTo

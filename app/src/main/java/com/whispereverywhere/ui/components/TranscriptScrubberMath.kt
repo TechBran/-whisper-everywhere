@@ -91,4 +91,35 @@ object TranscriptScrubberMath {
     fun grabOffset(fingerY: Float, thumbTopPx: Float, thumbHeightPx: Float): Float =
         if (fingerY >= thumbTopPx && fingerY <= thumbTopPx + thumbHeightPx) fingerY - thumbTopPx
         else thumbHeightPx / 2f
+
+    // ------------------------------------------------------------------ following, not yanking
+
+    /**
+     * IS THE READER RIDING THE NEWEST LINE? — read against the content as it stood BEFORE the
+     * repaint, which is the only moment at which the question has an answer.
+     *
+     * [thresholdPx] is slack, not sloppiness: a view can sit a pixel or two off its own maximum
+     * after a layout pass, and a reader who is one partial line from the bottom means "keep
+     * going" as plainly as one who is exactly on it. Content that fits (`maxScroll == 0`) is at
+     * the bottom by definition.
+     */
+    fun atBottom(scrollY: Int, maxScroll: Int, thresholdPx: Int): Boolean =
+        scrollY >= maxScroll - thresholdPx.coerceAtLeast(0)
+
+    /**
+     * WHERE THE PANEL SITS AFTER A REPAINT — the one rule behind the owner's 2026-09-19 report
+     * that scrolling back up did not stay put.
+     *
+     * The panel is re-assigned its whole text on every repaint, and since the retrospective
+     * reclusterer those repaints also happen when no new words arrived (a relabel every few
+     * chunks, and one at stop). Scrolling to the newest line unconditionally therefore yanked a
+     * reader — or a dragged scrubber — back to the bottom for a change they could not even see.
+     *
+     * So: follow the newest line only for a reader who was already there ([wasAtBottom]); anyone
+     * else keeps the offset they chose, clamped to whatever the content is now. A relabel that
+     * does not change the text's length cannot move the view at all, because both branches
+     * return where it already was.
+     */
+    fun followScrollY(wasAtBottom: Boolean, previousScrollY: Int, maxScroll: Int): Int =
+        if (wasAtBottom) maxScroll else previousScrollY.coerceIn(0, maxScroll.coerceAtLeast(0))
 }
