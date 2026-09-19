@@ -2,11 +2,14 @@ package com.whispereverywhere.transcription.speakers
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Collections
+import java.util.concurrent.BlockingQueue
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -259,6 +262,215 @@ class SpeakerAssignerTest {
         assigner.release()
         assertTrue(voices.released.await(5, TimeUnit.SECONDS))
         assertTrue(assigner.awaitIdle(2_000))
+    }
+
+    // ------------------------------------------------------------------ the second look (session 6)
+
+    /**
+     * THE LOCK-ON, reproduced exactly — session 6's 03:27 dump in five chunks.
+     *
+     * A 5 s window of voice A at 0°, then a 2 s window at 40° that A matches (cos 0.766) and
+     * which therefore ENTERS A's recent set, and then three 4 s windows of voice B at 95-99°. B
+     * is -0.087 from A's own fingerprint and would open its own speaker — but the matcher takes
+     * the MAXIMUM over the recent set, and against the 40° vector B scores 0.574. So every one
+     * of the five is called speaker 1: one id, two voices, one run-on paragraph. That is the
+     * mechanism, not an analogy — a single ambiguous window in a recent set is enough.
+     *
+     * The retrospective pass weighs the same five at once, and the duration weighting is what
+     * saves it: the 40° window is 0.766 from A and only 0.545 from B, so average linkage puts it
+     * with A, and {0°, 40°} at 7 s then sits 0.069 from {95°, 97°, 99°} at 12 s — far under
+     * [SpeakerReclusterer.RECLUSTER_SIM], with both clusters over the mass bar.
+     */
+    private fun lockOn() = FakeVoices { index ->
+        when (index) {
+            0 -> unit(0.0)
+            1 -> unit(40.0)
+            2 -> unit(95.0)
+            3 -> unit(97.0)
+            else -> unit(99.0)
+        }
+    }
+
+    /** The five windows of [lockOn], in order: `seq to (startSec to endSec)`. */
+    private val lockOnChunks = listOf(
+        1L to (0f to 5f),
+        2L to (0f to 2f),
+        3L to (0f to 4f),
+        4L to (0f to 4f),
+        5L to (0f to 4f),
+    )
+
+    /** Drives [chunks] through [assigner], one window each, waiting for each assignment. */
+    private fun drive(
+        assigner: SpeakerAssigner,
+        chunks: List<Pair<Long, Pair<Float, Float>>>,
+        arrivals: BlockingQueue<SpeakerAssignment>,
+    ): List<Int> {
+        val ids = ArrayList<Int>(chunks.size)
+        for ((seq, bounds) in chunks) {
+            assigner.assign(seq, buffer(bounds.second + 1f), segs(bounds))
+            val assignment = arrivals.poll(5, TimeUnit.SECONDS)
+            assertNotNull("chunk " + seq + " was assigned", assignment)
+            ids += assignment!!.ids.single()
+        }
+        return ids
+    }
+
+    @Test
+    fun theSecondLookIsPublishedEveryFiveChunksAndFindsTheVoiceTheMatcherSwallowed() {
+        val arrivals = LinkedBlockingQueue<SpeakerAssignment>()
+        val relabels = LinkedBlockingQueue<SpeakerRelabel>()
+        val assigner = SpeakerAssigner(
+            voices = lockOn(),
+            onAssigned = { arrivals.put(it) },
+            onRelabel = { relabels.put(it) },
+        )
+        try {
+            val ids = drive(assigner, lockOnChunks.take(4), arrivals)
+            assertEquals("the matcher locked onto one id", listOf(1, 1, 1, 1), ids)
+            assertTrue("…and nothing has been re-clustered yet", relabels.isEmpty())
+
+            drive(assigner, lockOnChunks.drop(4), arrivals)
+            val relabel = relabels.poll(5, TimeUnit.SECONDS)
+            assertNotNull("the fifth chunk brings the second look", relabel)
+            assertEquals(5, relabel!!.fingerprints)
+            assertEquals("two voices, where the online pass saw one", 2, relabel.clusterCount)
+            assertEquals(2, relabel.confirmedCount)
+            // The labels are PER WINDOW, which is the only correction that can split an id that
+            // swallowed two voices: the first two windows are one speaker, the last three another.
+            assertEquals(
+                listOf(1, 1, 2, 2, 2),
+                lockOnChunks.map { relabel.windowLabels.getValue(WindowKey(it.first, 0)) },
+            )
+            assertEquals("three windows changed hands", 3, relabel.changed)
+            assertTrue("…and the pass is timed", relabel.costMs >= 0)
+            assertEquals("one pass, not one per chunk", 0, relabels.size)
+        } finally {
+            assigner.release()
+        }
+    }
+
+    @Test
+    fun theSecondLookReseedsTheTrackerSoTheNextChunkFollowsTheTruth() {
+        // Relabelling the panel fixes the past. This is the other half: without the reseed the
+        // sixth chunk would be decided by the very recent set that locked on, and the session
+        // would go straight back to one id — the panel rewritten, then immediately wrong again.
+        val arrivals = LinkedBlockingQueue<SpeakerAssignment>()
+        val relabels = LinkedBlockingQueue<SpeakerRelabel>()
+        val tracker = SpeakerTracker()
+        val voices = FakeVoices { index ->
+            when (index) {
+                0 -> unit(0.0)
+                1 -> unit(40.0)
+                2 -> unit(95.0)
+                3 -> unit(97.0)
+                4 -> unit(99.0)
+                else -> unit(96.0) // the sixth chunk: voice B again
+            }
+        }
+        val assigner = SpeakerAssigner(
+            voices = voices,
+            onAssigned = { arrivals.put(it) },
+            onRelabel = { relabels.put(it) },
+            tracker = tracker,
+        )
+        try {
+            assertEquals(listOf(1, 1, 1, 1, 1), drive(assigner, lockOnChunks, arrivals))
+            assertNotNull(relabels.poll(5, TimeUnit.SECONDS))
+
+            val sixth = drive(assigner, listOf(6L to (0f to 4f)), arrivals).single()
+
+            assertEquals("the tracker's speakers ARE the clusters now", 2, sixth)
+            assertEquals(2, tracker.speakerCount)
+            assertTrue("…and the latch followed the retrospective truth", tracker.secondSpeakerConfirmed)
+        } finally {
+            assigner.release()
+        }
+    }
+
+    @Test
+    fun theFinalSecondLookRunsInsideTheFenceAndIsPublishedBeforeItReturns() {
+        // The sink is detached the instant the fence returns, so a pass published after it would
+        // land on nothing and the delivery, the clipboard and history would ship the online
+        // labels while the panel showed the corrected ones.
+        val arrivals = LinkedBlockingQueue<SpeakerAssignment>()
+        val published = AtomicReference<SpeakerRelabel?>(null)
+        val assigner = SpeakerAssigner(
+            voices = lockOn(),
+            onAssigned = { arrivals.put(it) },
+            onRelabel = { published.set(it) },
+        )
+        try {
+            // Four chunks — one short of the cadence, so nothing has been re-clustered yet.
+            drive(assigner, lockOnChunks.take(4), arrivals)
+            assertNull(published.get())
+
+            assertTrue("the fence drained", assigner.awaitIdle(5_000))
+
+            val relabel = published.get()
+            assertNotNull("the final pass is published by the time the fence clears", relabel)
+            assertEquals(4, relabel!!.fingerprints)
+            assertEquals(2, relabel.clusterCount)
+            assertEquals(2, relabel.confirmedCount)
+            assertEquals(
+                listOf(1, 1, 2, 2),
+                lockOnChunks.take(4).map { relabel.windowLabels.getValue(WindowKey(it.first, 0)) },
+            )
+        } finally {
+            assigner.release()
+        }
+    }
+
+    @Test
+    fun aFenceWithNothingNewToLookAtPublishesNothingAtAll() {
+        // onDestroy and the fatal drain can both reach the finalize block, so two fences in one
+        // session is a normal shape. A second identical relabel would repaint the panel and
+        // print a second diag line for a change that did not happen.
+        val arrivals = LinkedBlockingQueue<SpeakerAssignment>()
+        val relabels = LinkedBlockingQueue<SpeakerRelabel>()
+        val assigner = SpeakerAssigner(
+            voices = lockOn(),
+            onAssigned = { arrivals.put(it) },
+            onRelabel = { relabels.put(it) },
+        )
+        try {
+            drive(assigner, lockOnChunks.take(4), arrivals)
+            assertTrue(assigner.awaitIdle(5_000))
+            assertEquals(1, relabels.size)
+
+            assertTrue(assigner.awaitIdle(5_000))
+
+            assertEquals("still one", 1, relabels.size)
+        } finally {
+            assigner.release()
+        }
+    }
+
+    @Test
+    fun onlyWindowsThatProducedAVectorAreEverRelabelled() {
+        // A window under the embed floor and one the embedder refused have no fingerprint, so a
+        // clustering has nothing to weigh them with. They keep the label they inherited, and the
+        // relabel map does not mention them — which is what lets the sink apply it blindly.
+        val arrivals = LinkedBlockingQueue<SpeakerAssignment>()
+        val published = AtomicReference<SpeakerRelabel?>(null)
+        val voices = FakeVoices { index -> if (index == 1) null else unit(index * 45.0) }
+        val assigner = SpeakerAssigner(
+            voices = voices,
+            onAssigned = { arrivals.put(it) },
+            onRelabel = { published.set(it) },
+        )
+        try {
+            // Window 0: 4 s, fingerprinted. Window 1: 4 s, the embedder refuses. Window 2: 0.5 s,
+            // never fingerprinted at all. Window 3: 4 s, fingerprinted.
+            assigner.assign(1L, buffer(20f), segs(0f to 4f, 5f to 9f, 10f to 10.5f, 11f to 15f))
+            assertNotNull(arrivals.poll(5, TimeUnit.SECONDS))
+            assertTrue(assigner.awaitIdle(5_000))
+
+            val labels = published.get()!!.windowLabels
+            assertEquals(setOf(WindowKey(1L, 0), WindowKey(1L, 3)), labels.keys)
+        } finally {
+            assigner.release()
+        }
     }
 
     // ------------------------------------------------------------------ the three per-segment fates

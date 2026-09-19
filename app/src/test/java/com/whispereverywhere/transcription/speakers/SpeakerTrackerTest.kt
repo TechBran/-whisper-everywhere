@@ -717,6 +717,155 @@ class SpeakerTrackerTest {
         assertTrue("and nothing was measured against it", tracker.lastBestSimilarity.isNaN())
     }
 
+    // ------------------------------------------------------------------ the retrospective reseed
+
+    /**
+     * A [SpeakerReclusterer.Relabel] built by hand: the clusters this tracker is to become, each
+     * given the vectors its recent set should hold. The map is identity unless a test needs
+     * otherwise, which is what the real pass produces once its fingerprints have been rewritten
+     * into cluster space.
+     */
+    private fun relabelOf(
+        vararg clusters: Pair<Boolean, List<FloatArray>>,
+        map: Map<Int, Int> = emptyMap(),
+    ): SpeakerReclusterer.Relabel = SpeakerReclusterer.Relabel(
+        map = map,
+        windowLabels = emptyMap(),
+        clusters = clusters.mapIndexed { index, (confirmed, seeds) ->
+            SpeakerReclusterer.Cluster(
+                id = index + 1,
+                confirmed = confirmed,
+                totalSec = 10f,
+                fingerprints = seeds.size,
+                longest = seeds,
+            )
+        },
+        clusterCount = clusters.size,
+        confirmedCount = clusters.count { it.first },
+    )
+
+    @Test fun aReseedMakesTheTRACKERSSpeakersTheClustersAndTheNextCallFollowSUIT() {
+        // Session 6's 03:27 failure in miniature: the tracker has locked onto ONE speaker whose
+        // recent set now holds vectors from both voices, so every later segment of either one
+        // matches it and the transcript is one run-on paragraph. The retrospective pass says
+        // there were two, and this is the call that makes the tracker believe it.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals("the second voice was swallowed", 1, tracker.assign(unit(50.0), longSeg))
+        assertEquals(1, tracker.speakerCount)
+
+        tracker.reseed(relabelOf(true to listOf(unit(0.0)), true to listOf(unit(90.0))))
+
+        assertEquals("two speakers, numbered as the clusters were", 2, tracker.speakerCount)
+        assertEquals(2, tracker.confirmedCount)
+        // And the ids it hands out from here on are IN THE CLUSTER'S id space — which is what
+        // keeps the next chunk from contradicting the relabel the panel has just been given.
+        assertEquals(2, tracker.assign(unit(88.0), longSeg))
+        assertEquals(1, tracker.assign(unit(3.0), longSeg))
+    }
+
+    @Test fun aReseedRaisesTheLatchAndCanNeverLowerIt() {
+        val tracker = SpeakerTracker()
+        assertFalse(tracker.secondSpeakerConfirmed)
+
+        // Two confirmed clusters is the latch, even though the ONLINE pass never confirmed two.
+        tracker.reseed(relabelOf(true to listOf(unit(0.0)), true to listOf(unit(90.0))))
+        assertTrue(tracker.secondSpeakerConfirmed)
+
+        // And a later pass that finds only one voice does NOT take it back: the panel has already
+        // been rewritten with labels and un-rewriting it is the one thing that moves backwards.
+        tracker.reseed(relabelOf(true to listOf(unit(0.0))))
+        assertEquals(1, tracker.speakerCount)
+        assertTrue("the latch never goes back", tracker.secondSpeakerConfirmed)
+    }
+
+    @Test fun aReseedClearsTheSessionsMergesBecauseTheIdsHaveBeenRenumbered() {
+        // The merge map's keys are ids from BEFORE the renumbering. Carried across, an old key
+        // that collides with a new id would relabel a live speaker into somebody else — and the
+        // caller has already published those merges chunk by chunk, so nothing is lost.
+        val tracker = mergeFixture()
+        tracker.endChunk()
+        assertEquals(mapOf(2 to 1), tracker.remap())
+
+        tracker.reseed(relabelOf(true to listOf(unit(0.0)), true to listOf(unit(90.0))))
+
+        assertTrue(tracker.remap().isEmpty())
+    }
+
+    @Test fun anUnconfirmedClusterStillHasToEarnItsConfirmationTheOnlineWay() {
+        // The degenerate answer — nothing cleared the mass bar, so the whole session is ONE
+        // unconfirmed speaker. The tracker must not treat that as a person already proven.
+        val tracker = SpeakerTracker()
+        tracker.reseed(relabelOf(false to listOf(unit(0.0))))
+        assertEquals(1, tracker.speakerCount)
+        assertEquals(0, tracker.confirmedCount)
+        assertFalse(tracker.secondSpeakerConfirmed)
+    }
+
+    @Test fun theCURRENTSpeakerFollowsTheMapAndIsUnlabelledWhenThePassNeverSawIt() {
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(2, tracker.assign(unit(90.0), longSeg))
+        assertEquals(2, tracker.currentSpeaker())
+
+        // The pass says the voice on the floor is cluster 1.
+        tracker.reseed(
+            relabelOf(true to listOf(unit(90.0)), true to listOf(unit(0.0)), map = mapOf(2 to 1)),
+        )
+        assertEquals(1, tracker.currentSpeaker())
+
+        // An id the pass never saw — its windows fell off the cap — leaves the floor UNLABELLED
+        // rather than pointing at whoever happens to hold that number now.
+        tracker.reseed(relabelOf(true to listOf(unit(90.0)), true to listOf(unit(0.0))))
+        assertEquals(0, tracker.currentSpeaker())
+    }
+
+    @Test fun aReseedItCannotHonourIsIgnoredEntirelyRatherThanHalfApplied() {
+        // A tracker left holding half a reseed would answer ids belonging to neither id space.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(2, tracker.assign(unit(90.0), longSeg))
+
+        // No clusters at all.
+        tracker.reseed(relabelOf())
+        assertEquals(2, tracker.speakerCount)
+
+        // Ids that are not 1..n in order — the second cluster claims number 3.
+        tracker.reseed(
+            SpeakerReclusterer.Relabel(
+                map = emptyMap(),
+                windowLabels = emptyMap(),
+                clusters = listOf(
+                    SpeakerReclusterer.Cluster(1, true, 10f, 2, listOf(unit(0.0))),
+                    SpeakerReclusterer.Cluster(3, true, 10f, 2, listOf(unit(90.0))),
+                ),
+                clusterCount = 2,
+                confirmedCount = 2,
+            ),
+        )
+        assertEquals("nothing moved", 2, tracker.speakerCount)
+
+        // A cluster with no usable seed.
+        tracker.reseed(relabelOf(true to listOf(FloatArray(2))))
+        assertEquals(2, tracker.speakerCount)
+    }
+
+    @Test fun theRecentSetIsTheClustersSeedsAndNothingOlder() {
+        // The tracker matches by MAXIMUM cosine over the recent set, so a reseed that ADDED to
+        // the old set instead of replacing it would leave the locked-on vectors in place and the
+        // correction would not take. RECENT_K seeds go in; the pre-reseed fingerprints do not.
+        val tracker = SpeakerTracker()
+        assertEquals(1, tracker.assign(unit(0.0), longSeg))
+        assertEquals(1, tracker.assign(unit(40.0), longSeg))
+
+        tracker.reseed(relabelOf(true to listOf(unit(90.0)), true to listOf(unit(180.0))))
+
+        // 0° was speaker 1's own fingerprint a moment ago. It is now 0.0 from cluster 1 (90°) and
+        // -1.0 from cluster 2 (180°), so it opens a THIRD speaker instead of matching what the
+        // tracker used to know.
+        assertEquals(3, tracker.assign(unit(0.0), longSeg))
+    }
+
     // ------------------------------------------------------------------ session boundaries
 
     @Test fun resetClearsEverySpeakerTheNumberingTheMergesAndTheLatch() {

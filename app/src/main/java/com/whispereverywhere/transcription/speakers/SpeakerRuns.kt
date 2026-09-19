@@ -36,7 +36,8 @@ data class Run(
 )
 
 /**
- * Spans in, runs out — plus the two patches an assignment applies to a session's runs. Pure: no
+ * Spans in, runs out — plus the three patches a session's runs are corrected by: one chunk's ids,
+ * the tracker's merges, and the retrospective pass's per-window labels. Pure: no
  * Android, no I/O, no state of its own (plan Task 5 step 1).
  */
 object SpeakerRuns {
@@ -100,6 +101,38 @@ object SpeakerRuns {
             val index = run.windowIndex
             if (index < 0 || index >= ids.size) continue
             val id = ids[index]
+            if (id > 0) run.speakerId = id
+        }
+    }
+
+    /**
+     * THE SECOND LOOK's patch: a label per fingerprint WINDOW, applied to every run of the
+     * session it names (spike session 6).
+     *
+     * [SpeakerRuns.applyRemap] is the id-level correction — "speaker 3 was speaker 1 all along" —
+     * and it is all the tracker's merge pass can express. This one is exact. The retrospective
+     * clustering answers per window, so a run whose speaker the online pass got wrong is
+     * rewritten directly, even when the id it was given is still a live speaker of somebody
+     * else's: that is precisely session 6's 03:27 failure, where one id had swallowed fifty
+     * windows of two different voices and no id-level map could have separated them.
+     *
+     * Everything not named is left alone rather than guessed at:
+     *  - a run with [NO_WINDOW_INDEX] (cloud, the NPU tier, a chunk whose spans could not
+     *    reproduce its text) belongs to no window and can never be labelled;
+     *  - a window the pass did not look at — one older than the clustering's cap — keeps the
+     *    label it has, which is the whole reason the cap is safe;
+     *  - a label of 0 is dropped at the door, exactly as in [applyAssignment]: 0 is
+     *    "unattributed", never speaker 1.
+     *
+     * Idempotent, and order-free with respect to [applyAssignment] and [applyRemap] for the runs
+     * it names: this map is the newest and most complete opinion about those windows, so it wins
+     * wherever it speaks.
+     */
+    fun applyWindowLabels(runs: List<Run>, windowLabels: Map<WindowKey, Int>) {
+        if (windowLabels.isEmpty()) return
+        for (run in runs) {
+            if (run.windowIndex == NO_WINDOW_INDEX) continue
+            val id = windowLabels[WindowKey(run.seq, run.windowIndex)] ?: continue
             if (id > 0) run.speakerId = id
         }
     }

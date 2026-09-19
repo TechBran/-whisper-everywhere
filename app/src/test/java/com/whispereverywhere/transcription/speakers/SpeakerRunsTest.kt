@@ -6,7 +6,8 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * `SpeakerRuns` — spans to runs, and the two patches an assignment applies (plan Task 5 step 1).
+ * `SpeakerRuns` — spans to runs, and the three patches a session's runs are corrected by (plan
+ * Task 5 step 1; the per-window one is spike session 6).
  *
  * The load-bearing test in this file is [spans_that_do_not_reproduce_the_text_lose_their_labels]:
  * it is what makes "one speaker all session = today's output byte for byte" a property of the
@@ -192,5 +193,73 @@ class SpeakerRunsTest {
         SpeakerRuns.applyAssignment(runs, 1, listOf(5))
         SpeakerRuns.applyRemap(runs, emptyMap())
         assertEquals(5, runs[0].speakerId)
+    }
+
+    // ------------------------------------------------------------------ applyWindowLabels()
+
+    @Test fun window_labels_split_an_id_that_swallowed_two_voices() {
+        // The correction no id-level map can make (spike session 6): the online matcher gave
+        // every window of a conversation the same number, so a remap keyed on that number could
+        // only move all of them together. The retrospective pass answers per WINDOW.
+        val first = SpeakerRuns.of(1, "A B", listOf(span(0, "A"), span(1, "B")))
+        val second = SpeakerRuns.of(2, "C D", listOf(span(0, "C"), span(1, "D")))
+        val all = first + second
+        SpeakerRuns.applyAssignment(all, 1, listOf(1, 1))
+        SpeakerRuns.applyAssignment(all, 2, listOf(1, 1))
+        assertEquals(listOf(1, 1, 1, 1), all.map { it.speakerId })
+
+        SpeakerRuns.applyWindowLabels(
+            all,
+            mapOf(
+                WindowKey(1L, 0) to 1,
+                WindowKey(1L, 1) to 1,
+                WindowKey(2L, 0) to 2,
+                WindowKey(2L, 1) to 2,
+            ),
+        )
+
+        assertEquals(listOf(1, 1, 2, 2), all.map { it.speakerId })
+    }
+
+    @Test fun a_window_the_pass_did_not_look_at_keeps_the_label_it_has() {
+        // Windows older than SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS are absent from the
+        // map. Absent must mean "unchanged", which is the whole reason the cap is safe.
+        val runs = SpeakerRuns.of(1, "A B", listOf(span(0, "A"), span(1, "B")))
+        SpeakerRuns.applyAssignment(runs, 1, listOf(3, 3))
+        SpeakerRuns.applyWindowLabels(runs, mapOf(WindowKey(1L, 1) to 2))
+        assertEquals(listOf(3, 2), runs.map { it.speakerId })
+    }
+
+    @Test fun a_plain_run_and_a_zero_label_are_both_left_alone() {
+        // A run with no window behind it (cloud, the NPU tier, a chunk whose spans could not
+        // reproduce its text) can never be labelled, and 0 is "unattributed", never speaker 1.
+        val plain = SpeakerRuns.of(4, "whole chunk", spans = null)
+        SpeakerRuns.applyWindowLabels(plain, mapOf(WindowKey(4L, SpeakerRuns.NO_WINDOW_INDEX) to 2))
+        assertNull(plain.single().speakerId)
+
+        val runs = SpeakerRuns.of(5, "A", listOf(span(0, "A")))
+        SpeakerRuns.applyAssignment(runs, 5, listOf(1))
+        SpeakerRuns.applyWindowLabels(runs, mapOf(WindowKey(5L, 0) to 0))
+        assertEquals(1, runs.single().speakerId)
+    }
+
+    @Test fun window_labels_are_idempotent_and_an_empty_map_changes_nothing() {
+        val runs = SpeakerRuns.of(1, "A", listOf(span(0, "A")))
+        SpeakerRuns.applyAssignment(runs, 1, listOf(1))
+        SpeakerRuns.applyWindowLabels(runs, mapOf(WindowKey(1L, 0) to 2))
+        SpeakerRuns.applyWindowLabels(runs, mapOf(WindowKey(1L, 0) to 2))
+        assertEquals(2, runs.single().speakerId)
+        SpeakerRuns.applyWindowLabels(runs, emptyMap())
+        assertEquals(2, runs.single().speakerId)
+    }
+
+    @Test fun window_labels_are_keyed_on_the_chunk_too_so_two_chunks_never_collide() {
+        // Every chunk numbers its windows from 0, so a map keyed on the index alone would put
+        // chunk 2's speaker on chunk 1's first sentence.
+        val all = SpeakerRuns.of(1, "A", listOf(span(0, "A"))) +
+            SpeakerRuns.of(2, "B", listOf(span(0, "B")))
+        SpeakerRuns.applyWindowLabels(all, mapOf(WindowKey(2L, 0) to 2))
+        assertNull(all[0].speakerId)
+        assertEquals(2, all[1].speakerId)
     }
 }

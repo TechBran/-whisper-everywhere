@@ -124,6 +124,43 @@ object SpeakerDiag {
     fun relabelLine(confirmed: Int, runs: Int): String =
         "$RELABEL_PREFIX confirmed=$confirmed runs=$runs relabelled=1"
 
+    /** What the retrospective pass is grepped for. */
+    const val RECLUSTER_PREFIX: String = "speaker-recluster:"
+
+    /**
+     * THE SECOND LOOK — one line per retrospective pass (spike session 6):
+     *
+     * ```
+     * speaker-recluster: n=48 clusters=2 confirmed=2 changed=11 ms=63
+     * ```
+     *
+     * Every column answers one question the device session has to be able to ask of a build that
+     * rewrites labels behind the user's back:
+     *
+     *  - **`n=`** how many fingerprints were weighed — the cost driver, since the pass is O(n²),
+     *    and the number that says whether a long session is sitting on the
+     *    [SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS] cap;
+     *  - **`clusters=` / `confirmed=`** what it concluded, against the `ids=` of the `speaker:`
+     *    lines above it. A session where the online pass opened five ids and this line says
+     *    `clusters=2 confirmed=2` is exactly the 03:27 failure being corrected;
+     *  - **`changed=`** how many windows' labels actually MOVED. Zero is the ordinary reading and
+     *    is what says a pass cost nothing but its milliseconds; a large number on every pass says
+     *    the online and retrospective halves disagree systematically, which is a finding;
+     *  - **`ms=`** what it cost on the embed thread, read against the `embedMs=` beside it — the
+     *    two together are what the finalize fence has to cover.
+     *
+     * Numbers only, like every line in this file. A window key is a sequence number and an index,
+     * and not one of them reaches this string.
+     */
+    fun reclusterLine(relabel: SpeakerRelabel): String = buildString {
+        append(RECLUSTER_PREFIX)
+        append(" n=").append(relabel.fingerprints)
+        append(" clusters=").append(relabel.clusterCount)
+        append(" confirmed=").append(relabel.confirmedCount)
+        append(" changed=").append(relabel.changed)
+        append(" ms=").append(relabel.costMs)
+    }
+
     /** `[a,b,c]`, and `[]` for nothing — never a placeholder row for a chunk with no segments. */
     private fun <T> column(values: List<T>, render: (T) -> String): String =
         values.joinToString(separator = ",", prefix = "[", postfix = "]") { render(it) }

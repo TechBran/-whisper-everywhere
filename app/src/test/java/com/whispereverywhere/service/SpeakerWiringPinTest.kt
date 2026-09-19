@@ -157,14 +157,17 @@ class SpeakerWiringPinTest {
 
     @Test
     fun theOneDiagLinePerChunkGoesOutThroughNativeLoggingSoR8CannotStripIt() {
-        // TWO native lines, and the second is the relabel's (Task 5) — one per SESSION, guarded by
-        // the latch's own "did it move" answer, which is why it is counted here beside the
-        // per-chunk one rather than left to drift into a third. Both go out through
-        // WhisperNative.diag because R8 strips every android.util.Log call from the release
-        // build, and the release build is the only one the owner can install.
-        assertEquals(2, count(service, "WhisperNative.diag("))
+        // THREE native lines, and no more: the per-chunk `speaker:` line, the once-per-session
+        // relabel (Task 5), and the per-pass `speaker-recluster:` line spike session 6 added.
+        // The relabel's is counted here rather than left to drift because it is guarded by the
+        // latch's own "did it move" answer and must stay once per session however many callers
+        // ask for the latch. All three go out through WhisperNative.diag because R8 strips every
+        // android.util.Log call from the release build, and the release build is the only one
+        // the owner can install.
+        assertEquals(3, count(service, "WhisperNative.diag("))
         at(startRecording, "WhisperNative.diag(SpeakerDiag.line(assignment))", "startRecording")
-        at(startRecording, "SpeakerDiag.relabelLine(", "startRecording")
+        at(startRecording, "WhisperNative.diag(SpeakerDiag.reclusterLine(relabel))", "startRecording")
+        assertEquals("the recluster line is emitted from exactly one place", 1, count(service, "SpeakerDiag.reclusterLine("))
         assertEquals("the relabel line is emitted from exactly one place", 1, count(service, "SpeakerDiag.relabelLine("))
     }
 

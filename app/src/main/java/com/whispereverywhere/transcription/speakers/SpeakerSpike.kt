@@ -189,6 +189,13 @@ object SpikeJson {
      * number was chosen for. Without these two rules a session-4 dump reads exactly like a
      * session-3 dump whose columns meant something else, and the `windows` vs `segs` comparison
      * a later session is meant to make has nothing to stand on.
+     *
+     * [reclusterSim], [minClusterSeconds] and [reclusterEvery] are session 6's three, and they
+     * are in here because they change what `assigned` MEANS. Under a reclustering build the
+     * tracker is re-seeded from a retrospective pass partway through the session, so the online
+     * id a row carries was decided by a tracker that had already been corrected — twice over on a
+     * long session. A dump with no record of that is indistinguishable from an online-only dump
+     * whose ids drifted on their own, which is precisely the comparison session 6 exists to make.
      */
     fun header(
         session: Long,
@@ -205,6 +212,9 @@ object SpikeJson {
         cap: Int,
         longSegment: Float,
         minWindow: Float,
+        reclusterSim: Float,
+        minClusterSeconds: Float,
+        reclusterEvery: Int,
     ): String = buildString {
         append("{\"session\":").append(session)
         append(",\"model\":\"").append(model).append('"')
@@ -223,6 +233,12 @@ object SpikeJson {
         // knows them, and simply gains two.
         append(",\"longSegment\":").append(num(longSegment))
         append(",\"minWindow\":").append(num(minWindow))
+        // The THIRD group, appended after the second for the same reason the second was appended
+        // after the first: a PC reader written against a session-4 header keeps reading the keys
+        // it knows, in the order it knows them, and simply gains three.
+        append(",\"reclusterSim\":").append(num(reclusterSim))
+        append(",\"minClusterSeconds\":").append(num(minClusterSeconds))
+        append(",\"reclusterEvery\":").append(reclusterEvery)
         append('}')
     }
 
@@ -390,6 +406,9 @@ class SpeakerSpikeDump(
     private val cap: Int,
     private val longSegment: Float,
     private val minWindow: Float,
+    private val reclusterSim: Float,
+    private val minClusterSeconds: Float,
+    private val reclusterEvery: Int,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -473,6 +492,9 @@ class SpeakerSpikeDump(
             cap = cap,
             longSegment = longSegment,
             minWindow = minWindow,
+            reclusterSim = reclusterSim,
+            minClusterSeconds = minClusterSeconds,
+            reclusterEvery = reclusterEvery,
         )
         runCatching { primary?.write(header); primary?.write("\n") }
         runCatching { mirror?.write(header); mirror?.write("\n") }

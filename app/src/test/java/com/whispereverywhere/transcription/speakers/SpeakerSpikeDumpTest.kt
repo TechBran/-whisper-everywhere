@@ -105,6 +105,7 @@ class SpeakerSpikeDumpTest {
                     minEmbed = 1.0f, minMatch = 1.0f, minOpen = 2.0f, minUpdate = 2.0f,
                     recentK = 5, confirmN = 2, cap = 8,
                     longSegment = 5.0f, minWindow = 1.5f,
+                    reclusterSim = 0.4f, minClusterSeconds = 6.0f, reclusterEvery = 5,
                 ).contains("\"tSame\":0.5500"),
             )
         } finally {
@@ -169,12 +170,20 @@ class SpeakerSpikeDumpTest {
         // dump's own window-length distribution. A jsonl from before that change and one from
         // after it describe two different partitions of the same audio, and the header is the
         // only place a later reader can tell which one it is holding.
+        //
+        // `reclusterSim` / `minClusterSeconds` / `reclusterEvery` are session 6's three, and they
+        // change what the `assigned` COLUMN means: under a reclustering build the tracker is
+        // re-seeded from a retrospective pass partway through the session, so the online id a row
+        // carries was decided by a tracker that had already been corrected. A dump with no record
+        // of that is indistinguishable from an online-only dump whose ids drifted on their own,
+        // which is exactly the comparison session 6 exists to make.
         assertEquals(
             "{\"session\":1737000000000,\"model\":\"speaker_titanet_small_16k.onnx\",\"dim\":192," +
                 "\"tSame\":0.5000,\"tNew\":0.3000,\"minEmbed\":1.0000,\"minMatch\":1.0000," +
                 "\"minOpen\":1.5000,\"minUpdate\":2.0000," +
                 "\"recentK\":5,\"confirmN\":2,\"cap\":8," +
-                "\"longSegment\":2.0000,\"minWindow\":1.0000}",
+                "\"longSegment\":2.0000,\"minWindow\":1.0000," +
+                "\"reclusterSim\":0.4000,\"minClusterSeconds\":6.0000,\"reclusterEvery\":5}",
             SpikeJson.header(
                 session = 1_737_000_000_000L,
                 model = SpeakerSpike.MODEL_ASSET,
@@ -190,6 +199,9 @@ class SpeakerSpikeDumpTest {
                 cap = SpeakerTracker.MAX_SPEAKERS,
                 longSegment = SpeakerSpans.LONG_SEGMENT_SECONDS,
                 minWindow = SpeakerSpans.MIN_WINDOW_SECONDS,
+                reclusterSim = SpeakerReclusterer.RECLUSTER_SIM,
+                minClusterSeconds = SpeakerReclusterer.MIN_CLUSTER_SECONDS,
+                reclusterEvery = SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS,
             ),
         )
     }
@@ -376,6 +388,9 @@ class SpeakerSpikeDumpTest {
         cap = SpeakerTracker.MAX_SPEAKERS,
         longSegment = SpeakerSpans.LONG_SEGMENT_SECONDS,
         minWindow = SpeakerSpans.MIN_WINDOW_SECONDS,
+        reclusterSim = SpeakerReclusterer.RECLUSTER_SIM,
+        minClusterSeconds = SpeakerReclusterer.MIN_CLUSTER_SECONDS,
+        reclusterEvery = SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS,
         nowMs = now,
     )
 }

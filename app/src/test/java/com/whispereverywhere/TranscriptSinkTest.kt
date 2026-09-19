@@ -5,6 +5,7 @@ import com.whispereverywhere.transcription.TranscriptSink
 import com.whispereverywhere.transcription.speakers.SpeakerLabels
 import com.whispereverywhere.transcription.speakers.SpeakerRuns
 import com.whispereverywhere.transcription.speakers.SpeakerSpan
+import com.whispereverywhere.transcription.speakers.WindowKey
 import java.util.concurrent.Executors
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -263,6 +264,45 @@ class TranscriptSinkTest {
         assertEquals(0, sink.confirmedSpeakers)
         sink.setLabelsVisible(true)
         assertEquals(SpeakerLabels.MIN_CONFIRMED_SPEAKERS, sink.confirmedSpeakers)
+        sink.close()
+    }
+
+    @Test fun relabel_rewrites_the_panel_per_window_and_survives_a_close() {
+        // Spike session 6: the online matcher gave both chunks the same id, so no id-level remap
+        // could separate them. The retrospective pass answers per window, and the panel — which
+        // is ours to rewrite — is repainted from the session's start.
+        val f = tmp()
+        val sink = TranscriptSink(f)
+        sink.append(seq = 1L, spans = listOf(SpeakerSpan(0, "Hello there.")), text = "Hello there.")
+        sink.append(seq = 2L, spans = listOf(SpeakerSpan(0, "Nice to meet you.")), text = "Nice to meet you.")
+        sink.assign(1L, listOf(1), emptyMap())
+        sink.assign(2L, listOf(1), emptyMap())
+        sink.setLabelsVisible(true)
+        assertFalse("one id, so one paragraph", sink.preview.value.contains("Speaker 2:"))
+
+        sink.relabel(mapOf(WindowKey(1L, 0) to 1, WindowKey(2L, 0) to 2))
+
+        val preview = sink.preview.value
+        assertTrue(preview.startsWith("Speaker 1: Hello there."))
+        assertTrue("the second chunk is now a second speaker", preview.contains("Speaker 2: Nice to meet you."))
+        assertEquals(listOf(1, 2), sink.runs().map { it.speakerId })
+
+        // The session's LAST pass runs inside the finalize fence, which is after the sink has
+        // been told to close in some exit paths; its labels are what the export is rendered from.
+        sink.close()
+        sink.relabel(mapOf(WindowKey(2L, 0) to 1))
+        assertEquals(listOf(1, 1), sink.runs().map { it.speakerId })
+    }
+
+    @Test fun an_empty_relabel_changes_nothing_at_all() {
+        val f = tmp()
+        val sink = TranscriptSink(f)
+        sink.append(seq = 1L, spans = listOf(SpeakerSpan(0, "Hello.")), text = "Hello.")
+        sink.assign(1L, listOf(2), emptyMap())
+        val before = sink.preview.value
+        sink.relabel(emptyMap())
+        assertEquals(before, sink.preview.value)
+        assertEquals(listOf(2), sink.runs().map { it.speakerId })
         sink.close()
     }
 }

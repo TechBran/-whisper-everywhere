@@ -207,4 +207,57 @@ class SpeakerDiagTest {
             assertTrue("every field is key=value: $field", field.count { it == '=' } == 1)
         }
     }
+
+    // ------------------------------------------------------------------ the recluster line
+
+    @Test
+    fun theReclusterLineIsFiveNumbersUnderOneGreppablePrefix() {
+        assertEquals(
+            "speaker-recluster: n=48 clusters=2 confirmed=2 changed=11 ms=63",
+            SpeakerDiag.reclusterLine(
+                SpeakerRelabel(
+                    windowLabels = mapOf(WindowKey(7L, 0) to 1, WindowKey(7L, 1) to 2),
+                    confirmedCount = 2,
+                    fingerprints = 48,
+                    clusterCount = 2,
+                    changed = 11,
+                    costMs = 63,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun theReclusterLineCarriesNoWindowKeyAndNoTranscript() {
+        // The message it is rendered from holds a MAP of window keys, and none of them may reach
+        // the log: a key is a chunk sequence number and an index, the line is a count.
+        val line = SpeakerDiag.reclusterLine(
+            SpeakerRelabel(
+                windowLabels = (0 until 30).associate { WindowKey(99L, it) to 1 },
+                confirmedCount = 1,
+                fingerprints = 30,
+                clusterCount = 1,
+                changed = 0,
+                costMs = 4,
+            ),
+        )
+        assertEquals("speaker-recluster: n=30 clusters=1 confirmed=1 changed=0 ms=4", line)
+        assertFalse("no key, no bracket, no list", line.contains("["))
+        assertFalse(line.contains("99"))
+        // Nine words, split on spaces: the prefix plus five key=value fields.
+        assertEquals(6, line.split(" ").size)
+    }
+
+    @Test
+    fun aPassThatMovedNothingSaysSoRatherThanBeingOmitted() {
+        // `changed=0` is the ordinary reading on a stable session and it is worth printing: it
+        // is what says the pass cost nothing but its milliseconds, against the alternative
+        // reading — that the pass did not run at all.
+        val line = SpeakerDiag.reclusterLine(
+            SpeakerRelabel(emptyMap(), confirmedCount = 0, fingerprints = 3, clusterCount = 1, changed = 0, costMs = 0),
+        )
+        assertTrue(line.startsWith(SpeakerDiag.RECLUSTER_PREFIX))
+        assertTrue(line.contains(" changed=0 "))
+        assertTrue(line.endsWith(" ms=0"))
+    }
 }

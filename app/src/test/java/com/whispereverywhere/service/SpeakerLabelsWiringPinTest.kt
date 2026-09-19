@@ -148,14 +148,20 @@ class SpeakerLabelsWiringPinTest {
 
     @Test
     fun theLatchIsFlippedOnceFromTheAssignersCallbackAndTheRelabelLineRidesOnItsAnswer() {
-        // The `&&` is the whole test. `setLabelsVisible` answers whether the latch MOVED, so the
-        // diag line is once per session; splitting these into two statements, or ignoring the
-        // answer, re-emits it for every chunk of the rest of the session.
-        indexOfOrFail("                        if (assignment.confirmed && sink.setLabelsVisible(true)) {")
+        // ONE helper moves the latch and it only ever RAISES it (spike session 6 added a second
+        // caller: the retrospective pass). `setLabelsVisible` answers whether the latch actually
+        // MOVED, so the diag line is once per session; a caller that ignored that answer would
+        // re-emit it for every chunk of the rest of the session, and a `false` anywhere would
+        // take the labels back off a panel that already has them — the one thing on screen that
+        // would move backwards.
         assertEquals("ONE latch-flip site", 1, count("setLabelsVisible("))
+        indexOfOrFail("        if (!sink.setLabelsVisible(true)) return")
+        assertEquals("…and it is never lowered", 0, count("setLabelsVisible(false)"))
+        assertEquals("one declaration plus two callers", 3, count("raiseSpeakerLabels("))
+        indexOfOrFail("                        if (assignment.confirmed) raiseSpeakerLabels(sink)")
         assertEquals("ONE assign site", 1, count("sink.assign("))
         val assign = indexOfOrFail("sink.assign(assignment.seq, assignment.ids, assignment.remaps)")
-        val flip = indexOfOrFail("sink.setLabelsVisible(true)")
+        val flip = indexOfOrFail("if (assignment.confirmed) raiseSpeakerLabels(sink)")
         assertTrue("the ids are stamped before the panel is told to show them", assign < flip)
     }
 
@@ -215,12 +221,14 @@ class SpeakerLabelsWiringPinTest {
         assertTrue("…and precedes the detach, close and snapshot", fence < detach)
         assertEquals("ONE speaker fence", 1, liveCount("awaitIdle(SPEAKER_DRAIN_MS)"))
         assertEquals("…with its bound named once", 1, liveCount("private val SPEAKER_DRAIN_MS"))
-        // 2 500 ms since spike session 4. The old 1 500 was sized on ONE fingerprint per VAD
-        // segment; the long-segment split can put several windows in the last chunk of a session
+        // 3 000 ms since spike session 6. 1 500 was sized on ONE fingerprint per VAD segment;
+        // session 4's long-segment split can put several windows in the last chunk of a session
         // — which is exactly the chunk this fence exists for — and five at the measured 130-300 ms
-        // each is 0.7-1.5 s of embedding that must land before the snapshot is taken. Nobody
-        // waits the extra second unless the work is genuinely outstanding.
-        indexOfOrFail("private val SPEAKER_DRAIN_MS = 2_500L")
+        // each is 0.7-1.5 s of embedding that must land before the snapshot is taken. Session 6
+        // then put the session's LAST retrospective pass inside this same fence, because its
+        // labels are what the delivery, the clipboard and history are rendered from. Nobody
+        // waits the extra time unless the work is genuinely outstanding.
+        indexOfOrFail("private val SPEAKER_DRAIN_MS = 3_000L")
         // Off Main: it blocks, and Main is where the whole finalize continuation runs.
         indexOfOrFail("withContext(Dispatchers.IO) { assigner.awaitIdle(SPEAKER_DRAIN_MS) }")
         // And it is skipped entirely when the session has no speaker pass (cloud, detection off).

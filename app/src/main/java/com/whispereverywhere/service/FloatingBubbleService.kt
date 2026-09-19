@@ -56,6 +56,7 @@ import com.whispereverywhere.transcription.cloud.SttProviderFactory
 import com.whispereverywhere.transcription.speakers.SpeakerAssigner
 import com.whispereverywhere.transcription.speakers.SpeakerDiag
 import com.whispereverywhere.transcription.speakers.SpeakerEmbedder
+import com.whispereverywhere.transcription.speakers.SpeakerLabels
 import com.whispereverywhere.transcription.speakers.SpeakerSpike
 import com.whispereverywhere.transcription.speakers.SpeakerSpikeStore
 import com.whispereverywhere.ui.components.BarWaveformView
@@ -1232,10 +1233,19 @@ class FloatingBubbleService : Service(),
      * is exactly the chunk this fence exists for — can now carry several windows where it carried
      * one: five windows at the measured 130-300 ms each is 0.7-1.5 s on its own, and it is the
      * whole of it that must land before the snapshot. 2.5 s covers that plus a late model load.
-     * Nobody waits the extra second unless the work is genuinely outstanding: this returns the
-     * moment the embed queue drains.
+     *
+     * **2 500 → 3 000 ms at spike session 6**, and the extra half second is not slack: the
+     * assigner's `awaitIdle` now runs the session's LAST RETROSPECTIVE PASS inside this fence
+     * (`SpeakerReclusterer`), because the labels that pass produces are the ones the delivery,
+     * the clipboard and history are rendered from — publishing them after the fence would land
+     * them on a detached sink. That pass is O(n²) in the session's fingerprints and capped at
+     * `SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS`: at the cap, 600·599/2 ≈ 180 000 cosines of
+     * 192 floats, a few hundred milliseconds on the Tab, on top of the last chunk's embedding
+     * that was already inside this bound. Nobody waits the extra time unless the work is
+     * genuinely outstanding: this returns the moment the embed queue drains, and a timeout still
+     * costs a label and never a word.
      */
-    private val SPEAKER_DRAIN_MS = 2_500L
+    private val SPEAKER_DRAIN_MS = 3_000L
 
     /**
      * Client-VAD live (Gemini, 4.3.4): how long the finalize drain waits for the provider's final
@@ -4471,15 +4481,29 @@ class FloatingBubbleService : Service(),
                         // has already read: the moment a second speaker is confirmed the panel is
                         // re-rendered from the session's start WITH labels, first paragraph
                         // included (spec §2 — "the panel's text is ours to rewrite"). The latch
-                        // is republished on every later chunk; setLabelsVisible answers whether
-                        // it actually moved, so the line below is once per session.
-                        if (assignment.confirmed && sink.setLabelsVisible(true)) {
-                            WhisperNative.diag(
-                                SpeakerDiag.relabelLine(
-                                    confirmed = sink.confirmedSpeakers,
-                                    runs = sink.runCount,
-                                ),
-                            )
+                        // is republished on every later chunk; raiseSpeakerLabels answers whether
+                        // it actually moved, so the line it prints is once per session.
+                        if (assignment.confirmed) raiseSpeakerLabels(sink)
+                    }
+                },
+                // (4.10 spike session 6) THE SECOND LOOK's way in. Every few chunks, and once
+                // inside the finalize fence, the assigner re-clusters the session's fingerprints
+                // and answers a label PER WINDOW — which is the only correction that can undo the
+                // failure session 6 measured, an online matcher locking onto one id and giving
+                // fifty windows of two voices the same number. It arrives on the same Main hop as
+                // an assignment, for the same reason: the sink and the panel are Main-confined.
+                onRelabel = { relabel ->
+                    serviceScope.launch(Dispatchers.Main) {
+                        WhisperNative.diag(SpeakerDiag.reclusterLine(relabel))
+                        val sink = transcriptSink ?: return@launch
+                        sink.relabel(relabel.windowLabels)
+                        // The latch now follows the RETROSPECTIVE count as well as the online
+                        // one — a session whose second voice the live tracker never confirmed can
+                        // still earn its labels here. Only upwards: raiseSpeakerLabels is the one
+                        // place the latch moves and it only ever raises it, so a later pass that
+                        // sees one speaker cannot take the labels back off a panel that has them.
+                        if (relabel.confirmedCount >= SpeakerLabels.MIN_CONFIRMED_SPEAKERS) {
+                            raiseSpeakerLabels(sink)
                         }
                     }
                 },
@@ -5824,6 +5848,27 @@ class FloatingBubbleService : Service(),
             seq = release.seq,
             spans = if (speakerAssigner != null) release.spans else null,
             text = text,
+        )
+    }
+
+    /**
+     * (4.10) THE LATCH, and the ONE place in this service that moves it — upwards only.
+     *
+     * Two callers ask for it: the per-chunk assignment whose online tracker has confirmed a
+     * second speaker, and the retrospective pass whose clustering has (spike session 6). Either
+     * is enough, and neither can undo the other: `setLabelsVisible` is called with `true` here
+     * and nowhere else, so a later pass that sees one speaker cannot take the labels back off a
+     * panel that already has them. Un-rewriting the panel is the one thing on screen that would
+     * move backwards, and the owner's rule from the start was *"labels can appear a chunk late
+     * but must not flicker"*.
+     *
+     * The answer from `setLabelsVisible` is whether the latch actually MOVED, which is what keeps
+     * the relabel line one per session rather than one per chunk. Main thread, like the sink.
+     */
+    private fun raiseSpeakerLabels(sink: com.whispereverywhere.transcription.TranscriptSink) {
+        if (!sink.setLabelsVisible(true)) return
+        WhisperNative.diag(
+            SpeakerDiag.relabelLine(confirmed = sink.confirmedSpeakers, runs = sink.runCount),
         )
     }
 

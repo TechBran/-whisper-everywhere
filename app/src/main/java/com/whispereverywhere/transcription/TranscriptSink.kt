@@ -5,6 +5,7 @@ import com.whispereverywhere.transcription.speakers.Run
 import com.whispereverywhere.transcription.speakers.SpeakerLabels
 import com.whispereverywhere.transcription.speakers.SpeakerRuns
 import com.whispereverywhere.transcription.speakers.SpeakerSpan
+import com.whispereverywhere.transcription.speakers.WindowKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.BufferedWriter
@@ -17,14 +18,16 @@ import java.io.FileWriter
  * Every finalized segment is appended to [sessionFile] as it arrives, so a session that ends in a
  * process kill still leaves its words on disk, and the last [previewCapChars] characters or so are
  * rendered into [preview] for the bubble's panel. What 4.10 adds is that the sink now keeps the
- * RUNS beside that text, because three things happen after a chunk has already been delivered:
+ * RUNS beside that text, because four things happen after a chunk has already been delivered:
  *
  *  1. the speaker ids land (~300 ms later — the embedder is deliberately behind the delivery);
  *  2. the tracker's merge pass decides two of its speakers were one person;
  *  3. a SECOND speaker is confirmed, and the panel is rewritten from the session's start with
- *     labels on — the one thing in this app that edits text the user has already read.
+ *     labels on — the one thing in this app that edits text the user has already read;
+ *  4. a RETROSPECTIVE clustering of the session's fingerprints (spike session 6) decides that a
+ *     whole stretch of windows was the wrong speaker, and [relabel] rewrites them per window.
  *
- * None of the three can be served by a string that has already been concatenated, which is why
+ * None of the four can be served by a string that has already been concatenated, which is why
  * this class holds a list and renders, rather than holding the render.
  *
  * ### What it costs, stated honestly
@@ -148,9 +151,35 @@ class TranscriptSink(
     }
 
     /**
+     * THE SECOND LOOK's patch — a label per fingerprint WINDOW, for the whole session at once
+     * (spike session 6).
+     *
+     * [assign] is one chunk's opinion, formed live, and [SpeakerRuns.applyRemap] can only say
+     * "speaker 3 was speaker 1 all along". This is the retrospective pass, and it is EXACT: it
+     * rewrites each named run's speaker directly, which is the only thing that can undo session
+     * 6's 03:27 failure, where the online matcher locked onto one id and gave fifty windows of
+     * two different voices the same number. A window it does not name keeps what it has.
+     *
+     * Accepted after [close] for the same reason [assign] is: the session's LAST pass runs inside
+     * the finalize fence, and its labels are what the export and the history sidecar are rendered
+     * from.
+     */
+    @Synchronized
+    fun relabel(windowLabels: Map<WindowKey, Int>) {
+        if (windowLabels.isEmpty()) return
+        SpeakerRuns.applyWindowLabels(runs, windowLabels)
+        repaint()
+    }
+
+    /**
      * Flips the latch. Returns true only when it actually MOVED, which is what makes the relabel
      * diag line one-per-session rather than one-per-chunk: the assigner republishes
-     * `confirmed = true` on every chunk after the first.
+     * `confirmed = true` on every chunk after the first, and the retrospective pass republishes
+     * its own verdict on every pass.
+     *
+     * It is only ever called with `true` (`SpeakerLabelsWiringPinTest`): the panel has already
+     * been rewritten with labels by then, and un-rewriting it is the one thing on screen that
+     * would move backwards.
      */
     @Synchronized
     fun setLabelsVisible(on: Boolean): Boolean {

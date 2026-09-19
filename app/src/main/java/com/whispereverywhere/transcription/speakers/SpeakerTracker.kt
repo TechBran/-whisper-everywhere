@@ -118,6 +118,15 @@ import kotlin.math.sqrt
  * Only unconfirmed speakers are ever absorbed and only confirmed ones ever absorb, so a merge
  * chain is at most one link long and [remap] never needs resolving through itself.
  *
+ * ### AND THE SECOND LOOK: this object can be told it was wrong
+ *
+ * Everything above is decided with the evidence that existed at the moment, which is what a live
+ * panel needs and what session 6 showed a greedy matcher can get irrecoverably wrong — one id
+ * swallowing a whole conversation. [SpeakerReclusterer] looks at the session's fingerprints all
+ * at once and answers who was really speaking; [reseed] is how that answer becomes this object's
+ * state, so the NEXT online decision starts from the retrospective truth rather than from the
+ * recent set that locked on. The latch is the one thing a reseed can only raise.
+ *
  * ### Ids are monotone, and the cap counts LIVE speakers
  *
  * An id is a slot, issued in order, and it is never reused inside a session even after the slot is
@@ -345,6 +354,69 @@ class SpeakerTracker(
         }
         relatch()
         return moved
+    }
+
+    /**
+     * RE-SEEDS this tracker from a retrospective clustering — the other half of "online for
+     * display, retrospective for truth" (spike session 6).
+     *
+     * [SpeakerReclusterer] has just looked at the whole session at once and answered who was
+     * really speaking. Relabelling the panel fixes the PAST; this fixes the FUTURE, and without
+     * it the next chunk would be decided by exactly the state that went wrong — session 6's 03:27
+     * dump locked onto one id and never let the other speaker back, because a single similar
+     * fingerprint among five recent ones is enough to match.
+     *
+     * After this call the tracker's speakers ARE the clusters, numbered the same way: slot `i` is
+     * cluster `i + 1`, its recent set is the cluster's [SpeakerReclusterer.Cluster.longest]
+     * fingerprints (the longest windows are the least ambiguous evidence the cluster has), and it
+     * is confirmed exactly when the cluster cleared the mass bar. So the ids this tracker emits
+     * from here on are in the SAME id space as the labels the panel was just rewritten with,
+     * which is what keeps the next chunk's online ids from contradicting the relabel above them.
+     *
+     * Three things are deliberately NOT reset:
+     *  - **the latch.** [secondSpeakerConfirmed] never goes back, here least of all: the panel has
+     *    already been rewritten with labels and un-rewriting it is the one thing on screen that
+     *    would move backwards. A reseed can only ever RAISE it (via [relatch]).
+     *  - **[lastBestSimilarity]**, which describes the last [assign] and is read immediately after
+     *    one, on this thread.
+     *  - the fingerprint width, which cannot change inside a session.
+     *
+     * The session's accumulated [remap] IS cleared, and must be: its keys are ids from before the
+     * renumbering, and an old key that collides with a new id would relabel a live speaker into
+     * somebody else. The caller has already published those merges chunk by chunk, and the window
+     * map it is about to apply supersedes every one of them.
+     *
+     * A [relabel] this tracker cannot honour — no clusters, ids that are not 1..n in order, or a
+     * cluster with no usable seed — is IGNORED entirely rather than half-applied: a tracker left
+     * holding half a reseed would answer ids that belong to neither id space.
+     */
+    fun reseed(relabel: SpeakerReclusterer.Relabel) {
+        val clusters = relabel.clusters
+        if (clusters.isEmpty()) return
+        val rebuilt = ArrayList<Voice>(clusters.size)
+        for ((index, cluster) in clusters.withIndex()) {
+            if (cluster.id != index + 1) return
+            val seeds = cluster.longest.mapNotNull { normalised(it) }
+            if (seeds.isEmpty()) return
+            val voice = Voice(seeds.first())
+            for (i in 1 until seeds.size) push(voice, seeds[i])
+            // The evidence the cluster stands on, carried across: a cluster the reclusterer
+            // confirmed is a speaker this tracker has no more to learn about, and one it did not
+            // (the degenerate "nothing cleared the bar" answer) still has to earn its confirmation
+            // the online way, on its next two qualifying segments.
+            voice.qualifying = cluster.fingerprints
+            voice.confirmed = cluster.confirmed
+            rebuilt += voice
+        }
+        voices.clear()
+        voices.addAll(rebuilt)
+        dim = rebuilt.first().recent.first().size
+        merges.clear()
+        // The floor follows its owner. An id with no entry in the map belonged to a window the
+        // cap dropped or to nobody at all; 0 reads as "unlabelled" and the next segment inherits
+        // from whoever it matches, which is the honest answer for a speaker this pass did not see.
+        current = relabel.map[current]?.takeIf { it in 1..rebuilt.size } ?: 0
+        relatch()
     }
 
     /** Forgets every speaker, the numbering, the merges and the latch — one call per session start. */

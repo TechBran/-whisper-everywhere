@@ -47,7 +47,8 @@ import java.util.concurrent.TimeUnit
  * already been delivered, so nothing about the commit floors or a word of transcript moves.
  *
  * The ONE place it can be felt is the stop tap. [awaitIdle] is called there with the service's
- * `SPEAKER_DRAIN_MS` (2 500 ms), so a final chunk carrying more than about **eight windows** can
+ * `SPEAKER_DRAIN_MS` (3 000 ms since spike session 6, because that fence now also contains the
+ * final retrospective pass), so a final chunk carrying more than about **eight windows** can
  * still be embedding when the fence expires — and then, exactly as before the fence existed, that
  * chunk's ids land on a detached sink and the last thing said in the session wears the previous
  * speaker's number. That is the ACCEPTED TRADE for now: a sentence-accurate boundary everywhere
@@ -59,6 +60,27 @@ import java.util.concurrent.TimeUnit
  * whatever it moved rides out on the same callback as `remaps`. That ordering is the design of
  * spike session 2 — online, then refine — and this class is the only object that knows where a
  * chunk ends.
+ *
+ * ### THE SECOND LOOK: online for display, retrospective for truth (spike session 6)
+ *
+ * Every fingerprint that produced a vector is also KEPT, under its [WindowKey], and every
+ * [SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS] chunks — plus once inside the [awaitIdle] fence at
+ * finalize — all of them are clustered at once by [SpeakerReclusterer]. Session 6 is why: the
+ * online matcher is greedy and can lock onto a single id for a whole conversation (*"one big
+ * run-on paragraph"*) while a retrospective clustering of the very same fingerprints finds the
+ * speakers it merged. Three things then happen, in this order and on this thread:
+ *
+ *  1. **[SpeakerTracker.reseed]** — the tracker's speakers become the clusters, so the NEXT chunk
+ *     is decided from the retrospective truth rather than from the state that went wrong;
+ *  2. the kept fingerprints are rewritten into the cluster id space, so the next pass's
+ *     `onlineId -> cluster` map cannot mix two numberings;
+ *  3. **[onRelabel]** carries a [SpeakerRelabel] out — a label per window, which the sink applies
+ *     exactly (`TranscriptSink.relabel`) and which raises the panel's latch when two speakers are
+ *     confirmed. The latch is never lowered by a pass.
+ *
+ * The cost is O(n²) in the kept fingerprints, capped at
+ * [SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS] — a few hundred milliseconds at the cap, on
+ * this thread, below text that was delivered long ago, exactly like the embedding beside it.
  *
  * ### The slice is on the ORIGINAL timeline, and it is clamped
  *
@@ -105,6 +127,13 @@ import java.util.concurrent.TimeUnit
 class SpeakerAssigner(
     private val voices: VoicePrints,
     private val onAssigned: (SpeakerAssignment) -> Unit,
+    /**
+     * THE SECOND LOOK's way out (spike session 6). Called on the embed thread, after a
+     * retrospective pass, with a label for every fingerprint window of the session so far — the
+     * production consumer hops to Main and hands it to `TranscriptSink.relabel`. Defaulted to
+     * nothing so a test that is about the per-chunk pass does not have to care.
+     */
+    private val onRelabel: (SpeakerRelabel) -> Unit = {},
     private val tracker: SpeakerTracker = SpeakerTracker(),
     /** Injectable so a test can make the embed cost exact arithmetic. Nanoseconds. */
     private val clockNs: () -> Long = System::nanoTime,
@@ -157,9 +186,14 @@ class SpeakerAssigner(
      * a single-thread FIFO executor is idle of prior work exactly when a task submitted behind it
      * runs.
      *
-     * What it guarantees is stronger than "the executor is idle": [onAssigned] is invoked INSIDE
-     * the task it belongs to, so every assignment of the session has already been *published* when
-     * this returns. For the production consumer that publication is a `Dispatchers.Main` post from
+     * Since spike session 6 the barrier task is not empty: it runs the session's LAST
+     * retrospective pass before it counts down, so what the caller is waiting for is every
+     * assignment AND the final relabel. That is the whole reason the pass is there — the sink is
+     * detached the instant this returns.
+     *
+     * What it guarantees is stronger than "the executor is idle": [onAssigned] and [onRelabel]
+     * are invoked INSIDE the task they belong to, so every assignment of the session, and the
+     * final relabel, have already been *published* when this returns. For the production consumer that publication is a `Dispatchers.Main` post from
      * this thread, which therefore sits in the main queue AHEAD of the continuation that resumes
      * the caller — so a caller that awaits this off Main and resumes on Main observes every
      * assignment, not merely their submission.
@@ -170,7 +204,17 @@ class SpeakerAssigner(
     fun awaitIdle(timeoutMs: Long): Boolean {
         val latch = CountDownLatch(1)
         try {
-            executor.execute { latch.countDown() }
+            executor.execute {
+                // THE FINAL RECLUSTER, and it belongs inside the fence rather than beside it
+                // (spike session 6). The session's last words are also the ones the retrospective
+                // pass has the most evidence about, and the sink is detached the moment this
+                // fence returns — so a recluster published after it would land on nothing and the
+                // delivery, the clipboard and history would ship the online labels while the
+                // panel showed the corrected ones. Running it HERE, on the same FIFO thread,
+                // behind the last chunk's embedding, is what makes those four agree.
+                runCatching { recluster() }
+                latch.countDown()
+            }
         } catch (t: RejectedExecutionException) {
             return true // already released — nothing can still be in flight
         }
@@ -251,6 +295,11 @@ class SpeakerAssigner(
                 val similarity = tracker.lastBestSimilarity
                 ids += id
                 best += similarity
+                // …and the SESSION keeps the fingerprint, because the retrospective pass is a
+                // function of all of them at once (spike session 6). Only the windows that
+                // actually produced a vector: a window that inherited a label has nothing for a
+                // clustering to weigh, and it keeps the label it inherited.
+                remember(WindowKey(seq, index), embedding, seconds, id)
                 // The spike's row, and the ONLY place one is written: a vector exists, so the
                 // offline tuner can re-decide this segment. It is written AFTER the tracker has
                 // spoken, because `assigned`, `best` and `confirmed` are the shipped build's
@@ -307,6 +356,105 @@ class SpeakerAssigner(
                 ),
             )
         )
+
+        // THE SECOND LOOK, every [SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS] chunks and AFTER the
+        // chunk's own ids have been published: online first, then the correction. Spike session 6.
+        if (++chunksSinceRecluster >= SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS) recluster()
+    }
+
+    // ------------------------------------------------------------------ the retrospective pass
+
+    /** The session's fingerprints, newest last, capped like the pass that reads them. Embed thread only. */
+    private val session = ArrayList<SpeakerReclusterer.Fp>(SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS)
+
+    /** Chunks since the last retrospective pass. Embed thread only. */
+    private var chunksSinceRecluster = 0
+
+    /** How many fingerprints this session has taken, ever — the "is there anything new" test. */
+    private var fingerprintsTaken = 0L
+
+    /** [fingerprintsTaken] as it stood at the last pass, so a second fence publishes nothing. */
+    private var reclusteredAt = -1L
+
+    /**
+     * The label each window is currently WEARING, so a pass can say how many it changed. Seeded
+     * with the online id at the moment the window was assigned and rewritten by every pass, which
+     * makes `changed=` in the diag line mean "windows whose label on screen just moved" rather
+     * than "windows this pass had an opinion about".
+     */
+    private val shown = HashMap<WindowKey, Int>()
+
+    /** Keeps one fingerprint for the retrospective pass, dropping the oldest past the cap. */
+    private fun remember(key: WindowKey, embedding: FloatArray, seconds: Float, id: Int) {
+        session += SpeakerReclusterer.Fp(
+            windowKey = key,
+            emb = embedding,
+            durSec = seconds,
+            onlineId = id,
+        )
+        fingerprintsTaken++
+        shown[key] = id
+        if (session.size > SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS) {
+            val excess = session.size - SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS
+            for (i in 0 until excess) shown.remove(session[i].windowKey)
+            session.subList(0, excess).clear()
+        }
+    }
+
+    /**
+     * ONE retrospective pass over the session's fingerprints: cluster, publish the window labels,
+     * re-seed the tracker.
+     *
+     * Runs on the embed thread and nowhere else — it is O(n²) in the fingerprint count (see
+     * [SpeakerReclusterer]'s own arithmetic), which is a few hundred milliseconds at the cap and
+     * therefore exactly the kind of work that belongs below delivered text on a thread of its own.
+     *
+     * Two callers — the chunk counter and the finalize fence — and the counter is reset by both,
+     * so a pass at the fence does not leave the next session's first chunks paying for this one.
+     * A pass with nothing new to look at publishes NOTHING: the stop tap can bring two fences
+     * through here, and a second identical relabel would repaint the panel and print a second
+     * diag line for no change at all.
+     */
+    private fun recluster() {
+        chunksSinceRecluster = 0
+        // Fewer fingerprints than the smallest cluster the pass will call a speaker: there is
+        // nothing for a clustering to say that the online ids have not already said.
+        if (session.size < SpeakerReclusterer.MIN_CLUSTER_FINGERPRINTS) return
+        if (fingerprintsTaken == reclusteredAt) return
+        reclusteredAt = fingerprintsTaken
+
+        val startedNs = clockNs()
+        val relabel = SpeakerReclusterer.recluster(session)
+        val costMs = (clockNs() - startedNs) / 1_000_000L
+        if (relabel.windowLabels.isEmpty()) return
+
+        var changed = 0
+        for ((key, label) in relabel.windowLabels) {
+            if (shown.put(key, label) != label) changed++
+        }
+
+        // The tracker's live state becomes the retrospective truth BEFORE the labels leave, so
+        // the next chunk decided on this thread can never be decided by the state this pass just
+        // overruled. Its ids are the cluster ids from here on, which is why the stored
+        // fingerprints are rewritten into the same id space below — otherwise the NEXT pass's
+        // `onlineId -> cluster` map would mix two different numberings.
+        tracker.reseed(relabel)
+        for (i in session.indices) {
+            val fp = session[i]
+            val label = relabel.windowLabels[fp.windowKey] ?: continue
+            if (label != fp.onlineId) session[i] = fp.copy(onlineId = label)
+        }
+
+        onRelabel(
+            SpeakerRelabel(
+                windowLabels = relabel.windowLabels,
+                confirmedCount = relabel.confirmedCount,
+                fingerprints = session.size,
+                clusterCount = relabel.clusterCount,
+                changed = changed,
+                costMs = costMs,
+            )
+        )
     }
 
     /** Set by the first [VoicePrints.embed] of this assigner's life. Embed thread only. */
@@ -344,6 +492,13 @@ class SpeakerAssigner(
             // session 4. SpikeJson.header's own KDoc carries the argument.
             longSegment = SpeakerSpans.LONG_SEGMENT_SECONDS,
             minWindow = SpeakerSpans.MIN_WINDOW_SECONDS,
+            // And the THIRD group (session 6): the rules of the retrospective pass. A dump taken
+            // under a reclustering build and one taken under the online-only build describe two
+            // different label histories for the same audio — `assigned` is the ONLINE id in both,
+            // but in one of them it was re-seeded from a clustering partway through the session.
+            reclusterSim = SpeakerReclusterer.RECLUSTER_SIM,
+            minClusterSeconds = SpeakerReclusterer.MIN_CLUSTER_SECONDS,
+            reclusterEvery = SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS,
         )
         dump = built
         return built
@@ -399,6 +554,41 @@ data class SpeakerAssignment(
     val confirmed: Boolean,
     val stats: SpeakerAssignStats,
     val remaps: Map<Int, Int> = emptyMap(),
+)
+
+/**
+ * WHAT THE SECOND LOOK CONCLUDED — one of these per retrospective pass (spike session 6).
+ *
+ * It is a [SpeakerAssignment]'s opposite number in every way that matters. An assignment is about
+ * ONE chunk and arrives a moment after that chunk's text; this is about the WHOLE session and
+ * arrives every [SpeakerReclusterer.RECLUSTER_EVERY_CHUNKS] chunks and once at finalize, carrying
+ * a label for every window the pass looked at. The sink applies it per window, which is exact —
+ * `SpeakerReclusterer.Relabel.map` exists for callers that can only address ids, and this
+ * message deliberately does not carry it.
+ *
+ * @param windowLabels `windowKey -> clusterId` for every fingerprint window of the session that
+ *        the pass looked at. A window older than [SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS]
+ *        is absent and keeps the label it has.
+ * @param confirmedCount how many retrospective speakers cleared the mass bar. The panel's latch
+ *        follows this at [SpeakerLabels.MIN_CONFIRMED_SPEAKERS] — and only ever UPWARDS: a later
+ *        pass that sees one speaker never takes the labels back off a panel that has them, which
+ *        would be the only thing on screen that moved backwards.
+ * @param fingerprints how many fingerprints the pass weighed — the diag line's `n=`.
+ * @param clusterCount how many speakers it found, confirmed or not.
+ * @param changed how many windows' labels actually MOVED. Zero is the ordinary reading on a
+ *        stable session and is the number that says a pass cost nothing but its milliseconds.
+ * @param costMs what the pass cost on the embed thread, milliseconds.
+ *
+ * Numbers and ids only, like every other message out of this file: there is no text field, and a
+ * window key is a chunk sequence number and an index.
+ */
+data class SpeakerRelabel(
+    val windowLabels: Map<WindowKey, Int>,
+    val confirmedCount: Int,
+    val fingerprints: Int,
+    val clusterCount: Int,
+    val changed: Int,
+    val costMs: Long,
 )
 
 /**
