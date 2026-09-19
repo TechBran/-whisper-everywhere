@@ -58,3 +58,21 @@ Build 04dbd88..daccdbf (TitaNet-small bundled; the six tracker rules; band 0.50/
 No spurious speaker opened in any session; the merge step never fired and was not needed. Embedding cost on the tablet ~290 ms per chunk (median) on the embedder's own thread.
 
 **Verdict: the pipeline is ready for the labels.** Spec §3.4 is corrected to name TitaNet-small; the tracker constants are the ones committed in a9f0972.
+
+## Session 4 — the labels build in the owner's hands (2026-09-18 20:21-20:41): two failure modes, neither the model
+
+The owner ran "quite a few" sessions on the labels build (Task 5, dc122c4). The first ones worked (relabel lines at 20:24:27 and 20:27:50; the 20:23 and 20:27 dumps cut cleanly into two voices, 15/13 and 24/14 on the ≥ 2 s segments). Then "it just stopped working — I couldn't get any different speakers". The dumps say why:
+
+| session | fingerprints | segment length median / p90 | under 2 s | over 6 s | pairwise sim median | two-way cut (≥ 2 s) | what happened |
+|---|---|---|---|---|---|---|---|
+| 20:23 | 47 | 2.7 / 7.8 s | 19 | 7 | 0.17 | 15 / 13, within 0.40, between 0.08 | worked |
+| 20:27 | 50 | 3.1 / 7.2 s | 12 | 10 | 0.30 | 24 / 14, within 0.46, between 0.24 | worked |
+| 20:31 | 22 | **6.3 / 14.3 s** | 1 | 13 | **0.84** | 20 / 1, within 0.86, between 0.79 | no separation in the embeddings at all — the same signature as the confirmed one-voice clip at 18:41 (0.85 / 0.71): either one voice, or two voices mixed inside 6-14 s segments |
+| 20:35 | 38 | 3.1 / 7.3 s | 12 | 7 | 0.74 | 25 / 1, within 0.80, between 0.69 | weak separation; the tracker opened a second speaker late and never confirmed it |
+| 20:39 | 15 | **1.8 / 4.4 s** | **11 of 15** | 0 | 0.20 | 2 / 2 | clearly distinct voices, but 11 of 15 segments were under the 2.0 s gate — nothing could open or confirm |
+
+**Failure mode A — conversational audio with short turns (20:39):** the `MIN_OPEN 2.0 s` gate, chosen on session-2 data where segments ran 2.4-7 s, starves on rapid turn-taking. Fix: segments of 1.0-1.5 s may MATCH an existing speaker (assigned when the max similarity ≥ T_SAME, else the current speaker); segments ≥ 1.5 s may OPEN a speaker and count toward confirmation; only segments ≥ 2.0 s update a speaker's recent set.
+
+**Failure mode B — long segments (20:31, possibly 20:35):** when the endpointer hands over 6-14 s of speech, two alternating voices share one segment and one fingerprint; the dominant voice wins and every fingerprint looks like every other. The owner's own reading ("the VAD doesn't seem to chunk on the boundaries") is this. Fix: a VAD segment longer than 5 s that contains two or more whisper segments is fingerprinted PER WHISPER SEGMENT (windows ≥ 1.5 s, adjacent short whisper segments coalesced), so the text-to-speaker mapping is per sentence rather than per pause. Cost: more fingerprints per long chunk (~130-300 ms each, still off the whisper thread); the finalize fence rises from 1.5 s to 2.5 s.
+
+Whether 20:31 was the one-voice clip or a two-voice clip was not recorded; the owner is asked.
