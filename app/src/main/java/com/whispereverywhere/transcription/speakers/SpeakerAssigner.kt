@@ -321,6 +321,11 @@ class SpeakerAssigner(
             recentK = tracker.recentK,
             confirmN = tracker.confirmN,
             cap = tracker.maxSpeakers,
+            // Not tracker rules — the two that decide whether a ROW is a whole VAD segment or a
+            // slice of one, which is what `seg`/`durSec`/`origStart`/`origEnd` mean since
+            // session 4. SpikeJson.header's own KDoc carries the argument.
+            longSegment = SpeakerSpans.LONG_SEGMENT_SECONDS,
+            minWindow = SpeakerSpans.MIN_WINDOW_SECONDS,
         )
         dump = built
         return built

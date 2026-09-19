@@ -162,9 +162,10 @@ data class SpikeFingerprint(
  *  - **`null`, never `NaN`, for a value that was not measured.** `best` is genuinely absent for the
  *    first speaker of a session (nobody to be compared with), and 0 is a real reading — two
  *    orthogonal voices. `NaN` is not JSON at all in the strict grammar.
- *  - **One header line first**, carrying every RULE this session ran under — the band, the
- *    open floor, the recent-fingerprint window, the confirm count, the cap — so a dump is
- *    self-describing: a tuning run against a jsonl whose rules nobody recorded is a
+ *  - **One header line first**, carrying every RULE this session ran under — the band, the three
+ *    duration floors, the recent-fingerprint window, the confirm count, the cap, AND the two
+ *    rules that decide what a ROW IS (the long-segment floor and the minimum window) — so a dump
+ *    is self-describing: a tuning run against a jsonl whose rules nobody recorded is a
  *    measurement of an unknown build.
  */
 object SpikeJson {
@@ -177,6 +178,14 @@ object SpikeJson {
      * band — and session 4 split that one open floor into THREE graded gates, so a header that
      * carried the band alone would leave a dump indistinguishable from one taken under a
      * different tracker, which is the one thing a tuning loop cannot recover from.
+     *
+     * [longSegment] and [minWindow] are in here for a sharper reason than completeness: since
+     * session 4 a row is one fingerprint WINDOW, not one VAD segment, and those two rules are the
+     * whole of what decides which. A VAD segment past [longSegment] holding two or more whisper
+     * segments is cut into windows of at least [minWindow], so `seg`, `durSec`, `origStart` and
+     * `origEnd` mean a SLICE there and a whole segment everywhere else. Without them a session-4
+     * dump reads exactly like a session-3 dump whose columns meant something else, and the
+     * `windows` vs `segs` comparison a later session is meant to make has nothing to stand on.
      */
     fun header(
         session: Long,
@@ -191,6 +200,8 @@ object SpikeJson {
         recentK: Int,
         confirmN: Int,
         cap: Int,
+        longSegment: Float,
+        minWindow: Float,
     ): String = buildString {
         append("{\"session\":").append(session)
         append(",\"model\":\"").append(model).append('"')
@@ -204,6 +215,11 @@ object SpikeJson {
         append(",\"recentK\":").append(recentK)
         append(",\"confirmN\":").append(confirmN)
         append(",\"cap\":").append(cap)
+        // Appended after the tracker's rules rather than interleaved with them: a PC reader
+        // written against a session-3 header keeps reading the keys it knows, in the order it
+        // knows them, and simply gains two.
+        append(",\"longSegment\":").append(num(longSegment))
+        append(",\"minWindow\":").append(num(minWindow))
         append('}')
     }
 
@@ -369,6 +385,8 @@ class SpeakerSpikeDump(
     private val recentK: Int,
     private val confirmN: Int,
     private val cap: Int,
+    private val longSegment: Float,
+    private val minWindow: Float,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -450,6 +468,8 @@ class SpeakerSpikeDump(
             recentK = recentK,
             confirmN = confirmN,
             cap = cap,
+            longSegment = longSegment,
+            minWindow = minWindow,
         )
         runCatching { primary?.write(header); primary?.write("\n") }
         runCatching { mirror?.write(header); mirror?.write("\n") }

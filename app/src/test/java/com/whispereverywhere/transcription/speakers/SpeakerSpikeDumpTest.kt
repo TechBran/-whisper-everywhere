@@ -104,6 +104,7 @@ class SpeakerSpikeDumpTest {
                     tSame = 0.55f, tNew = 0.45f,
                     minEmbed = 1.0f, minMatch = 1.0f, minOpen = 2.0f, minUpdate = 2.0f,
                     recentK = 5, confirmN = 2, cap = 8,
+                    longSegment = 5.0f, minWindow = 1.5f,
                 ).contains("\"tSame\":0.5500"),
             )
         } finally {
@@ -157,11 +158,17 @@ class SpeakerSpikeDumpTest {
         // A tuning run against a jsonl whose RULES nobody recorded is a measurement of an unknown
         // build, which is the one thing a spike cannot afford twice — and session 2 changed four
         // rules at once, so the band alone no longer identifies a build.
+        //
+        // `longSegment` and `minWindow` are the session-4 pair, and they are not decoration: a row
+        // is one fingerprint WINDOW now, so those two rules are what decide whether `seg`/`durSec`
+        // /`origStart`/`origEnd` describe a whole VAD segment or a slice of one. A dump without
+        // them is header-identical to a session-3 dump whose columns meant something else.
         assertEquals(
             "{\"session\":1737000000000,\"model\":\"speaker_titanet_small_16k.onnx\",\"dim\":192," +
                 "\"tSame\":0.5000,\"tNew\":0.3000,\"minEmbed\":1.0000,\"minMatch\":1.0000," +
                 "\"minOpen\":1.5000,\"minUpdate\":2.0000," +
-                "\"recentK\":5,\"confirmN\":2,\"cap\":8}",
+                "\"recentK\":5,\"confirmN\":2,\"cap\":8," +
+                "\"longSegment\":5.0000,\"minWindow\":1.5000}",
             SpikeJson.header(
                 session = 1_737_000_000_000L,
                 model = SpeakerSpike.MODEL_ASSET,
@@ -175,6 +182,8 @@ class SpeakerSpikeDumpTest {
                 recentK = SpeakerTracker.RECENT_K,
                 confirmN = SpeakerTracker.CONFIRM_N,
                 cap = SpeakerTracker.MAX_SPEAKERS,
+                longSegment = SpeakerSpans.LONG_SEGMENT_SECONDS,
+                minWindow = SpeakerSpans.MIN_WINDOW_SECONDS,
             ),
         )
     }
@@ -359,6 +368,8 @@ class SpeakerSpikeDumpTest {
         recentK = SpeakerTracker.RECENT_K,
         confirmN = SpeakerTracker.CONFIRM_N,
         cap = SpeakerTracker.MAX_SPEAKERS,
+        longSegment = SpeakerSpans.LONG_SEGMENT_SECONDS,
+        minWindow = SpeakerSpans.MIN_WINDOW_SECONDS,
         nowMs = now,
     )
 }
