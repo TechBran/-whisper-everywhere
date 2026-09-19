@@ -84,3 +84,17 @@ Owner: "it is working a lot better for quick back and forths … the boundaries 
 **Change:** `LONG_SEGMENT_SECONDS 5.0 → 2.0` and `MIN_WINDOW_SECONDS 1.5 → 1.0` (a 1.0-1.5 s sentence window is matched to a known speaker by the graded gates but cannot open one). Boundaries then align to whisper's sentence boundaries in nearly every segment, which is where a new speaker usually begins. The remaining lag is inside a sentence (a genuine interruption mid-sentence), which only word-level change-point detection could catch — the next lever if this is not enough: whisper's token timestamps plus short sliding fingerprints across a detected change.
 
 Cost: fingerprints per chunk ≈ sentences per chunk; on the Tab 130-300 ms each on the embedder's thread. A chunk with more than ~8 sentences may exceed the 2.5 s finalize fence, losing the last chunk's ids (accepted for now; measured next).
+
+## Session 6 — per-sentence windows in the owner's hands (2026-09-19 03:02-03:30)
+
+Owner: "working much better … still the same edge cases: every once in a while no speaker changes being detected at all, one big run-on paragraph; other videos work just fine." Three dumps under the 2.0 s / 1.0 s windowing (fingerprints per chunk median 4, max 8; embed cost per chunk median 336 ms, max 575 ms — no chunk near the 2.5 s finalize fence):
+
+| session | windows | median window | online ids | retrospective two-way cut (≥ 1.5 s) | reading |
+|---|---|---|---|---|---|
+| 03:02 | 57 | 2.4 s | seven ids opened, four of them near-singletons | 45 / 3, within 0.31, between 0.05 | noisy fingerprints on short windows: the tracker chattered |
+| 03:05 | 324 | 2.5 s | 1 (172) and 2 (115) alternating in blocks, plus a 25-window id 3 | 255 / 9, within 0.35, between 0.01 | the online blocks look like real turn-taking, but the global structure is weak: within-speaker similarity on 2-3 s windows is only ~0.35 |
+| 03:27 | 64 | 2.6 s | 1 for the first 14 windows, then **2 for all remaining 50** | **40 / 14**, within 0.50, between 0.06 | the voices ARE separable retrospectively, but the online matcher locked onto id 2 and never let speaker 1 back — the "one big run-on" the owner saw |
+
+**What this says.** Per-sentence windows bought boundary alignment at the price of noisier fingerprints (2-3 s of speech instead of 5-10), and the online matcher — greedy, max-over-the-last-five — can lock onto one id once a speaker's recent set holds a few mixed or noisy fingerprints, because a single similar fingerprint among five is enough to match. The 03:27 session is the clean demonstration: a retrospective clustering of the same fingerprints finds the two speakers (40/14) that the online pass merged. **Word-level timing would not have changed any of these three outcomes**: it refines WHERE a boundary falls when two voices are already being told apart; it cannot create a change the matcher never made.
+
+**The next lever, therefore: online for display, retrospective for truth.** Every N chunks and once at finalize (before the fence), re-cluster the session's fingerprints (duration-weighted average linkage; a cluster is a speaker only above a minimum mass), map the online ids onto the clusters, and relabel the panel through the existing remap path; the exports at stop are rendered from the retrospective labels. The tracker's live state is re-seeded from the clusters (each speaker's recent set = its longest windows). Word-level change detection stays the lever for mid-sentence interruptions, after this.
