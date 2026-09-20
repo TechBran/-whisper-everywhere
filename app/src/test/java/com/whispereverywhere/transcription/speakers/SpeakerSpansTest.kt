@@ -988,9 +988,12 @@ class SpeakerSpansTest {
     }
 
     @Test
-    fun noSentencesOrNoSpeechYieldsNOWindowsSoTheCallerKeepsItsOldAnswer() {
-        // Empty is how the caller learns to fall back to `wholeChunkWindows` — 4.10.1's answer —
-        // and spec section 2 forbids reading "no segments" as one speaker either way.
+    fun noSentencesOrNoSpeechYieldsNOWindowsAndTheChunkIsPublishedWithNOLabel() {
+        // Empty is NOT a request to fall back. `SpeakerAssigner.assignVadRoute` forks on
+        // `sentences.isEmpty()` BEFORE this call, so the return value never picks a route:
+        // an empty list hits `if (windows.isEmpty()) return@runCatching` and the chunk gets no
+        // `SpeakerAssignment` at all — no label, rather than a coarse one. Spec section 2 forbids
+        // reading "no segments" as one speaker either way.
         assertEquals(
             emptyList<SpeakerWindow>(),
             SpeakerSpans.sentenceChunkWindows(pairs(0f to 5f), IntArray(0)),
