@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -1343,9 +1344,19 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
                 const jint b0 = byteStart + static_cast<jint>(tokenText.size());
                 tokenText += tt;
                 const jint b1 = byteStart + static_cast<jint>(tokenText.size());
-                for (const jint v : {static_cast<jint>(data.t0), static_cast<jint>(data.t1),
-                                     b0, b1})
-                    tokenQuads.push_back(v);
+                // FOUR ints, fixed at COMPILE time. The staging vector — not the copy-out
+                // below — is where a future edit would add a fifth field, and counting
+                // push_back sites cannot see that: `tokenQuads.push_back(confidence)` inside
+                // this loop would leave both counts at one and silently put every stride-4
+                // reader on the Kotlin side out of phase. CTAD deduces the array's extent from
+                // the initializer, so adding a fifth value here (or dropping to three) changes
+                // std::tuple_size and fails the static_assert instead. SegmentGeometryPinTest
+                // pins that this assert is present and that this is the vector's only writer.
+                const std::array quad = {static_cast<jint>(data.t0), static_cast<jint>(data.t1),
+                                         b0, b1};
+                static_assert(std::tuple_size<decltype(quad)>::value == 4,
+                              "lastTokenTimes is stride-4: t0cs, t1cs, byteStart, byteEnd");
+                for (const jint v : quad) tokenQuads.push_back(v);
             }
             if (tokenText != seg) {
                 // Numbers only, no transcript content — the house rule for every diag line.

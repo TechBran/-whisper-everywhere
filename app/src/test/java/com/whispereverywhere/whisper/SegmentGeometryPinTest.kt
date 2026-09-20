@@ -407,11 +407,48 @@ class SegmentGeometryPinTest {
                 "not a particular ctx",
             0, m.parameterCount
         )
+        // WHY THIS IS THREE ASSERTIONS AND ITS SIBLING IS ONE. For the whisper geometry the
+        // push_back IS the four-element loop, so counting push_back sites pins the arity. The
+        // token quads do not reach the global that way: they are staged in a local `tokenQuads`
+        // (they must be — a segment whose token walk fails the text-equality check is dropped
+        // whole, which cannot be undone once published) and copied out afterwards. Counting
+        // `g_last_token_times.push_back` therefore constrains only the COPY-OUT. A fifth field
+        // would be added on the staging side — `tokenQuads.push_back(confidence)` inside the
+        // token loop — leaving that count at one, the pin green, and every stride-4 reader on
+        // the Kotlin side reading fields out of phase, which is the exact failure this pin
+        // exists to prevent. So the arity is pinned where it is actually decided: the staged
+        // unit is a CTAD'd std::array whose extent the compiler deduces from the initializer,
+        // guarded by a static_assert, so a fifth value is a build failure rather than a silent
+        // phase shift; and the staging vector, like the global, may have exactly one writer.
         assertEquals(
-            "one writer of the token times: the four ints of a token are pushed by a SINGLE " +
-                "statement, so no future edit can add a fifth push in one place and leave the " +
-                "stride-4 readers on the Kotlin side reading fields out of phase.",
+            "one writer of the token times INTO THE GLOBAL: the copy-out is a single statement, " +
+                "so a second, differently-shaped path into g_last_token_times cannot appear.",
             1, Regex("""g_last_token_times\.push_back""").findAll(jni).count()
+        )
+        assertEquals(
+            "one writer of the STAGING vector too. This is the assertion that would actually " +
+                "catch a fifth field: the copy-out above is shape-blind, it moves whatever was " +
+                "staged. A second `tokenQuads.push_back` in the token loop is how a fifth int " +
+                "per token gets in without either count changing.",
+            1, Regex("""tokenQuads\.push_back""").findAll(codeOnly(jni)).count()
+        )
+        assertTrue(
+            "…and the staged unit's arity must be enforced by the COMPILER, not by counting " +
+                "statements. `const std::array quad = {t0, t1, byteStart, byteEnd};` deduces its " +
+                "extent from the initializer, so the static_assert below fails the build if a " +
+                "fifth value is added to it or a fourth removed — the only guard a source pin " +
+                "cannot be fooled about.",
+            Regex(
+                """static_assert\(\s*std::tuple_size<decltype\(quad\)>::value\s*==\s*4\s*,"""
+            ).containsMatchIn(codeOnly(jni))
+        )
+        assertEquals(
+            "…and `quad` must be the staged unit that static_assert is about: exactly one " +
+                "`std::array quad = {` declaration, CTAD'd (no explicit `<jint, 4>`, which " +
+                "would fix the extent independently of the initializer and let a dropped field " +
+                "zero-fill past both the assert and the reader).",
+            1,
+            Regex("""const std::array quad = \{""").findAll(codeOnly(jni)).count()
         )
     }
 
