@@ -606,8 +606,13 @@ object SpeakerSpans {
      * @param raw `[start, end]` * n from `WhisperNative.vadSegmentsOf`, on the CHUNK's own
      *        timeline (there is no second timeline on this route — see [wholeChunkWindows]).
      * @param sentences `[t0cs, t1cs, byteStart, byteEnd]` * n from `WhisperBackend.lastSentences`.
-     * @return one window per sentence, or EMPTY when either input is — which is how the caller
-     *         learns to fall back to [wholeChunkWindows] and 4.10.1's one coarse label.
+     * @return one window per sentence, or EMPTY when either input is. EMPTY is NOT a request to
+     *         fall back: the route is chosen before this call — `SpeakerAssigner.assignVadRoute`
+     *         forks on `sentences.isEmpty()` first, so the empty-`sentences` return is unreachable
+     *         from there, and an empty list publishes NO `SpeakerAssignment` for the chunk,
+     *         exactly as an empty [wholeChunkWindows] does. The chunk gets no label, not a coarse
+     *         one. The reachable empty case is a chunk [raw] found no speech in, where
+     *         [wholeChunkWindows] is empty too, so the two routes answer it identically.
      */
     fun sentenceChunkWindows(raw: IntArray, sentences: IntArray): List<SpeakerWindow> {
         val n = sentences.size / STRIDE
