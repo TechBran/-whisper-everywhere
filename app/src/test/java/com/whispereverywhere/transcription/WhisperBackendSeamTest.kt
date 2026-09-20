@@ -51,6 +51,30 @@ class WhisperBackendSeamTest {
         assertEquals(0, callbacks)   // the default streams nothing: byte-for-byte 3.5.0 behavior
     }
 
+    /**
+     * [WhisperBackend.lastSentences] (4.11 Task 3) defaults to an EMPTY array, and empty is a
+     * meaningful reading rather than a missing one: "this backend has no sentence bounds for that
+     * chunk". `SpeakerAssigner`'s VAD route reads it as "label the chunk as a whole" — 4.10.1's
+     * behaviour, byte for byte — so every backend that knows nothing about the timing layer keeps
+     * exactly what it had.
+     *
+     * A NULL default would have been the wrong shape here even though [lastSegmentStats] uses
+     * one, and the difference is what the two members are for: stats distinguish "no counters
+     * exist" from "a transcribe ran and cost nothing", which are different facts a reader prints
+     * differently. There is no such second fact for sentences — a chunk either has bounds or is
+     * cut nowhere — so a nullable type would buy one more state for every call site to handle and
+     * nothing to say with it.
+     */
+    @Test
+    fun lastSentences_defaultsToEmpty_soAChunkWithNoBoundsKeepsTheWholeChunkLabel() {
+        val got = MinimalBackend().lastSentences(1L)
+        assertEquals(
+            "a backend that never heard of the timing layer reports NO sentence bounds",
+            0,
+            got.size,
+        )
+    }
+
     @Test
     fun lastSegmentStats_defaultsToNull_soTheTimingLineDegradesInsteadOfLying() {
         // A backend with no native counters must report NOTHING, not zeros: `ctxFrames=0` is a

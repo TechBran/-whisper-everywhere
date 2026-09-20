@@ -9,6 +9,7 @@ import com.whispereverywhere.npu.NpuDecodeStats
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.npu.NpuQuantize
+import com.whispereverywhere.npu.NpuSentences
 import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.npu.QnnAsrNative
 import com.whispereverywhere.npu.NpuModelSpec
@@ -219,6 +220,32 @@ class NpuWhisperBackend(
      */
     @Volatile
     private var lastReportedLanguage: String? = null
+
+    // 4.11 Task 3: THE SENTENCE SLOT — `[t0cs, t1cs, byteStart, byteEnd]` per sentence for the
+    // last segment this arm decoded, and the only timing this tier has. It is a ONE-SLOT,
+    // CTX-TAGGED pair on `WhisperNativeBackend`'s discipline, and every word of the argument
+    // recorded at that object's `lastStats`/`lastStatsCtx` applies here unchanged:
+    //
+    //   PAYLOAD FIRST, TAG LAST, both @Volatile. The tag is the guard: a reader that sees a
+    //   matching tag is guaranteed to see the array that goes with it.
+    //
+    //   CLEARED AT THE TOP OF THE HOLD, above the fallback short-circuit, and the invalidation is
+    //   half of the mechanism rather than a tidy-up. A transcribe that THREW — or one the CPU
+    //   tier answered after a decline, which publishes no sentences of its own — would otherwise
+    //   leave the PREVIOUS segment's bounds behind a still-matching tag, and the next chunk's
+    //   text would be cut where the last chunk's sentences ended. The labels would land on the
+    //   wrong words and every number involved would look reasonable.
+    //
+    // One thing is weaker here than there and is worth naming rather than implying: this tier's
+    // handle is the constant `HANDLE` (there is one QNN session per process and it is
+    // native-side), so the tag distinguishes "a segment ran under this instance" from "none did",
+    // not one context from another. That is what it is used for — the `ctx != 0L` guard and the
+    // reset — and it is all the seam asks of it.
+    @Volatile
+    private var lastSentencesArr: IntArray = IntArray(0)
+
+    @Volatile
+    private var lastSentencesCtx: Long = 0L
 
     /**
      * `"<stage>: <detail>"` for the stage that declined, or null while the tier is live. Read by
@@ -520,6 +547,12 @@ class NpuWhisperBackend(
      */
     override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
         return NativeComputeGate.serialized {
+            // FIRST, above every path INCLUDING the fallback short-circuit below — the mirror of
+            // `WhisperNativeBackend`'s reset at the top of its own hold, and for the same reason:
+            // a sentence read may only ever be answered by the decode that completed in THIS
+            // hold. See the slot's declaration. Never move these below anything.
+            lastSentencesArr = IntArray(0)
+            lastSentencesCtx = 0L
             fallbackBackend?.let {
                 return@serialized it.transcribe(fallbackCtx, samples, lang, useVad)
             }
@@ -719,6 +752,30 @@ class NpuWhisperBackend(
                 else -> ""
             }
 
+            // 4.11 Task 3 — THE SENTENCE BOUNDS OF THE TEXT THIS CALL IS ABOUT TO RETURN.
+            //
+            // Guarded on `text.isEmpty()` rather than on the two gate flags, and that is the
+            // stronger statement: the byte offsets index into the string this function RETURNS,
+            // so publishing them for a segment whose text was blanked — by the no-speech rule or
+            // by the stock-phrase blocklist — would hand the splitter offsets into nothing. A
+            // decode that genuinely produced no tokens takes the same branch for the same reason.
+            //
+            // The family is the SPEC's, never a constant: 50364 is <|0.00|> under whisper-small
+            // and <|notimestamps|> under large-v3, so a fixed timestamp base shifts every
+            // sentence in the chunk by one slot and nothing anywhere can see it.
+            //
+            // `runCatching` on the same rule `WhisperNativeBackend.captureGeometry` states — a
+            // label is worth less than a sentence. This is a refinement below delivered text and
+            // it must never be able to fail a transcribe that has already succeeded; a chunk
+            // that loses its bounds keeps 4.10.1's one coarse label, which is the behaviour the
+            // empty array means everywhere else in this seam.
+            //
+            // PAYLOAD FIRST, TAG LAST. See the slot's declaration.
+            lastSentencesArr = if (text.isEmpty()) IntArray(0) else runCatching {
+                NpuSentences.of(out.copyOf(written), spec.tokens, bpe::decode)
+            }.getOrDefault(IntArray(0))
+            lastSentencesCtx = ctx
+
             // `.reportable`, NEVER `.code`. A (locale) or (fallback) resolution is a guess this
             // tier made, and the engine feeds whatever crosses this seam to LanguagePin, which
             // latches the first usable code for the whole session and never revises it. Reporting
@@ -870,6 +927,29 @@ class NpuWhisperBackend(
         fallbackBackend?.lastGeometry(fallbackCtx)
 
     /**
+     * @see WhisperBackend.lastSentences — and this is the backend the member exists for (4.11
+     * Task 3). The bounds of the segment the NPU arm last decoded, or EMPTY.
+     *
+     * **NOT DELEGATED, unlike its three neighbours, and the asymmetry is the point.** The CPU
+     * tier answers this question through [lastGeometry] instead: whisper.cpp publishes segment
+     * bounds and, since Task 1, per-TOKEN times, which are strictly finer than sentences. After
+     * a decline `publishesGeometry` flips to true, the engine takes the geometry route, and this
+     * member is not read at all — so delegating it would be a second, coarser answer to a
+     * question already better answered, reachable only if that routing were wrong. An empty
+     * array here says what is true after a decline: this arm decoded nothing.
+     *
+     * The `ctx != 0L` guard is [WhisperNativeBackend]'s, for its reason: 0L is a failed load's
+     * value, and without the guard a caller passing it would match an untouched tag.
+     *
+     * DELIBERATELY NOT under [NativeComputeGate], on exactly the argument [lastSegmentStats]
+     * records: two volatile reads of a Kotlin snapshot touch no native memory, and taking the
+     * FAIR gate here would park the segment's resolution behind an in-flight batch chunk that
+     * would have re-tagged this slot before the wait ended.
+     */
+    override fun lastSentences(ctx: Long): IntArray =
+        if (ctx != 0L && ctx == lastSentencesCtx) lastSentencesArr else IntArray(0)
+
+    /**
      * @see WhisperBackend.publishesGeometry — and this is the backend the member exists for
      * (4.10, round 1 of review).
      *
@@ -946,6 +1026,12 @@ class NpuWhisperBackend(
         previous?.release(fallbackCtx)
         fallbackCtx = 0L
         lastReportedLanguage = null
+        // 4.11 Task 3: the sentence slot dies with the session too — TAG FIRST here, which is the
+        // publish order inverted, so no reader can see a matching tag beside an array this
+        // teardown has already abandoned. Nothing may outlive the session that decoded it: the
+        // bounds index into a string only that session produced.
+        lastSentencesCtx = 0L
+        lastSentencesArr = IntArray(0)
     }
 
     /**

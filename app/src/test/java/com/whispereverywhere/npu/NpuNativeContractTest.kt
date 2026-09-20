@@ -3148,4 +3148,90 @@ class NpuNativeContractTest {
             last = at
         }
     }
+
+    /**
+     * **4.11 Task 3 — the sentence slot, and it obeys `lastSegmentStats`' discipline exactly.**
+     *
+     * Source-anchored for this file's standing reason: `NpuWhisperBackend` touches
+     * `QnnAsrNative`, whose initialiser runs `System.loadLibrary("qnnasr")`, so a JVM test that
+     * NAMED the class would die rather than fail.
+     *
+     * Four claims, one per way this can be silently wrong — and every one of them puts a
+     * speaker's label on another speaker's words rather than raising anything:
+     *
+     *  1. **Cleared at the top of the hold**, above the fallback short-circuit. Without it a
+     *     transcribe that THREW — or one the CPU tier answered after a decline — leaves the
+     *     PREVIOUS segment's bounds behind a still-matching tag, and the next chunk's text is cut
+     *     where the last chunk's sentences ended.
+     *  2. **Payload first, tag last**, both `@Volatile`: the tag is the guard for the payload
+     *     written above it. The same rule, for the same reason, as `WhisperNativeBackend`'s
+     *     `lastStats`/`lastStatsCtx` and `lastGeom`/`lastGeomCtx`.
+     *  3. **Published only for text that is actually returned.** The byte offsets index into the
+     *     decoded string; when [HallucinationPolicy] or the no-speech gate blanks a segment, that
+     *     string is never delivered and its offsets point into nothing.
+     *  4. **Wrapped**, so a refinement cannot fail a transcribe that already succeeded — the
+     *     rule `WhisperNativeBackend.captureGeometry` states as "a label is worth less than a
+     *     sentence".
+     */
+    @Test
+    fun theSentenceSlotIsClearedAtTheTopOfTheHoldAndPublishedTagLastForDeliveredTextOnly() {
+        assertTrue(
+            "NpuWhisperBackend must declare the seam member on a live line",
+            liveOffsets(backend, "override fun lastSentences(ctx: Long): IntArray").isNotEmpty()
+        )
+        assertTrue(
+            "…over a @Volatile payload and a @Volatile tag, which is what makes the pair " +
+                "readable from the engine's thread at all",
+            liveOffsets(backend, "private var lastSentencesArr: IntArray").isNotEmpty() &&
+                liveOffsets(backend, "private var lastSentencesCtx: Long").isNotEmpty()
+        )
+
+        val transcribe = kotlinMemberBody(
+            backend,
+            "override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {"
+        )
+        val clearPayload = liveOffsets(transcribe, "lastSentencesArr = IntArray(0)").firstOrNull() ?: -1
+        val clearTag = liveOffsets(transcribe, "lastSentencesCtx = 0L").firstOrNull() ?: -1
+        val shortCircuit = liveOffsets(transcribe, "fallbackBackend?.let {").firstOrNull() ?: -1
+        assertTrue(
+            "the slot must be cleared INSIDE the hold and ABOVE the fallback short-circuit — a " +
+                "post-decline chunk is answered by the CPU tier, which publishes no sentences, " +
+                "and a stale tag would hand it the last NPU chunk's bounds. Found clear at " +
+                "$clearPayload/$clearTag, short-circuit at $shortCircuit.",
+            clearPayload in 0 until shortCircuit && clearTag in 0 until shortCircuit
+        )
+
+        val publishPayload = liveOffsets(transcribe, "lastSentencesArr =").lastOrNull() ?: -1
+        val publishTag = liveOffsets(transcribe, "lastSentencesCtx = ctx").lastOrNull() ?: -1
+        assertTrue(
+            "the payload must be written BEFORE the tag: the tag is the guard, and a reader " +
+                "that sees it must be guaranteed to see the array that goes with it",
+            publishPayload > clearPayload && publishTag > publishPayload
+        )
+        val publishLine = transcribe.substring(publishPayload, publishTag)
+        assertTrue(
+            "the publish must be guarded on the text actually being returned — the offsets " +
+                "index into the decoded string, and a blanked segment never delivers one. Got: " +
+                publishLine.trim(),
+            publishLine.contains("text.isEmpty()")
+        )
+        assertTrue(
+            "…and wrapped, so NpuSentences cannot fail a transcribe that already succeeded",
+            publishLine.contains("runCatching")
+        )
+        assertTrue(
+            "…and it must actually be NpuSentences that parses them, with the SPEC's family: " +
+                "50364 is <|0.00|> under whisper-small and <|notimestamps|> under large-v3, so a " +
+                "fixed base shifts every sentence in the chunk by one slot",
+            publishLine.contains("NpuSentences.of(") && publishLine.contains("spec.tokens")
+        )
+
+        assertTrue(
+            "and the slot dies with the session, beside lastReportedLanguage",
+            liveOffsets(
+                kotlinMemberBody(backend, "private fun releaseEverything() {"),
+                "lastSentencesCtx = 0L",
+            ).isNotEmpty()
+        )
+    }
 }

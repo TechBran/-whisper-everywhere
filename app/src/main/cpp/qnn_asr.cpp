@@ -3059,8 +3059,9 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     //
     // Q4 M1: 4.0 refused `promptLen > lastPosition`, i.e. refused a 199-token prompt that its own
     // loop below would have decoded correctly, while Kotlin cheerfully budgeted one token for it.
-    // Nothing had ever reached that boundary through this tier's four-token prompt - which is
-    // exactly why it was a disagreement waiting to be discovered by a caller instead of by a test.
+    // Nothing had ever reached that boundary through this tier's prompt, four tokens then and
+    // three since 4.11 - which is exactly why it was a disagreement waiting to be discovered by a
+    // caller instead of by a test.
     //
     // Q10a-D, THE OPEN QUESTION, AND THE ANSWER TAKEN. `lastPosition = maskLen - 1` (199) is also
     // arithmetically exact: at p=199 the mask's `firstLive` is 0, so all 200 columns are live -
@@ -3255,18 +3256,21 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
                 noSpeechProb = noSpeechProbabilityLocked(logits, g.vocab, scale, noSpeechToken);
             }
 
-            // The prompt walk plus one step past it. Bounded: for the shipped 4-token prompt that is
-            // five lines per segment and then silence, whatever the segment's length.
+            // The prompt walk plus one step past it. Bounded: for the shipped 3-token prompt that is
+            // four lines per segment and then silence, whatever the segment's length.
             //
             // A HEALTHY WALK IS READABLE AT A GLANCE, which is why the raw argmax is here rather than
             // just the final token: after bare SOT the model must want a LANGUAGE token; after the
             // language token it must want <|transcribe|> (50359 in the whisper-small family, 50360
-            // under large-v3/turbo — the shifted-specials block, 4.1 L4); after that <|notimestamps|>
-            // (50363 small / 50364 large-v3); and only at position promptLen-1 should the answer
-            // become a text token. Any step where that chain breaks is the step where the prompt
-            // stopped taking. The ids are the FAMILY's, never universal: 50358 in particular is
-            // small's <|translate|> and large-v3's <|yue|>, which is why no per-id note here can be
-            // read without the family in hand.
+            // under large-v3/turbo — the shifted-specials block, 4.1 L4); and at position
+            // promptLen-1 the answer should become a TIMESTAMP — <|0.00|> is 50364 small / 50365
+            // large-v3 — because since 4.11 this tier no longer prompts <|notimestamps|> and reads
+            // the emitted timestamps as sentence bounds (NpuSentences). A text token there is not a
+            // fault; a <|notimestamps|> there would be, which is why it is now in the suppress mask
+            // instead of in the prompt. Any step where that chain breaks is the step where the
+            // prompt stopped taking. The ids are the FAMILY's, never universal: 50358 in particular
+            // is small's <|translate|> and large-v3's <|yue|>, which is why no per-id note here can
+            // be read without the family in hand.
             const bool trace = g.diag && position <= promptLen;
             LogitsHealth h;
             if (trace) h = scanLogitsRaw(logits, g.vocab);

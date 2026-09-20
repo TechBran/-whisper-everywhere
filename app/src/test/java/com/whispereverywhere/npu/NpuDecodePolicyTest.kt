@@ -33,37 +33,64 @@ class NpuDecodePolicyTest {
     // ---------------------------------------------------------------- the prompt
 
     /**
-     * `<|startoftranscript|> <|lang|> <|transcribe|> <|notimestamps|>` — four tokens, in that
-     * order, and the `<|notimestamps|>` is the one that gets dropped.
+     * `<|startoftranscript|> <|lang|> <|transcribe|>` — THREE tokens since 4.11 Task 3, and the
+     * one that is gone is `<|notimestamps|>`.
      *
-     * Dropping it is not a crash and not a garbled transcript: the model starts emitting timestamp
-     * tokens (`<|0.00|>` and friends, ids >= 50364) interleaved with the words. Q5's detokeniser
-     * drops every id above `EOT`, so the timestamps vanish silently — and with them the positions
-     * the budget spent producing them. The transcript comes back short, plausible and missing
-     * words, with nothing anywhere in the stack reporting a fault.
+     * **It was dropped on purpose and the tier depends on its absence.** Until 4.10.1 this tier
+     * asked the model not to say when, which left the speaker pipeline with no timing on the NPU
+     * tier at all: `lastGeometry` is null while the NPU arm is live, so 4.10.1 substituted a
+     * standalone VAD and gave the whole chunk ONE speaker. On the owner's Fold6 that met
+     * hard-cut media and every chunk collapsed to a single label about seventy seconds in
+     * (`docs/measurements/2026-09-18-speaker-spike.md` §Session 7). The timestamps the model was
+     * being told to withhold are the fix: `NpuSentences` reads them into sentence bounds.
+     *
+     * The failure this prompt slot USED to prevent has moved to the mask rather than vanished —
+     * see [timestampsAreAskedForAndNoTimestampsIsMaskedInstead]. `<|notimestamps|>` arriving as a
+     * GENERATED token would still cost a position and leave no trace (the detokeniser drops
+     * every id above EOT), so it is suppressed now that it is not prompted, exactly as
+     * whisper.cpp's own reference decoder suppresses it unconditionally
+     * (`whisper.cpp/src/whisper.cpp:6483-6485`).
      */
     @Test
-    fun promptIsSotLangTranscribeNoTimestamps() {
+    fun promptIsSotLangTranscribeAndNoLongerSaysNoTimestamps() {
         assertArrayEquals(
-            "the English prompt must be exactly [SOT, <|en|>, TRANSCRIBE, NO_TIMESTAMPS]",
-            intArrayOf(50258, 50259, 50359, 50363),
+            "the English prompt must be exactly [SOT, <|en|>, TRANSCRIBE]",
+            intArrayOf(50258, 50259, 50359),
             NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "en")
         )
         assertArrayEquals(
             "the French prompt differs from the English one in the language slot ONLY",
-            intArrayOf(50258, 50265, 50359, 50363),
+            intArrayOf(50258, 50265, 50359),
             NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "fr")
         )
         assertArrayEquals(
             "the German prompt differs from the English one in the language slot ONLY",
-            intArrayOf(50258, 50261, 50359, 50363),
+            intArrayOf(50258, 50261, 50359),
             NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "de")
         )
         assertEquals(
-            "every prompt this policy builds is 4 tokens long — maxTokensFor() and the native " +
-                "loop's `position == promptLen - 1` begin-suppress step both key off that length.",
-            4,
+            "every prompt this policy builds is 3 tokens long — maxTokensFor() and the native " +
+                "loop's `position == promptLen - 1` begin-suppress step both key off that length, " +
+                "and neither has a 4 written into it.",
+            3,
             NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "es").size
+        )
+        assertFalse(
+            "NO prompt may carry <|notimestamps|> (${WhisperTokens.NO_TIMESTAMPS}) any more: it " +
+                "is the token that turns the timing layer off.",
+            WhisperTokens.LANGUAGE_CODES.any { code ->
+                NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, code)
+                    .contains(WhisperTokens.NO_TIMESTAMPS)
+            }
+        )
+        assertEquals(
+            "…and the budget follows the length rather than a constant: 199 positions less a " +
+                "3-token prompt is 197, one more than the 4-token prompt's 196.",
+            197,
+            NpuDecodePolicy.maxTokensFor(
+                WhisperTokens.SMALL,
+                NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "en").size
+            )
         )
     }
 
@@ -153,20 +180,34 @@ class NpuDecodePolicyTest {
     }
 
     /**
-     * We prompt `<|notimestamps|>`, so a timestamp token coming back is a decode fault — and an
-     * invisible one: Q5 drops every id above EOT, so a timestamp costs a position and leaves no
-     * trace. Every one of the 1501 timestamp ids is therefore in the mask.
+     * **THE 4.11 INVERSION.** Until this task the always-on mask held all 1,501 timestamp ids and
+     * `<|notimestamps|>` sat in the prompt. Both halves swap: the timestamps are the tier's only
+     * source of sentence timing and must be reachable, and `<|notimestamps|>` — no longer
+     * prompted, and therefore now a token the model can GENERATE — takes their place in the mask.
+     *
+     * The mask is where it has to be handled, not the prompt: a generated `<|notimestamps|>` is
+     * the invisible fault the old prompt comment described. The detokeniser drops every id above
+     * EOT, so it would cost a decode position, silence the timestamps after it, and leave no
+     * trace anywhere. whisper.cpp's reference decoder masks it unconditionally in BOTH modes
+     * (`whisper.cpp/src/whisper.cpp:6483-6485`), which is the behaviour copied here.
      */
     @Test
-    fun everyTimestampIdIsSuppressed() {
+    fun timestampsAreAskedForAndNoTimestampsIsMaskedInstead() {
         val policy = NpuDecodePolicy.suppressList(WhisperTokens.SMALL).toSet()
-        val missing = (WhisperTokens.TIMESTAMP_BEGIN until WhisperTokens.VOCAB)
-            .filterNot { policy.contains(it) }
+        val masked = (WhisperTokens.TIMESTAMP_BEGIN until WhisperTokens.VOCAB)
+            .filter { policy.contains(it) }
         assertTrue(
-            "every id from TIMESTAMP_BEGIN (${WhisperTokens.TIMESTAMP_BEGIN}) to VOCAB-1 " +
-                "(${WhisperTokens.VOCAB - 1}) must be suppressed; ${missing.size} were not, " +
-                "first few: ${missing.take(8)}",
-            missing.isEmpty()
+            "NOT ONE id from TIMESTAMP_BEGIN (${WhisperTokens.TIMESTAMP_BEGIN}) to VOCAB-1 " +
+                "(${WhisperTokens.VOCAB - 1}) may be suppressed — they are the whole timing " +
+                "layer on this tier, and a masked one is a sentence boundary the decoder cannot " +
+                "report. ${masked.size} were masked, first few: ${masked.take(8)}",
+            masked.isEmpty()
+        )
+        assertTrue(
+            "…and <|notimestamps|> (${WhisperTokens.NO_TIMESTAMPS}) MUST be masked now that the " +
+                "prompt no longer carries it: generated, it costs a position, silences every " +
+                "timestamp after it, and is dropped by the detokeniser without a trace.",
+            policy.contains(WhisperTokens.NO_TIMESTAMPS)
         )
         assertEquals(
             "whisper carries exactly 1501 timestamp tokens (0.00 s to 30.00 s in 0.02 s steps), " +
@@ -229,8 +270,10 @@ class NpuDecodePolicyTest {
     fun suppressListIsSortedUniqueAndInsideTheVocabulary() {
         val list = NpuDecodePolicy.suppressList(WhisperTokens.SMALL)
         assertEquals(
-            "suppressList is the 88 generation_config ids plus the 1501 timestamps",
-            88 + 1501,
+            "suppressList is the 88 generation_config ids plus <|notimestamps|> — and since " +
+                "4.11 Task 3 that is ALL of it: the 1501 timestamps came out so the tier can " +
+                "read sentence bounds off them.",
+            88 + 1,
             list.size
         )
         for (i in 1 until list.size) {
@@ -782,7 +825,7 @@ class NpuDecodePolicyTest {
     fun promptTokensFromAResolvedIdRefusesAnythingOutsideTheLanguageBlock() {
         assertArrayEquals(
             "the id overload builds the identical prompt the code overload does",
-            intArrayOf(50258, 50262, 50359, 50363),
+            intArrayOf(50258, 50262, 50359),
             NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, WhisperTokens.langToken("es"))
         )
         val outside = listOf(
@@ -1007,17 +1050,17 @@ class NpuDecodePolicyTest {
         // (Since 4.1 L4 the second family is the SHIPPED handle, not a local derivation.)
         val largeV3 = WhisperTokens.LARGE_V3
         assertArrayEquals(
-            "a large-v3 prompt must carry LARGE-V3's task and timestamp tokens — 50360 and 50364, " +
-                "one above whisper-small's. Built from whisper-small's ids instead, the task slot " +
-                "holds 50359, which under this vocabulary is <|translate|>: legal, unsuppressed, " +
+            "a large-v3 prompt must carry LARGE-V3's task token — 50360, one above " +
+                "whisper-small's. Built from whisper-small's ids instead, the task slot holds " +
+                "50359, which under this vocabulary is <|translate|>: legal, unsuppressed, " +
                 "perfectly decodable, and the wrong task. The output is fluent text nobody asked " +
                 "for, and no per-id check anywhere can see it.",
-            intArrayOf(50258, largeV3.langToken("yue"), 50360, 50364),
+            intArrayOf(50258, largeV3.langToken("yue"), 50360),
             NpuDecodePolicy.promptTokens(largeV3, "yue")
         )
         assertEquals(
-            "…and the small family's prompt is unchanged: 50359 / 50363",
-            listOf(50258, WhisperTokens.langToken("es"), 50359, 50363),
+            "…and the small family's task token is 50359",
+            listOf(50258, WhisperTokens.langToken("es"), 50359),
             NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "es").toList()
         )
         assertEquals(
@@ -1049,11 +1092,12 @@ class NpuDecodePolicyTest {
     /**
      * `suppressList` answers per family rather than per process.
      *
-     * The always-on mask is `generation_config.json`'s 88 ids **plus every timestamp id**, and both
-     * halves move with the vocabulary: the six control ids shift by one and the timestamp block
-     * starts one later and ends one later. A list computed once for `whisper-small` and handed to a
-     * `large-v3` decoder would leave `<|yue|>` (50358) unsuppressed where a task token belongs and
-     * would mask 50364 — which is `<|notimestamps|>` there, i.e. a token the PROMPT carries.
+     * The always-on mask is `generation_config.json`'s 88 ids **plus `<|notimestamps|>`**, and
+     * every one of those moves with the vocabulary: the seven control ids above the language
+     * table shift by one. A list computed once for `whisper-small` and handed to a `large-v3`
+     * decoder would leave `<|yue|>` (50358) unsuppressed where a task token belongs and would
+     * mask 50364 — which is `<|0.00|>` there, i.e. the FIRST TIMESTAMP, the one token the 4.11
+     * timing layer cannot do without.
      */
     @Test
     fun suppressListAnswersPerFamilyRatherThanPerProcess() {
@@ -1063,19 +1107,19 @@ class NpuDecodePolicyTest {
         val smallList = NpuDecodePolicy.suppressList(small)
         val largeList = NpuDecodePolicy.suppressList(largeV3)
         assertNotEquals(
-            "the two families must not share one list — every timestamp id and every control id " +
-                "above the language band differs",
+            "the two families must not share one list — every control id above the language " +
+                "band differs, <|notimestamps|> included",
             smallList.toList(),
             largeList.toList()
         )
         assertEquals(
-            "small: 88 generation_config ids + 1501 timestamps, minus the overlap",
-            (WhisperTokens.SUPPRESS.toList() + (50364 until 51865)).distinct().size,
+            "small: 88 generation_config ids + <|notimestamps|> (50363), minus the overlap",
+            (WhisperTokens.SUPPRESS.toList() + listOf(50363)).distinct().size,
             smallList.size
         )
         assertEquals(
             "large-v3: the same construction, one id along",
-            (largeV3.suppress.toList() + (50365 until 51866)).distinct().size,
+            (largeV3.suppress.toList() + listOf(50364)).distinct().size,
             largeList.size
         )
         assertTrue(
@@ -1088,10 +1132,18 @@ class NpuDecodePolicyTest {
             !smallList.contains(small.eot) && !largeList.contains(largeV3.eot)
         )
         assertTrue(
-            "50364 is a TIMESTAMP under whisper-small and <|notimestamps|> under large-v3 — the " +
-                "prompt's own fourth token. Masking it there would suppress a token the prompt " +
-                "feeds, which is the sharpest single value in this whole comparison.",
-            smallList.contains(50364) && !largeList.contains(50364)
+            "50364 is <|0.00|> under whisper-small and <|notimestamps|> under large-v3, and " +
+                "since 4.11 Task 3 the two families want OPPOSITE things done with it: small " +
+                "must leave it reachable (it is the first timestamp, and the timing layer starts " +
+                "there), large-v3 must mask it (it is the token that turns the timing layer " +
+                "off). One id, two answers — the sharpest single value in this whole comparison.",
+            !smallList.contains(50364) && largeList.contains(50364)
+        )
+        assertTrue(
+            "…and the mirror: 50363 is <|notimestamps|> under whisper-small (masked) and " +
+                "<|nospeech|> under large-v3 (masked too, for a different reason — a silent " +
+                "segment must terminate on EOT rather than announce itself)",
+            smallList.contains(50363) && largeList.contains(50363)
         )
     }
 
@@ -1155,29 +1207,31 @@ class NpuDecodePolicyTest {
     }
 
     /**
-     * The two SHIPPED families' prompts, side by side: `[50258, <lang>, 50360, 50364]` under
-     * `LARGE_V3` against `[50258, <lang>, 50359, 50363]` under `SMALL` (4.1 L4).
+     * The two SHIPPED families' prompts, side by side: `[50258, <lang>, 50360]` under
+     * `LARGE_V3` against `[50258, <lang>, 50359]` under `SMALL` (4.1 L4; the fourth slot went
+     * away at 4.11 Task 3 when the tier stopped asking for no timestamps).
      *
      * For any code both families carry, the SOT and language slots are IDENTICAL — the shared
-     * table is a strict prefix, so `es` is 50262 in both — and the task and timestamp slots sit
-     * exactly one apart. That adjacency is the trap: a prompt built from the wrong family is four
-     * legal ids, three of them right, and the model runs the wrong TASK rather than failing.
+     * table is a strict prefix, so `es` is 50262 in both — and the task slot sits exactly one
+     * apart. That adjacency is the trap: a prompt built from the wrong family is three legal
+     * ids, two of them right, and the model runs the wrong TASK rather than failing.
      */
     @Test
     fun promptsUnderTheTwoShippedFamiliesDifferOnlyInTheSlotsAboveTheLanguageBand() {
         val smallPrompt = NpuDecodePolicy.promptTokens(WhisperTokens.SMALL, "es")
         val largePrompt = NpuDecodePolicy.promptTokens(WhisperTokens.LARGE_V3, "es")
-        assertArrayEquals(intArrayOf(50258, 50262, 50359, 50363), smallPrompt)
-        assertArrayEquals(intArrayOf(50258, 50262, 50360, 50364), largePrompt)
+        assertArrayEquals(intArrayOf(50258, 50262, 50359), smallPrompt)
+        assertArrayEquals(intArrayOf(50258, 50262, 50360), largePrompt)
         assertEquals("slot 0 (SOT) is shared", smallPrompt[0], largePrompt[0])
         assertEquals("slot 1 (the language) is shared for a shared code", smallPrompt[1], largePrompt[1])
         assertEquals("slot 2 (the task) sits one apart", smallPrompt[2] + 1, largePrompt[2])
-        assertEquals("slot 3 (timestamps) sits one apart", smallPrompt[3] + 1, largePrompt[3])
+        assertEquals("and neither family has a slot 3 any more", 3, smallPrompt.size)
+        assertEquals("and neither family has a slot 3 any more", 3, largePrompt.size)
 
         // `yue` exists in exactly one family: a prompt for it under LARGE_V3 carries 50358 in the
         // language slot, and under SMALL there is nothing to build — the refusal, not a fallback.
         assertArrayEquals(
-            intArrayOf(50258, 50358, 50360, 50364),
+            intArrayOf(50258, 50358, 50360),
             NpuDecodePolicy.promptTokens(WhisperTokens.LARGE_V3, "yue")
         )
         assertThrows(IllegalArgumentException::class.java) {

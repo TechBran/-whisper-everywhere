@@ -322,6 +322,35 @@ interface WhisperBackend {
     fun lastGeometry(ctx: Long): SegmentGeometry? = null
 
     /**
+     * The SENTENCE BOUNDS of the last transcribe THIS backend ran on [ctx] — `[t0cs, t1cs,
+     * byteStart, byteEnd]` per sentence, the same stride-4 flattening as every other geometry
+     * array — or EMPTY when it has none (4.11 Task 3).
+     *
+     * **This is the NPU tier's member.** It is the answer to a question [lastGeometry] cannot be
+     * asked there: that arm runs its own encoder and decoder on the HTP, never calls whisper.cpp's
+     * VAD filter, and so publishes no geometry at all — which is why 4.10.1 had to give a whole
+     * chunk one speaker, and why on the owner's Fold6 a pause-free clip collapsed to a single
+     * label about seventy seconds in (`docs/measurements/2026-09-18-speaker-spike.md` §Session 7).
+     * The decoder has always been able to say WHEN; it was being prompted not to. See
+     * [com.whispereverywhere.npu.NpuSentences].
+     *
+     * A new member with a default BODY, for the reason the two-arg [load]'s KDoc records at
+     * length. Default EMPTY rather than null, and unlike [lastSegmentStats] that is the right
+     * shape here: stats have two distinguishable readings ("no counters exist" against "a
+     * transcribe ran and cost nothing") and sentences have one — a chunk either has bounds or is
+     * cut nowhere. `SpeakerAssigner`'s VAD route reads empty as "label the chunk as a whole",
+     * which is 4.10.1's behaviour byte for byte.
+     *
+     * The offsets belong to the **raw** text the transcribe returned, before
+     * `TranscriptText.clean`, exactly like [SegmentGeometry]'s — see
+     * `LocalWhisperEngine.textOutcome` for why that distinction is load-bearing.
+     *
+     * Read on the same single native-executor thread, at the same point in the segment, as
+     * [lastGeometry]; and like it, read FOR A DECISION rather than for a log line.
+     */
+    fun lastSentences(ctx: Long): IntArray = IntArray(0)
+
+    /**
      * Whether this backend publishes [lastGeometry] AT ALL — a property of the BACKEND, never of
      * a chunk (4.10, round 1 of review).
      *

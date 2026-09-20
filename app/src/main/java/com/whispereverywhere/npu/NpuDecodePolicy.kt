@@ -29,18 +29,31 @@ package com.whispereverywhere.npu
 object NpuDecodePolicy {
 
     /**
-     * `[<|startoftranscript|>, <|lang|>, <|transcribe|>, <|notimestamps|>]` — the four-token prompt,
-     * in the order the model was trained to see it.
+     * `[<|startoftranscript|>, <|lang|>, <|transcribe|>]` — the three-token prompt, in the order
+     * the model was trained to see it.
      *
      * Each of these consumes a self-KV slot: they are fed through the same execute path as the
-     * generated tokens, at positions 0..3, and the argmax produced at position 3 is the **first
+     * generated tokens, at positions 0..2, and the argmax produced at position 2 is the **first
      * generated token**. That is why [maxTokensFor] takes the prompt's length rather than assuming
-     * four.
+     * a number.
      *
-     * `<|notimestamps|>` is the one that goes missing. Without it the model interleaves timestamp
-     * tokens with the words; Q5's detokeniser drops every id above `EOT`, so they vanish silently
-     * and take their positions in the budget with them — a short, plausible, word-dropping
-     * transcript and no fault reported anywhere.
+     * ### `<|notimestamps|>` USED TO BE HERE, AND ITS REMOVAL IS THE POINT (4.11 Task 3)
+     *
+     * With it, the model is asked not to say *when*, and this tier then has no timing of any
+     * kind: `NpuWhisperBackend.lastGeometry` is null while the NPU arm is live — that arm runs
+     * its own encoder and decoder on the HTP and never calls whisper.cpp's VAD filter — so 4.10.1
+     * had to substitute a standalone VAD and give a whole chunk ONE speaker. On the owner's Fold6
+     * that met hard-cut media with no pauses in it, the VAD returned one 9-15 s segment per
+     * chunk, and every chunk collapsed to a single label about seventy seconds in
+     * (`docs/measurements/2026-09-18-speaker-spike.md` §Session 7). Without the token the model
+     * interleaves timestamp tokens with the words, [NpuSentences] reads them into sentence
+     * bounds, and the tier gets one speaker per sentence instead of one per chunk.
+     *
+     * **The fault the slot used to prevent moved to [suppressList]; it did not go away.** A
+     * `<|notimestamps|>` arriving as a GENERATED token would still cost a decode position, would
+     * silence every timestamp after it, and would be dropped by the detokeniser without a trace —
+     * so it is masked now that it is not prompted, exactly as whisper.cpp's reference decoder
+     * masks it in both modes (`whisper.cpp/src/whisper.cpp:6483-6485`).
      *
      * @param family the vocabulary these ids belong to. Required, never defaulted — see the
      *        object KDoc for the wrong-task failure a default produces.
@@ -51,7 +64,7 @@ object NpuDecodePolicy {
         promptTokens(family, family.langToken(languageCode))
 
     /**
-     * The same four-token prompt, built from an already-resolved `<|xx|>` **token id**.
+     * The same three-token prompt, built from an already-resolved `<|xx|>` **token id**.
      *
      * This is the overload the tier actually calls, because [resolveLangToken] answers in ids: the
      * auto-detect path's answer *is* an id (`nativeDetectLanguage` argmaxes over the language
@@ -75,19 +88,35 @@ object NpuDecodePolicy {
         return intArrayOf(
             family.sot,
             langToken,
-            family.transcribe,
-            family.noTimestamps
+            family.transcribe
         )
     }
 
     /**
-     * The always-on mask: `generation_config.json`'s 88 `suppress_tokens` **plus all 1501 timestamp
-     * ids**, ascending and duplicate-free.
+     * The always-on mask: `generation_config.json`'s 88 `suppress_tokens` **plus
+     * `<|notimestamps|>`**, ascending and duplicate-free.
      *
-     * The timestamps are ours, not whisper's — whisper relies on the `<|notimestamps|>` prompt
-     * alone. We prompt it too, and then also mask, because a timestamp arriving anyway is a decode
-     * fault that costs a position and leaves no trace: Q5 drops every id above `EOT`, so the only
-     * symptom is a transcript that came back shorter than the speech.
+     * ### What changed at 4.11 Task 3, and why it is an exchange rather than a loosening
+     *
+     * Until then this list also held **all 1,501 timestamp ids**, because the prompt carried
+     * `<|notimestamps|>` and a timestamp arriving anyway was a decode fault. The tier now asks
+     * for timestamps — they are its only source of sentence timing, and without them a whole
+     * chunk gets one speaker (see [promptTokens]) — so the range comes out and `<|notimestamps|>`
+     * goes in, because it is no longer in the prompt and the model can therefore generate it.
+     *
+     * The masked id is the one whose arrival is invisible, and that is still true of exactly one
+     * of them: `<|notimestamps|>` would cost a decode position, silence every timestamp after it,
+     * and be dropped by the detokeniser with no fault reported anywhere. whisper.cpp's reference
+     * decoder masks it unconditionally, in both of its modes
+     * (`whisper.cpp/src/whisper.cpp:6483-6485`); this line is that behaviour.
+     *
+     * **What this mask deliberately does NOT reproduce.** whisper's timestamp discipline is
+     * otherwise STATEFUL — timestamps must come in pairs, they must increase, and the first one
+     * is bounded (`whisper.cpp/src/whisper.cpp:6556-6594`) — and none of that can travel as data:
+     * this tier hands native ONE array per segment and native masks with it at every step. So the
+     * token stream can be shapes whisper's own never is, and [NpuSentences] is written to read
+     * them rather than to assume them, down to answering "no sentences" for a stream that runs
+     * backwards.
      *
      * `EOT` is **not** here. It is in [beginSuppressList], which applies at one step; masking it at
      * every step would leave the loop with no terminator short of the 199-position cap, and every
@@ -98,7 +127,7 @@ object NpuDecodePolicy {
      * out-of-range id is a write past the end of a 103,730-byte buffer.
      */
     fun suppressList(family: WhisperTokenFamily): IntArray =
-        (family.suppress.toList() + (family.timestampBegin until family.vocab))
+        (family.suppress.toList() + family.noTimestamps)
             .distinct().sorted().toIntArray()
 
     /**
@@ -110,15 +139,19 @@ object NpuDecodePolicy {
 
     /**
      * How many tokens a prompt of [promptLen] can generate: `MAX_POSITIONS - promptLen`, which is
-     * **196** for the four-token prompt.
+     * **197** for the three-token prompt this tier ships since 4.11 Task 3 (it was 196 while the
+     * prompt carried `<|notimestamps|>`). Nothing anywhere may write either number down: the one
+     * extra position is a consequence of the prompt's length, and the timestamps the tier now
+     * asks for spend two of the budget per sentence, which is a real cost this expression is the
+     * only honest account of.
      *
      * The arithmetic, spelled out because every part of it is off-by-one bait. `position` is the
      * single counter and the prompt consumes it too. Positions 0..198 execute — 199 of them, an
      * exact fit for the 199-deep self-KV, using 199 of the mask's 200 columns; 199 is the
      * termination threshold and never executes. The first generated token lands at
      * `position == promptLen - 1`. So the generated positions are `promptLen - 1 .. 198`, which is
-     * `198 - (promptLen - 1) + 1 == MAX_POSITIONS - promptLen` tokens: `198 - 2 == 196` for a
-     * four-token prompt.
+     * `198 - (promptLen - 1) + 1 == MAX_POSITIONS - promptLen` tokens: `198 - 1 == 197` for the
+     * three-token prompt.
      *
      * The caller sizes `nativeDecodeSegment`'s `out` array to at least this. Native bounds-checks
      * rather than trusting it.
