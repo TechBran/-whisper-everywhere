@@ -1,6 +1,7 @@
 package com.whispereverywhere.whisper
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -11,6 +12,11 @@ import java.lang.reflect.Modifier
  * which carry, per committed chunk, WHERE each VAD segment sat in the raw audio and WHICH bytes of
  * the returned text came out of it. Speaker labels are built on nothing else: the embedder slices
  * the ORIGINAL pcm by the first array and the runs are cut by the second.
+ *
+ * 4.11 adds a third, `lastTokenTimes()`, at token grain, and with it two new silent failures worth
+ * pinning: `dtw_token_timestamps`, the other way to get token times, kills the live words strip
+ * with no error at all; and a token walk that started AUTHORING the returned text instead of
+ * measuring it would move the transcript, which timing is not allowed to do.
  *
  * WHY A TEST THAT READS C++: `System.loadLibrary("whisper_jni")` throws `UnsatisfiedLinkError` on a
  * plain JVM, so no unit test can CALL any of this, and a compiler cannot check an ORDERING. Two of
@@ -76,6 +82,24 @@ class SegmentGeometryPinTest {
         )
         return m!!
     }
+
+    /**
+     * [scope] with every comment removed — block comments and `//` tails alike.
+     *
+     * Needed for exactly one kind of claim, the ABSENCE of a statement, and the `live` helper
+     * above cannot make it: `live` proves a pattern IS on a code line, while "this must never be
+     * written" has to prove no code line carries it. A plain `contains` cannot, because
+     * whisper_jni.cpp deliberately NAMES `dtw_token_timestamps` in the LANDMINE comment that
+     * explains why it is never set — so the honest form of the pin would be permanently red and
+     * the dishonest form (drop the comment) would delete the warning the pin exists to keep.
+     *
+     * Strips more than it must — a `//` inside a string literal takes the rest of that line with
+     * it. That direction is safe here: over-stripping can only make an absence claim pass, and
+     * every absence claim in this file is backed by a positive assertion elsewhere.
+     */
+    private fun codeOnly(scope: String): String = scope
+        .replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), " ")
+        .replace(Regex("""(?m)//.*$"""), "")
 
     /** `transcribeRaw`'s body. Every JNI function in whisper_jni.cpp closes at column 0. */
     private fun transcribeRawBody(): String {
@@ -323,7 +347,8 @@ class SegmentGeometryPinTest {
     fun theClearSitsAboveEveryReturnInTranscribeRaw_soNoChunkInheritsThePreviousChunksBounds() {
         val body = transcribeRawBody()
         val firstReturn = live(body, """return\b""", "transcribeRaw's first return statement")
-        listOf("g_last_vad_segments", "g_last_whisper_segments").forEach { name ->
+        listOf("g_last_vad_segments", "g_last_whisper_segments", "g_last_token_times")
+            .forEach { name ->
             val clear = live(
                 body, """${Regex.escape(name)}\.clear\(\);""", "the clear of $name"
             )
@@ -339,5 +364,102 @@ class SegmentGeometryPinTest {
                 clear.range.first < firstReturn.range.first
             )
         }
+    }
+
+    // ------------------------------------------------- 4.11 the timing layer: per-token times
+
+    @Test
+    fun theTokenTimesAreDeclaredOnBothSidesWithTheShapeItsSiblingsHave() {
+        assertTrue(
+            "WhisperNative must declare `external fun lastTokenTimes(): IntArray` — JNI binds by " +
+                "name, so a rename on either side is an UnsatisfiedLinkError at the first chunk " +
+                "of a speaker session and nothing at compile time",
+            kt.contains("external fun lastTokenTimes(): IntArray")
+        )
+        assertTrue(
+            "whisper_jni.cpp must export Java_..._lastTokenTimes",
+            jni.contains("Java_com_whispereverywhere_whisper_WhisperNative_lastTokenTimes")
+        )
+        val clazz = Class.forName(
+            "com.whispereverywhere.whisper.WhisperNative", false, javaClass.classLoader
+        )
+        val m = try {
+            clazz.getDeclaredMethod("lastTokenTimes")
+        } catch (e: NoSuchMethodException) {
+            throw AssertionError(
+                "WhisperNative declares no lastTokenTimes(). JNI binds by the SHORT name first, " +
+                    "so a signature change calls the same native function with arguments it was " +
+                    "not written for. Declared instead: " +
+                    clazz.declaredMethods.map { it.name }.sorted(),
+                e
+            )
+        }
+        assertTrue("lastTokenTimes must be declared `external`", Modifier.isNative(m.modifiers))
+        assertEquals(
+            "ONE IntArray per call, for the reason its two siblings are: a chunk's token times " +
+                "describe ONE transcribe and must be snapshotted in ONE JNI round trip, or a " +
+                "second transcribe interleaving between two calls hands the reader half of each " +
+                "chunk's timing.",
+            IntArray::class.java, m.returnType
+        )
+        assertEquals(
+            "no arguments: the array is process-global and describes the LAST transcribeRaw, " +
+                "not a particular ctx",
+            0, m.parameterCount
+        )
+        assertEquals(
+            "one writer of the token times: the four ints of a token are pushed by a SINGLE " +
+                "statement, so no future edit can add a fifth push in one place and leave the " +
+                "stride-4 readers on the Kotlin side reading fields out of phase.",
+            1, Regex("""g_last_token_times\.push_back""").findAll(jni).count()
+        )
+    }
+
+    @Test
+    fun tokenTimingIsAskedForAndTheDtwFlagIsNeverSet() {
+        live(
+            transcribeRawBody(), """params\.token_timestamps\s*=\s*true;""",
+            "the request for whisper's heuristic per-token timestamps"
+        )
+        // The OTHER way to get token times, and the one that must never be taken. whisper.cpp
+        // gates the new-segment callback on !dtw_token_timestamps, so setting it silently turns
+        // local partial streaming — the live words strip — OFF, with no error anywhere; the
+        // heuristic path asked for above does not. Asserted over code only, because the LANDMINE
+        // comment in whisper_jni.cpp names the flag on purpose and must keep naming it.
+        assertFalse(
+            "dtw_token_timestamps must never be SET in whisper_jni.cpp. It kills the live words " +
+                "strip silently — no exception, no log, just no partial previews ever again — " +
+                "and the DTW branch's own callback loop is buggy upstream. The heuristic " +
+                "`params.token_timestamps` gives this feature everything it needs. (The " +
+                "LANDMINE comment naming the flag is fine and required; this assertion reads " +
+                "code with the comments stripped.)",
+            codeOnly(jni).contains("dtw_token_timestamps")
+        )
+    }
+
+    @Test
+    fun onlyTheSegmentTextEverReachesTheReturnedBytes_soTimingCannotChangeTheTranscript() {
+        // The plan for the timing layer offered a second way to build the returned text: append
+        // each TOKEN's text and take the byte offsets from that walk. whisper.cpp makes the two
+        // identical — a segment's `text` is exactly the concatenation of its non-special tokens
+        // (whisper.cpp:7896, `text += whisper_token_to_str(...)` over the same i0..i range that
+        // becomes `result_all.back().tokens`) — but "identical today" is not the same guarantee
+        // as "cannot differ", and the transcript is the one thing this feature may not touch.
+        // So the segment text stays the sole author of the bytes and the token walk only
+        // MEASURES it. This pin is what keeps that true: a future edit that starts appending
+        // token text to `result` fails here rather than on a user's screen.
+        val body = transcribeRawBody()
+        val appends = Regex("""(?m)^[ \t]*result \+= (\w+);""").findAll(codeOnly(body)).toList()
+        assertEquals(
+            "exactly ONE statement may append to `result` in transcribeRaw — the segment-text " +
+                "append. Found: " + appends.map { it.groupValues[1] },
+            1, appends.size
+        )
+        assertEquals(
+            "…and what it appends must be the SEGMENT text (`seg`), whisper's own authoritative " +
+                "string, not a string rebuilt from tokens. Timing is additive: it may read the " +
+                "bytes, never write them.",
+            "seg", appends.single().groupValues[1]
+        )
     }
 }

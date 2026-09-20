@@ -15,6 +15,8 @@ import java.nio.ByteBuffer
  *   - lastVadSegments() / lastWhisperSegments() -> the 4.10 segment geometry of the last
  *     transcribeRaw: where each speech segment sat in the raw audio, and which bytes of the
  *     returned text came out of it. NOT diagnostics — the speaker pipeline reads both.
+ *   - lastTokenTimes()   -> the same, per TOKEN (4.11): what lets a speaker window end at a word
+ *     rather than only at a sentence, which is the only boundary edited media leaves available
  *   - vadSegmentsOf()    -> a standalone Silero pass over a caller-supplied buffer: the NPU tier's
  *     substitute for that geometry, since that tier never runs whisper.cpp's VAD filter
  *   - diag()             -> __android_log_print: the one Kotlin diagnostic that has to survive R8
@@ -302,6 +304,38 @@ object WhisperNative {
      * the-gate contract as [lastVadSegments].
      */
     external fun lastWhisperSegments(): IntArray
+
+    /**
+     * The decoded TOKENS of the LAST [transcribeRaw] on this thread, four ints each, in text
+     * order: `[t0cs, t1cs, byteStart, byteEnd]` (4.11 the timing layer).
+     *
+     * [lastWhisperSegments] at a finer grain and in the same units: centiseconds on the TRIMMED
+     * timeline, byte offsets into the `ByteArray` the matching [transcribeRaw] returned, bytes
+     * rather than characters for the same UTF-8 reason. Same PROCESS-GLOBAL, one-call-behind,
+     * read-it-on-the-transcribing-thread-inside-the-gate contract as its two siblings, and the
+     * same mutex behind it.
+     *
+     * **WHY IT EXISTS.** A speaker window has to be able to end where a VOICE CHANGES. On edited
+     * media the editor has cut the pause between speakers out, so the VAD hands back one unbroken
+     * 9-15 s segment (the Fold6, 2026-09-19: `windows = 1` for chunk after chunk) and the segment
+     * geometry offers nowhere inside it to put a boundary. A boundary that can land on any token
+     * edge can.
+     *
+     * **IT DOES NOT AUTHOR ANY TEXT.** The returned bytes are whisper's own segment texts,
+     * unchanged and byte-identical to what the same audio produced before this array existed;
+     * these offsets only describe where inside them each token sits, and the native side verifies
+     * that before publishing a segment's tokens.
+     *
+     * **EMPTY, OR MISSING A STRETCH OF THE TEXT, IS NORMAL** and is not an error: whisper
+     * produced no segments, or one segment's tokens failed that verification. It costs precision
+     * — cuts in that stretch fall back to sentence boundaries — and never text. Do not assume
+     * this array covers every byte of the transcript, and do not read a gap as silence.
+     *
+     * The times are whisper's HEURISTIC token timestamps, accurate to roughly the length of a
+     * token, not the DTW ones: DTW silently disables local partial streaming (the live words
+     * strip) and must never be switched on. `SegmentGeometryPinTest` pins both halves of that.
+     */
+    external fun lastTokenTimes(): IntArray
 
     /**
      * THE NPU TIER'S SUBSTITUTE for the geometry [lastVadSegments] exports — a STANDALONE Silero

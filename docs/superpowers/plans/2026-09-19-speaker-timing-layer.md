@@ -48,7 +48,7 @@
 **Interfaces:**
 - Produces: `WhisperNative.lastTokenTimes(): IntArray` — `[t0cs, t1cs, byteStart, byteEnd]` per **token** of the last `transcribeRaw` on this thread, byte offsets into the returned `ByteArray`, empty when timing was unavailable. Same process-global, same-thread, cleared-at-entry contract as `lastVadSegments` / `lastWhisperSegments`, under the same `g_geom_mutex`.
 
-- [ ] **Step 1: extend the pin test (fails first)**
+- [x] **Step 1: extend the pin test (fails first)**
 
 ```kotlin
 @Test fun tokenTimesAreExportedUnderTheSameContractAsTheOtherGeometry() {
@@ -65,9 +65,9 @@
 }
 ```
 
-- [ ] **Step 2: run it, expect failure** — `.\gradlew.bat :app:testDebugUnitTest --tests "*SegmentGeometryPinTest*" --no-daemon`
+- [x] **Step 2: run it, expect failure** — `.\gradlew.bat :app:testDebugUnitTest --tests "*SegmentGeometryPinTest*" --no-daemon`
 
-- [ ] **Step 3: implement.** Global beside the other two: `static std::vector<jint> g_last_token_times;`, cleared with them. In the params block: `params.token_timestamps = true;` (and nothing else — no `max_len`, no `split_on_word`, which would change segmentation and therefore text). In the result loop, for each segment `i`, walk its tokens and record those that carry text:
+- [x] **Step 3: implement.** Global beside the other two: `static std::vector<jint> g_last_token_times;`, cleared with them. In the params block: `params.token_timestamps = true;` (and nothing else — no `max_len`, no `split_on_word`, which would change segmentation and therefore text). In the result loop, for each segment `i`, walk its tokens and record those that carry text:
 
 ```cpp
         const int nTok = whisper_full_n_tokens(ctx, i);
@@ -87,11 +87,15 @@
 
 **Note:** the loop above must produce byte-for-byte the same `result` string the current segment-text loop produces. Concatenating token texts is whisper's own segment text; verify by keeping both paths and asserting equality in a scratch build, then delete the old accumulation. If they ever differ, keep the segment text as authoritative and emit token times without rebuilding `result`.
 
+**RESOLVED (2026-09-19), from whisper.cpp source rather than a scratch build — and implemented as the safe half of the answer anyway.** They are equal, by construction: `whisper_full` builds a segment's text as `text += whisper_token_to_str(ctx, tokens_cur[i].id)` for every token with `id < whisper_token_eot` (`src/whisper.cpp:7894-7896`, `print_special` being false), and the token list it then stores on that segment is exactly the same `i0..i` range (`:7922-7925`). `whisper_token_to_str` and `whisper_full_get_token_text` are the same lookup, `ctx->vocab.id_to_token[id]` (`:4468`, `:8317`). Nothing between then and the accessors mutates either: `whisper_exp_compute_token_level_timestamps` writes only `t0`/`t1` onto tokens (`:8714-8760`), and `whisper_wrap_segment`, the one function that would re-cut text, is reached only when `params.max_len > 0`, which stays 0 (`:7929-7932`).
+
+**What shipped is stricter than "delete the old accumulation".** `result += seg` stays the sole author of the returned bytes and the token walk accumulates into a separate string purely to learn each token's offset, then asserts that string equals `seg` before publishing that segment's quads. Cost: one string compare per segment. Benefit: "the transcript must not change" becomes structural rather than proven, and the equality is re-checked on every chunk on every device — a mismatch drops that segment's token times (cuts there fall back to sentence bounds, per the spec's fail-downhill rule) and logs `token-times: segment N dropped, tokenBytes= segmentBytes=`, numbers only. `SegmentGeometryPinTest.onlyTheSegmentTextEverReachesTheReturnedBytes_soTimingCannotChangeTheTranscript` pins the invariant. **Consequence for Task 2:** `lastTokenTimes` may cover less than the whole transcript, so the consumer must not assume full coverage and must not read a gap as silence.
+
 Export with the existing `we_int_vector` helper; declare in Kotlin beside `lastWhisperSegments` with a KDoc naming the contract.
 
-- [ ] **Step 4: run** the pin test, `:app:buildCMakeRelWithDebInfo[arm64-v8a]`, and the full suite. All green.
+- [x] **Step 4: run** the pin test, `:app:buildCMakeRelWithDebInfo[arm64-v8a]`, and the full suite. All green.
 
-- [ ] **Step 5: commit** — `feat(speakers): whisper says when it said each word`
+- [x] **Step 5: commit** — `feat(speakers): whisper says when it said each word`
 
 ---
 

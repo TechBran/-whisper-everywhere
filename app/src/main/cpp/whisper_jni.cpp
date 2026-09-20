@@ -163,9 +163,15 @@ static std::atomic<int>       g_last_vad_out{0};
 // mistake costs a stale reading; for a vector being cleared under a reader it is undefined
 // behaviour, so the lock is the cheaper of the two prices. It is taken for a handful of
 // push_backs per chunk and never around anything that blocks.
+//
+// 4.11 adds a THIRD array of the same shape and under the same mutex, one entry per TOKEN rather
+// than per segment. It is what lets a speaker window end at a word instead of only at a sentence:
+// on hard-cut media a single VAD segment can run 15 s with no pause in it, and a segment-only
+// geometry has nowhere inside that to put a boundary (the Fold6, 2026-09-19, fault 1).
 static std::mutex             g_geom_mutex;
 static std::vector<jint>      g_last_vad_segments;      // [origS0, origS1, trimS0, trimS1] * n
 static std::vector<jint>      g_last_whisper_segments;  // [t0cs, t1cs, byteStart, byteEnd] * n
+static std::vector<jint>      g_last_token_times;       // [t0cs, t1cs, byteStart, byteEnd] * nTok
 
 // THE ONE SILERO SEGMENTER, and the one place its knobs live (4.10 speaker labels, the NPU tier).
 //
@@ -601,7 +607,7 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastSegmentStats(
     return out;
 }
 
-// One jint vector out across the boundary. Shared by the two geometry exports below so the
+// One jint vector out across the boundary. Shared by the three geometry exports below so the
 // NewIntArray/SetIntArrayRegion pair — and the null-on-OOM behaviour the caller has to live with
 // — is written once for both. The caller holds g_geom_mutex.
 static jintArray we_int_vector(JNIEnv *env, const std::vector<jint> &v) {
@@ -657,6 +663,40 @@ Java_com_whispereverywhere_whisper_WhisperNative_lastWhisperSegments(
         JNIEnv *env, jobject /* this */) {
     std::lock_guard<std::mutex> geom(g_geom_mutex);
     return we_int_vector(env, g_last_whisper_segments);
+}
+
+// ---------------------------------------------------------------------------------------------
+// 4.11 the timing layer: lastTokenTimes — the same four ints, per TOKEN.
+//
+//   [t0cs, t1cs, byteStart, byteEnd] * nTokens, in text order.
+//
+// Same timeline and same units as lastWhisperSegments (centiseconds on the TRIMMED buffer, byte
+// offsets into the ByteArray transcribeRaw returned), same process-global / one-call-behind /
+// read-it-on-the-transcribing-thread contract, same mutex. Everything true of that array is true
+// of this one; only the granularity differs.
+//
+// WHY IT EXISTS: a speaker window has to be able to end WHERE A VOICE CHANGES, and on edited
+// media — the owner's case — the editor has cut the pause out, so the VAD returns one unbroken
+// 9-15 s segment and the segment array offers no boundary inside it. Per-token times give the
+// span cutter a place to cut every few hundred milliseconds.
+//
+// THE TEXT IS NOT BUILT FROM THESE TOKENS. The returned bytes are still, exactly as before, the
+// concatenation of whisper's own segment texts; the token walk below only measures where inside
+// those bytes each token sits, and it CHECKS that measurement against the segment text before
+// publishing it. whisper.cpp builds a segment's text as the concatenation of its own non-special
+// tokens (whisper.cpp:7896), so the two agree — but agreeing today and being unable to disagree
+// are different guarantees, and the transcript is the thing this feature may not touch. A segment
+// whose tokens do not reproduce its text contributes NO entries here and its text is unaffected.
+//
+// EMPTY, or short of a segment's worth, therefore means "no token timing for that text" and never
+// "no text". Missing timing costs precision — cuts fall back on sentence boundaries — and nothing
+// else. The pad, the stitch and the VAD caveats of lastWhisperSegments all apply unchanged.
+// ---------------------------------------------------------------------------------------------
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_whispereverywhere_whisper_WhisperNative_lastTokenTimes(
+        JNIEnv *env, jobject /* this */) {
+    std::lock_guard<std::mutex> geom(g_geom_mutex);
+    return we_int_vector(env, g_last_token_times);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1061,6 +1101,7 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
         std::lock_guard<std::mutex> geom(g_geom_mutex);
         g_last_vad_segments.clear();
         g_last_whisper_segments.clear();
+        g_last_token_times.clear();
     }
 
     auto emptyResult = [env]() { return env->NewByteArray(0); };
@@ -1128,6 +1169,17 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
     // stops non-speech tokens ([BLANK_AUDIO], music notes) at the source instead of post-filtering.
     params.temperature_inc = 0.2f;
     params.suppress_nst    = true;
+    // 4.11 the timing layer: per-token t0/t1, exported as lastTokenTimes. whisper's HEURISTIC
+    // path (an energy profile plus the timestamp-token probabilities), not the DTW one — see the
+    // LANDMINE below, which is why this is the only flag set here.
+    //
+    // NOTHING ELSE MAY JOIN IT. max_len > 0 makes whisper_wrap_segment re-cut every segment
+    // (whisper.cpp:7930) and split_on_word changes where it cuts: both rewrite the SEGMENTATION,
+    // which is the text the user reads, and this feature is additive by contract. With max_len
+    // left at 0 the flag's whole effect is state->energy (computed once per call, whisper.cpp:
+    // 7114) and t0/t1 written onto tokens already decoded (whisper.cpp:8714) — no token is added,
+    // removed or re-ordered and no segment's text is touched, so the transcript cannot move.
+    params.token_timestamps = true;
 
     int cores = static_cast<int>(std::thread::hardware_concurrency());
     if (cores <= 0) {
@@ -1262,9 +1314,51 @@ Java_com_whispereverywhere_whisper_WhisperNative_transcribeRaw(
             const jint byteStart = static_cast<jint>(result.size());
             result += seg;
             const jint byteEnd = static_cast<jint>(result.size());
+
+            // 4.11 the timing layer: the same four ints per TOKEN of this segment, so a speaker
+            // window can end at a word. See lastTokenTimes above for the contract.
+            //
+            // MEASURED, NOT BUILT. `result` was appended from `seg` two lines up and stays the
+            // only author of the returned bytes; this walk accumulates the token texts into a
+            // SEPARATE string purely to learn each token's offset inside that segment, then
+            // proves the accumulation equals `seg` before publishing anything. whisper.cpp makes
+            // them equal — a segment's text is `text += whisper_token_to_str(...)` over exactly
+            // the non-special tokens it then stores as the segment's token list (whisper.cpp:
+            // 7896 and 7922) — so the check passes; it is here because a transcript that silently
+            // changed shape would be far more expensive than one string compare per segment.
+            //
+            // Specials are skipped by `id >= whisper_token_eot`, which is the same predicate
+            // whisper used when it built the text (print_special is false above), so timestamp
+            // and control tokens own no bytes here either. A mismatch drops THIS segment's
+            // tokens only: its text is already committed and untouched, and the Kotlin side
+            // falls back to cutting that stretch at sentence boundaries.
+            std::vector<jint> tokenQuads;
+            std::string tokenText;
+            const int nTok = whisper_full_n_tokens(ctx, i);
+            for (int j = 0; j < nTok; ++j) {
+                if (whisper_full_get_token_id(ctx, i, j) >= whisper_token_eot(ctx)) continue;
+                const char *tt = whisper_full_get_token_text(ctx, i, j);
+                if (tt == nullptr || *tt == '\0') continue;
+                const auto data = whisper_full_get_token_data(ctx, i, j);
+                const jint b0 = byteStart + static_cast<jint>(tokenText.size());
+                tokenText += tt;
+                const jint b1 = byteStart + static_cast<jint>(tokenText.size());
+                for (const jint v : {static_cast<jint>(data.t0), static_cast<jint>(data.t1),
+                                     b0, b1})
+                    tokenQuads.push_back(v);
+            }
+            if (tokenText != seg) {
+                // Numbers only, no transcript content — the house rule for every diag line.
+                LOGDIAGE("token-times: segment %d dropped, tokenBytes=%d segmentBytes=%d",
+                         i, static_cast<int>(tokenText.size()), byteEnd - byteStart);
+                tokenQuads.clear();
+            }
+
             std::lock_guard<std::mutex> geom(g_geom_mutex);
             for (const jint v : {t0cs, t1cs, byteStart, byteEnd})
                 g_last_whisper_segments.push_back(v);
+            for (const jint v : tokenQuads)
+                g_last_token_times.push_back(v);
         }
     }
     // Return raw UTF-8 bytes, decoded to String on the Kotlin side. NewStringUTF expects
