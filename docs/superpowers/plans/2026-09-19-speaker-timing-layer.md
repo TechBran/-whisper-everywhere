@@ -202,10 +202,33 @@ Export with the existing `we_int_vector` helper; declare in Kotlin beside `lastW
 
 **Files:** `app/build.gradle.kts` (versionCode 102, versionName 4.11.0 — 101 is on the internal track and spent), `ReleaseIdentityTest`, `docs/superpowers/sdd/2026-09-02-431-guards-tts/acceptance.md` (§AO rows), `docs/measurements/2026-09-18-speaker-spike.md` (a Session 8 stub).
 
-- [ ] Version and its paragraph, in the file's established style.
-- [ ] §AO gains: on the NPU tier a pause-free two-voice clip keeps alternating labels past two minutes (the Session 7 failure); **on the CPU tiers** the transcript text is unchanged with timing on (the additive half — the pin already asserts it in the suite, the row proves it on the device); **on the NPU tier the row asks instead that the text is sane and complete for an ordinary utterance and that no runaway reaches the budget**, because Task 3's fourth ruling trades bit-identical text there on purpose — dropping `<|notimestamps|>` re-conditions the decode and the emitted timestamps spend budget positions; the live words strip still works (the DTW landmine's user-visible proof).
-- [ ] A Session 8 stub naming what the controller reads from the device: `windows=` per chunk on the NPU tier (expect > 1 where Session 7 had 1), `embedMs=` against the 3,000 ms fence, and whether labels still alternate at the three-minute mark.
-- [ ] Commit — `chore(release): 4.11.0 at versionCode 102 — the timing layer`
+- [x] Version and its paragraph, in the file's established style. 102 / 4.11.0, a MINOR: a label that can land INSIDE a chunk is a new capability rather than a fix to 4.10.1's. `ReleaseIdentityTest` carries the paragraph and the two assertions; `app/build.gradle.kts` carries the same account in the `versionName` comment's own style, with 4.10.1's demoted to `Previous:`.
+- [x] §AO gains: on the NPU tier a pause-free two-voice clip keeps alternating labels past two minutes (the Session 7 failure); **on the CPU tiers** the transcript text is unchanged with timing on (the additive half — the pin already asserts it in the suite, the row proves it on the device); **on the NPU tier the row asks instead that the text is sane and complete for an ordinary utterance and that no runaway reaches the budget**, because Task 3's fourth ruling trades bit-identical text there on purpose — dropping `<|notimestamps|>` re-conditions the decode and the emitted timestamps spend budget positions; the live words strip still works (the DTW landmine's user-visible proof).
+- [x] A Session 8 stub naming what the controller reads from the device: `windows=` per chunk on the NPU tier (expect > 1 where Session 7 had 1), `embedMs=` against the 3,000 ms fence, and whether labels still alternate at the three-minute mark.
+- [x] Commit — `chore(release): 4.11.0 at versionCode 102 — the timing layer`
+
+**THREE ROWS, NOT TWO, AND THE THIRD IS THE POINT OF THE SPLIT (2026-09-19).** The task text names
+the NPU alternation row, the CPU text-unchanged row and the NPU sane-and-complete row as one
+bullet, but AO9 and AO10 ask *different questions of different devices* and a single row would
+invite one "the text looks fine" covering both — which is exactly the reading Task 3's fourth
+ruling forbids. So AO8 is the fix (Fold6, `windows=` exceeding `segs=`), AO9 is the CPU
+guarantee plus the live-words strip (Tab, the DTW landmine's only user-visible detector), AO10 is
+the NPU trade stated as a weaker claim (Fold6, sane and complete text plus no runaway to the 197
+budget). **And two STALE rows had to move with them**, because leaving them would have made the
+sheet contradict the build: AO7's FAIL clause read "a chunk's text split across two labels …
+would mean the wrong route ran", which at 4.11.0 is the PASS AO8 asks for, so it is now scoped to
+4.10.1; and the two "known limitations" bullets that said windows follow sentence edges and that
+the NPU tier labels a whole chunk are amended to what is true now — a CPU window may end at a
+word, the NPU ceiling is a SENTENCE, and what has NOT changed is that nothing yet detects a
+change of VOICE (the cut is geometric, which is layer 2's job).
+
+**Session 8 is a STUB WITH SESSION 7'S NUMBERS BESIDE THE BLANKS.** Every row carries the
+measured 4.10.1 value in its own column, because the acceptance question is a comparison and a
+blank table invites a reading with nothing to read it against. The table's first row is the one
+that decides the task: `segs=1 windows=1` measured, `windows` exceeding `segs` required. The stub
+also names the cost question that is NEW rather than repeated — per-sentence windows buy more
+FINGERPRINTS per chunk, not more VAD passes, so `embedMs=` is where the new cost lands and the
+LAST chunk of a session is where the 3,000 ms fence bites.
 
 ---
 

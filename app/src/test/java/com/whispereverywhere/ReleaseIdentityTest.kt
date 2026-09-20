@@ -185,6 +185,55 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 102 = 4.11.0 — the MINOR moves, because the tier that labelled a CHUNK now labels
+ * a SENTENCE.** 101 is spent: the owner installed 4.10.1 on his Z Fold6 and ran the controlled
+ * 3 min 20 s session of 2026-09-19 20:37-20:41 on it
+ * (`docs/measurements/2026-09-18-speaker-spike.md` §Session 7; the plan's Task 5 header records it
+ * on the internal track), so a higher code is what lets the next install replace it. 102 is the
+ * plain next integer, and the NAME is not a patch to 4.10.1 — it retires the ceiling 4.10.1 wrote
+ * down as its own. That session is why: on hard-cut media the standalone VAD returned ONE 9-15 s
+ * segment per chunk, so `windows=1`, so the whole 15 s took one label and *"after about two
+ * minutes they just stopped, and everything just becomes one speaker"*. The tracker was never
+ * wrong — ids 2 and 3 alternated to the end — the granularity at which text could carry a label
+ * was.
+ *
+ * **What 102 changes, in two places that never meet.** The CPU tiers ask whisper.cpp for
+ * `params.token_timestamps` and export a `[t0cs, t1cs, byteStart, byteEnd]` quad per token beside
+ * the geometry they already export, so a fingerprint window may now end at a WORD: a stretch still
+ * spanning `2 * LONG_SEGMENT_SECONDS` (4.0 s) is bisected at the nearest token edge, recursively.
+ * The NPU tier stops prompting `<|notimestamps|>` and stops masking the timestamp range, so its
+ * QNN decoder emits the timestamp tokens it always had in its vocabulary; `NpuSentences` parses
+ * them into sentence bounds and the VAD route makes ONE WINDOW PER SENTENCE instead of one per
+ * chunk. Session 7's `segs=1 windows=1` becomes `segs=1 windows=4`, which is the line that says
+ * the fix is live. Everything downstream — `SpeakerTracker`, `SpeakerReclusterer`, `SpeakerRuns`,
+ * `SpeakerLabels`, `TranscriptSink` — is untouched, because all of it keys on window indices.
+ *
+ * **The text guarantee is kept on the CPU tiers and knowingly TRADED on the NPU one, and the
+ * asymmetry is the whole of what a reviewer needs to know.** On CPU, timing is additive:
+ * `token_timestamps` changes no logit and no segmentation, the JNI keeps `result += seg` as the
+ * sole author of the returned bytes and drops a segment's quads rather than let a token walk
+ * rebuild them, and `SegmentGeometryPinTest` fails the build if that ever stops being true. On
+ * NPU there is no such version: dropping `<|notimestamps|>` from the prompt RE-CONDITIONS the
+ * decode — the model is answering a different question — and each emitted timestamp spends one of
+ * the 197 budget positions, so a long chunk can truncate at a different token than it did at
+ * 4.10.1. The spec asks for it anyway and wins, because one label for a 15 s chunk is a worse
+ * transcript than a differently-truncated long one. §AO's rows are scoped to match: unchanged text
+ * is asked of the CPU tiers, sane and complete text of the NPU one.
+ *
+ * **And one guard had to be re-based rather than left alone.** `qnn_asr.cpp`'s 4.3.1 repetition
+ * cut histogrammed the last 32 generated ids; timestamps are ever-increasing singletons, so a
+ * `<|t|><|t|> Thank you.` loop would put ~13 distinct ones in that window and push both `distinct`
+ * past `CYCLE_MAX_DISTINCT` and the entropy past `ENTROPY_THOLD` — disarming the trip exactly when
+ * a runaway needed it. The window now holds 32 TEXT ids and the last-rung cut drops to that
+ * window's own start. On a stream with no timestamps it is byte-for-byte the pre-4.11 guard.
+ *
+ * **`dtw_token_timestamps` is still never set, and that is a shipping constraint rather than a
+ * preference.** whisper.cpp gates the new-segment callback on `!dtw_token_timestamps`
+ * (`whisper_jni.cpp` records the landmine at the callback), so enabling DTW would silently kill
+ * the live words strip with no error anywhere. The heuristic token path does not. A pin asserts
+ * the flag is absent from the whole translation unit, and §AO asks a device to prove the strip
+ * still fills. Every bump still re-arms GpuPolicy's canary latches (below), unchanged.
+ *
  * **versionCode 101 = 4.10.1 — a PATCH, and the tier it fixes is the one the owner tests on.**
  * 100 went to the internal track on 2026-09-19 and is spent there. On his Z Fold6 — NPU-capable,
  * so the 4.3 one-tier rule offers `npu-turbo` alone — 4.10.0 produced *"no speaker changes at
@@ -247,17 +296,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_10_1_at_version_code_101() {
+    fun release_identity_is_4_11_0_at_version_code_102() {
         assertEquals(
-            "versionName must be 4.10.1 for this release (app/build.gradle.kts defaultConfig)",
-            "4.10.1",
+            "versionName must be 4.11.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.11.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 101 for this release (app/build.gradle.kts defaultConfig). " +
-                "100 = 4.10.0 went to the INTERNAL TRACK on 2026-09-19 and is spent there: Play " +
-                "refuses a second upload at the same code",
-            101,
+            "versionCode must be 102 for this release (app/build.gradle.kts defaultConfig). " +
+                "101 = 4.10.1 is spent — the owner installed it on his Z Fold6 and ran the " +
+                "2026-09-19 20:37-20:41 session on it, so only a higher code replaces it",
+            102,
             BuildConfig.VERSION_CODE,
         )
     }

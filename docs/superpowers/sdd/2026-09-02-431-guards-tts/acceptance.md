@@ -1478,7 +1478,7 @@ names all three and the gate reports `Promotable`** — on your report of 2026-0
 
 ---
 
-## AO — speaker labels (4.10.0 / 100; the first build of this capability anybody has been handed as a release)
+## AO — speaker labels (4.10.0 / 100, the first build of this capability anybody has been handed as a release; AO7 added at 4.10.1 / 101; AO8-AO10 added at 4.11.0 / 102, the timing layer)
 
 **What 4.10.0 adds.** When more than one person is heard, committed text is split into a new
 paragraph at every change of speaker and each paragraph starts `Speaker N:` in the transcript
@@ -1634,9 +1634,81 @@ AO7. **THE NPU TIER GETS LABELS AT ALL — at chunk granularity (4.10.1).** On t
     THEN THE NON-CHANGE, on the same device: run **one voice** for a minute. EXPECTED: no label
     and no speaker paragraph anywhere — a chunk is not a speaker.
     FAIL: no labels at all (the defect this row exists for); a label on the one-voice run; a
-    chunk's text split across two labels on this tier (its decoder gives no timestamps, so it
-    cannot be and a split would mean the wrong route ran); the commit cadence visibly slowing.
+    chunk's text split across two labels on this tier — **true for 4.10.1/101 only**: that
+    decoder gave no timestamps, so a split there meant the wrong route had run. **At 4.11.0/102
+    a split is the POINT and AO8 asks for it**; run this row on 4.11 only to confirm labels
+    still arrive at all; the commit cadence visibly slowing.
     `[ ] PASS  [ ] FAIL   (two voices: ____ / one voice: ____ / route= seen: ____ / VAD-standalone wallMs: ____ / embedMs: ____)`
+
+### The three rows 4.11.0 adds (the timing layer)
+
+**What 4.11.0 changes, in one sentence per tier.** The CPU tiers ask whisper.cpp for per-token
+times and may end a fingerprint window at a WORD; the NPU tier's decoder is allowed to emit the
+timestamp tokens it always had, and its route makes ONE WINDOW PER SENTENCE instead of one per
+chunk. AO8 is the fix for the failure you reported; AO9 and AO10 are the two things that fix
+could plausibly have broken, one per tier, and they are deliberately NOT the same question.
+
+AO8. **THE NPU TIER KEEPS ALTERNATING PAST TWO MINUTES ON AUDIO WITH NO PAUSES — the Session 7
+    failure, and the reason 4.11.0 exists.** On the **Z Fold6** (`npu-turbo`, the only rung that
+    device is offered), with **Detect speakers ON**, play a **hard-cut two-voice clip** — an
+    edited interview or a YouTube two-hander where the pauses between turns have been cut to
+    nothing, which is the material that produced the report. Run it for **at least three
+    minutes** and watch the panel the whole way.
+    EXPECTED: labels keep **alternating past the two-minute mark** and do not settle onto one
+    speaker. A change may now land **inside a chunk**, at a sentence boundary, instead of on a
+    6-8 s commit edge — that is the new capability, not a fault. A change arriving a sentence
+    late is still a PASS; a change that never arrives after two minutes of two people is the
+    failure this row exists for.
+    WHAT TO READ: `adb logcat -s WE-DIAG` on that device, and the one number that decides it is
+    **`windows=` against `segs=`** on the `speaker:` line. Session 7 logged `segs=1 windows=1`
+    chunk after chunk on exactly this material; **the fix is live when `windows` EXCEEDS `segs`
+    on a pause-free chunk** (`segs=1 windows=4` is the shape to look for). A second line,
+    `speaker-sentences: sentences= spans=`, says how many sentences the decoder bounded and how
+    many of them survived into spans; numbers only, no text. `pick=` is still printed but is now
+    a FALLBACK rather than the chunk's answer, so it proves nothing on its own.
+    THEN THE NON-CHANGE, same device: run **one voice** for a minute. EXPECTED: no label and no
+    speaker paragraph anywhere. A sentence is not a speaker any more than a chunk was.
+    FAIL: labels stop and the session collapses to one speaker (the original report, unfixed);
+    `windows=` equal to `segs=` on every chunk of pause-free two-voice audio (the timing never
+    reached the route); a label on the one-voice run; the commit cadence visibly slowing.
+    `[ ] PASS  [ ] FAIL   (labels alternating at 2 min: ____ / at 3 min: ____ / segs= windows= seen: ____ / sentences= seen: ____ / one voice: ____)`
+AO9. **THE CPU TIERS' TRANSCRIPT IS UNCHANGED WITH TIMING ON, AND THE LIVE WORDS STRIP STILL
+    FILLS.** On the **Tab S10+** (or any device on a CPU rung — small, medium or turbo Q8),
+    dictate or play a clip you have a 4.10.1 transcript of, and compare the committed text
+    word for word.
+    EXPECTED: **identical text.** On these tiers the timing really is additive —
+    `params.token_timestamps` changes no logit and no segmentation, and the JNI keeps the
+    segment text as the sole author of the bytes it returns — so this row is asking the device
+    to confirm what the suite already asserts
+    (`SegmentGeometryPinTest.onlyTheSegmentTextEverReachesTheReturnedBytes_soTimingCannotChangeTheTranscript`).
+    AND THE STRIP, which is the half no test can prove: **live words must still appear while you
+    speak.** whisper.cpp switches its new-segment callback off entirely when DTW token
+    timestamps are enabled — silently, with no error — so a blank strip for a whole session on
+    a CPU rung is the one user-visible symptom of that landmine, and this row is its detector.
+    WHAT TO LOOK FOR: the strip fills within a second or two of speaking, on the FIRST session
+    after install as well as the second (the 4.8.1 gate).
+    FAIL: any word of committed text differing from 4.10.1 on the same audio; the live strip
+    blank for a whole session on a CPU rung; commit cadence visibly slower than 4.10.1.
+    `[ ] PASS  [ ] FAIL   (text identical: ____ / live strip fills: ____)`
+AO10. **THE NPU TIER'S TEXT IS SANE AND COMPLETE, AND NOTHING RUNS AWAY TO THE BUDGET.** This row
+    asks a **different and weaker** question than AO9, on purpose. 4.11.0 stops prompting
+    `<|notimestamps|>` on that decoder, which **re-conditions the decode itself**, and each
+    emitted timestamp spends one of the 197 generation positions — so its text is NOT expected to
+    be bit-identical to 4.10.1's and a long chunk may truncate at a different word. That was
+    traded knowingly: one label for a 15 s chunk is the worse transcript.
+    EXPECTED, on the **Z Fold6**: for **ordinary utterances** — normal sentences, a few seconds
+    each — the transcript is **complete and correct**, with no missing tail, no timestamp markup
+    leaking into the visible text (`<|2.40|>` or similar must NEVER appear on screen, in a text
+    field, in the clipboard or in a saved transcript), and no sentence silently cut short.
+    AND THE RUNAWAY, which is the specific thing the timestamps could have broken: read out or
+    play a stretch with **repetition or near-silence** and confirm no chunk degenerates into one
+    word or one phrase repeated to the end of its budget. 4.3.1's repetition cut counted the
+    last 32 generated ids, and timestamps would have flooded that window; it counts the last 32
+    **text** ids now, and this row is the device-side proof.
+    FAIL: `<|` anywhere in visible text; an ordinary sentence truncated mid-word; a chunk
+    arriving as one phrase repeated dozens of times; a chunk arriving empty where speech was
+    clearly present.
+    `[ ] PASS  [ ] FAIL   (ordinary text complete: ____ / no timestamp markup visible: ____ / no runaway: ____)`
 
 ### Known limitations of §AO, stated rather than discovered later
 
@@ -1645,20 +1717,35 @@ AO7. **THE NPU TIER GETS LABELS AT ALL — at chunk granularity (4.10.1).** On t
   that review, three of them the same sentence — a retrospective pass renumbers the id space, so a
   label it does not rewrite is not stale, it is somebody else's. AO2 and AO6 are its first
   evidence.
-- **Boundaries land on sentence edges, not inside them.** Fingerprint windows follow whisper's
-  sentence boundaries, which is usually where a new speaker starts. A genuine mid-sentence
-  interruption is the case that stays wrong, and only word-level change detection would catch it.
-  That is the next lever, and it is not in this build.
+- **Boundaries land on sentence edges, not inside them — TRUE THROUGH 4.10.1, AMENDED AT
+  4.11.0.** Through 4.10.1 fingerprint windows followed whisper's sentence boundaries, which is
+  usually where a new speaker starts. At 4.11.0 a CPU-tier window may also be cut at a WORD: a
+  stretch still spanning 4.0 s is bisected at the nearest token edge, recursively, so a long
+  pause-free sentence is no longer one window. **What has NOT changed is that nothing yet
+  detects a change of VOICE.** The cut is geometric — a bisection, not a decision — so a genuine
+  mid-sentence interruption is still attributed by luck rather than by evidence. Only
+  change-point detection fixes that; it is layer 2 of
+  `docs/superpowers/specs/2026-09-19-speaker-boundaries-design.md` and it is not in this build.
 - **Nothing here has been run on the Z Fold6.** Every number in the spike is from the Tab S10+.
   AO7 is the first row that has to be, and 4.10.0/100 on that device is where the NPU tier's
   defect was found.
-- **The NPU tier labels a whole CHUNK, never a sentence inside it.** Its decoder publishes no
-  token or sentence timestamps, so the chunk's text cannot be cut between two voices: the chunk
-  takes the id of the window holding the most speech in it. The audio is still fingerprinted per
-  window — the tracker learns both voices, and the retrospective pass can still correct the
-  chunk — but a turn taken mid-chunk is attributed to whoever spoke longer. It is the owner's
-  ruling of 2026-09-19 ("at the chunk level … at least that would be good enough") and it is a
-  ceiling on that tier until something gives it timestamps.
+- **The NPU tier labels a whole CHUNK, never a sentence inside it — TRUE AT 4.10.1, RETIRED AT
+  4.11.0, and the ceiling that replaces it is a SENTENCE.** At 4.10.1 that decoder published no
+  timestamps, so a chunk's text could not be cut between two voices and it took the id of the
+  window holding the most speech — the owner's ruling of 2026-09-19 ("at the chunk level … at
+  least that would be good enough"). 4.11.0 lets the decoder emit the timestamp tokens it always
+  had in its vocabulary and cuts one window per SENTENCE. The new ceiling: **word-level timing on
+  that tier is still out of reach** (it needs cross-attention weights out of the QNN graph), so a
+  change of speaker mid-sentence gives the whole sentence to one voice. The chunk-level fallback
+  is still there and still published — `pick=` — for the case where the decode emits no
+  timestamps at all, so a session on that tier degrades to 4.10.1's behaviour rather than to no
+  labels.
+- **That tier's text is no longer bit-comparable across 4.10.1 and 4.11.0.** Dropping
+  `<|notimestamps|>` from its prompt re-conditions the decode, and the timestamps it then emits
+  spend generation positions out of the same 197-token budget, so a long chunk can truncate at a
+  different word. AO10 asks for sane and complete text rather than unchanged text, and AO9 —
+  which does ask for unchanged text — is scoped to the CPU tiers, where the timing genuinely is
+  additive. Do not read the two rows as the same check written twice.
 - **The NPU tier pays a SECOND VAD pass per chunk**, about 60 ms on the embed thread, because the
   bounds the CPU tier gets free from `transcribeRaw` do not exist there. It is below delivered
   text and inside the same finalize fence as the embeddings; AO7 records the number.

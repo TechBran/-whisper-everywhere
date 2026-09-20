@@ -152,3 +152,46 @@ As the clip runs on without pauses the VAD returns ONE segment per chunk, 9-15 s
 **Cost on the Fold6, measured:** VAD 15-180 ms per chunk (median ~100), embeddings 84-832 ms per chunk (median ~260, the 832 being a 15.6 s window with the model's first load), reclustering under 1 ms at n=31. Nothing near the 3,000 ms fence.
 
 **Consequence for the plan.** Layer 1 of `2026-09-19-speaker-boundaries-design.md` (sentence times on the NPU tier) is not merely parity work — it is the fix for fault 1 on the owner's own device, turning one 15 s window into one window per sentence. Layer 2 then handles the mid-sentence changes that remain.
+
+## Session 8 — STUB: the timing layer on the device (4.11.0/102, not yet run)
+
+**Nothing below is measured.** This is the reading list for the Fold6 session that follows the
+4.11.0 build, written before it so the controller reads the same numbers it planned to read.
+Session 7 is the baseline every row compares against, and it was taken on the same device, on the
+same kind of material (hard-cut two-voice media, no pauses), at 4.10.1/101.
+
+**What changed between 7 and 8, in one line per tier.** The CPU tiers export a per-token time quad
+and may end a fingerprint window at a word; the NPU tier's decoder is no longer prompted
+`<|notimestamps|>` nor masked over the timestamp range, so `NpuSentences` bounds sentences and the
+VAD route makes one window per sentence instead of one per chunk. Acceptance rows AO8-AO10.
+
+**The one number that decides whether the fix is live.** `windows=` against `segs=` on the
+`speaker:` line of `adb logcat -s WE-DIAG`, on a pause-free chunk. Session 7 logged `segs=1
+windows=1` chunk after chunk; **a pass is `windows` EXCEEDING `segs`** (the shape to look for is
+`segs=1 windows=4`). `pick=` is still printed and is now a fallback rather than the chunk's answer,
+so on its own it is evidence of nothing.
+
+| what | where to read it | session 7 (measured) | session 8 (to fill) |
+|---|---|---|---|
+| windows per chunk on a pause-free chunk, NPU tier | `speaker: … segs= windows=` | `segs=1 windows=1`, 9-15 s per window | |
+| sentences the decoder bounded, and how many survived | `speaker-sentences: sentences= spans=` | line did not exist | |
+| chunks that took the VAD route | `speaker: … route=vad` vs `route=geom` | all (`route=vad`) | |
+| standalone VAD cost per chunk | `VAD-standalone: … wallMs=` | 15-180 ms, median ~100 | |
+| embedding cost per chunk, against the 3,000 ms fence | `speaker: … embedMs=` | 84-832 ms, median ~260 | |
+| do labels still alternate at 2 min? at 3 min? | the panel, against the audio | **NO — collapsed to one speaker after ~2 min** | |
+| confirmed speakers, and when the first confirmation landed | `speaker: … confirmed=` | `confirmed=0` until seq 8 (~70 s) | |
+| any chunk running away to the 197-token budget | the panel; a chunk arriving as one repeated phrase | none seen | |
+| timestamp markup visible anywhere | the panel, a text field, the clipboard, a saved file | n/a (none emitted) | |
+
+**The cost question this session settles, and it is not the same as session 7's.** Per-sentence
+windows mean MORE fingerprints per chunk, not more VAD passes: the VAD pass is unchanged and
+`embedMs=` is where the new cost lands. Session 7's worst chunk was 832 ms for ONE window
+including the model's first load; four windows on the same 15 s of audio is the number to watch
+against the 3,000 ms finalize fence, and the LAST chunk of a session is where it bites.
+
+**Read the CPU side on the Tab S10+, separately, and do not merge the two.** AO9 asks that the
+committed text is IDENTICAL to 4.10.1 there and that the live words strip still fills (the DTW
+landmine's only user-visible symptom). AO10 asks the weaker question of the Fold6 on purpose —
+sane and complete text, no runaway — because dropping `<|notimestamps|>` re-conditions that
+decode and its text is not expected to be bit-identical. A single "the text looks fine" covering
+both devices is not an answer to either row.
