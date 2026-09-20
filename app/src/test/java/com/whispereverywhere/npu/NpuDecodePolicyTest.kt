@@ -221,7 +221,7 @@ class NpuDecodePolicyTest {
     /**
      * EOT must NEVER be in the always-on mask. It is in `beginSuppressList`, which applies at ONE
      * step; masking it at every step removes the loop's only early terminator and every segment
-     * runs the full 196 tokens of hallucinated filler.
+     * runs the full 197 tokens of hallucinated filler.
      */
     @Test
     fun eotIsSuppressedOnlyAtTheFirstGeneratedStepNeverThroughout() {
@@ -232,7 +232,7 @@ class NpuDecodePolicyTest {
         assertTrue(
             "EOT (${WhisperTokens.EOT}) must NOT be in the always-on suppressList — it is the " +
                 "decode loop's only terminator short of the 199-position cap, and masking it " +
-                "turns every segment into 196 tokens of filler.",
+                "turns every segment into 197 tokens of filler.",
             !NpuDecodePolicy.suppressList(WhisperTokens.SMALL).contains(WhisperTokens.EOT)
         )
     }

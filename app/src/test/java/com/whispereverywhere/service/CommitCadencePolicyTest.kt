@@ -160,7 +160,8 @@ class CommitCadencePolicyTest {
         // 4.0: npu joined the catalog and this pin fired, exactly as designed. The decision it
         // asked for: 1_200L — the FAST row. Same whisper-small weights as multi, but the encoder
         // runs on the Hexagon at ~405 ms sustained (spike-measured) against multi's 2.3 s fixed
-        // cost, and the decode is bounded at 196 tokens; the 6 s floor would have thrown the win
+        // cost, and the decode is bounded at 197 tokens (196 while the prompt still carried
+        // <|notimestamps|>, which 4.11 dropped); the 6 s floor would have thrown the win
         // away. Provisional on one spike pass — Q10a measures the full tier on device.
         // 4.1: npu-turbo joined and the pin fired again. The decision: 1_200L, the FAST row —
         // see npuTurboRidesTheFastRowOnItsPublishedFigures for the reasoning and its trigger.

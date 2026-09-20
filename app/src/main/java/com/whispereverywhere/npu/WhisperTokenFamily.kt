@@ -112,7 +112,14 @@ class WhisperTokenFamily(
     /** `<|nospeech|>`. Suppressed — a silent segment must terminate on EOT, not announce itself. */
     val noSpeech: Int = translate + 4
 
-    /** `<|notimestamps|>` — prompt token 3, and the reason a timestamp is a decode fault. */
+    /**
+     * `<|notimestamps|>`. It was prompt token 3 until 4.11, which is when this tier stopped
+     * asking the model NOT to say when: the timestamps are now the tier's only source of
+     * sentence timing (`NpuSentences`), so it is `NpuDecodePolicy.suppressList`'s newest entry
+     * rather than the prompt's last one — un-prompted AND un-masked it is a token the model can
+     * generate, and its arrival is invisible (it costs a decode position, silences every
+     * timestamp after it, and is dropped by the detokeniser without a trace).
+     */
     val noTimestamps: Int = translate + 5
 
     /** `<|0.00|>`. Every id from here to [vocab]` - 1` is a timestamp: [TIMESTAMP_SLOTS] of them. */

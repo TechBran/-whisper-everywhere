@@ -46,7 +46,11 @@ object WhisperTokens {
     /** `<|transcribe|>` — prompt token 2. One above [TRANSLATE], which is why both are named here. */
     const val TRANSCRIBE = 50359
 
-    /** `<|notimestamps|>` — prompt token 3, and the reason timestamps are a decode fault. */
+    /**
+     * `<|notimestamps|>`. Prompt token 3 until 4.11; since then it is SUPPRESSED instead, and
+     * the timestamps it used to turn off are what the NPU tier reads its sentence bounds off.
+     * See [WhisperTokenFamily.noTimestamps] and `NpuDecodePolicy.suppressList`.
+     */
     const val NO_TIMESTAMPS = 50363
 
     /** `<|0.00|>`. Every id from here to [VOCAB]`- 1` is a timestamp: 1501 of them. */

@@ -259,7 +259,9 @@ object CommitCadencePolicy {
             // npu rides the FAST row, not multi's 6 s, even though it is the same whisper-small
             // weights: the work moves to the Hexagon, where the spike measured the encoder at
             // ~405 ms sustained (1007 ms unvoted — a power-saver floor, not slow silicon) against
-            // multi's 2.3 s fixed cost, and the decode is bounded at 196 tokens. Pacing a 0.4 s
+            // multi's 2.3 s fixed cost, and the decode is bounded at 197 tokens (196 until 4.11
+            // dropped <|notimestamps|> from the prompt — the budget is MAX_POSITIONS minus the
+            // prompt's LENGTH, so a shorter prompt buys one more). Pacing a 0.4 s
             // encoder at a 6 s floor would discard the entire reason the tier exists. Provisional
             // on ONE spike-measured encoder pass; Q10a is the first full-tier device measurement.
             //

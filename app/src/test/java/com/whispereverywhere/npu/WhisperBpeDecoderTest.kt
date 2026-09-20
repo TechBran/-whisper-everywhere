@@ -155,7 +155,7 @@ class WhisperBpeDecoderTest {
 
     @Test
     fun aTruncatedMultiByteTailBecomesReplacementRatherThanThrowing() {
-        // Reachable, not hypothetical: `NpuDecodePolicy.maxTokensFor` caps a segment at 196 tokens
+        // Reachable, not hypothetical: `NpuDecodePolicy.maxTokensFor` caps a segment at 197 tokens
         // and the position cap at 199, either of which can cut mid-character. 49200 alone is
         // EC 95 88 EB — `안` followed by a lone lead byte. The user gets one bad glyph; they must
         // not get an exception from a finished transcription.
