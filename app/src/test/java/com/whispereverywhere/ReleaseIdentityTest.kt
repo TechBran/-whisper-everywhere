@@ -220,7 +220,7 @@ import org.junit.Test
  *
  * The tier that 102 changed passed its regression row on the way: one voice stayed one speaker,
  * and the cost stayed a fifth of the finalize fence
- * (`docs/measurements/2026-09-20-tab-411-timing-layer.md`).
+ * (`docs/measurements/2026-09-20-411-timing-layer-field.md`).
  *
  * **versionCode 102 = 4.11.0 — the MINOR moves, because the tier that labelled a CHUNK now labels
  * a SENTENCE.** 101 is spent: the owner installed 4.10.1 on his Z Fold6 and ran the controlled

@@ -1710,7 +1710,29 @@ AO10. **THE NPU TIER'S TEXT IS SANE AND COMPLETE, AND NOTHING RUNS AWAY TO THE B
     FAIL: `<|` anywhere in visible text; an ordinary sentence truncated mid-word; a chunk
     arriving as one phrase repeated dozens of times; a chunk arriving empty where speech was
     clearly present.
-    `[ ] PASS  [ ] FAIL   (ordinary text complete: ____ / no timestamp markup visible: ____ / no runaway: ____)`
+    `[x] PASS on the machine-readable half  [ ] FAIL   (ordinary text complete: OWNER-PENDING / no timestamp markup visible: OWNER-PENDING / no runaway: NONE, 45 of 45 decodes ended at EOT)`
+    **READ FROM THE DEVICE 2026-09-20** — the owner's own Z Fold6, running 102 from the internal
+    track, session 01:50:30-01:55:43 (5 min 13 s, 45 chunks, every one `route=vad`), 192 WE-DIAG
+    lines off the ring buffer. Analysed in
+    `docs/measurements/2026-09-20-411-timing-layer-field.md`.
+    **THE RUNAWAY HALF PASSES OUTRIGHT**, which was this row's real question. Un-suppressing the
+    timestamp range spends budget positions and re-conditions the decode, and none of it ran away:
+    **all 45 decodes terminated by EOT**, never by the budget; steps used ran p50 25 and worst 75
+    of 197; the re-based repetition cut reached **rung 0 on all 45**, so it never tripped and never
+    needed to; and the no-speech probability read **0.00 throughout**, so the 4.3.2 silence gate
+    still gets a sane number with timestamps on — the hardening question, answered on a device.
+    Encode p50 1,874 ms, decode p50 209 ms, worst 611 ms.
+    **AND THE GRANULARITY FIX IS LIVE**, which is AO8's question and is worth recording here
+    because the same lines carry it: 4.10.1 gave this tier ONE window per chunk always, and this
+    session ran **p50 2 windows and max 8**, with only 12 of 45 chunks single-windowed (each a
+    2-3 s chunk where one window is correct). `segs=1 windows=6 ids=[2,2,2,1,1,1]` is a speaker
+    change landing INSIDE one unbroken stretch of speech, and `segs=1 windows=8` is the same at
+    full stretch. The session held two speakers with 9 id changes across five minutes and the
+    retrospective pass answered 2 clusters at all ten of its passes, changing at most 3 labels —
+    so the report that started this work (*"after about two minutes they just stopped, and
+    everything just becomes one speaker"*) does not reproduce.
+    **WHAT IS STILL THE OWNER'S:** whether the visible text is complete and free of `<|` markup.
+    No log line can answer that — it is a reading of the panel, a text field and the clipboard.
 AO11. **THE BISECTION DID NOT INVENT A SPEAKER ON THE TIER THAT ALREADY WORKED — the regression
     row, and the one the suite cannot stand in for.** Every one of sessions 1-6 worked on the
     **Tab S10+**, and 4.11.0 changes what those sessions do: a fingerprint window at or over
@@ -1751,7 +1773,7 @@ AO11. **THE BISECTION DID NOT INVENT A SPEAKER ON THE TIER THAT ALREADY WORKED �
     `[x] PASS (a) and (c)  [ ] FAIL   (one voice: NO LABELS / two voices vs 4.10.1: OWNER-PENDING / segs= windows= typical: 2 segs, 4-6 windows / worst embedMs=: 600 / stop tap slower: no, 178-448 ms drain)`
     **READ FROM THE DEVICE 2026-09-20** — 4.11.0/102 sideloaded on the Tab S10+, 257 chunks and
     1,240 windows across five owner-driven sessions between 00:56 and 01:48, analysed in
-    `docs/measurements/2026-09-20-tab-411-timing-layer.md`.
+    `docs/measurements/2026-09-20-411-timing-layer-field.md`.
     **(a) PASSES OUTRIGHT.** The one-voice session ran nine chunks with one speaker, zero id
     changes, and never reached the second-speaker latch — no label was ever shown. The bisection
     invented nobody, which is the question this row was written for.

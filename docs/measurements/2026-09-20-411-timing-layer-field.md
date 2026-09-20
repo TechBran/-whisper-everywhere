@@ -1,9 +1,12 @@
-# 4.11.0 on the Tab S10+ — the timing layer's first field session
+# 4.11.0 in the field — the timing layer on both tiers, one night
 
-**Build:** 4.11.0 / versionCode 102, sideloaded release APK, installed 2026-09-20 00:55.
-**Device:** Galaxy Tab S10+ (the experiment device — never had the Play copy).
-**Tier:** CPU throughout. Every `speaker:` line carries `route=geom`, so this session says
-nothing about the NPU route; that one is the Fold6's to answer through the internal track.
+**Build:** 4.11.0 / versionCode 102, on BOTH devices — a sideloaded release APK on the tablet
+(installed 00:55) and the internal-track build on the phone.
+**Devices:** Galaxy Tab S10+ (the experiment device, never had the Play copy) for the CPU tiers,
+and the Z Fold6 (Play-installed from the internal track) for the NPU tier.
+**Tier:** CPU throughout on the tablet — every `speaker:` line there carries `route=geom`. The
+NPU route is answered separately below, from the **Z Fold6** running the same 102 off the internal
+track the same night.
 **Source:** 829 WE-DIAG lines, deduplicated from a live capture and the device ring buffer —
 257 `speaker:` lines over five sessions between 00:56 and 01:48, 1,240 windows in total.
 
@@ -122,8 +125,54 @@ The pass grows with the session: 0-2 ms early, **96 ms** at n=566. `MAX_RECLUSTE
 (600) bounds it, and it runs on the speaker thread below delivered text, so it is not near
 mattering yet. Worth re-reading on a session long enough to sit at the seed cap.
 
+## The Fold6, the same night — the NPU route answers
+
+**Build:** the same 4.11.0 / 102, installed from the **internal track** (`installerPackageName=
+com.android.vending`), so it carries Google's app-signing key and is the owner's own test path.
+**Session:** 01:50:30 to 01:55:43, **5 minutes 13 seconds**, 45 committed chunks, every one
+`route=vad` — the NPU tier. 192 WE-DIAG lines from the device ring buffer.
+
+**The one line that says the fix is live.** 4.10.1 gave that tier exactly ONE window per chunk,
+always, because its standalone endpointer returned one 9-15 s segment on hard-cut media. Now:
+
+| | 4.10.1 | this session |
+|---|---|---|
+| windows per chunk | **1, always** | **p50 2, max 8** |
+| single-window chunks | all of them | **12 of 45**, and those are the 2-3 s chunks where one window is right |
+| a speaker change inside one chunk | impossible | **seen**: `segs=1 windows=6 ids=[2,2,2,1,1,1]` |
+
+`segs=1 windows=8` on another chunk is the same thing at full stretch — one unbroken stretch of
+speech, no pause anywhere in it, cut into eight windows by the sentence bounds the QNN decoder now
+emits. That is the capability 4.11.0 was built for, working on the device that reported the
+failure.
+
+**And it held for the whole session, which is the original complaint.** The report that started
+this work was *"after about two minutes, they just stopped, and everything just becomes one
+speaker."* This session ran more than five minutes with ids alternating throughout — 9 changes
+across 45 chunks — and the retrospective pass answered **2 clusters at every one of its ten
+passes**, changing at most 3 labels. No collapse, no over-split, no drift.
+
+**AO10 passes outright — nothing ran away when the timestamp range was un-suppressed.** This was
+the real risk on this tier: dropping `<|notimestamps|>` re-conditions the decode and every emitted
+timestamp spends one of the 197 budget positions.
+
+| | |
+|---|---|
+| decodes that terminated by EOT | **45 of 45** — none hit the budget |
+| steps used | p50 **25**, worst **75** of 197 |
+| repetition-guard rung reached | **0 on all 45** — the re-based cut never tripped |
+| no-speech probability | **0.00 throughout**, so the 4.3.2 silence gate still reads a sane value |
+| encode / decode | p50 **1,874 ms** / **209 ms** |
+| fingerprinting | p50 **104 ms**, worst **343 ms** |
+| stop drain | **258 ms**, `settled=true` |
+
+Similarities on this material ran 0.69-0.89 — clean separation with nothing in the unsure band,
+the opposite of the tablet's mixed sessions. Two voices, cleanly cut, on a tier that could not cut
+them at all two builds ago.
+
 ## Still open
 
-- **The NPU route is unmeasured.** Sentence-granularity timing on that tier needs the Fold6 and
-  the internal track; nothing here touches it.
-- **Layer 2's gate** should be sized against the 16% unsure band above, not against a guess.
+- **The tablet's 39 s stall** (above) wants a second long session before it is called anything.
+- **AO11(b)** is still the owner's turn-by-turn read of two-voice text against 4.10.1.
+- **Layer 2's gate** should be sized against the tablet's 16% unsure band, not against a guess —
+  and the Fold6 session is the reminder that on clean material there is nothing for it to do.
