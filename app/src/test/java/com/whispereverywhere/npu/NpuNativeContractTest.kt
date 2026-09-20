@@ -3085,8 +3085,8 @@ class NpuNativeContractTest {
         val ladder = liveOffsets(body, "for (size_t rung = 0; rung < temperatures.size(); ++rung) {")
         val positions = liveOffsets(body, "for (uint32_t position = 0; position <= lastPosition; ++position) {")
         val nsp = liveOffsets(body, "noSpeechProb = noSpeechProbabilityLocked(")
-        val entropy = liveOffsets(body, "if (count > kEntropyWindow) {")
-        val cut = liveOffsets(body, "count = failedAt > kEntropyWindow ? failedAt - kEntropyWindow : 0;")
+        val entropy = liveOffsets(body, "if (textCount > kEntropyWindow) {")
+        val cut = liveOffsets(body, "count = cutTo;")
         assertTrue("one ladder loop; found ${ladder.size}", ladder.size == 1)
         assertTrue("one position loop; found ${positions.size}", positions.size == 1)
         assertTrue("one no-speech read; found ${nsp.size}", nsp.size == 1)
@@ -3119,6 +3119,75 @@ class NpuNativeContractTest {
         assertTrue(
             "cycleMaxDistinct must be refused below 1, with the failure text on exactly one live line",
             liveLines(body, "failure(\"decode: cycleMaxDistinct must be >= 1\")").size == 1
+        )
+    }
+
+    /**
+     * 4.11 TASK 3: THE REPETITION GUARD'S WINDOW HOLDS TEXT IDS ONLY.
+     *
+     * This is the one place where turning the timestamps back on could have silently disarmed a
+     * guard that exists because of an owner-reported runaway ("one word × 70-80", 2026-09-01).
+     * `out` now interleaves timestamp ids with the words, and timestamps INCREASE, so a window
+     * measured over the last 32 *entries* fills with singletons: a `<|t|><|t|> Thank you.` loop
+     * puts ~13 distinct timestamp ids in a 32-entry window, which pushes `distinct` past
+     * [NpuDecodePolicy.CYCLE_MAX_DISTINCT] (8) and the histogram entropy past
+     * [NpuDecodePolicy.ENTROPY_THOLD] (2.4 — two text ids at p=0.25 plus 16 singletons give
+     * 2.43). Both halves of the trip stop firing at once, and every other pin in this file stays
+     * green while the runaway walks to the 197-token budget.
+     *
+     * So the skip is pinned by text, in both places it has to hold: the walk inside
+     * `trailingEntropy` (which ids enter the histogram) and the step gate in the decode loop
+     * (when the window is deemed to exist). The threshold `kEotToken` is the same line
+     * [diagToken] draws between words and scaffolding, which is why neither needs its own list.
+     */
+    @Test
+    fun theRepetitionGuardsWindowSkipsTimestampsAndEveryOtherSpecial() {
+        val walk = functionBody(cpp, "double trailingEntropy(")
+        assertTrue(
+            "trailingEntropy must SKIP ids at or above kEotToken on exactly one live line — " +
+                "timestamps in the histogram lift both the distinct count and the entropy past " +
+                "their trips and disarm the cycle cut entirely",
+            liveLines(walk, "if (ids[static_cast<size_t>(i)] >= kEotToken) continue;").size == 1
+        )
+        assertTrue(
+            "the walk must run BACKWARDS from the newest id, because skipping forwards cannot " +
+                "know where 32 text ids back begins",
+            liveLines(walk, "for (int32_t i = count - 1; i >= 0 && n < kEntropyWindow; --i) {").size == 1
+        )
+        // Anchored on the SIGNATURE and on the walk's own assignment, not on the
+        // `*outWindowStart = start;` store: [liveLines] treats a trimmed line beginning with `*`
+        // as a doc-comment continuation, so a pin written on the store would be filtered out and
+        // fail against correct code. The two below say the same thing and are visible.
+        assertTrue(
+            "trailingEntropy must publish the window's START index: with specials between the " +
+                "text ids the window is wider than kEntropyWindow entries, so the cut cannot " +
+                "recompute it as count - kEntropyWindow",
+            liveLines(walk, "int32_t *outWindowStart) {").size == 1 &&
+                liveLines(walk, "start = i;").size == 1
+        )
+
+        val body = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(")
+        assertTrue(
+            "the decode loop must count TEXT ids for the window gate, on exactly one live line",
+            liveLines(body, "if (tok < kEotToken) ++textCount;").size == 1
+        )
+        assertTrue(
+            "the window gate must read textCount, not count — otherwise the first measurement " +
+                "happens over a window that holds fewer than 32 words",
+            liveLines(body, "if (textCount > kEntropyWindow) {").size == 1
+        )
+        assertTrue(
+            "the decode loop must READ the window start back out of trailingEntropy",
+            liveLines(body, "trailingEntropy(out, count, &distinctLast, &windowStart);").size == 1
+        )
+        assertTrue(
+            "the last-rung cut must drop to the tripping window's own start",
+            liveLines(body, "cutTo = windowStart;").size == 1 &&
+                liveLines(body, "count = cutTo;").size == 1
+        )
+        assertTrue(
+            "nothing may still compute the cut from the raw entry count",
+            liveLines(body, "failedAt - kEntropyWindow").isEmpty()
         )
     }
 

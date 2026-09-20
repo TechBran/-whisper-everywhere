@@ -145,6 +145,15 @@ object NpuDecodePolicy {
      * asks for spend two of the budget per sentence, which is a real cost this expression is the
      * only honest account of.
      *
+     * **That cost is the reason this tier is NOT covered by the plan's "the text must not change"
+     * constraint** (4.11 Task 3's fourth ruling). On the CPU tiers timing is genuinely additive;
+     * here the tier stopped prompting `<|notimestamps|>`, which re-conditions the decode, and the
+     * timestamps it emits spend budget positions — so a long chunk may truncate at a different
+     * token than it did at 4.10.1. Traded on purpose: one label for a 15 s chunk was the worse
+     * transcript. The guarantee that survives is the one §AO asks for on this tier — sane,
+     * complete text for an ordinary utterance, and no runaway reaching the budget (see
+     * [CYCLE_MAX_DISTINCT], whose window had to be re-based on text for that to stay true).
+     *
      * The arithmetic, spelled out because every part of it is off-by-one bait. `position` is the
      * single counter and the prompt consumes it too. Positions 0..198 execute — 199 of them, an
      * exact fit for the 199-deep self-KV, using 199 of the mask's 200 columns; 199 is the
@@ -207,6 +216,25 @@ object NpuDecodePolicy {
      * A 32-id window with this many distinct ids or fewer is a CYCLE; the entropy trip applies
      * only then. A comma list ("1, 2, 3, …") sits below the entropy threshold with ~17 distinct
      * ids and is legitimate dictation; the report-1 runaway has 1–3.
+     *
+     * ### The window counts TEXT ids only, and 4.11 Task 3 is why that had to be said out loud
+     *
+     * [suppressList] stopped masking the 1,501 timestamps, so the decoder's output array now
+     * interleaves them with the words. Timestamps INCREASE, which makes them the worst possible
+     * filler for a histogram of a repetition: a `<|t|><|t|> Thank you.` loop puts ~13 distinct,
+     * never-repeating timestamp ids into a 32-**entry** window, lifting `distinct` past this
+     * constant (8) and the entropy past [ENTROPY_THOLD] (two text ids at p=0.25 plus 16
+     * singletons give 2.43 > 2.40). Both halves of the trip would stop firing at once and the
+     * runaway would reach the token budget — the "one word × 70-80" the guard was added for,
+     * re-opened by a change made in the prompt.
+     *
+     * So `trailingEntropy` in `qnn_asr.cpp` walks BACKWARDS past every id at or above EOT and
+     * histograms 32 text ids, and the last-rung cut drops to that window's own start index
+     * rather than to `count - 32`. whisper.cpp scores timestamps into its own entropy, but it
+     * also enforces the stateful pair/increase/bound discipline this tier's one static array
+     * cannot carry (see [suppressList]), so the two windows are not measuring the same stream.
+     * On a stream with no timestamps in it the behaviour is byte-for-byte the pre-4.11 one.
+     * Pinned by `NpuNativeContractTest.theRepetitionGuardsWindowSkipsTimestampsAndEveryOtherSpecial`.
      */
     const val CYCLE_MAX_DISTINCT = 8
     /** The fallback ladder, `temperature = 0` then `+= temperature_inc` (whisper.cpp:7134). */

@@ -2059,15 +2059,32 @@ int32_t suppressThenSample(uint16_t *logits, uint32_t vocab,
 /// kEntropyWindow ids, -sum(p ln p). Id-based - no probabilities involved. [outDistinct] receives
 /// the histogram's size - how many distinct ids the window holds (0 when there is no window) -
 /// which is what tells a cycle from a merely low-entropy list.
-double trailingEntropy(const std::vector<int32_t> &ids, int32_t count, int32_t *outDistinct) {
-    const int32_t n = count < kEntropyWindow ? count : kEntropyWindow;
-    if (n <= 0) {
-        *outDistinct = 0;
-        return 0.0;
-    }
+///
+/// THE WINDOW IS THE LAST kEntropyWindow **TEXT** IDS, not the last kEntropyWindow entries of
+/// [ids] (4.11 Task 3). Every id at or above [kEotToken] - the timestamps this tier now emits,
+/// and any other special that reaches `out` - is SKIPPED on the way back and contributes nothing
+/// to the histogram. The reason is at the call site: timestamps increase, so a repetition loop
+/// that carries them would fill a raw window with singleton ids and lift both the distinct count
+/// and the entropy above the trip, disabling the guard precisely where it is needed. On a stream
+/// that holds no specials this is identical to the old walk, term for term.
+///
+/// [outWindowStart] receives the index in [ids] where that window begins - the first text id of
+/// the 32, or [count] when the window is empty. It is what the last-rung cut drops to, and it
+/// cannot be recomputed as `count - kEntropyWindow` once specials sit between the text ids.
+double trailingEntropy(const std::vector<int32_t> &ids, int32_t count, int32_t *outDistinct,
+                       int32_t *outWindowStart) {
     std::map<int32_t, int> hist;
-    for (int32_t i = count - n; i < count; ++i) hist[ids[static_cast<size_t>(i)]]++;
+    int32_t n = 0;
+    int32_t start = count;
+    for (int32_t i = count - 1; i >= 0 && n < kEntropyWindow; --i) {
+        if (ids[static_cast<size_t>(i)] >= kEotToken) continue;   // a special carries no text
+        hist[ids[static_cast<size_t>(i)]]++;
+        ++n;
+        start = i;
+    }
     *outDistinct = static_cast<int32_t>(hist.size());
+    *outWindowStart = start;
+    if (n <= 0) return 0.0;
     double h = 0.0;
     for (const auto &kv : hist) {
         const double p = kv.second / static_cast<double>(n);
@@ -3000,10 +3017,20 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
 
 /// THE WHOLE GREEDY DECODE LOOP FOR ONE SEGMENT, in one JNI call.
 ///
-/// [jPrompt] is `[SOT, <|lang|>, TRANSCRIBE, NO_TIMESTAMPS]` from `NpuDecodePolicy`; [jSuppress] is
-/// the always-on mask (88 generation-config ids + 1501 timestamps); [jBeginSuppress] is `[220,
-/// EOT]`, applied at the FIRST GENERATED step only. Writes at most [maxTokens] ids into [jOut] and
-/// returns the count, or a negative number with the reason in `nativeLastError()`.
+/// [jPrompt] is `[SOT, <|lang|>, TRANSCRIBE]` from `NpuDecodePolicy`; [jSuppress] is the always-on
+/// mask (88 generation-config ids + `<|notimestamps|>`); [jBeginSuppress] is `[220, EOT]`, applied
+/// at the FIRST GENERATED step only. Writes at most [maxTokens] ids into [jOut] and returns the
+/// count, or a negative number with the reason in `nativeLastError()`.
+///
+/// 4.11 TASK 3 INVERTED THOSE TWO ARRAYS, and this function depends on the new shape. The prompt
+/// LOST `<|notimestamps|>` (four tokens to three, so the budget is 197 rather than 196) and the
+/// mask LOST the 1,501 timestamp ids and GAINED `<|notimestamps|>` — the token is no longer
+/// prompted, so the model could otherwise generate it, and its arrival is invisible (the
+/// detokeniser drops every id above EOT) while it silences every timestamp after it. The
+/// timestamps are now deliberately EMITTED: `NpuSentences` reads sentence bounds off them, which
+/// is the tier's only source of timing. So [jOut] interleaves timestamp ids with text ids, and
+/// anything here that reasons about the emitted stream must say which kind it means — see the
+/// text-only entropy window at the repetition guard below.
 ///
 /// `position` is the single counter and the prompt consumes it too: positions 0..promptLen-1 feed
 /// the prompt through the same execute path, and the argmax produced at `position == promptLen - 1`
@@ -3066,7 +3093,7 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     // Q10a-D, THE OPEN QUESTION, AND THE ANSWER TAKEN. `lastPosition = maskLen - 1` (199) is also
     // arithmetically exact: at p=199 the mask's `firstLive` is 0, so all 200 columns are live -
     // 199 cache slots holding positions 0..198 plus the current token's own key - and it would buy
-    // one extra token in 196. IT IS DECLINED, and the reason is a property of that position rather
+    // one extra token in 197. IT IS DECLINED, and the reason is a property of that position rather
     // than caution in general: p=199 is the first and only step in a segment at which the graph's
     // `Slice` discards a REAL cache entry instead of never-written padding, so it is the first step
     // whose correctness depends on the DIRECTION of that Slice - and this file's own comment in
@@ -3180,11 +3207,15 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         std::mt19937 rng(0x5EEDu ^ static_cast<uint32_t>(rung));   // deterministic per rung
         zeroSelfKvLocked();
         count = 0;
+        // Emitted ids BELOW kEotToken. The entropy window is measured over text alone (4.11 Task
+        // 3), so the step at which the window first exists is counted in text, not in entries.
+        int32_t textCount = 0;
         firstGenerated = -1;             // the result line names THIS rung's first token
         hitEot = false;
         double sumLogprob = 0.0;
         bool failedEntropy = false;
-        int32_t failedAt = 0;
+        int32_t windowStart = 0;         // trailingEntropy's answer for the step just measured
+        int32_t cutTo = 0;               // where a tripping window began: the last-rung cut's new count
         int32_t next = prompt[0];
         entropyLast = 0.0;
         distinctLast = 0;
@@ -3317,17 +3348,36 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
             }
             out[static_cast<size_t>(count)] = tok;
             ++count;
+            if (tok < kEotToken) ++textCount;
             // 4.3.1 A: THE REPETITION GUARD, IN-LOOP. whisper.cpp scores the finished sequence
             // (:7807) because its decoders run batched; this loop is step-wise, so the same
             // 32-id histogram entropy is checked at every step past the window and a runaway dies
-            // at ~33-40 tokens instead of at the 196-token budget.
-            if (count > kEntropyWindow) {
-                entropyLast = trailingEntropy(out, count, &distinctLast);
+            // at ~33-40 text tokens instead of at the 197-token budget.
+            //
+            // 4.11 TASK 3: THE WINDOW COUNTS TEXT IDS ONLY, and that is what keeps this guard the
+            // strength it was. Since the tier stopped suppressing timestamps, `out` interleaves
+            // them with the words, and a window measured over the RAW last 32 emitted ids would
+            // be diluted by exactly the ids a runaway keeps changing: `<|t|><|t|> Thank you.`
+            // repeated puts ~13 distinct, ever-increasing timestamp ids into a 32-id window, so
+            // `distinct` climbs past cycleMaxDistinct (8) AND the histogram's entropy climbs past
+            // entropyThold (two text ids at p=0.25 plus 16 singleton timestamps gives H = 2.43 >
+            // 2.40). BOTH halves of the test stop firing and the runaway reaches the budget - the
+            // "one word x 70-80" report the guard was added for, re-opened by a change made
+            // somewhere else entirely. whisper.cpp scores timestamps into its own entropy, but it
+            // also has the stateful pair mask and `seek_delta` segmenting that this tier's one
+            // static suppress array cannot carry, so its window and ours do not hold the same
+            // thing. Text-only restores the pre-4.11 contents exactly: on a stream with no
+            // timestamps in it the window, the trip and the cut are byte-for-byte what they were.
+            if (textCount > kEntropyWindow) {
+                entropyLast = trailingEntropy(out, count, &distinctLast, &windowStart);
                 entropyMeasured = true;
                 // A cycle signature, not merely low entropy: a comma list is legitimate.
                 if (entropyLast < entropyThold && distinctLast <= cycleMaxDistinct) {
                     failedEntropy = true;
-                    failedAt = count;
+                    // Where the tripping window BEGINS in `out`, which is what the cut drops.
+                    // Not `count - kEntropyWindow`: the window spans 32 TEXT ids and the
+                    // timestamps between them, so its start is further back than 32 entries.
+                    cutTo = windowStart;
                     break;
                 }
             }
@@ -3354,8 +3404,11 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
             if (failedEntropy) {
                 // THE ONE DEVIATION FROM THE REFERENCE (spec A, step 3): the reference emits the
                 // last rung whatever it is, and that is exactly report 1. Keep the prefix before
-                // the window that tripped; drop the loop.
-                count = failedAt > kEntropyWindow ? failedAt - kEntropyWindow : 0;
+                // the window that tripped; drop the loop. `cutTo` is that window's own start
+                // index in `out` (4.11 Task 3) - with timestamps interleaved the window is wider
+                // than kEntropyWindow entries, so the arithmetic that used to compute it here
+                // would keep part of the loop.
+                count = cutTo;
                 terminator = kTermCut;
             }
             break;                                            // a low-confidence last rung stands
