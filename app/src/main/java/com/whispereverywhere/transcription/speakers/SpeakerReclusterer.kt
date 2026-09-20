@@ -64,8 +64,10 @@ data class WindowKey(val seq: Long, val windowIndex: Int)
  *     every `within` — inside [0.06, 0.31], and 0.30 is the top of that window. See
  *     [RECLUSTER_SIM] for what the first shipped value (0.40, outside two of the three gaps)
  *     did to the 03:02 and 03:05 sessions.
- *  4. **A cluster is a SPEAKER only above a mass** — [MIN_CLUSTER_SECONDS] of total duration AND
- *     at least [MIN_CLUSTER_FINGERPRINTS] windows. Everything below is absorbed into the nearest
+ *  4. **A cluster is a SPEAKER only above a mass, and only within the cap** —
+ *     [MIN_CLUSTER_SECONDS] of total duration AND at least [MIN_CLUSTER_FINGERPRINTS] windows,
+ *     and at most `maxSpeakers` of them — the tracker's own number, longest-speaking first.
+ *     Everything below the bar, and everything past the cap, is absorbed into the nearest
  *     confirmed cluster, and if nothing at all clears the bar the whole session is ONE speaker —
  *     a [Relabel] with `confirmedCount = 0`, which is a pass saying it concluded NOTHING and
  *     which a caller must therefore not publish (see [oneSpeaker] and `SpeakerAssigner`).
@@ -99,8 +101,9 @@ data class WindowKey(val seq: Long, val windowIndex: Int)
  * Together, a few hundred milliseconds at the cap on the owner's Tab, on the `speaker-embed`
  * thread, below text that was delivered long ago. 600 seeds is roughly 25 minutes of speech.
  *
- * The cap is on the seeds and NOT on the answer: every window handed to [recluster] is labelled,
- * whatever the cap did, and the extra terms that costs are linear — one normalisation, one
+ * THAT cap — [MAX_RECLUSTER_FINGERPRINTS] — is on the seeds and NOT on the answer; the SPEAKER
+ * cap, `maxSpeakers`, is the one that bounds the answer (step 4 above). Every window handed to
+ * [recluster] is labelled, whatever the seed cap did, and the extra terms that costs are linear — one normalisation, one
  * `argmax` lookup and one map entry per window. That distinction is load-bearing rather than
  * tidy. A window this pass does not name keeps the id it was last given, and after the very
  * next [SpeakerTracker.reseed] renumbers the id space that id can denote a DIFFERENT person; so
@@ -167,7 +170,8 @@ object SpeakerReclusterer {
      * **600** — the most fingerprints one pass lets VOTE, the newest kept. It bounds an O(k²)
      * pass on a phone (see the class KDoc's arithmetic) at roughly 25 minutes of speech.
      *
-     * It caps the SEEDS and not the answer. A window past the cap stops defining clusters and is
+     * It caps the SEEDS and not the answer — the SPEAKER count is bounded separately, by
+     * `maxSpeakers` in [recluster]. A window past this cap stops defining clusters and is
      * labelled like any other window too thin to vote — by the company it keeps (step 5) — so
      * every window the caller still holds is named by every pass. It used to cap the input, and
      * that was a defect: an unnamed window keeps an id from BEFORE the next
@@ -241,7 +245,8 @@ object SpeakerReclusterer {
      *        including the ones with no usable vector. EXACT, and the one a caller that can
      *        address windows should use.
      * @param clusters the speakers, in id order (so `clusters[i].id == i + 1`).
-     * @param clusterCount how many speakers the session has, retrospectively.
+     * @param clusterCount how many speakers the session has, retrospectively — at most
+     *        `maxSpeakers`, the cap [recluster] was given.
      * @param confirmedCount how many of them cleared the mass bar — the number the panel's latch
      *        is a threshold on ([SpeakerLabels.MIN_CONFIRMED_SPEAKERS]), and the number a caller
      *        decides whether to publish this pass at all on. It is 0 for the degenerate answer
@@ -274,7 +279,7 @@ object SpeakerReclusterer {
      * the earlier fingerprint and the lower cluster index, because a relabel that flickered
      * between two equally good answers would rewrite the panel for nothing.
      */
-    fun recluster(fingerprints: List<Fp>): Relabel {
+    fun recluster(fingerprints: List<Fp>, maxSpeakers: Int = SpeakerTracker.MAX_SPEAKERS): Relabel {
         val kept = fingerprints
         val n = kept.size
         if (n == 0) return Relabel.NOTHING
@@ -344,11 +349,77 @@ object SpeakerReclusterer {
         // anything moves — like SpeakerTracker.endChunk, and for the same reason: otherwise the
         // answer would depend on the order the leftovers happen to sit in.
         val liveIndices = (0 until k).filter { live[it] }
-        val confirmed = liveIndices.filter {
+        val qualified = liveIndices.filter {
             mass[it] >= MIN_CLUSTER_SECONDS && members[it].size >= MIN_CLUSTER_FINGERPRINTS
         }
-        if (confirmed.isEmpty()) return oneSpeaker(kept, unit)
+        if (qualified.isEmpty()) return oneSpeaker(kept, unit)
+        // THE CAP BINDS THE ANSWER, not only the seeds, and it is [SpeakerTracker]'s number
+        // rather than a second copy of it. [SpeakerTracker.reseed] installs one LIVE voice per
+        // cluster returned here, so a pass answering with more clusters than the tracker may
+        // hold leaves it holding more live voices than [SpeakerTracker.maxSpeakers] — which
+        // breaks the bound [SpeakerTracker.speakerCount] documents about itself. A 24-minute
+        // session on the Tab S10+ (4.11.0, 2026-09-20 01:35) reached `clusters=11 confirmed=11`
+        // against a cap of 8 and stayed over it to the end.
+        //
+        // WHAT THIS EARNS, stated exactly, because the neighbouring claim is easy to make and
+        // wrong. The online path opens a new speaker only while `liveCount < maxSpeakers`, and
+        // AT the cap that guard is false too — capping to 8 does NOT give the tracker back the
+        // ability to open a ninth voice, and nothing here should be read as saying it does. What
+        // it does give: the tracker's live count honours its own documented bound; the label
+        // space handed to the panel stops drifting upward past the cap; and because every pass
+        // re-decides WHICH speakers survive, a person who out-speaks the weakest survivor takes
+        // that slot at the next pass rather than being locked out for the session.
+        //
+        // AND WHAT IT COSTS, on material the cap is genuinely too small for: nine real people
+        // used to come back as nine clusters, all separated, with only the online path jammed.
+        // Now the ninth is merged into whoever they most resemble. That is the cap's price, not
+        // this trim's — [SpeakerTracker.MAX_SPEAKERS] is the single place to change if sessions
+        // routinely hold more people than it allows. The session that prompted this held one or
+        // two real voices and answered eleven, which is the over-split the other way.
+        //
+        // Over the cap the speakers who SPOKE LONGEST keep their identity and the rest become
+        // leftovers, which is not a new disposal rule: they fall into the absorption loop below
+        // that every sub-bar cluster already goes through, so each is merged into the confirmed
+        // speaker it most resembles and no window is dropped. Speech time decides because it is
+        // the same quantity [MIN_CLUSTER_SECONDS] already uses to decide that a cluster is a
+        // person at all; the index breaks a tie, so the answer never depends on hash order.
+        //
+        // A NaN duration cannot reach this sort — `mass[it] >= MIN_CLUSTER_SECONDS` is false for
+        // NaN, and a seed needed `durSec >= MIN_CLUSTERED_SECONDS` before that — which is worth
+        // writing down because the failure would be the bad one: boxed `Double.compareTo`
+        // total-orders NaN as the LARGEST value, so a NaN-mass cluster would sort FIRST and take
+        // a cap slot ahead of a real speaker. Two gates stand between that and here.
+        val cap = maxOf(1, maxSpeakers)
+        val confirmed =
+            if (qualified.size <= cap) {
+                qualified
+            } else {
+                qualified.sortedWith(compareByDescending<Int> { mass[it] }.thenBy { it })
+                    .take(cap)
+                    .sorted()
+            }
         val isConfirmed = confirmed.toHashSet()
+        // A SURVIVOR'S IDENTITY IS ITS OWN WINDOWS, snapshotted HERE — before anything is
+        // absorbed into it. [Cluster.longest] is the seed set [SpeakerTracker.reseed] rebuilds a
+        // live voice from, and absorption is by construction a merge of things this pass just
+        // proved are NOT one voice: step 3 already merged every pair that reached
+        // [RECLUSTER_SIM], so whatever the loop below absorbs sits UNDER 0.30 of its anchor.
+        // Letting those windows into the seed set hands the tracker a survivor whose recent set
+        // answers ~1.0 to the WRONG person — and `credit` would then push that person's next
+        // vector in as well, evicting the survivor from its own id.
+        //
+        // The absorbed windows still take the survivor's LABEL; that disposal rule is unchanged.
+        // They just do not become its VOICE.
+        //
+        // The speaker cap made this urgent rather than introducing it: a sub-bar leftover fails
+        // `mass >= MIN_CLUSTER_SECONDS` or holds a single window, so it rarely owned a window
+        // long enough to win [longest]'s duration sort, while every cluster the cap trims
+        // cleared that bar and lost only on RELATIVE mass — its windows are long and would
+        // routinely win. A snapshot taken here also holds SEEDS only, each at least
+        // [MIN_CLUSTERED_SECONDS], so step 5's thin attachments cannot seed a voice either: a
+        // 1.0 s window is labelled, never a voter.
+        val ownMembers = HashMap<Int, List<Int>>(confirmed.size * 2)
+        for (c in confirmed) ownMembers[c] = members[c].toList()
         for (c in liveIndices) {
             if (c in isConfirmed) continue
             var into = confirmed.first()
@@ -408,7 +479,8 @@ object SpeakerReclusterer {
                 confirmed = c in isConfirmed,
                 totalSec = held.sumOf { kept[it].durSec.toDouble() }.toFloat(),
                 fingerprints = held.size,
-                longest = longest(held, kept, unit),
+                // NOT `held`: identity is the cluster's own PRE-absorption windows.
+                longest = longest(ownMembers.getValue(c), kept, unit),
             )
         }
         return Relabel(

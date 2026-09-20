@@ -1748,7 +1748,27 @@ AO11. **THE BISECTION DID NOT INVENT A SPEAKER ON THE TIER THAT ALREADY WORKED �
     numbers on the two-voice clip; fewer turns labelled than 4.10.1 labelled; `embedMs=`
     approaching 3,000 on any chunk, or the last chunk of a session losing its labels (that is the
     fence, and it is the suspect named in the limitations below).
-    `[ ] PASS  [ ] FAIL   (one voice: no labels ____ / two voices vs 4.10.1: better / same / worse ____ / segs= windows= typical: ____ / worst embedMs=: ____ / stop tap slower: ____)`
+    `[x] PASS (a) and (c)  [ ] FAIL   (one voice: NO LABELS / two voices vs 4.10.1: OWNER-PENDING / segs= windows= typical: 2 segs, 4-6 windows / worst embedMs=: 600 / stop tap slower: no, 178-448 ms drain)`
+    **READ FROM THE DEVICE 2026-09-20** — 4.11.0/102 sideloaded on the Tab S10+, 257 chunks and
+    1,240 windows across five owner-driven sessions between 00:56 and 01:48, analysed in
+    `docs/measurements/2026-09-20-tab-411-timing-layer.md`.
+    **(a) PASSES OUTRIGHT.** The one-voice session ran nine chunks with one speaker, zero id
+    changes, and never reached the second-speaker latch — no label was ever shown. The bisection
+    invented nobody, which is the question this row was written for.
+    **(c) PASSES with room.** `windows=` sits at a median of 4-6 per chunk against `segs=` of 1-3;
+    window length is p50 2.2 s, p95 3.5 s, and only 4 of 1,240 windows exceeded the 4.0 s cut
+    (each a stretch the endpointer kept but whisper put no words inside, so there was no token
+    edge to cut at — the fail-downhill rule, working). `embedMs=` is p50 320, p90 444, worst
+    **600**, a fifth of the fence; the four stop taps drained in 178-448 ms and all reported
+    `settled=true`.
+    **(b) IS STILL THE OWNER'S**, because it is a turn-by-turn reading of text and no log line
+    can stand in for it. What the logs do say is that nothing regressed structurally: every new
+    speaker was opened on an ordinary 1.6-3.6 s window at 0.09-0.29 similarity, which is `T_NEW`
+    doing its job, and no window over 4.0 s opened anybody.
+    **ONE DEFECT CAME OUT OF THIS SESSION AND IS FIXED**: the retrospective pass could answer
+    with more clusters than `SpeakerTracker.MAX_SPEAKERS` (session 3 logged `clusters=11`), which
+    permanently retires the online tracker's ability to open a new speaker for the rest of that
+    session. The cap is now the tracker's own and binds the answer. That fix is NOT in 102.
 
 ### Known limitations of §AO, stated rather than discovered later
 

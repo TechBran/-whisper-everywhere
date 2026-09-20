@@ -357,6 +357,12 @@ class SpeakerWiringPinTest {
         // executor. On Main the pass would block the panel it is about to repaint; on the
         // whisper thread it would sit inside the commit floors spec §3.3 measured without it.
         assertEquals("the assigner is the only caller", 1, count(assigner, "SpeakerReclusterer.recluster("))
+        // …AND IT PASSES THE TRACKER'S OWN CAP. `recluster`'s `maxSpeakers` defaults to
+        // SpeakerTracker.MAX_SPEAKERS, so dropping the argument would compile, pass every other
+        // test and be identical today — and then diverge the moment a tracker is built with a
+        // different cap, leaving the pass free to answer with more live voices than the tracker
+        // it reseeds may hold. The argument is the whole point of the parameter; pin it.
+        at(assigner, "SpeakerReclusterer.recluster(session, tracker.maxSpeakers)", "SpeakerAssigner.kt")
         assertEquals(0, count(service, "SpeakerReclusterer.recluster("))
         assertEquals(0, count(engine, "SpeakerReclusterer.recluster("))
         // The service receives the ANSWER and never runs the pass: a relabel arrives as a

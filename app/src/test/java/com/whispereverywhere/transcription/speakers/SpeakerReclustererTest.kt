@@ -471,4 +471,155 @@ class SpeakerReclustererTest {
             SpeakerReclusterer.MIN_CLUSTERED_SECONDS > SpeakerTracker.MIN_EMBED_SECONDS,
         )
     }
+
+    // ------------------------------------------------- the cap the two halves have to share
+
+    /**
+     * [count] windows of ONE speaker whose base direction is a dimension of its own, so two
+     * different speakers built this way are exactly ORTHOGONAL — cosine 0, far below
+     * [SpeakerReclusterer.RECLUSTER_SIM], which is what lets a test ask for twelve voices that
+     * cannot merge. [measuredVoice] cannot: its bases live on one plane, where a twelfth voice
+     * is necessarily close to some other.
+     */
+    private fun orthogonalVoice(
+        speaker: Int,
+        count: Int,
+        durSec: Float,
+        onlineId: Int,
+    ): List<SpeakerReclusterer.Fp> {
+        val within = 0.9
+        val alpha = kotlin.math.sqrt(within).toFloat()
+        val noise = kotlin.math.sqrt(1.0 - within).toFloat()
+        return (0 until count).map { i ->
+            val v = FloatArray(192)
+            v[speaker] = alpha
+            v[24 + speaker * 8 + i] = noise
+            SpeakerReclusterer.Fp(
+                windowKey = WindowKey(nextSeq++, 0),
+                emb = v,
+                durSec = durSec,
+                onlineId = onlineId,
+            )
+        }
+    }
+
+    /**
+     * TWELVE separable voices, each holding enough speech to be confirmed, against a cap of
+     * eight.
+     *
+     * The cap is not this pass's own taste: [SpeakerTracker.reseed] installs one live voice per
+     * cluster this returns, and past [SpeakerTracker.MAX_SPEAKERS] live voices the online path
+     * can never open another speaker for the rest of the session — every later unheard voice is
+     * handed to the closest one it already knows. So a pass that answers with more clusters than
+     * the tracker may hold does not merely overcount: it retires the tracker's ability to find
+     * anyone new. A 24-minute tablet session on 4.11.0 did exactly that, logging
+     * `clusters=11 confirmed=11`.
+     */
+    @Test
+    fun theAnswerHonoursTheSameSpeakerCapTheTrackerDoes() {
+        val speakers = (0 until 12).map { s ->
+            // Distinct speech times, so "the eight longest survive" has ONE answer: 9 s … 25.5 s.
+            orthogonalVoice(speaker = s, count = 3, durSec = 3f + 0.5f * s, onlineId = s + 1)
+        }
+        val session = speakers.flatten()
+
+        val relabel = SpeakerReclusterer.recluster(session)
+
+        assertEquals(
+            "twelve separable voices, capped at what the tracker can hold",
+            SpeakerTracker.MAX_SPEAKERS,
+            relabel.clusterCount,
+        )
+        assertEquals("…and every survivor is a confirmed speaker", SpeakerTracker.MAX_SPEAKERS, relabel.confirmedCount)
+        assertEquals(
+            "ids stay dense and 1-based, which is what reseed's own guard requires",
+            (1..SpeakerTracker.MAX_SPEAKERS).toList(),
+            relabel.clusters.map { it.id },
+        )
+        // The four briefest voices are absorbed rather than dropped: every window still has a label.
+        assertEquals(session.size, relabel.windowLabels.size)
+        assertTrue(
+            "no window is labelled past the cap",
+            relabel.windowLabels.values.all { it in 1..SpeakerTracker.MAX_SPEAKERS },
+        )
+        // The eight LONGEST-SPEAKING voices are the ones that survive as speakers of their own.
+        val longest = speakers.takeLast(SpeakerTracker.MAX_SPEAKERS)
+        assertEquals(
+            "each of the eight longest-speaking voices keeps a label nobody else shares",
+            SpeakerTracker.MAX_SPEAKERS,
+            longest.map { v -> relabel.windowLabels.getValue(v.first().windowKey) }.toSet().size,
+        )
+        for (v in longest) {
+            assertEquals(
+                "…and that voice's windows are not split across labels",
+                1,
+                v.map { relabel.windowLabels.getValue(it.windowKey) }.toSet().size,
+            )
+        }
+    }
+
+    /** The cap is the TRACKER's, not a second copy of the number. */
+    @Test
+    fun theCapIsTakenFromTheTrackerAndCanBeLowered() {
+        val session = (0 until 5).map { s ->
+            orthogonalVoice(speaker = s, count = 3, durSec = 3f + 0.5f * s, onlineId = s + 1)
+        }.flatten()
+
+        assertEquals(5, SpeakerReclusterer.recluster(session).clusterCount)
+        assertEquals(3, SpeakerReclusterer.recluster(session, maxSpeakers = 3).clusterCount)
+        val one = SpeakerReclusterer.recluster(session, maxSpeakers = 1)
+        assertEquals(1, one.clusterCount)
+        // …and a cap of one is still a PUBLISHED answer, not the degenerate [oneSpeaker], whose
+        // `confirmedCount` is 0 and which a caller is required not to publish. Routing cap=1
+        // through that path would silently un-publish every pass on a one-speaker cap.
+        assertEquals("a capped answer is confirmed, not degenerate", 1, one.confirmedCount)
+    }
+
+    /**
+     * A TRIMMED CLUSTER'S WINDOWS TAKE THE SURVIVOR'S LABEL AND NEVER ITS VOICE.
+     *
+     * [SpeakerReclusterer.Cluster.longest] is the seed set [SpeakerTracker.reseed] rebuilds a live
+     * voice from, and absorption is by construction a merge of two things this pass just proved
+     * are NOT one voice — step 3 merged every pair that reached
+     * [SpeakerReclusterer.RECLUSTER_SIM], so an absorbed cluster sits under 0.30 of its anchor.
+     * The speaker cap made that dangerous: a sub-bar leftover is short and rarely wins the
+     * duration sort, but a cluster the CAP trims cleared [SpeakerReclusterer.MIN_CLUSTER_SECONDS]
+     * and lost only on relative mass, so its long windows would take the survivor's seed slots
+     * and the tracker would answer ~1.0 to the wrong person.
+     *
+     * The fixture is the smallest shape that shows it: the surviving speaker A holds five 1.6 s
+     * windows (mass 8.0) and the trimmed speaker I holds two 3.9 s ones (mass 7.8), so on
+     * duration alone I's windows beat every one of A's.
+     */
+    @Test
+    fun aTrimmedClustersWindowsDoNotBecomeTheSurvivorsVoice() {
+        // A first, so first-appearance numbering makes it id 1 — and lowest index, so the
+        // orthogonal leftover (every similarity exactly 0.0) is absorbed into it.
+        val a = orthogonalVoice(speaker = 0, count = 5, durSec = 1.6f, onlineId = 1)
+        val others = (1..7).map { s ->
+            orthogonalVoice(speaker = s, count = 3, durSec = 3f, onlineId = s + 1)
+        }
+        val trimmed = orthogonalVoice(speaker = 8, count = 2, durSec = 3.9f, onlineId = 9)
+        val session = a + others.flatten() + trimmed
+
+        val relabel = SpeakerReclusterer.recluster(session)
+
+        assertEquals("nine qualify, eight survive", 8, relabel.clusterCount)
+        val labelOfA = relabel.windowLabels.getValue(a.first().windowKey)
+        assertEquals("A spoke first", 1, labelOfA)
+        assertEquals(
+            "the trimmed voice is absorbed into A rather than dropped",
+            listOf(labelOfA, labelOfA),
+            trimmed.map { relabel.windowLabels.getValue(it.windowKey) },
+        )
+        // THE POINT: every vector A is reseeded from is one of A's OWN windows. Each
+        // orthogonalVoice puts its base weight in dimension `speaker`, so dimension 0 carries A
+        // and dimension 8 carries the trimmed voice.
+        val seeds = relabel.clusters.single { it.id == labelOfA }.longest
+        assertEquals("A has five windows of its own and RECENT_K is five", 5, seeds.size)
+        for (v in seeds) {
+            assertTrue("a seed of A points along A's own direction", v[0] > 0.5f)
+            assertTrue("…and carries nothing of the trimmed voice", v[8] < 0.01f)
+        }
+    }
 }

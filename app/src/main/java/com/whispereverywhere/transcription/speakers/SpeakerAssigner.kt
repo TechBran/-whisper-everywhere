@@ -690,7 +690,9 @@ class SpeakerAssigner(
         reclusteredAt = fingerprintsTaken
 
         val startedNs = clockNs()
-        val relabel = SpeakerReclusterer.recluster(session)
+        // The tracker's OWN cap, so the two halves can never disagree about how many
+        // speakers a session may hold — this pass's answer is reseeded into that tracker.
+        val relabel = SpeakerReclusterer.recluster(session, tracker.maxSpeakers)
         val costMs = (clockNs() - startedNs) / 1_000_000L
         if (relabel.windowLabels.isEmpty()) return
         if (relabel.confirmedCount < SpeakerLabels.MIN_CONFIRMED_SPEAKERS) return

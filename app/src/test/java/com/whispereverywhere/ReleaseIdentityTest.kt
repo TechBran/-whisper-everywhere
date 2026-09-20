@@ -185,6 +185,43 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 103 = 4.11.1 — the speaker cap binds the ANSWER, not only the seeds.** 102 is
+ * spent: it was sideloaded onto the Tab S10+ at 2026-09-20 00:55 and the five sessions that
+ * found this defect were run on it, so a higher code is what lets the next install replace it,
+ * and the name takes a PATCH because a cap that binds is a fix to 4.11.0 rather than something
+ * 4.11.0 could not do. `SpeakerReclusterer.MAX_RECLUSTER_FINGERPRINTS` bounds the pass's SEEDS
+ * and says so in its own KDoc; nothing bounded its ANSWER, and session 3 of that evening logged
+ * `speaker-recluster: n=505 clusters=11 confirmed=11` against a cap of 8. `SpeakerAssigner`
+ * reseeds the tracker with one LIVE voice per cluster and the online path opens a new speaker
+ * only while `liveCount < maxSpeakers`, so over the cap that guard is dead for the rest of the
+ * session — every later unheard voice goes to the closest voice already known and teaches it
+ * nothing — and `endChunk`'s corrective merge is inert at the same moment, because it skips
+ * CONFIRMED voices and a reseed marks every voice confirmed. 103 makes the cap a parameter of
+ * `recluster`, defaulted to `SpeakerTracker.MAX_SPEAKERS` and passed by the assigner as the
+ * tracker's OWN `maxSpeakers`, so the two halves cannot disagree. Over the cap the
+ * longest-speaking survive and the rest fall into the absorption loop every sub-bar cluster
+ * already goes through, so no window loses its label.
+ *
+ * **What that earns is narrower than it looks, and the source says so where the trim is.** AT
+ * the cap the opening guard is false too, so capping to 8 does NOT hand the tracker back the
+ * ability to open a ninth voice. It earns the bound `SpeakerTracker.speakerCount` documents
+ * about itself, a label space that stops drifting upward, and displacement: every pass
+ * re-decides WHICH speakers survive, so a person who out-speaks the weakest survivor takes that
+ * slot at the next pass. It costs a real ninth speaker on material the cap is too small for,
+ * and `SpeakerTracker.MAX_SPEAKERS` is the one place to change that.
+ *
+ * **A second defect is fixed in the same breath**, because the cap turned it from rare into
+ * systematic: `Cluster.longest` is the seed set `reseed` rebuilds a voice from and it was read
+ * AFTER absorption, yet absorption merges two things the pass just proved are NOT one voice
+ * (step 3 already merged every pair reaching `RECLUSTER_SIM`). A trimmed cluster clears the mass
+ * bar, so its long windows would win the duration sort and become the survivor's identity —
+ * after which the tracker answers ~1.0 to the wrong person and `credit` evicts the survivor from
+ * its own id. Identity is now snapshotted from a cluster's OWN pre-absorption windows.
+ *
+ * The tier that 102 changed passed its regression row on the way: one voice stayed one speaker,
+ * and the cost stayed a fifth of the finalize fence
+ * (`docs/measurements/2026-09-20-tab-411-timing-layer.md`).
+ *
  * **versionCode 102 = 4.11.0 — the MINOR moves, because the tier that labelled a CHUNK now labels
  * a SENTENCE.** 101 is spent: the owner installed 4.10.1 on his Z Fold6 and ran the controlled
  * 3 min 20 s session of 2026-09-19 20:37-20:41 on it
@@ -296,17 +333,18 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_11_0_at_version_code_102() {
+    fun release_identity_is_4_11_1_at_version_code_103() {
         assertEquals(
-            "versionName must be 4.11.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.11.0",
+            "versionName must be 4.11.1 for this release (app/build.gradle.kts defaultConfig)",
+            "4.11.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 102 for this release (app/build.gradle.kts defaultConfig). " +
-                "101 = 4.10.1 is spent — the owner installed it on his Z Fold6 and ran the " +
-                "2026-09-19 20:37-20:41 session on it, so only a higher code replaces it",
-            102,
+            "versionCode must be 103 for this release (app/build.gradle.kts defaultConfig). " +
+                "102 = 4.11.0 is spent — it was sideloaded onto the Tab S10+ at 2026-09-20 " +
+                "00:55 and the sessions that found the speaker-cap defect were run on it, " +
+                "so only a higher code replaces it",
+            103,
             BuildConfig.VERSION_CODE,
         )
     }
