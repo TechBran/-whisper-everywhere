@@ -185,6 +185,24 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 104 = 4.11.2 — a session may hold SIXTEEN speakers, not eight.** 103 is spent:
+ * it was built, sideloaded onto the Tab S10+ at 02:38 and downloaded by the owner, so a higher
+ * code is what replaces it, and the name takes a PATCH because sixteen speakers is the same
+ * capability at a different number.
+ *
+ * 8 was the spec's cap and had never been tested against the owner's own material. His material
+ * has ten voices in it: testing 102 on both devices on 2026-09-20 he ran multi-speaker podcasts
+ * deliberately — *"certain podcasts will have, like, almost ten people. And I did that
+ * intentionally, and that part did work pretty well."* 102 answered those sessions correctly only
+ * BECAUSE nothing capped the retrospective pass's answer, so **103 shipped a regression against
+ * 102 on exactly that material**: making the two halves agree at 8 would have merged the ninth
+ * and tenth people into whoever they most resembled. 104 raises
+ * `SpeakerTracker.MAX_SPEAKERS` to 16 — one number that reaches the reclusterer (the assigner
+ * hands it over), the online opening guard, and therefore the trim 103 added, which podcast
+ * material now never reaches. 16 rather than 32 because cost is not what sets the number: a
+ * phantom speaker needs `MIN_CLUSTER_SECONDS` of misattributed speech to earn a label, and a
+ * higher cap leaves more room for one on music or crowd noise. Both 103 fixes stand.
+ *
  * **versionCode 103 = 4.11.1 — the speaker cap binds the ANSWER, not only the seeds.** 102 is
  * spent: it was sideloaded onto the Tab S10+ at 2026-09-20 00:55 and the five sessions that
  * found this defect were run on it, so a higher code is what lets the next install replace it,
@@ -333,18 +351,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_11_1_at_version_code_103() {
+    fun release_identity_is_4_11_2_at_version_code_104() {
         assertEquals(
-            "versionName must be 4.11.1 for this release (app/build.gradle.kts defaultConfig)",
-            "4.11.1",
+            "versionName must be 4.11.2 for this release (app/build.gradle.kts defaultConfig)",
+            "4.11.2",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 103 for this release (app/build.gradle.kts defaultConfig). " +
-                "102 = 4.11.0 is spent — it was sideloaded onto the Tab S10+ at 2026-09-20 " +
-                "00:55 and the sessions that found the speaker-cap defect were run on it, " +
-                "so only a higher code replaces it",
-            103,
+            "versionCode must be 104 for this release (app/build.gradle.kts defaultConfig). " +
+                "103 = 4.11.1 is spent — it was sideloaded onto the Tab S10+ at 2026-09-20 " +
+                "02:38 and downloaded by the owner, so only a higher code replaces it",
+            104,
             BuildConfig.VERSION_CODE,
         )
     }

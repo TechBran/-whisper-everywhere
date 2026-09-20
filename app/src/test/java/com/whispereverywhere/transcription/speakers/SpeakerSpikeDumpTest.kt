@@ -181,7 +181,7 @@ class SpeakerSpikeDumpTest {
             "{\"session\":1737000000000,\"model\":\"speaker_titanet_small_16k.onnx\",\"dim\":192," +
                 "\"tSame\":0.5000,\"tNew\":0.3000,\"minEmbed\":1.0000,\"minMatch\":1.0000," +
                 "\"minOpen\":1.5000,\"minUpdate\":2.0000," +
-                "\"recentK\":5,\"confirmN\":2,\"cap\":8," +
+                "\"recentK\":5,\"confirmN\":2,\"cap\":16," +
                 "\"longSegment\":2.0000,\"minWindow\":1.0000," +
                 "\"reclusterSim\":0.3000,\"minClusterSeconds\":6.0000,\"reclusterEvery\":5}",
             SpikeJson.header(

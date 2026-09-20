@@ -517,8 +517,8 @@ class SpeakerReclustererTest {
      */
     @Test
     fun theAnswerHonoursTheSameSpeakerCapTheTrackerDoes() {
-        val speakers = (0 until 12).map { s ->
-            // Distinct speech times, so "the eight longest survive" has ONE answer: 9 s … 25.5 s.
+        val speakers = (0 until SpeakerTracker.MAX_SPEAKERS + 4).map { s ->
+            // Distinct speech times, so "the longest survive" has exactly ONE answer.
             orthogonalVoice(speaker = s, count = 3, durSec = 3f + 0.5f * s, onlineId = s + 1)
         }
         val session = speakers.flatten()
@@ -526,7 +526,7 @@ class SpeakerReclustererTest {
         val relabel = SpeakerReclusterer.recluster(session)
 
         assertEquals(
-            "twelve separable voices, capped at what the tracker can hold",
+            "four more separable voices than the tracker can hold, capped at what it can",
             SpeakerTracker.MAX_SPEAKERS,
             relabel.clusterCount,
         )
@@ -536,16 +536,16 @@ class SpeakerReclustererTest {
             (1..SpeakerTracker.MAX_SPEAKERS).toList(),
             relabel.clusters.map { it.id },
         )
-        // The four briefest voices are absorbed rather than dropped: every window still has a label.
+        // The four briefest are absorbed rather than dropped: every window still has a label.
         assertEquals(session.size, relabel.windowLabels.size)
         assertTrue(
             "no window is labelled past the cap",
             relabel.windowLabels.values.all { it in 1..SpeakerTracker.MAX_SPEAKERS },
         )
-        // The eight LONGEST-SPEAKING voices are the ones that survive as speakers of their own.
+        // The LONGEST-SPEAKING voices are the ones that survive as speakers of their own.
         val longest = speakers.takeLast(SpeakerTracker.MAX_SPEAKERS)
         assertEquals(
-            "each of the eight longest-speaking voices keeps a label nobody else shares",
+            "each of the longest-speaking voices keeps a label nobody else shares",
             SpeakerTracker.MAX_SPEAKERS,
             longest.map { v -> relabel.windowLabels.getValue(v.first().windowKey) }.toSet().size,
         )
@@ -595,16 +595,22 @@ class SpeakerReclustererTest {
     fun aTrimmedClustersWindowsDoNotBecomeTheSurvivorsVoice() {
         // A first, so first-appearance numbering makes it id 1 — and lowest index, so the
         // orthogonal leftover (every similarity exactly 0.0) is absorbed into it.
+        val trimmedSpeaker = SpeakerTracker.MAX_SPEAKERS
         val a = orthogonalVoice(speaker = 0, count = 5, durSec = 1.6f, onlineId = 1)
-        val others = (1..7).map { s ->
+        val others = (1 until trimmedSpeaker).map { s ->
             orthogonalVoice(speaker = s, count = 3, durSec = 3f, onlineId = s + 1)
         }
-        val trimmed = orthogonalVoice(speaker = 8, count = 2, durSec = 3.9f, onlineId = 9)
+        val trimmed =
+            orthogonalVoice(speaker = trimmedSpeaker, count = 2, durSec = 3.9f, onlineId = trimmedSpeaker + 1)
         val session = a + others.flatten() + trimmed
 
         val relabel = SpeakerReclusterer.recluster(session)
 
-        assertEquals("nine qualify, eight survive", 8, relabel.clusterCount)
+        assertEquals(
+            "one more qualifies than the cap allows, so one is trimmed",
+            SpeakerTracker.MAX_SPEAKERS,
+            relabel.clusterCount,
+        )
         val labelOfA = relabel.windowLabels.getValue(a.first().windowKey)
         assertEquals("A spoke first", 1, labelOfA)
         assertEquals(
@@ -614,12 +620,12 @@ class SpeakerReclustererTest {
         )
         // THE POINT: every vector A is reseeded from is one of A's OWN windows. Each
         // orthogonalVoice puts its base weight in dimension `speaker`, so dimension 0 carries A
-        // and dimension 8 carries the trimmed voice.
+        // and dimension `trimmedSpeaker` carries the trimmed voice.
         val seeds = relabel.clusters.single { it.id == labelOfA }.longest
         assertEquals("A has five windows of its own and RECENT_K is five", 5, seeds.size)
         for (v in seeds) {
             assertTrue("a seed of A points along A's own direction", v[0] > 0.5f)
-            assertTrue("…and carries nothing of the trimmed voice", v[8] < 0.01f)
+            assertTrue("…and carries nothing of the trimmed voice", v[trimmedSpeaker] < 0.01f)
         }
     }
 }

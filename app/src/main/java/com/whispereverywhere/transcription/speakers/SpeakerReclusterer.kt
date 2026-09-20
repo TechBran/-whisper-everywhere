@@ -370,12 +370,15 @@ object SpeakerReclusterer {
         // re-decides WHICH speakers survive, a person who out-speaks the weakest survivor takes
         // that slot at the next pass rather than being locked out for the session.
         //
-        // AND WHAT IT COSTS, on material the cap is genuinely too small for: nine real people
-        // used to come back as nine clusters, all separated, with only the online path jammed.
-        // Now the ninth is merged into whoever they most resemble. That is the cap's price, not
-        // this trim's — [SpeakerTracker.MAX_SPEAKERS] is the single place to change if sessions
-        // routinely hold more people than it allows. The session that prompted this held one or
-        // two real voices and answered eleven, which is the over-split the other way.
+        // AND WHAT IT COSTS, on material the cap is genuinely too small for: the people past it
+        // used to come back as clusters of their own, all separated, with only the online path
+        // jammed. Now each is merged into whoever they most resemble. That is the cap's price
+        // rather than this trim's, and [SpeakerTracker.MAX_SPEAKERS] is the single place to pay
+        // it — WHICH IS EXACTLY WHAT HAPPENED: at 8 this trim was a regression on the owner's
+        // own podcasts, which run to ten voices, so he raised the number to 16 the same day
+        // (2026-09-20; see that constant). On his material the trim is now a backstop rather
+        // than a thing that fires. The session that first showed the defect held one or two real
+        // voices and answered eleven, which is the over-split the other way.
         //
         // Over the cap the speakers who SPOKE LONGEST keep their identity and the rest become
         // leftovers, which is not a new disposal rule: they fall into the absorption loop below

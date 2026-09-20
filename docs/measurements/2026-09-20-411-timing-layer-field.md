@@ -83,8 +83,19 @@ ability to open a ninth voice. What it earns is the bound the tracker documents 
 label space that stops drifting upward, and displacement — every pass re-decides which speakers
 survive, so a person who out-speaks the weakest survivor takes that slot at the next pass rather
 than being locked out for the session. What it costs is a genuine ninth speaker on material the
-cap is too small for. **That is a number for the owner, not a defect**: eight is the spec's cap,
-and it is the one place to change if sessions routinely hold more people than that.
+cap is too small for.
+
+**And that turned out to be his material, so the number moved the same day.** Told that these
+sessions had been run deliberately on multi-speaker podcasts — *"certain podcasts will have, like,
+almost ten people. And I did that intentionally, and that part did work pretty well"* — the answer
+is that eight was never tested against the owner's own audio. The sessions he liked worked
+*because* 102 left the retrospective pass uncapped and it returned ten and eleven clusters where
+it found them; capping at eight would have merged the ninth and tenth people away. `MAX_SPEAKERS`
+is **16** from 4.11.2, his ruling: clear headroom over ten, with cost no object (an extra live
+voice is five 192-float vectors and five more dot products against a 320 ms embedding) and the
+real limit being that a phantom needs six seconds of misattributed speech to earn a label, so a
+higher cap leaves more room for one on music or crowd noise. On his material the trim is now a
+backstop rather than something that fires.
 
 **A second defect surfaced while fixing the first and is fixed with it.** `Cluster.longest` is
 the seed set the tracker rebuilds a live voice from, and it was read after absorption — yet

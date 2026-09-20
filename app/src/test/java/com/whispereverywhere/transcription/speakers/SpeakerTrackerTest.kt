@@ -113,7 +113,12 @@ class SpeakerTrackerTest {
     private val tinySeg = 0.8f
 
     /** One of nine mutually orthogonal vectors, for the cap. */
-    private fun basis(index: Int, dim: Int = 9): FloatArray =
+    /**
+     * One orthogonal voice per axis, in a space with exactly one axis to spare — so the cap
+     * tests below always have somewhere to put the voice that arrives one past the cap, whatever
+     * [SpeakerTracker.MAX_SPEAKERS] happens to be. It was a fixed 9 while the cap was a fixed 8.
+     */
+    private fun basis(index: Int, dim: Int = SpeakerTracker.MAX_SPEAKERS + 1): FloatArray =
         FloatArray(dim).also { it[index] = 1f }
 
     /** Two qualifying segments of the same voice: what it takes to CONFIRM a speaker. */
@@ -633,19 +638,19 @@ class SpeakerTrackerTest {
 
     // ------------------------------------------------------------------ the cap
 
-    @Test fun theNinthDistinctVoiceTakesTheClosestExistingSpeaker() {
+    @Test fun theFirstVoicePastTheCapTakesTheClosestExistingSpeaker() {
         val tracker = SpeakerTracker()
         for (i in 0 until SpeakerTracker.MAX_SPEAKERS) {
             assertEquals(i + 1, tracker.assign(basis(i), longSeg))
         }
-        assertEquals(8, tracker.speakerCount)
-        // Mostly the 9th axis (so, far from everyone: 0.287 against speaker 3, 0 against the rest)
-        // but nearest to speaker 3. The cap sends it to the CLOSEST known speaker — spec §3.2 —
-        // never to the current one, because past the cap the tracker is a classifier with no
-        // "none of the above" answer left.
-        assertEquals(3, tracker.assign(ninth(), longSeg))
+        assertEquals(SpeakerTracker.MAX_SPEAKERS, tracker.speakerCount)
+        // Mostly the spare axis (so, far from everyone: 0.287 against speaker 3, 0 against the
+        // rest) but nearest to speaker 3. The cap sends it to the CLOSEST known speaker — spec
+        // §3.2 — never to the current one, because past the cap the tracker is a classifier with
+        // no "none of the above" answer left.
+        assertEquals(3, tracker.assign(pastTheCap(), longSeg))
         assertEquals(0.287f, tracker.lastBestSimilarity, 0.002f)
-        assertEquals("the cap holds", 8, tracker.speakerCount)
+        assertEquals("the cap holds", SpeakerTracker.MAX_SPEAKERS, tracker.speakerCount)
     }
 
     @Test fun anOverCapSegmentTeachesTheSpeakerItWasGuessedOntoNothing() {
@@ -655,13 +660,13 @@ class SpeakerTrackerTest {
         val tracker = SpeakerTracker()
         for (i in 0 until SpeakerTracker.MAX_SPEAKERS) tracker.assign(basis(i), longSeg)
         assertEquals(0, tracker.confirmedCount)
-        repeat(3) { assertEquals(3, tracker.assign(ninth(), longSeg)) }
+        repeat(3) { assertEquals(3, tracker.assign(pastTheCap(), longSeg)) }
         assertEquals("three over-cap guesses confirmed nobody", 0, tracker.confirmedCount)
 
-        // And speaker 3 never learned the 9th axis. The probe is 0.9999 against `ninth` and 0.270
-        // against the bare 3rd axis, so the SIMILARITY is what tells the two states apart — the id
-        // is 3 either way.
-        assertEquals(3, tracker.assign(nearlyNinth(), longSeg))
+        // And speaker 3 never learned the spare axis. The probe is 0.9999 against `pastTheCap`
+        // and 0.270 against the bare 3rd axis, so the SIMILARITY is what tells the two states
+        // apart — the id is 3 either way.
+        assertEquals(3, tracker.assign(nearlyPastTheCap(), longSeg))
         assertEquals("speaker 3 is still just its own axis", 0.270f, tracker.lastBestSimilarity, 0.003f)
     }
 
@@ -1009,7 +1014,7 @@ class SpeakerTrackerTest {
         assertEquals("MIN_UPDATE_SECONDS", 2.0f, SpeakerTracker.MIN_UPDATE_SECONDS, 0f)
         assertEquals("RECENT_K", 5, SpeakerTracker.RECENT_K)
         assertEquals("CONFIRM_N", 2, SpeakerTracker.CONFIRM_N)
-        assertEquals("MAX_SPEAKERS", 8, SpeakerTracker.MAX_SPEAKERS)
+        assertEquals("MAX_SPEAKERS", 16, SpeakerTracker.MAX_SPEAKERS)
         // The embed floor is NOT one of the eight, and since session 4 it is no longer a number
         // with nothing behind it: it is MIN_MATCH_SECONDS, because the shortest segment worth
         // paying an embedder for is exactly the shortest one whose answer can be used.
@@ -1038,10 +1043,20 @@ class SpeakerTrackerTest {
     // ------------------------------------------------------------------ shared fixtures' numbers
 
     /** Mostly the 9th axis, nearest to speaker 3 at 0.287 — just under T_NEW. */
-    private fun ninth(): FloatArray = FloatArray(9).also { it[2] = 0.3f; it[8] = 1f }
+    /**
+     * The voice that arrives one past the cap: the spare axis, tilted 0.3 toward speaker 3 so it
+     * has a NEAREST known speaker (0.3/√1.09 = 0.287) while being orthogonal to every other.
+     * Both components, and therefore both asserted similarities, are independent of how many axes
+     * the space has — which is why raising the cap does not move the numbers.
+     */
+    private fun pastTheCap(): FloatArray =
+        FloatArray(SpeakerTracker.MAX_SPEAKERS + 1)
+            .also { it[2] = 0.3f; it[SpeakerTracker.MAX_SPEAKERS] = 1f }
 
-    /** 0.9999 against [ninth] and 0.270 against the bare 3rd axis: the discriminating probe. */
-    private fun nearlyNinth(): FloatArray = FloatArray(9).also { it[2] = 0.28f; it[8] = 1f }
+    /** 0.9999 against [pastTheCap] and 0.270 against the bare 3rd axis: the discriminating probe. */
+    private fun nearlyPastTheCap(): FloatArray =
+        FloatArray(SpeakerTracker.MAX_SPEAKERS + 1)
+            .also { it[2] = 0.28f; it[SpeakerTracker.MAX_SPEAKERS] = 1f }
 
     private companion object {
         /** The five positions of the [cone] fixture, 60° apart — pairwise 0.533, so they chain. */

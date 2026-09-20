@@ -28,7 +28,8 @@ import kotlin.math.sqrt
  *  - [T_SAME] **0.50** / [T_NEW] **0.30** — the centre of the working region, twelve of whose
  *    bands gave exactly 1/2/3 on the three clips.
  *  - [CONFIRM_N] **2** — qualifying segments before a speaker is CONFIRMED.
- *  - [MAX_SPEAKERS] **8** — unchanged, the spec's cap.
+ *  - [MAX_SPEAKERS] **16** — raised from 8 by owner ruling 2026-09-20, whose own podcast
+ *    material runs to ten voices; see the constant for the measurement and the trade.
  *
  * `SpeakerTrackerTest.theConstantsAreTheONESTheMeasurementDocSettled` pins all eight against that
  * doc, because the one way this file can be silently wrong again is a number nudged by somebody
@@ -630,7 +631,31 @@ class SpeakerTracker(
          */
         const val CONFIRM_N: Int = 2
 
-        /** Live speakers per session, spec §3.2. Past this the closest live speaker takes the segment. */
-        const val MAX_SPEAKERS: Int = 8
+        /**
+         * **16** — live speakers per session. Past this the closest live speaker takes the
+         * segment (spec §3.2), and — because [SpeakerReclusterer] is handed this same number and
+         * [reseed] installs one live voice per cluster it answers — past this a session also
+         * stops being able to name anyone new until a later pass displaces a quieter speaker.
+         *
+         * **It was 8 through 4.11.1, and 8 was measured to be too small for the owner's own
+         * material.** On 2026-09-20, testing 102 on both devices, he ran multi-speaker podcasts
+         * deliberately: *"certain podcasts will have, like, almost ten people. And I did that
+         * intentionally, and that part did work pretty well."* 102 answered those sessions
+         * correctly only because nothing capped the retrospective pass's ANSWER — it returned 10
+         * and 11 clusters where it found them (`speaker-recluster: n=505 clusters=11`). 4.11.2
+         * caps that answer so the two halves agree, which at 8 would have merged the ninth and
+         * tenth people into whoever they most resembled and taken away the result he liked. 16 is
+         * the owner's ruling of the same day: clear headroom over his worst case, so on podcast
+         * material the cap stops being the binding constraint at all.
+         *
+         * **What the number costs, since it is now the only thing standing between a long noisy
+         * session and a long list of names**: each extra live voice is [RECENT_K] vectors of 192
+         * floats (about 3.8 KB) and [RECENT_K] more dot products per window — against a ~320 ms
+         * embedding that is unmeasurable, so cost is not what sets it. What sets it is that a
+         * phantom speaker needs [SpeakerReclusterer.MIN_CLUSTER_SECONDS] of misattributed speech
+         * to earn a label, and a higher cap leaves more room for one to appear on music or
+         * crowd noise. 16 was chosen over 32 for exactly that reason.
+         */
+        const val MAX_SPEAKERS: Int = 16
     }
 }
