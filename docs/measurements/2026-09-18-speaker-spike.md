@@ -165,6 +165,16 @@ and may end a fingerprint window at a word; the NPU tier's decoder is no longer 
 `<|notimestamps|>` nor masked over the timestamp range, so `NpuSentences` bounds sentences and the
 VAD route makes one window per sentence instead of one per chunk. Acceptance rows AO8-AO10.
 
+**And both tiers now BISECT what is still too long** (fix round 2). A window at or over 4.0 s is
+cut at its own middle — at the nearest token edge on the CPU tiers, at the bare midpoint on the
+NPU tier, recursively, both halves kept at 1.0 s. It is the contingency under the sentence cut: a
+sentence bound only helps where the decoder found one, and a 15 s run-on decoded as ONE sentence
+would otherwise reproduce session 7 with the fix installed. So `windows=` can exceed the
+`sentences=` count on the NPU tier, and not only `segs=`. Nothing detects a change of VOICE — the
+cut is geometric — which is why **acceptance AO11 reads the Tab for a spurious speaker** on
+one-voice material, and it is the row this session must not skip: the bisection lands on the tier
+that already worked.
+
 **The one number that decides whether the fix is live.** `windows=` against `segs=` on the
 `speaker:` line of `adb logcat -s WE-DIAG`, on a pause-free chunk. Session 7 logged `segs=1
 windows=1` chunk after chunk; **a pass is `windows` EXCEEDING `segs`** (the shape to look for is
@@ -181,13 +191,19 @@ so on its own it is evidence of nothing.
 | do labels still alternate at 2 min? at 3 min? | the panel, against the audio | **NO — collapsed to one speaker after ~2 min** | |
 | confirmed speakers, and when the first confirmation landed | `speaker: … confirmed=` | `confirmed=0` until seq 8 (~70 s) | |
 | any chunk running away to the 197-token budget | the panel; a chunk arriving as one repeated phrase | none seen | |
+| windows per chunk where the decoder gave ONE sentence for a long stretch | `speaker: … segs= windows=` beside `speaker-sentences: sentences=` | n/a (no sentences emitted) | |
+| Tab S10+, one-voice narrator: any label at all (AO11a) | the panel | none (correct) | |
+| Tab S10+, `windows=` and worst `embedMs=` against 4.10.1 (AO11c) | `speaker: … windows= embedMs=` | 218 windows, median 3.0 s; 130-300 ms each | |
 | timestamp markup visible anywhere | the panel, a text field, the clipboard, a saved file | n/a (none emitted) | |
 
 **The cost question this session settles, and it is not the same as session 7's.** Per-sentence
 windows mean MORE fingerprints per chunk, not more VAD passes: the VAD pass is unchanged and
 `embedMs=` is where the new cost lands. Session 7's worst chunk was 832 ms for ONE window
 including the model's first load; four windows on the same 15 s of audio is the number to watch
-against the 3,000 ms finalize fence, and the LAST chunk of a session is where it bites.
+against the 3,000 ms finalize fence, and the LAST chunk of a session is where it bites. The
+bisection adds to the same number on BOTH tiers, which is why AO11(c) asks for it on the Tab too:
+the 02:12 dump's median window was 3.0 s, under the 4.0 s cut, so the rise there should be small —
+but "should be" is the reason it is a row.
 
 **Read the CPU side on the Tab S10+, separately, and do not merge the two.** AO9 asks that the
 committed text is IDENTICAL to 4.10.1 there and that the live words strip still fills (the DTW

@@ -232,6 +232,60 @@ LAST chunk of a session is where the 3,000 ms fence bites.
 
 ---
 
+---
+
+## Fix round 2 (2026-09-19): the whole-branch review's four items
+
+The branch's own review passed on spec compliance and raised four. All four are closed, in the
+order of importance the review gave them.
+
+1. **THE NO-SPEECH GATE, a production risk.** `avgLogprob = sumLogprob / scored` had started
+   averaging over the emitted TIMESTAMP tokens, which are near-certain in timestamp mode, so the
+   mean was pulled toward 0 and `NpuDecodePolicy.isNoSpeech` — the 4.3.2 silence fix, in
+   PRODUCTION since versionCode 86, calibrated with `<|notimestamps|>` in the prompt, i.e. over
+   text tokens alone — fired less often than at 4.10.1. `qnn_asr.cpp` now sums and counts only ids
+   below `timestampBegin` (derived from `g.vocab`, the way the language band already is), and the
+   denominator is counted where the numerator is summed. The cut is `timestampBegin` and not
+   `kEotToken` so the claim is term-for-term: pre-4.11 every emittable id was scored — text, the
+   EOT, and the unmasked language ids and `<|notimestamps|>` — and a timestamp is the only id the
+   mask change newly admits. The EOT stays in (`whisper_sequence_score` divides by `result_len`,
+   which counts it), and a segment with no text keeps the old empty-stream answer: NaN, therefore
+   `isNoSpeech == false`. Pinned by a source pin over the native site and a pure-policy test that
+   writes the arithmetic out. **The only change to shipped native decode behaviour in this
+   branch.**
+
+2. **THE NPU CONTINGENCY.** A sentence bound only helps where the decoder found one; a 15 s
+   run-on decoded as ONE sentence gave `segs=1 windows=1` and reproduced session 7 with the fix
+   installed. `bisect` was refactored from a window emitter into a CUT-POINT emitter so both
+   routes share one body — token-edge snapping when it is given edges, the bare midpoint when it
+   is not — and `sentenceChunkWindows` now bisects each sentence's territory. **The index
+   alignment is what made this more than a loop:** a bisected sentence moves every later
+   sentence's window index, and the TEXT half has no VAD pass to learn that from, so the cut may
+   not depend on what the VAD found. It does not — a territory is `[start[i], start[i+1])`, both
+   bounds out of the sentence array — and `sentenceWindowStarts` is that arithmetic, run on the
+   whisper thread. The LAST sentence's territory may run to the chunk's last speech sample,
+   because it is the one territory no later sentence needs the count of; that also stops
+   `NpuSentences.CHUNK_END_CS`'s deliberate 30.00 s over-run from manufacturing empty windows.
+   Four fixtures moved under `TOKEN_CUT_SECONDS` rather than being re-baselined, because each was
+   written about a different rule.
+
+3. **THE STALE DOCS.** `WhisperTokenFamily.noTimestamps` and `WhisperTokens.NO_TIMESTAMPS` no
+   longer call a timestamp a decode fault; `CommitCadencePolicy`'s npu row says 197 and says why
+   (the budget is `MAX_POSITIONS` minus the prompt's LENGTH). Three test comments repeating the
+   196 were corrected with it; the plan, spec and review documents were left as the records they
+   are.
+
+4. **THE MISSING ACCEPTANCE ROW (the review's one must-fix).** §AO gains **AO11**, on the Tab —
+   the tier that already worked and the one the geometric bisection now lands on. Three questions:
+   a one-voice narrator clip still produces NO label (no speaker invented out of two disagreeing
+   fingerprints of the same voice); a two-voice clip labels at least as well as 4.10.1 did, turn
+   by turn; and `windows=` / `embedMs=` per chunk, plus the same two on the session's LAST chunk,
+   against the 3,000 ms fence. AO9 would not catch any of it — AO9 asks about text, and this
+   failure leaves the text perfect. The §AO limitation bullets and the Session 8 stub were amended
+   to match.
+
+---
+
 ## Self-review
 
 **Spec coverage.** Layer 1's CPU half → Tasks 1-2; its NPU half → Tasks 3-4; the DTW prohibition → Global Constraints and Task 1's pin; "no text change" → Global Constraints, **asserted in Task 1 and knowingly traded in Task 3** (its fourth ruling: the spec's own layer 1 table asks the NPU tier to re-condition its decode, so the guarantee holds on the CPU tiers only); the acceptance rows and the measurement → Task 5. Layer 2 is out of scope by design, as the spec says.

@@ -1640,13 +1640,15 @@ AO7. **THE NPU TIER GETS LABELS AT ALL — at chunk granularity (4.10.1).** On t
     still arrive at all; the commit cadence visibly slowing.
     `[ ] PASS  [ ] FAIL   (two voices: ____ / one voice: ____ / route= seen: ____ / VAD-standalone wallMs: ____ / embedMs: ____)`
 
-### The three rows 4.11.0 adds (the timing layer)
+### The four rows 4.11.0 adds (the timing layer)
 
 **What 4.11.0 changes, in one sentence per tier.** The CPU tiers ask whisper.cpp for per-token
 times and may end a fingerprint window at a WORD; the NPU tier's decoder is allowed to emit the
 timestamp tokens it always had, and its route makes ONE WINDOW PER SENTENCE instead of one per
 chunk. AO8 is the fix for the failure you reported; AO9 and AO10 are the two things that fix
-could plausibly have broken, one per tier, and they are deliberately NOT the same question.
+could plausibly have broken, one per tier, and they are deliberately NOT the same question. AO11
+is the one that asks about the tier that ALREADY WORKED: every window at or over 4.0 s is now
+BISECTED, and that is a geometric guess with nothing behind it.
 
 AO8. **THE NPU TIER KEEPS ALTERNATING PAST TWO MINUTES ON AUDIO WITH NO PAUSES — the Session 7
     failure, and the reason 4.11.0 exists.** On the **Z Fold6** (`npu-turbo`, the only rung that
@@ -1709,6 +1711,44 @@ AO10. **THE NPU TIER'S TEXT IS SANE AND COMPLETE, AND NOTHING RUNS AWAY TO THE B
     arriving as one phrase repeated dozens of times; a chunk arriving empty where speech was
     clearly present.
     `[ ] PASS  [ ] FAIL   (ordinary text complete: ____ / no timestamp markup visible: ____ / no runaway: ____)`
+AO11. **THE BISECTION DID NOT INVENT A SPEAKER ON THE TIER THAT ALREADY WORKED — the regression
+    row, and the one the suite cannot stand in for.** Every one of sessions 1-6 worked on the
+    **Tab S10+**, and 4.11.0 changes what those sessions do: a fingerprint window at or over
+    **4.0 s** is now cut in two at the token edge nearest its middle, recursively, until nothing
+    is still that long. **Nothing in this build detects a change of voice** — layer 1 has no
+    change-point detector at all — so that cut is a GEOMETRIC GUESS, and on one person talking
+    for eight seconds it splits one speaker's own sentence into two separately fingerprinted
+    windows. Two fingerprints of the same voice that happen to disagree are how a second speaker
+    gets invented out of nothing. AO9 would not catch it: AO9 asks about TEXT and the live strip,
+    and this failure leaves the text perfect.
+    **(a) THE ONE-VOICE NARRATOR, and this is the question that matters most.** On the Tab, with
+    **Detect speakers ON**, play the one-voice narration clip — the long single-narrator piece,
+    the 20:31 material — for **at least two minutes**.
+    EXPECTED: **no label and no speaker paragraph anywhere**, exactly as at 4.10.1. One voice is
+    one speaker however many windows it was cut into.
+    **(b) THE TWO-VOICE CLIP, against the 4.10.1 result you already have.** Run the same
+    two-voice audio as AO2 and compare, turn by turn, with what 4.10.1 produced on it.
+    EXPECTED: **at least as good as 4.10.1** — the same turns labelled, the same or fewer late
+    changes, no NEW mid-sentence split putting one continuous sentence under two different
+    numbers. Better is the hoped-for outcome (a new speaker's first words sat inside the previous
+    speaker's window at 4.10.1, and a bisected window can now reach them); the same is a PASS;
+    worse is the failure.
+    **(c) THE COST, which is where the bisection is paid for.** Bisecting buys more FINGERPRINTS
+    per chunk, not more VAD passes, so the whole of the new cost lands in `embedMs=`.
+    WHAT TO READ: `adb logcat -s WE-DIAG` and the `speaker:` line's **`windows=` against `segs=`**
+    and **`embedMs=`**, per chunk — and then the same two numbers on the **LAST chunk of the
+    session**, which is the one that sits inside the **3,000 ms finalize fence**. The 02:12 dump
+    measured 218 windows at a median of 3.0 s and 130-300 ms per fingerprint; a median window of
+    3.0 s is under the 4.0 s cut, so most chunks should be unchanged and `windows=` should rise
+    only where a window was long. Write down the worst `embedMs=` you see and whether the stop
+    tap felt slower than 4.10.1's.
+    EXPECTED: `windows=` at or a little above 4.10.1's for the same audio, not multiplied; the
+    worst `embedMs=` **well under 3,000**; the stop tap no slower to the hand.
+    FAIL: any label at all on the one-voice clip; a continuous sentence split under two speaker
+    numbers on the two-voice clip; fewer turns labelled than 4.10.1 labelled; `embedMs=`
+    approaching 3,000 on any chunk, or the last chunk of a session losing its labels (that is the
+    fence, and it is the suspect named in the limitations below).
+    `[ ] PASS  [ ] FAIL   (one voice: no labels ____ / two voices vs 4.10.1: better / same / worse ____ / segs= windows= typical: ____ / worst embedMs=: ____ / stop tap slower: ____)`
 
 ### Known limitations of §AO, stated rather than discovered later
 
@@ -1723,8 +1763,14 @@ AO10. **THE NPU TIER'S TEXT IS SANE AND COMPLETE, AND NOTHING RUNS AWAY TO THE B
   stretch still spanning 4.0 s is bisected at the nearest token edge, recursively, so a long
   pause-free sentence is no longer one window. **What has NOT changed is that nothing yet
   detects a change of VOICE.** The cut is geometric — a bisection, not a decision — so a genuine
-  mid-sentence interruption is still attributed by luck rather than by evidence. Only
-  change-point detection fixes that; it is layer 2 of
+  mid-sentence interruption is still attributed by luck rather than by evidence, and the same
+  bisection can split ONE speaker's long sentence into two fingerprints that disagree. That is
+  the risk AO11 exists to catch, on the tier where it lands on sessions that already worked. The
+  NPU tier runs the same bisection over each SENTENCE's territory, for the case whisper decodes a
+  pause-free stretch as one run-on sentence and the sentence cut therefore has nowhere to land;
+  there the extra windows carry no text of their own — that tier has no sub-sentence byte offsets
+  — so what they buy is that a 15 s stretch of two voices stops being one blended fingerprint.
+  Only change-point detection fixes the underlying thing; it is layer 2 of
   `docs/superpowers/specs/2026-09-19-speaker-boundaries-design.md` and it is not in this build.
 - **Nothing here has been run on the Z Fold6.** Every number in the spike is from the Tab S10+.
   AO7 is the first row that has to be, and 4.10.0/100 on that device is where the NPU tier's
@@ -1751,8 +1797,11 @@ AO10. **THE NPU TIER'S TEXT IS SANE AND COMPLETE, AND NOTHING RUNS AWAY TO THE B
   text and inside the same finalize fence as the embeddings; AO7 records the number.
 - **Cost, for context if a session feels slower:** 130-300 ms per fingerprint on the Tab, a median
   of four per chunk and at most eight, all on the embedder's own thread; no chunk came near the
-  2.5 s finalize fence. If the last chunk of a session ever loses its labels, that fence is the
-  suspect — say so, with the session length and how busy the audio was.
+  2.5 s finalize fence. **Those counts are 4.10.1's and 4.11.0 can only raise them**, because a
+  window at or over 4.0 s is now bisected — the 02:12 dump's median window was 3.0 s, so the
+  rise should be small, but nobody has measured it and AO11(c) is where the number comes from. If
+  the last chunk of a session ever loses its labels, that fence is the suspect — say so, with the
+  session length and how busy the audio was.
 - **It is an English speaker-recognition model.** Nobody has tried it on another language's audio.
   It may well work — it fingerprints voices, not words — and it may not. There is no row above for
   it because there is no evidence either way to write one from.
