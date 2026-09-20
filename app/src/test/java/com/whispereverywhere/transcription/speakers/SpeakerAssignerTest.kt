@@ -872,17 +872,21 @@ class SpeakerAssignerTest {
     // ------------------------------------------------- the NPU route (4.10, the Fold6 defect)
 
     /**
-     * Runs ONE chunk through [SpeakerAssigner.assignWholeChunk] with a FAKE segmenter standing in
+     * Runs ONE chunk through [SpeakerAssigner.assignVadRoute] with a FAKE segmenter standing in
      * for `WhisperNative.vadSegmentsOf`, which cannot be called off a device.
      *
      * [segments] is what that native call would have answered: `[start, end]` SAMPLE PAIRS on the
      * chunk's own timeline — two ints per segment, because there is no stitched buffer on this
      * route and therefore no second timeline.
+     *
+     * [sentences] is `WhisperBackend.lastSentences` — empty by default, which is 4.10.1's whole
+     * behaviour and the shape every test written before 4.11 asks for.
      */
-    private fun assignWholeChunkOnce(
+    private fun assignVadRouteOnce(
         voices: VoicePrints,
         samples: FloatArray,
         segments: IntArray,
+        sentences: IntArray = IntArray(0),
         tracker: SpeakerTracker = SpeakerTracker(),
         seq: Long = 7L,
         vadModelPath: String = "/data/vad/silero.bin",
@@ -897,7 +901,7 @@ class SpeakerAssignerTest {
             segmenter = { _, _ -> segments },
         )
         try {
-            assigner.assignWholeChunk(seq, samples, vadModelPath)
+            assigner.assignVadRoute(seq, samples, vadModelPath, sentences)
             arrived.await(timeoutMs, TimeUnit.MILLISECONDS)
         } finally {
             assigner.release()
@@ -918,7 +922,7 @@ class SpeakerAssignerTest {
         // Two windows, two voices, and the LONGER one speaks for the chunk — that is the whole of
         // the owner's "at the chunk level … at least that would be good enough".
         val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
-        val assignment = assignWholeChunkOnce(
+        val assignment = assignVadRouteOnce(
             voices = voices,
             samples = buffer(10f),
             segments = pairs(0f to 2f, 3f to 8f),
@@ -932,7 +936,7 @@ class SpeakerAssignerTest {
     @Test
     fun anEvenSplitNamesTheEARLIESTWindowSoOneAudioCannotProduceTwoAnswers() {
         val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
-        val assignment = assignWholeChunkOnce(
+        val assignment = assignVadRouteOnce(
             voices = voices,
             samples = buffer(10f),
             segments = pairs(0f to 3f, 4f to 7f),
@@ -947,7 +951,7 @@ class SpeakerAssignerTest {
         // carries over because it is about the EMBEDDER: three half-second back-channels are one
         // fingerprintable window, not three that inherit a label without being heard.
         val voices = FakeVoices { unit(0.0) }
-        val assignment = assignWholeChunkOnce(
+        val assignment = assignVadRouteOnce(
             voices = voices,
             samples = buffer(10f),
             segments = pairs(0f to 2f, 2.2f to 2.6f, 2.8f to 3.1f),
@@ -971,7 +975,7 @@ class SpeakerAssignerTest {
         // otherwise the whole chunk's text wears the label of the quieter voice and the louder
         // one gets nothing.
         val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
-        val assignment = assignWholeChunkOnce(
+        val assignment = assignVadRouteOnce(
             voices = voices,
             samples = buffer(6f),
             segments = pairs(0f to 2f, 2.25f to 2.45f, 3f to 5.3f),
@@ -995,7 +999,7 @@ class SpeakerAssignerTest {
         // the truth, this window is in the MATCH-ONLY tier with nobody to match, so it is
         // unlabelled (0) and opens nothing, exactly as a 1.4 s window elsewhere would be.
         val voices = FakeVoices { unit(0.0) }
-        val assignment = assignWholeChunkOnce(
+        val assignment = assignVadRouteOnce(
             voices = voices,
             samples = buffer(4f),
             segments = pairs(0f to 1.2f, 1.45f to 1.65f),
@@ -1018,7 +1022,7 @@ class SpeakerAssignerTest {
         // Spec §2: "no segments" is not "one speaker". An empty segmentation is also what a
         // missing or unloadable VAD model answers, and neither may invent a speaker.
         val voices = FakeVoices { unit(0.0) }
-        val assignment = assignWholeChunkOnce(
+        val assignment = assignVadRouteOnce(
             voices = voices,
             samples = buffer(10f),
             segments = IntArray(0),
@@ -1036,7 +1040,7 @@ class SpeakerAssignerTest {
         // the index published here were not a real window index, the pass would silently miss
         // every NPU chunk and those runs would keep ids from a superseded numbering.
         val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
-        val assignment = assignWholeChunkOnce(
+        val assignment = assignVadRouteOnce(
             voices = voices,
             samples = buffer(10f),
             segments = pairs(0f to 2f, 3f to 8f),
@@ -1073,7 +1077,7 @@ class SpeakerAssignerTest {
             },
         )
         try {
-            assigner.assignWholeChunk(9L, buffer(5f), "/data/vad/silero.bin")
+            assigner.assignVadRoute(9L, buffer(5f), "/data/vad/silero.bin")
             assertTrue(arrived.await(5_000, TimeUnit.MILLISECONDS))
         } finally {
             assigner.release()
@@ -1096,13 +1100,103 @@ class SpeakerAssignerTest {
             segmenter = { _, _ -> called.incrementAndGet(); pairs(0f to 3f) },
         )
         try {
-            assigner.assignWholeChunk(9L, buffer(5f), "")
-            assigner.assignWholeChunk(10L, FloatArray(0), "/data/vad/silero.bin")
+            assigner.assignVadRoute(9L, buffer(5f), "")
+            assigner.assignVadRoute(10L, FloatArray(0), "/data/vad/silero.bin")
             assertTrue(assigner.awaitIdle(5_000))
         } finally {
             assigner.release()
         }
         assertEquals("neither an empty path nor an empty buffer reaches the segmenter", 0L, called.get())
+    }
+
+    // ---------------------------- the VAD route WITH sentence bounds (4.11 Task 4)
+
+    /** `[t0cs, t1cs, byteStart, byteEnd]` * n — what `NpuSentences.of` answers. */
+    private fun sentences(vararg s: IntArray): IntArray = s.flatMap { it.toList() }.toIntArray()
+
+    @Test
+    fun aPauseFreeChunkBecomesONEWindowPERSENTENCEWhenTheDecoderSaidWhen() {
+        // THE FOLD6'S SESSION 7, ANSWERED. Fifteen seconds of hard-cut interview, no pause
+        // anywhere in it, so Silero hands over ONE segment — and 4.10.1 gave the whole minute one
+        // label. With the decoder's own sentence bounds the chunk is four windows and the tracker
+        // gets four chances to notice the voice changed.
+        val voices = FakeVoices { index -> if (index % 2 == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignVadRouteOnce(
+            voices = voices,
+            samples = buffer(15f),
+            segments = pairs(0f to 15f),
+            sentences = sentences(
+                intArrayOf(0, 400, 0, 10),
+                intArrayOf(400, 700, 10, 20),
+                intArrayOf(700, 1100, 20, 30),
+                intArrayOf(1100, 1500, 30, 40),
+            ),
+        )
+        assertEquals("one id per sentence", listOf(1, 2, 1, 2), assignment?.ids)
+        assertEquals("one embedding per sentence", 4, voices.lengths.size)
+        assertEquals("…and the segment count still says the endpointer found one", 1, assignment?.segs)
+    }
+
+    @Test
+    fun aSentenceUnderTheWindowFLOORKeepsItsOwnIndexAndTakesItsNeighboursLabel() {
+        // It COALESCES in the only sense that matters downstream — it wears the id of the window
+        // beside it — while keeping the index its own span is addressed by, so the text still
+        // splits where the sentence does. Fate 1 does the work: under MIN_EMBED_SECONDS a window
+        // is not fingerprinted at all, so the short sentence also costs no embedding.
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignVadRouteOnce(
+            voices = voices,
+            samples = buffer(10f),
+            segments = pairs(0f to 10f),
+            sentences = sentences(
+                intArrayOf(0, 400, 0, 10),
+                intArrayOf(400, 450, 10, 14),
+                intArrayOf(450, 1000, 14, 30),
+            ),
+        )
+        assertEquals("three windows for three sentences", 3, assignment?.ids?.size)
+        assertEquals("the 0.5 s one inherits its predecessor", listOf(1, 1, 2), assignment?.ids)
+        assertEquals("…and cost no embedding", 2, voices.lengths.size)
+        assertEquals(0.5f, assignment!!.stats.durationsSec[1], 0.01f)
+    }
+
+    @Test
+    fun withNoSentencesTheVadRouteIsTheWHOLECHUNKAnswerByteForByte() {
+        // The default argument is the whole of 4.10.1's behaviour: a decode that emitted no
+        // timestamps, a parse that refused the stream, or a chunk whose bounds were lost all
+        // arrive here as an empty array, and the chunk gets one coarse label exactly as before.
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignVadRouteOnce(
+            voices = voices,
+            samples = buffer(10f),
+            segments = pairs(0f to 2f, 3f to 8f),
+            sentences = IntArray(0),
+        )
+        assertEquals(listOf(1, 2), assignment?.ids)
+        assertEquals("the 5 s window still speaks for the chunk", 1, assignment?.wholeChunkWindow)
+        assertEquals(2, assignment?.segs)
+    }
+
+    @Test
+    fun theDOMINANTPickSurvivesTheSentenceSplitAsTheFallbackForAChunkWhoseSpansWereRefused() {
+        // `SpeakerRuns.of` drops a chunk's spans wholesale when they cannot reproduce its text,
+        // and that chunk then arrives as ONE run at NO_WINDOW_INDEX. `applyWholeChunk` touches
+        // only such runs, so keeping the pick costs nothing when the spans held and is the only
+        // thing standing between that chunk and no label at all when they did not.
+        val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignVadRouteOnce(
+            voices = voices,
+            samples = buffer(10f),
+            segments = pairs(0f to 10f),
+            sentences = sentences(intArrayOf(0, 300, 0, 10), intArrayOf(300, 1000, 10, 30)),
+        )
+        assertNotNull("the VAD route always names a pick", assignment?.wholeChunkWindow)
+        assertEquals("the 7 s sentence over the 3 s one", 1, assignment?.wholeChunkWindow)
+
+        val runs = listOf(Run(seq = 7L, windowIndex = SpeakerRuns.NO_WINDOW_INDEX, text = "hi"))
+        val pick = assignment!!.wholeChunkWindow!!
+        SpeakerRuns.applyWholeChunk(runs, seq = 7L, windowIndex = pick, id = assignment.ids[pick])
+        assertEquals(assignment.ids[pick], runs[0].speakerId)
     }
 
     @Test

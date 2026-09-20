@@ -351,11 +351,11 @@ class SpeakerSpikePinTest {
         // the only reason the commit floors are untouched by a tier that has no geometry.
         val npuQueueOnly = between(
             assigner,
-            "fun assignWholeChunk(seq: Long, samples: FloatArray, vadModelPath: String) {",
+            "fun assignVadRoute(",
             "* Blocks the CALLING thread",
             ASSIGNER,
         )
-        assertEquals("assignWholeChunk() never touches the dump", 0, count(npuQueueOnly, "dump"))
+        assertEquals("assignVadRoute() never touches the dump", 0, count(npuQueueOnly, "dump"))
         assertEquals("…it only hands the chunk over", 1, count(npuQueueOnly, "executor.execute {"))
         assertTrue(
             "the VAD runs INSIDE the queued task, never on the caller's thread",

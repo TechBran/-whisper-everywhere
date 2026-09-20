@@ -177,11 +177,24 @@ Export with the existing `we_int_vector` helper; declare in Kotlin beside `lastW
 - Consumes: Task 3's `lastSentences`, Task 1's window machinery.
 - Produces: `SpeakerAssigner.assignVadRoute(seq, samples, vadModelPath, sentences: IntArray)` — when `sentences` is empty it behaves exactly as today's `assignWholeChunk` (one id for the chunk, `pick` set); when non-empty it subdivides the VAD spans at sentence bounds, fingerprints each window, and publishes **per-window ids with per-sentence spans**, so the chunk becomes one run per sentence rather than one run.
 
-- [ ] **Step 1: failing tests.** A 15 s VAD segment carrying four sentences yields four windows and four runs; ids differ where the voices differ. With no sentences the whole-chunk behaviour is byte-identical to today (the existing tests must still pass untouched). A sentence shorter than `MIN_WINDOW_SECONDS` coalesces with its neighbour but keeps its own span, so the text still splits where the sentence does.
-- [ ] **Step 2: run, expect failure.**
-- [ ] **Step 3: implement.**
-- [ ] **Step 4: run** the suite plus `:app:compileReleaseKotlin`.
-- [ ] **Step 5: commit** — `feat(npu): one speaker per sentence, not one per chunk`
+- [x] **Step 1: failing tests.** A 15 s VAD segment carrying four sentences yields four windows and four runs; ids differ where the voices differ. With no sentences the whole-chunk behaviour is byte-identical to today (the existing tests must still pass untouched). A sentence shorter than `MIN_WINDOW_SECONDS` coalesces with its neighbour but keeps its own span, so the text still splits where the sentence does.
+- [x] **Step 2: run, expect failure.**
+- [x] **Step 3: implement.**
+
+**THE INDEX IS THE SENTENCE, AND THAT IS WHAT MADE THE TASK IMPLEMENTABLE AT ALL (2026-09-19).** The task text asks for per-window ids AND per-sentence spans, and those are cut in two different places at two different times: the TEXT in `LocalWhisperEngine.textOutcome`, on the native thread, at the instant the chunk is delivered; the AUDIO in `SpeakerAssigner`, ~60 ms later on the embed thread, because the windows need a VAD pass this task may not move onto the whisper thread. The two halves never meet — a `SpeakerSpan.windowIndex` is matched to an id by POSITION in `SpeakerAssignment.ids`. So the cut has to be a function both sides can compute independently and agree on, which rules out any rule that depends on what the VAD found: `SpeakerSpans.sentenceChunkWindows` therefore emits **one window per sentence, always, in sentence order**, and a sentence the VAD heard no speech under keeps its index as a ZERO-LENGTH window rather than being dropped. Dropping it would shift every later sentence's text onto the previous sentence's label. `runSegment` reads `lastSentences` ONCE into a local and hands the same array to both halves, the same discipline Task 2 used for `tokenTimes`.
+
+**"COALESCES WITH ITS NEIGHBOUR" IS THE LABEL, NOT THE AUDIO.** A sentence under `MIN_WINDOW_SECONDS` cannot be MERGED into its neighbour's window without breaking the index alignment above, and growing its audio bounds to cover the neighbour's would buy a second embedding of nearly the same samples on a route whose measured cost is 84-832 ms per chunk. What ships is fate 1, already the file's tested machinery: under `MIN_EMBED_SECONDS` a window is not fingerprinted, inherits `tracker.currentSpeaker()` — which on this route is the window immediately before it — and keeps its own index and its own span. Observably that is what the step asks for (its neighbour's label, its own text split) at zero extra embedding cost. A short LEADING sentence inherits the previous chunk's speaker instead of the next sentence's, which is exactly what `wholeChunkWindows` already documents for a short leading segment.
+
+**THE DOMINANT PICK IS KEPT ON BOTH PATHS, against the reading that `pick` belongs only to the no-sentences case.** `SpeakerRuns.of` refuses a chunk's spans wholesale when they cannot reproduce its text, and that chunk then arrives as ONE run at `NO_WINDOW_INDEX`; `SpeakerRuns.applyWholeChunk` touches only such runs. So publishing `wholeChunkWindow` on the sentence path is a downstream no-op whenever the spans held, and the only thing between that chunk and NO label at all when they did not. It also keeps `SpeakerDiag`'s `route=vad` / `pick=` reading exactly what it read before, which the device session's own table is written against.
+
+**`windows` STAYS NULL ON THE OUTCOME, which is how the route is still chosen.** `runSegment` forks on `outcome.windows != null`, so the NPU route publishes spans WITHOUT windows — the inverse of the half the `textOutcome` KDoc forbids (windows with no spans, a chunk to fingerprint with nothing to label). The service's "does this chunk have speakers" test reads `spans`, so nothing downstream had to change; `FloatingBubbleService` and `TranscriptSink` are untouched by this task.
+
+**The rename reached two source pins**, `SpeakerWiringPinTest` (both `assignWholeChunk` strings) and `SpeakerSpikePinTest` (the signature it slices the queued task out of); neither assertion was weakened.
+
+- [x] **Step 4: run** the suite plus `:app:compileReleaseKotlin`. 3,305 tests, 0 failures; release compile green. No C++ touched, so no native build.
+- [x] **Step 5: commit** — `feat(npu): one speaker per sentence, not one per chunk`
+
+**Consequence for Task 5.** The §AO row for the Fold6 reads `speaker: … route=vad segs= windows=` — session 7's shape was `segs=1 windows=1` chunk after chunk, and the fix is live when `windows` exceeds `segs` on a pause-free chunk. `pick=` is still printed and is now a fallback rather than the chunk's answer, so it is no longer evidence of anything on its own. The new engine line is `speaker-sentences: sentences= spans=`, numbers only.
 
 ---
 

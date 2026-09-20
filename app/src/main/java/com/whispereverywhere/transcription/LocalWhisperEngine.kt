@@ -482,6 +482,15 @@ class LocalWhisperEngine(
         // (whisper never ran, or the transcribe threw) must not take the VAD route on the
         // strength of a flag nobody set.
         var backendPublishesGeometry = true
+        // 4.11 Task 4: the NPU tier's SENTENCE BOUNDS for this chunk — `[t0cs, t1cs, byteStart,
+        // byteEnd]` per sentence, or empty. Hoisted for the reason the two above are, and for
+        // one more that is stronger than either: the TEXT is cut by this array here, on this
+        // thread, and the AUDIO is cut by it ~60 ms later on the embed thread, and the halves
+        // are matched by POSITION. ONE read, ONE array, handed to both — a second read of a
+        // process-global slot could answer differently and put one sentence's speaker on
+        // another's words. Empty for every tier but the live NPU arm, which is what keeps the
+        // CPU and GPU routes byte-for-byte what they were.
+        var backendSentences: IntArray = IntArray(0)
         val outcome: SegmentOutcome = try {
             val ctx = ctxPtr
             if (ctx == 0L) {
@@ -627,6 +636,10 @@ class LocalWhisperEngine(
                 // that has since flipped.
                 backendPublishesGeometry = backend.publishesGeometry
                 val geometry = backend.lastGeometry(ctx)
+                // 4.11 Task 4, read in the SAME breath and off the same live backend as the two
+                // above, for the same reason: all three describe one instant, and a sentence
+                // array from a later decode would name bytes this chunk's text does not have.
+                backendSentences = backend.lastSentences(ctx)
                 if (cleaned.isBlank()) {
                     // EmptyExpected, NEVER EmptyUnexpected, for the on-device engine.
                     //
@@ -649,7 +662,7 @@ class LocalWhisperEngine(
                     android.util.Log.i("WE-DIAG", "transcribe result blank/non-speech -> empty")
                     SegmentOutcome.EmptyExpected
                 } else {
-                    textOutcome(cleaned, text, geometry)
+                    textOutcome(cleaned, text, geometry, backendSentences)
                 }
             }
         } catch (t: Throwable) {
@@ -688,7 +701,7 @@ class LocalWhisperEngine(
         // the NPU tier while its arm is live: it runs its own encoder and decoder on the HTP,
         // never calls the whisper.cpp VAD filter, and therefore publishes nothing for the
         // assigner to stand on — which is why the owner's Fold6, a device the 4.3 one-tier rule
-        // offers no CPU rung, produced no speaker changes at all. `assignWholeChunk` re-runs the
+        // offers no CPU rung, produced no speaker changes at all. `assignVadRoute` re-runs the
         // VAD on the embed thread and labels the chunk as a whole.
         //
         // THE TEST IS A BACKEND CAPABILITY, and neither of the two per-chunk tests that look like
@@ -717,7 +730,7 @@ class LocalWhisperEngine(
             } else if (!backendPublishesGeometry && samples != null && committed != null &&
                 committed.text.isNotBlank()
             ) {
-                vadModelPath()?.let { assigner.assignWholeChunk(seq, samples, it) }
+                vadModelPath()?.let { assigner.assignVadRoute(seq, samples, it, backendSentences) }
             }
         }
     }
@@ -748,13 +761,37 @@ class LocalWhisperEngine(
      * long VAD segment is now several windows, so a second list computed independently
      * downstream could disagree with this one and put one window's speaker on another's
      * sentence.
+     *
+     * ### THE NPU TIER'S HALF — SPANS WITHOUT WINDOWS (4.11 Task 4)
+     *
+     * [sentences] is `WhisperBackend.lastSentences`, and it is read only where [geometry] is
+     * null, which on a backend that publishes geometry means a LOST snapshot and on the live
+     * NPU arm means the structural absence the tier was always going to have. Only the second
+     * ever carries sentences: `WhisperNativeBackend` does not implement the member and
+     * `NpuWhisperBackend` deliberately does not delegate it after a decline, so the CPU and GPU
+     * tiers reach this branch with an empty array and keep their answer byte for byte. Its own
+     * geometry is strictly finer anyway — per TOKEN since Task 1.
+     *
+     * **`windows` stays NULL on that path, and that is the routing decision rather than an
+     * omission.** `runSegment`'s fork reads `outcome.windows != null` as "this chunk's windows
+     * are already built, fingerprint exactly them"; the NPU route's windows cannot be built
+     * here, because they need a VAD pass this thread must not pay — it is the ~60 ms
+     * `assignVadRoute` spends on the embed thread, below delivered text, and moving it here
+     * would put it back on the whisper thread whose cadence floors were measured without it. So
+     * the two halves are cut from the SAME sentence array in two places, which is exactly why
+     * `runSegment` reads that array once and hands the same object to both.
+     *
+     * "BOTH FIELDS OR NEITHER" therefore reads "spans or nothing" here. The service's
+     * "does this chunk have speakers" test is on `spans`, and the half that would be wrong is
+     * the other one — windows with no spans, a chunk to fingerprint with nothing to label.
      */
     private fun textOutcome(
         cleaned: String,
         raw: String,
         geometry: SegmentGeometry?,
+        sentences: IntArray = IntArray(0),
     ): SegmentOutcome.Text {
-        if (geometry == null) return SegmentOutcome.Text(cleaned)
+        if (geometry == null) return sentenceOutcome(cleaned, raw, sentences)
         val vad = SpeakerSpans.vadSegments(geometry.vadSegments)
         if (vad.isEmpty()) return SegmentOutcome.Text(cleaned)
         val windows = SpeakerSpans.windows(
@@ -782,6 +819,40 @@ class LocalWhisperEngine(
                 "tokens=${geometry.tokenTimes.size / 4}",
         )
         return SegmentOutcome.Text(cleaned, spans = spans, windows = windows)
+    }
+
+    /**
+     * The NPU tier's spans, cut at the sentences its own decoder timestamped (4.11 Task 4) — or
+     * the byte-identical pre-4.11 outcome when it timestamped none.
+     *
+     * Session 7 is why this exists: on the owner's Fold6 a pause-free clip gave the standalone
+     * VAD one 9-15 s segment per chunk, the chunk took ONE label, and two people shared it for
+     * a minute at a time (`docs/measurements/2026-09-18-speaker-spike.md`). The decoder always
+     * knew where each sentence ended; since Task 3 it says so, and this is where the text is cut
+     * by it.
+     *
+     * Empty [sentences] is the ordinary answer and produces the pre-4.11 `Text(cleaned)`: a
+     * decode that emitted no timestamps, a parse that refused a backwards stream, a blanked
+     * segment, or any tier but the live NPU arm. So is a sentence array that maps onto no
+     * surviving text, for the same reason the geometry path refuses an empty span list — a
+     * chunk with nothing to label must not look like a chunk with speakers.
+     */
+    private fun sentenceOutcome(
+        cleaned: String,
+        raw: String,
+        sentences: IntArray,
+    ): SegmentOutcome.Text {
+        if (sentences.isEmpty()) return SegmentOutcome.Text(cleaned)
+        val spans = SpeakerSpans.sentenceSpans(sentences, raw.toByteArray(Charsets.UTF_8))
+        if (spans.isEmpty()) return SegmentOutcome.Text(cleaned)
+        // Numbers only — a span's text IS user speech and never reaches a log line.
+        android.util.Log.i(
+            "WE-DIAG",
+            "speaker-sentences: sentences=${sentences.size / 4} spans=${spans.size}",
+        )
+        // No WINDOW list: see this function's caller. The windows are cut from the same array on
+        // the embed thread, where the VAD pass they need is already being paid for.
+        return SegmentOutcome.Text(cleaned, spans = spans)
     }
 
     /**

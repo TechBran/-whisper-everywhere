@@ -80,10 +80,17 @@ class LocalWhisperEngineSpeakerRouteTest {
         private val text: String,
         private val geometry: SegmentGeometry?,
         private val publishes: Boolean = geometry != null,
+        /**
+         * The NPU tier's own answer (4.11 Task 4): `[t0cs, t1cs, byteStart, byteEnd]` per
+         * SENTENCE, offsets into the string [transcribe] returns. Empty is 4.10.1's shape and
+         * the default, so every test written before this one keeps its answer.
+         */
+        private val sentences: IntArray = IntArray(0),
     ) : WhisperBackend {
         override fun load(modelPath: String): Long = 42L
         override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String = text
         override fun lastGeometry(ctx: Long): SegmentGeometry? = geometry
+        override fun lastSentences(ctx: Long): IntArray = sentences
         override val publishesGeometry: Boolean get() = publishes
         override fun release(ctx: Long) = Unit
     }
@@ -102,7 +109,9 @@ class LocalWhisperEngineSpeakerRouteTest {
         attachAssigner: Boolean = true,
         text: String = " Hello world.",
         publishesGeometry: Boolean = geometry != null,
+        sentences: IntArray = IntArray(0),
         onSegmenterCall: () -> Unit = {},
+        onResolved: (SegmentOutcome) -> Unit = {},
     ): SpeakerAssignment? {
         val seen = AtomicReference<SpeakerAssignment?>(null)
         val assigner = SpeakerAssigner(
@@ -113,13 +122,14 @@ class LocalWhisperEngineSpeakerRouteTest {
         val engine = LocalWhisperEngine(
             modelPathProvider = FakeModelPathProvider("/models/small-q8.bin"),
             retry = fastRetry(),
-            backend = GeometryBackend(text, geometry, publishesGeometry),
+            backend = GeometryBackend(text, geometry, publishesGeometry, sentences),
             executor = SameThreadExecutorService(),
             vadModelPath = { vadPath },
         )
         if (attachAssigner) engine.speakerAssigner = assigner
+        val listener = RecordingListener()
         try {
-            engine.connect(language = "en", listener = RecordingListener())
+            engine.connect(language = "en", listener = listener)
             engine.sendAudio(pcm)
             engine.commit()
             // The assigner's own thread is the point of the design; wait for it, never for text.
@@ -127,6 +137,7 @@ class LocalWhisperEngineSpeakerRouteTest {
         } finally {
             assigner.release()
         }
+        listener.resolved.forEach { (_, outcome) -> onResolved(outcome) }
         return seen.get()
     }
 
@@ -331,6 +342,117 @@ class LocalWhisperEngineSpeakerRouteTest {
         )
         assertEquals(pick, runs.single().windowIndex)
         assertEquals(assignment.ids[pick], runs.single().speakerId)
+    }
+
+    // ------------------------ the VAD route WITH sentence bounds (4.11 Task 4)
+
+    /** " Hello there. And you. Who is this? Nobody." — four sentences that TILE the bytes. */
+    private val fourSentenceText = " Hello there. And you. Who is this? Nobody."
+
+    /** `[t0cs, t1cs, byteStart, byteEnd]` * 4 over [fourSentenceText], 2 s per sentence. */
+    private fun fourSentences(): IntArray {
+        val b = fourSentenceText.toByteArray(Charsets.UTF_8)
+        val edges = intArrayOf(0, 13, 22, 35, b.size)
+        return IntArray(16) { i ->
+            val s = i / 4
+            when (i % 4) {
+                0 -> s * 200
+                1 -> (s + 1) * 200
+                2 -> edges[s]
+                else -> edges[s + 1]
+            }
+        }
+    }
+
+    @Test
+    fun anNpuChunkWithSENTENCEBoundsBecomesOneWindowAndOneRunPerSentence() {
+        // SESSION 7'S FAILURE, END TO END. One pause-free VAD segment over the whole chunk —
+        // exactly what hard-cut media gives Silero — used to be ONE window and ONE label. With
+        // the decoder's own bounds it is four of each, and the text splits where the sentences do.
+        val outcomes = ArrayList<SegmentOutcome>()
+        val assignment = commitOne(
+            geometry = null,
+            segments = intArrayOf(0, 128_000),
+            text = fourSentenceText,
+            sentences = fourSentences(),
+            onResolved = { outcomes += it },
+        )
+        assertNotNull(assignment)
+        assertEquals("four windows, one per sentence", 4, assignment!!.ids.size)
+
+        val committed = outcomes.filterIsInstance<SegmentOutcome.Text>().single()
+        assertNull("the VAD route publishes no WINDOW list — that is what picks the route", committed.windows)
+        assertEquals(
+            listOf("Hello there.", "And you.", "Who is this?", "Nobody."),
+            committed.spans?.map { it.text },
+        )
+        assertEquals(listOf(0, 1, 2, 3), committed.spans?.map { it.windowIndex })
+
+        val runs = SpeakerRuns.of(seq = assignment.seq, text = committed.text, spans = committed.spans)
+        assertEquals("one run per sentence, not one per chunk", 4, runs.size)
+        SpeakerRuns.applyAssignment(runs, seq = assignment.seq, ids = assignment.ids)
+        assertEquals(
+            "…and each run wears its OWN window's id",
+            assignment.ids.filter { it > 0 }.size,
+            runs.count { it.speakerId != null },
+        )
+    }
+
+    @Test
+    fun theSpansAndTheWindowsAreCutFromTheSAMEsentenceArray() {
+        // The engine cuts the TEXT on the native thread and the assigner cuts the AUDIO ~60 ms
+        // later on the embed thread; the two are matched by POSITION and never meet. So a span's
+        // index must be a real index into `ids` — one array read once, handed to both halves.
+        val outcomes = ArrayList<SegmentOutcome>()
+        val assignment = commitOne(
+            geometry = null,
+            segments = intArrayOf(0, 128_000),
+            text = fourSentenceText,
+            sentences = fourSentences(),
+            onResolved = { outcomes += it },
+        )!!
+        val spans = outcomes.filterIsInstance<SegmentOutcome.Text>().single().spans!!
+        assertTrue(
+            "every span indexes a window the assigner actually fingerprinted",
+            spans.all { it.windowIndex in assignment.ids.indices },
+        )
+    }
+
+    @Test
+    fun anNpuChunkWithNoSentenceBoundsStillGetsTheWholeChunkAnswer() {
+        // The empty array is 4.10.1's behaviour and it has to stay reachable: a decode that
+        // emitted no timestamps, a parse that refused a backwards stream, or a blanked segment.
+        val outcomes = ArrayList<SegmentOutcome>()
+        val assignment = commitOne(
+            geometry = null,
+            segments = intArrayOf(0, 32_000, 48_000, 112_000),
+            onResolved = { outcomes += it },
+        )
+        assertNotNull(assignment)
+        assertEquals(listOf(1, 2), assignment!!.ids)
+        assertEquals("the 4 s window beats the 2 s one", 1, assignment.wholeChunkWindow)
+        val committed = outcomes.filterIsInstance<SegmentOutcome.Text>().single()
+        assertNull("no spans, exactly as in 4.10.1", committed.spans)
+        assertNull(committed.windows)
+    }
+
+    @Test
+    fun aChunkThatHasGEOMETRYIgnoresAnySentenceBoundsBesideIt() {
+        // The CPU tier's own timing is strictly finer — per TOKEN since Task 1 — so a backend
+        // that published both must answer from the geometry. Reading the coarser array would
+        // hand a sentence-cut chunk the sentence's label for words the tokens had already
+        // separated.
+        val outcomes = ArrayList<SegmentOutcome>()
+        val assignment = commitOne(
+            geometry = cpuGeometry(),
+            sentences = fourSentences(),
+            onResolved = { outcomes += it },
+        )
+        assertNotNull(assignment)
+        assertNull("still the geometry route", assignment!!.wholeChunkWindow)
+        val committed = outcomes.filterIsInstance<SegmentOutcome.Text>().single()
+        assertNotNull("…and its WINDOW list, which the VAD route never publishes", committed.windows)
+        assertEquals(listOf("Hello", "world."), committed.spans?.map { it.text })
     }
 
     @Test

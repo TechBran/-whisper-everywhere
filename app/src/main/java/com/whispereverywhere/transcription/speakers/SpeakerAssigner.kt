@@ -159,7 +159,7 @@ class SpeakerAssigner(
     private val spike: SpeakerSpikeDirs? = null,
     /**
      * THE NPU TIER'S VAD, and the only native call this class makes besides the embedder
-     * ([assignWholeChunk]). A LAMBDA rather than a direct `WhisperNative` call so that every test
+     * ([assignVadRoute]). A LAMBDA rather than a direct `WhisperNative` call so that every test
      * in this file stays on a plain JVM: `WhisperNative`'s initialiser is
      * `System.loadLibrary("whisper_jni")`, which throws `UnsatisfiedLinkError` off a device — and
      * merely CONSTRUCTING this default does not touch that object, because a lambda's body runs
@@ -178,14 +178,20 @@ class SpeakerAssigner(
      * chunk arrives with both a speech partition and per-segment text offsets, and each window
      * gets its own stretch of text. Nothing about it has changed.
      *
-     * [WHOLE_CHUNK] is the NPU tier. The QNN decoder exposes no token or sentence timestamps, so
-     * there is no way to say which words belong to which window — the audio can still be
-     * fingerprinted per window, and is, but the chunk's committed text can only wear ONE label.
-     * Speaker changes therefore land on chunk boundaries (6-8 s) instead of sentence boundaries,
-     * which is the owner's ruling of 2026-09-19: *"at the chunk level … at least that would be
-     * good enough."*
+     * [VAD] is the NPU tier, and since 4.11 it has TWO shapes rather than one. Given sentence
+     * bounds ([assignVadRoute]'s fourth argument) it cuts the chunk per sentence and each window
+     * owns its own stretch of text, exactly as [GEOMETRY] does — one run per sentence. Given
+     * none it is 4.10.1 unchanged: the audio is still fingerprinted per window, but the chunk's
+     * committed text can only wear ONE label, so speaker changes land on chunk boundaries (6-8 s)
+     * — the owner's ruling of 2026-09-19, *"at the chunk level … at least that would be good
+     * enough."*
+     *
+     * The route does NOT split on which of the two it was, and that is deliberate: the
+     * dominant-window pick is published either way. See [SpeakerAssignment.wholeChunkWindow] —
+     * when the spans held it is a no-op downstream, and when they did not it is the only thing
+     * between that chunk and no label at all.
      */
-    private enum class Route { GEOMETRY, WHOLE_CHUNK }
+    private enum class Route { GEOMETRY, VAD }
 
     /**
      * Queues one committed chunk. Returns immediately — always.
@@ -232,7 +238,8 @@ class SpeakerAssigner(
      *     thread. It costs what the `VAD: … wallMs=` lines already report for the same work —
      *     about 60 ms for a 6-8 s chunk — and it is paid here, below delivered text, rather than
      *     on the whisper thread whose cadence floors were measured without it.
-     *  2. **Windows** from those bounds ([SpeakerSpans.wholeChunkWindows]). There is ONE timeline
+     *  2. **Windows** from those bounds — [SpeakerSpans.sentenceChunkWindows] when [sentences]
+     *     is non-empty, [SpeakerSpans.wholeChunkWindows] when it is not. There is ONE timeline
      *     on this route — [samples]' own — because nothing is stitched and nothing is swapped, so
      *     the "original" and "trimmed" offsets the CPU route carries separately are here the same
      *     number and are not pretended to be two.
@@ -242,10 +249,29 @@ class SpeakerAssigner(
      *     a window span more time than it holds voice. See [SpeakerWindow.speechSamples] and
      *     [SpeakerSpans.MAX_COALESCE_GAP_SECONDS], which between them keep a pause from opening
      *     a speaker.
-     *  4. **ONE id for the whole chunk** — the id of the window holding the most speech, ties to
-     *     the earliest — published as [SpeakerAssignment.wholeChunkWindow]. The decoder gives no
-     *     text offsets, so a chunk's text cannot be split between two speakers on this tier and
-     *     the honest answer is the dominant voice in it.
+     *  4. **A dominant-window pick**, published as [SpeakerAssignment.wholeChunkWindow] — the
+     *     window holding the most speech, ties to the earliest. Without [sentences] it is the
+     *     chunk's whole answer; with them it is the fallback described below.
+     *
+     * ### [sentences] — what 4.11 adds, and what it does NOT change
+     *
+     * `[t0cs, t1cs, byteStart, byteEnd]` per sentence, from `WhisperBackend.lastSentences`, and
+     * **the caller must hand the SAME array to `SpeakerSpans.sentenceSpans`**: the text is cut
+     * by sentence on the native thread and the audio by sentence here, and the two are matched
+     * by POSITION in [SpeakerAssignment.ids]. Two independently computed cuts that disagreed
+     * would put one sentence's speaker on another's words.
+     *
+     * With it, session 7's failure is gone: a pause-free 15 s chunk stops being one window with
+     * one label and becomes one window — and one run — per sentence, which is what the CPU tiers
+     * have done since 4.10. Empty is 4.10.1 byte for byte, and empty is the ordinary answer for
+     * a decode that emitted no timestamps or a parse that refused the stream.
+     *
+     * **The pick is published EITHER WAY**, which looks redundant on the sentence path and is
+     * not. `SpeakerRuns.of` drops a chunk's spans wholesale when they cannot reproduce its text,
+     * and that chunk arrives as ONE run at `NO_WINDOW_INDEX`; `SpeakerRuns.applyWholeChunk`
+     * touches only such runs. So when the spans held the pick is a downstream no-op, and when
+     * they did not it is the one thing standing between that chunk and no label at all. Spec §3:
+     * everything fails downhill.
      *
      * NO SPEECH PUBLISHES NOTHING. An empty segmentation — no speech, a missing or unloadable VAD
      * model, a failed pass — produces no callback at all, exactly as an empty `windows` does in
@@ -254,18 +280,32 @@ class SpeakerAssigner(
      * [vadModelPath] must be the `VadModel.path()` the backend seam already uses. There is no
      * fallback path to invent here: a caller without one must not call this.
      */
-    fun assignWholeChunk(seq: Long, samples: FloatArray, vadModelPath: String) {
+    fun assignVadRoute(
+        seq: Long,
+        samples: FloatArray,
+        vadModelPath: String,
+        sentences: IntArray = IntArray(0),
+    ) {
         if (samples.isEmpty() || vadModelPath.isEmpty()) return
         runCatching {
             executor.execute {
                 runCatching {
                     val raw = segmenter(samples, vadModelPath)
-                    val windows = SpeakerSpans.wholeChunkWindows(raw)
+                    // THE ONE FORK, and it is a fork on what the DECODER said rather than on
+                    // anything this chunk's audio did: an empty array is a decode that emitted
+                    // no timestamps, a parse that refused the stream, or a chunk whose bounds
+                    // were lost, and all three keep 4.10.1's answer byte for byte.
+                    val windows =
+                        if (sentences.isEmpty()) SpeakerSpans.wholeChunkWindows(raw)
+                        else SpeakerSpans.sentenceChunkWindows(raw, sentences)
                     if (windows.isEmpty()) return@runCatching
                     // `raw.size / 2` is the SPEECH SEGMENT count, which coalescing can make
                     // larger than the window count — the opposite of the geometry route, where
-                    // splitting makes windows the larger of the two. Both are printed.
-                    fingerprint(seq, samples, windows, Route.WHOLE_CHUNK, raw.size / 2)
+                    // splitting makes windows the larger of the two. Both are printed, and on
+                    // the sentence path the two now differ the OTHER way: session 7's one 15 s
+                    // segment becomes `segs=1 windows=4`, which is the line that says the fix
+                    // is live on the device.
+                    fingerprint(seq, samples, windows, Route.VAD, raw.size / 2)
                 }
             }
         }
@@ -476,7 +516,7 @@ class SpeakerAssigner(
                 // nothing has to be picked.
                 wholeChunkWindow = when (route) {
                     Route.GEOMETRY -> null
-                    Route.WHOLE_CHUNK -> dominant(durations)
+                    Route.VAD -> dominant(durations)
                 },
                 remaps = remaps,
                 // Read AFTER the merge pass: a chunk's verdict is the one that stands at the end
@@ -795,15 +835,26 @@ class SpeakerAssigner(
  *        It is the one field that changes what a reader DOES with [ids] rather than adding to
  *        them, and both meanings are needed because both tiers are live in one session after a
  *        fallback. Null: the chunk's text is cut per window and each id owns its own stretch —
- *        the CPU and GPU behaviour, unchanged. Non-null: the QNN decoder gave no text offsets, so
- *        there is no cut to make and the chunk's committed text wears `ids[wholeChunkWindow]`
- *        alone. The other ids are still real — they were fingerprinted, they taught the tracker,
- *        and they are in the diag line — they simply have no text to sit on.
+ *        the CPU and GPU behaviour, unchanged. Non-null: the chunk MAY have arrived with no cut
+ *        at all, in which case its committed text wears `ids[wholeChunkWindow]` alone and the
+ *        other ids are still real — they were fingerprinted, they taught the tracker, and they
+ *        are in the diag line — they simply have no text to sit on.
  *
  *        It doubles as the whole chunk's WINDOW INDEX, and that is the load-bearing half:
  *        `TranscriptSink.assign` stamps it onto the chunk's single run, so the retrospective
  *        pass's `windowLabels` — which is keyed by `WindowKey(seq, windowIndex)` — reaches that
  *        run unchanged and corrects it like any other.
+ *
+ *        **Since 4.11 non-null no longer MEANS "one label for the chunk"** (Task 4). The NPU
+ *        tier now cuts its text per sentence whenever the decoder timestamped one, so most
+ *        chunks on this route arrive with spans and a window per sentence — and this field is
+ *        then a FALLBACK rather than the answer. It stays published because
+ *        `SpeakerRuns.applyWholeChunk` only ever touches a run left at `NO_WINDOW_INDEX`, which
+ *        on that route means exactly one thing: `SpeakerRuns.of` refused the chunk's spans
+ *        because they could not reproduce its text. For that chunk this field is the difference
+ *        between 4.10.1's coarse label and no label at all; for every other chunk on the route
+ *        it is a no-op. Read it as "which window speaks for anything of this chunk that has no
+ *        window of its own", and read `route=vad` off it in the diag line exactly as before.
  *
  * There is NO text field, by design: see [SpeakerAssigner]'s KDoc.
  */

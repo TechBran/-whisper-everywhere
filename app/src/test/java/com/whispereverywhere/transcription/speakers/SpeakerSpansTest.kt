@@ -899,6 +899,169 @@ class SpeakerSpansTest {
         )
     }
 
+    // ------------------- the NPU tier's SENTENCE windows and spans (4.11 Task 4)
+
+    /** `[t0cs, t1cs, byteStart, byteEnd]` * n — what `NpuSentences.of` answers. */
+    private fun sentences(vararg s: IntArray): IntArray = s.flatMap { it.toList() }.toIntArray()
+
+    @Test
+    fun sentenceChunkWindowsCutTheChunksSPEECHAtEachSENTENCEStart() {
+        // SESSION 7'S FAILURE, ANSWERED. A hard-cut interview has no pauses, so Silero hands over
+        // ONE 15 s segment and 4.10.1's rule gave the whole minute one label. The decoder has
+        // always known where each sentence began; asked, it turns that one window into four.
+        val windows = SpeakerSpans.sentenceChunkWindows(
+            pairs(0f to 15f),
+            sentences(
+                intArrayOf(0, 400, 0, 10),
+                intArrayOf(400, 700, 10, 20),
+                intArrayOf(700, 1100, 20, 30),
+                intArrayOf(1100, 1500, 30, 40),
+            ),
+        )
+        assertEquals(
+            listOf(
+                SpeakerWindow(0, 0, 4 * RATE),
+                SpeakerWindow(0, 4 * RATE, 7 * RATE),
+                SpeakerWindow(0, 7 * RATE, 11 * RATE),
+                SpeakerWindow(0, 11 * RATE, 15 * RATE),
+            ),
+            windows,
+        )
+        assertTrue(
+            "no window claims speech it does not hold",
+            windows.all { it.speechSamples == it.origEnd - it.origStart },
+        )
+    }
+
+    @Test
+    fun oneWindowPerSENTENCEAlwaysSoTheWINDOWINDEXIsTheSENTENCEINDEX() {
+        // THE INVARIANT THE WHOLE ROUTE STANDS ON. The engine cuts the TEXT by sentence on the
+        // native thread and the assigner cuts the AUDIO by sentence ~60 ms later on the embed
+        // thread, and the two never meet: a span's `windowIndex` is matched to an id by POSITION.
+        // So a sentence the VAD heard no speech in may not be dropped — every later sentence's
+        // text would then wear the previous one's label.
+        val windows = SpeakerSpans.sentenceChunkWindows(
+            pairs(0f to 2f, 6f to 8f),
+            sentences(
+                intArrayOf(0, 200, 0, 10),
+                intArrayOf(200, 400, 10, 20),
+                intArrayOf(400, 800, 20, 30),
+            ),
+        )
+        assertEquals("one window per sentence, silent ones included", 3, windows.size)
+        assertEquals(SpeakerWindow(0, 0, 2 * RATE), windows[0])
+        assertEquals(
+            "the silent sentence is a ZERO-LENGTH window: it holds its index and inherits",
+            0, windows[1].speechSamples,
+        )
+        assertEquals(windows[1].origStart, windows[1].origEnd)
+        assertEquals(SpeakerWindow(1, 6 * RATE, 8 * RATE), windows[2])
+    }
+
+    @Test
+    fun aSentenceSPANNINGAPauseReportsTheSPEECHItHoldsAndNotItsSpan() {
+        // The same rule `wholeChunkWindows` needed and for the same reason: every gate below
+        // this file is a question about VOICE, so a sentence that straddles two speech segments
+        // must not claim the silence between them as seconds it spoke.
+        val windows = SpeakerSpans.sentenceChunkWindows(
+            pairs(0f to 2f, 6f to 8f),
+            sentences(intArrayOf(0, 800, 0, 30)),
+        )
+        assertEquals(1, windows.size)
+        assertEquals(0, windows.single().origStart)
+        assertEquals(8 * RATE, windows.single().origEnd)
+        assertEquals("4 s of voice inside an 8 s span", 4 * RATE, windows.single().speechSamples)
+    }
+
+    @Test
+    fun aSentenceRunningPastTheCHUNKIsClippedToTheSpeechThatExists() {
+        // `NpuSentences.CHUNK_END_CS` is 30.00 s — whisper's WINDOW, deliberately not the chunk's
+        // real duration, which a pure function cannot know. Clipping is this function's job.
+        val windows = SpeakerSpans.sentenceChunkWindows(
+            pairs(0f to 6f),
+            sentences(intArrayOf(0, 300, 0, 10), intArrayOf(300, 3000, 10, 20)),
+        )
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 3 * RATE), SpeakerWindow(0, 3 * RATE, 6 * RATE)),
+            windows,
+        )
+    }
+
+    @Test
+    fun noSentencesOrNoSpeechYieldsNOWindowsSoTheCallerKeepsItsOldAnswer() {
+        // Empty is how the caller learns to fall back to `wholeChunkWindows` — 4.10.1's answer —
+        // and spec section 2 forbids reading "no segments" as one speaker either way.
+        assertEquals(
+            emptyList<SpeakerWindow>(),
+            SpeakerSpans.sentenceChunkWindows(pairs(0f to 5f), IntArray(0)),
+        )
+        assertEquals(
+            emptyList<SpeakerWindow>(),
+            SpeakerSpans.sentenceChunkWindows(IntArray(0), sentences(intArrayOf(0, 200, 0, 10))),
+        )
+    }
+
+    @Test
+    fun sentenceSpansCutTheTextWhereTheSENTENCEDoesAndIndexTheirOwnWindow() {
+        val bytes = " Hello there. And you.".toByteArray(Charsets.UTF_8)
+        val spans = SpeakerSpans.sentenceSpans(
+            sentences(intArrayOf(0, 240, 0, 13), intArrayOf(240, 400, 13, bytes.size)),
+            bytes,
+        )
+        assertEquals(listOf(SpeakerSpan(0, "Hello there."), SpeakerSpan(1, "And you.")), spans)
+    }
+
+    @Test
+    fun sentenceSpansSliceBYTESSoAMultiByteCharacterSurvivesTheCut() {
+        // The same reason the whole file slices bytes: a `Char` index cannot be mapped back to a
+        // native byte offset, and cutting inside a UTF-8 sequence yields U+FFFD on exactly the
+        // multilingual models that made the byte return necessary.
+        val (bytes, ranges) = encode("  Guten Tag. ", "Schön, dich zu sehen. ", "日本語です。")
+        val spans = SpeakerSpans.sentenceSpans(
+            sentences(
+                intArrayOf(0, 200, ranges[0].first, ranges[0].second),
+                intArrayOf(200, 400, ranges[1].first, ranges[1].second),
+                intArrayOf(400, 600, ranges[2].first, ranges[2].second),
+            ),
+            bytes,
+        )
+        assertEquals(listOf(0, 1, 2), spans.map { it.windowIndex })
+        assertEquals("Schön, dich zu sehen.", spans[1].text)
+        assertEquals("日本語です。", spans[2].text)
+    }
+
+    @Test
+    fun aSentenceThatCLEANSAwayContributesNoSpanButCostsNoIndexEither() {
+        // Rule 2 of [spans], unchanged: whisper's non-speech markers would otherwise open a
+        // paragraph for a speaker who said nothing. The index is STATED per span rather than
+        // implied by position, so dropping one cannot shift the rest out of step with the ids.
+        val (bytes, ranges) = encode("Hello. ", "[BLANK_AUDIO]", " Goodbye.")
+        val spans = SpeakerSpans.sentenceSpans(
+            sentences(
+                intArrayOf(0, 200, ranges[0].first, ranges[0].second),
+                intArrayOf(200, 300, ranges[1].first, ranges[1].second),
+                intArrayOf(300, 500, ranges[2].first, ranges[2].second),
+            ),
+            bytes,
+        )
+        assertEquals(listOf(SpeakerSpan(0, "Hello."), SpeakerSpan(2, "Goodbye.")), spans)
+    }
+
+    @Test
+    fun sentenceSpansClampAStaleRangeRatherThanThrowingOnIt() {
+        // The same rule 1 [spans] has: these bounds cross a thread boundary and one call behind
+        // is reachable. A wrong label is a wrong label; an exception costs the user the sentence.
+        val bytes = "Hi.".toByteArray(Charsets.UTF_8)
+        assertEquals(
+            listOf(SpeakerSpan(0, "Hi.")),
+            SpeakerSpans.sentenceSpans(sentences(intArrayOf(0, 200, 0, 9_000)), bytes),
+        )
+        assertEquals(
+            emptyList<SpeakerSpan>(),
+            SpeakerSpans.sentenceSpans(sentences(intArrayOf(0, 200, 0, 3)), ByteArray(0)),
+        )
+    }
+
     @Test
     fun theTwoRoutesShareTheWindowFLOORAndNothingElse() {
         // The short-window rule is about the EMBEDDER and carries over; the SPLIT is about

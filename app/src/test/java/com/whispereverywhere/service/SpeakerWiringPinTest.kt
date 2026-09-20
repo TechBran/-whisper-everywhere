@@ -220,11 +220,13 @@ class SpeakerWiringPinTest {
         // `else if` behind `!backendPublishesGeometry`.
         val perWindow = at(engine, "assigner.assign(seq, samples, windows)", "LocalWhisperEngine.kt")
         val wholeChunk = at(
-            engine, "assigner.assignWholeChunk(seq, samples, it)", "LocalWhisperEngine.kt",
+            engine,
+            "assigner.assignVadRoute(seq, samples, it, backendSentences)",
+            "LocalWhisperEngine.kt",
         )
         assertTrue("the geometry route is decided first", perWindow < wholeChunk)
         assertEquals("ONE per-window call site", 1, count(engine, "assigner.assign(seq"))
-        assertEquals("ONE whole-chunk call site", 1, count(engine, "assigner.assignWholeChunk("))
+        assertEquals("ONE VAD-route call site", 1, count(engine, "assigner.assignVadRoute("))
 
         val fork = engine.substring(perWindow, wholeChunk)
         assertTrue(
@@ -293,8 +295,11 @@ class SpeakerWiringPinTest {
         // The same VAD model path the backend seam hands `transcribeRaw`, and a null one means
         // the device has no VAD model at all — the route is SKIPPED rather than handed an
         // invented path, which native would answer with an init failure and a log line per chunk.
-        at(engine, "vadModelPath()?.let { assigner.assignWholeChunk(seq, samples, it) }",
-            "LocalWhisperEngine.kt")
+        at(
+            engine,
+            "vadModelPath()?.let { assigner.assignVadRoute(seq, samples, it, backendSentences) }",
+            "LocalWhisperEngine.kt",
+        )
         assertEquals(
             "the seam is `VadModel.path()` and it is named in exactly ONE place — the default of " +
                 "the injected provider. A second, direct read anywhere else would be a second " +
