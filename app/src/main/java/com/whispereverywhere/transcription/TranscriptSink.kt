@@ -257,7 +257,18 @@ class TranscriptSink(
      * IS the relabel the owner asked for ("then when speaker one comes back … we want to be able
      * to switch that").
      */
+    /**
+     * How long the last [repaint] spent BUILDING the panel's string, in milliseconds — the
+     * sink-side half of the per-commit cost that removing the character ceiling made O(session).
+     * The service pairs it with the view-side `setText` in the `panel:` diag line; measuring
+     * only one half would understate the very thing the measurement exists to decide.
+     */
+    @Volatile
+    var lastRenderMs: Long = 0L
+        private set
+
     private fun repaint() {
+        val startedNs = System.nanoTime()
         _preview.value = if (labelsVisible) {
             SpeakerLabels.renderTail(
                 runs = runs,
@@ -268,13 +279,35 @@ class TranscriptSink(
         } else {
             tail.toString()
         }
+        lastRenderMs = (System.nanoTime() - startedNs) / 1_000_000
     }
 
     companion object {
 
         /**
          * THE PANEL'S WINDOW — how many characters of the session the bubble's transcript panel
-         * can show at once. About 25 minutes of speech at a normal speaking rate.
+         * can show at once. **There is no longer a ceiling: it is
+         * [SpeakerLabels.NO_CAP], and the panel shows the whole session.**
+         *
+         * OWNER, 2026-09-20: *"it should be a PIN only — anything done, processing wise, should
+         * just be a PIN only. That way we can show the entire window of text of what you have
+         * transcribed already … users are probably gonna wanna see that. They're gonna think the
+         * app is broken if things get cut off."* Committed text is finished text: no pass will
+         * rewrite it except the retrospective relabel, which rewrites it in place. A reader who
+         * scrolls up to re-read their own words and finds the beginning gone has no way to tell
+         * that from a bug.
+         *
+         * **What removing it costs, stated rather than assumed.** The RECORD grows by nothing:
+         * the file and `runs` were always whole. Two things do grow. (1) [tail], the incremental
+         * buffer used while no second speaker is confirmed, was trimmed to this constant and is
+         * now unbounded — a second full copy of the session's text beside `runs`, about 180 KB
+         * of UTF-16 for a two-hour session, which is real and is stated here rather than
+         * discovered later. (2) The per-commit WORK: the string built by [repaint] and the
+         * `StaticLayout` the panel measures for it are both O(session) and both land once per
+         * commit, the layout on Main. At a normal speaking rate a two-hour session is around
+         * 90,000 characters. The `panel:` diag line reports the character count, [lastRenderMs]
+         * and the view's own `setText` milliseconds, so the cost is a measurement rather than an
+         * argument; if it ever bites, the fix is incremental rendering, not the ceiling back.
          *
          * It is NOT the transcript, and that distinction is the whole reason the number can be
          * this large without costing anything permanent. The RECORD is two things, both already
@@ -286,13 +319,16 @@ class TranscriptSink(
          * it costs one larger string per repaint and no new retention whatsoever.
          *
          * It was 4,000 from the original bounded-memory sink (commit 39f151f), chosen when the
-         * panel was a plain incremental tail. The runs render changed what 4,000 buys: paragraph
-         * breaks and `Speaker N: ` labels spend the same characters, and with per-sentence
-         * windows the runs are short and numerous — so the owner watched the earlier part of a
-         * few-minutes session vanish from the panel while it was still on disk and still in
-         * memory (2026-09-19: *"the earlier parts of the transcript are disappearing … when I
-         * scroll back up"*). The cap was the only thing throwing that text away.
+         * panel was a plain incremental tail, then 20,000 at 4.10.0. The runs render changed
+         * what a cap buys: paragraph breaks and `Speaker N: ` labels spend the same characters,
+         * and with per-sentence windows the runs are short and numerous — so the owner twice
+         * watched the earlier part of a session vanish from the panel while it was still on disk
+         * and still in memory (2026-09-19: *"the earlier parts of the transcript are
+         * disappearing … when I scroll back up"*). Raising it bought time; only removing it
+         * answers the report, because any ceiling is a session length at which the same thing
+         * happens again.
          */
-        const val PREVIEW_CAP_CHARS: Int = 20_000
+        const val PREVIEW_CAP_CHARS: Int =
+            com.whispereverywhere.transcription.speakers.SpeakerLabels.NO_CAP
     }
 }

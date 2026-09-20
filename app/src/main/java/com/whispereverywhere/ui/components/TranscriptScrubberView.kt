@@ -77,10 +77,28 @@ class TranscriptScrubberView @JvmOverloads constructor(
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = TRACK_COLOUR }
     private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = THUMB_COLOUR }
 
+    /**
+     * THE TARGET'S SCROLL MOVED, whoever moved it — `(scrollY, maxScroll)` on this view's own
+     * mirrored model, reported after [sync] so the two agree.
+     *
+     * This hook exists because `View.setOnScrollChangeListener` is a SINGLE-SLOT setter and this
+     * class already owns that slot on both transcript views ([bind]). A second owner would
+     * silently unhook the thumb. So anyone who also needs to hear about scrolls asks here.
+     *
+     * **It cannot tell you WHO scrolled.** The listener fires identically for a finger dragging
+     * the text, this view's own [scrollToFinger], and the service's repaint scroll. A listener
+     * that needs "a finger did this" has to fence its own programmatic scrolls and ignore the
+     * report — see `FloatingBubbleService.scrollPanelTo` and [PanelFollowLatch].
+     */
+    var onTargetScrolled: ((scrollY: Int, maxScroll: Int) -> Unit)? = null
+
     /** Mirror [textView]; call once, from the view that owns both. */
     fun bind(textView: TextView) {
         target = textView
-        textView.setOnScrollChangeListener { _, _, _, _, _ -> sync() }
+        textView.setOnScrollChangeListener { _, _, _, _, _ ->
+            sync()
+            onTargetScrolled?.invoke(textView.scrollY, maxScroll)
+        }
         textView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> sync() }
         textView.doAfterTextChanged {
             // A fixed-size TextView rebuilds its layout inside setText with no bounds change,

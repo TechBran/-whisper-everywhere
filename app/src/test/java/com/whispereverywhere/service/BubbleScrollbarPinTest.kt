@@ -225,36 +225,105 @@ class BubbleScrollbarPinTest {
         // words at all (a relabel every few chunks, and one at stop) — so an unconditional
         // scroll-to-newest yanked a reader back to the bottom for a change they could not see,
         // and fought the scrubber they were holding.
+        // 4.11.3 REPLACED THE MECHANISM, and the rewrite is the fix. Through 4.11.2 the
+        // collector read `scrollY` BEFORE the repaint, compared it against the layout, and used
+        // that verdict afterwards. The comparison spans a `setText` that rebuilds the layout
+        // SYNCHRONOUSLY while the correction waits for a `post`, so a second repaint arriving in
+        // between read the OLD offset against the NEW, taller layout, decided the reader had
+        // left the bottom, and the panel stopped following for the rest of the session (owner,
+        // 2026-09-20: "after a while ... it will just drift off and then not follow the bottom").
+        // What is pinned now is that no repaint may form an opinion at all.
+
+        // 1. THE COLLECTOR ASKS, AND DOES NOT DERIVE. It sets the text and posts the follow;
+        //    nothing in it reads scrollY, and nothing in it tests at-bottom.
         val start = serviceRaw.indexOf("            sink.preview.collectLatest { text ->")
         assertTrue("the panel's preview collector is gone or renamed", start >= 0)
         val collector = serviceRaw.substring(start, serviceRaw.indexOf("\n        }\n", start))
         val flat = collector.replace(Regex("\\s+"), " ")
-
-        // 1. The position is read BEFORE the text changes — the only moment the question
-        //    "was the reader at the bottom?" has an answer.
-        val read = flat.indexOf("val was = transcriptionEditText.scrollY")
-        val pinned = flat.indexOf("val pinned = com.whispereverywhere.ui.components.TranscriptScrubberMath.atBottom(")
         val setText = flat.indexOf("transcriptionEditText.text = text")
-        assertTrue("the pre-change scroll is read first", read >= 0 && read < setText)
-        assertTrue("and the at-bottom test is made on it, before the text changes", pinned in (read + 1) until setText)
+        val follow = flat.indexOf("transcriptionEditText.post { followPanelToBottom() }")
+        assertTrue("the collector still assigns the panel's text", setText >= 0)
+        assertTrue("and follows in a post after it, so the new extent is known", follow > setText)
+        assertFalse(
+            "a repaint must not read the panel's scroll position — that read IS the defect",
+            flat.contains("transcriptionEditText.scrollY"),
+        )
+        assertFalse(
+            "a repaint must not decide at-bottom for itself; only a finger writes the latch",
+            flat.contains("atBottom("),
+        )
 
-        // 2. Exactly ONE scrollTo on the panel in the whole service, it is in this collector,
-        //    and what it scrolls to is the maths' verdict — never a bare bottom.
+        // 2. EXACTLY ONE PLACE SCROLLS THE PANEL, and it is the fenced helper. The fence is what
+        //    stops the app's own scroll from reporting itself as a user landing at the bottom.
         assertEquals("one place scrolls the panel", 1, service.split("transcriptionEditText.scrollTo(").size - 1)
-        val scroll = flat.indexOf("transcriptionEditText.scrollTo(")
-        assertTrue("the one scrollTo is in the collector, after the text is set", scroll > setText)
+        val helper = serviceRaw.indexOf("private fun scrollPanelTo(y: Int) {")
+        assertTrue("the one scroll lives in scrollPanelTo", helper >= 0)
+        val helperBody = serviceRaw.substring(helper, serviceRaw.indexOf("\n    }\n", helper))
+            .replace(Regex("\\s+"), " ")
         assertTrue(
-            "the scroll target is followScrollY of the pre-change verdict",
-            flat.contains(
-                "com.whispereverywhere.ui.components.TranscriptScrubberMath.followScrollY( " +
-                    "wasAtBottom = pinned, previousScrollY = was, maxScroll = max, )",
+            "scrollPanelTo raises the fence, scrolls, and lowers it in a finally",
+            helperBody.contains("panelScrollIsOurs = true") &&
+                helperBody.contains("transcriptionEditText.scrollTo(0, y)") &&
+                helperBody.contains("finally { panelScrollIsOurs = false }"),
+        )
+
+        // 3. THE LATCH IS WRITTEN BY A FINGER AND NOTHING ELSE. The scrubber owns the view's
+        //    single scroll-change slot, so it reports through onTargetScrolled; the service
+        //    ignores the report while its own scroll is in flight.
+        assertTrue(
+            "the finger report is gated on the fence",
+            service.replace(Regex("\\s+"), " ").contains(
+                "transcriptScrubber.onTargetScrolled = { scrollY, maxScroll -> " +
+                    "if (!panelScrollIsOurs) panelFollow.onUserScroll(scrollY, maxScroll, panelFollowSlackPx) }",
+            ),
+        )
+        assertEquals(
+            "onUserScroll is called from exactly one place",
+            1,
+            service.split("panelFollow.onUserScroll(").size - 1,
+        )
+        assertTrue(
+            "the scrubber reports scrolls rather than being displaced from the single slot",
+            scrubberSource.replace(Regex("\\s+"), " ").contains(
+                "textView.setOnScrollChangeListener { _, _, _, _, _ -> sync() " +
+                    "onTargetScrolled?.invoke(textView.scrollY, maxScroll) }",
             ),
         )
 
-        // 3. A finger on the scrubber wins outright: the collector does not scroll at all while
-        //    the bar is being dragged, and it asks the bar rather than keeping its own flag.
-        val guard = flat.indexOf("if (layout != null && !transcriptScrubber.isScrubbing)")
-        assertTrue("the scrubber guard precedes the scrollTo", guard in (setText + 1) until scroll)
+        // 4. A NEW SESSION RIDES ITS NEWEST LINE — armed at the one site that empties the panel,
+        //    because teardown leaves the previous session's offset on the view.
+        assertEquals("the latch is armed in exactly one place", 1, service.split("panelFollow.arm()").size - 1)
+        val preview = serviceRaw.indexOf("private fun showSessionPreview(live: Boolean) {")
+        assertTrue("showSessionPreview is gone or renamed", preview >= 0)
+        val previewBody = serviceRaw.substring(preview, serviceRaw.indexOf("\n    }\n", preview))
+            .replace(Regex("\\s+"), " ")
+        assertTrue("the arm is in showSessionPreview, after the text is cleared",
+            previewBody.indexOf("panelFollow.arm()") > previewBody.indexOf("transcriptionEditText.text = \"\""))
+
+        // 5. A finger on the scrubber still wins outright: the follow does not fight a held thumb.
+        val followAt = serviceRaw.indexOf("private fun followPanelToBottom() {")
+        assertTrue("followPanelToBottom is gone or renamed", followAt >= 0)
+        val followBody = serviceRaw.substring(followAt, serviceRaw.indexOf("\n    }\n", followAt))
+            .replace(Regex("\\s+"), " ")
+        assertTrue("the follow returns while the bar is being dragged",
+            followBody.contains("if (transcriptScrubber.isScrubbing) return"))
+
+        // 6. THE FOLLOW ASKS THE LATCH — the assertion this test shipped without. Everything
+        //    above pins that the latch is written correctly; none of it noticed that
+        //    followPanelToBottom could ignore the answer and scroll unconditionally, which is
+        //    the whole behaviour. It reads the latch, hands it the CURRENT offset so a stranded
+        //    view can be clamped, and scrolls only through the fenced helper.
+        assertTrue(
+            "the follow asks the latch, with the current offset, and scrolls only what it answers",
+            followBody.contains(
+                "panelFollow.targetScrollY(max, transcriptionEditText.scrollY)?.let { scrollPanelTo(it) }",
+            ),
+        )
+        assertEquals(
+            "the latch is read from exactly one place",
+            1,
+            service.split("panelFollow.targetScrollY(").size - 1,
+        )
         assertTrue("isScrubbing is the view's own dragging state, not a copy",
             scrubberSource.contains("val isScrubbing: Boolean get() = dragging"))
     }

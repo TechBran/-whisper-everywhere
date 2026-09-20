@@ -294,17 +294,20 @@ class TranscriptSinkTest {
         assertEquals(listOf(1, 1), sink.runs().map { it.speakerId })
     }
 
-    @Test fun the_panels_window_is_twenty_thousand_characters_not_four() {
-        // THE 2026-09-19 REPORT: "the earlier parts of the transcript are disappearing … when I
-        // scroll back up". 4,000 was the original bounded-memory sink's number, from before the
-        // panel was rendered from runs; a few minutes of per-sentence windows with labels and
-        // paragraph breaks spent it in a hurry. The record was never in danger — the file and
-        // the runs both hold everything — so the window is the only thing that had to move.
-        assertEquals(20_000, TranscriptSink.PREVIEW_CAP_CHARS)
+    @Test fun the_panel_has_no_window_at_all_and_shows_the_whole_session() {
+        // THE 2026-09-20 RULING: "it should be a PIN only — anything done, processing wise,
+        // should just be a PIN only. That way we can show the entire window of text of what you
+        // have transcribed already … They're gonna think the app is broken if things get cut
+        // off." The number was 4,000, then 20,000 at 4.10.0 after the owner watched the start of
+        // a few-minute session vanish; each raise only moved the session length at which the
+        // same report comes back, because ANY ceiling is one. The record was never in danger —
+        // the file and the runs both hold everything — so the ceiling was the only thing
+        // throwing text away, and it is gone rather than larger.
+        assertEquals(SpeakerLabels.NO_CAP, TranscriptSink.PREVIEW_CAP_CHARS)
 
         val f = tmp()
         val sink = TranscriptSink(f)
-        // ~9,000 characters of two-speaker session: past the OLD cap by more than double.
+        // ~9,000 characters of two-speaker session: past the ORIGINAL cap by more than double.
         for (i in 1..200) {
             val text = "Sentence number $i of a long conversation."
             sink.append(seq = i.toLong(), spans = listOf(SpeakerSpan(0, text)), text = text)
@@ -312,10 +315,46 @@ class TranscriptSinkTest {
         }
         sink.setLabelsVisible(true)
         val preview = sink.preview.value
-        assertTrue("the fixture must clear the old cap", preview.length > 4_000)
-        assertTrue("and stay inside the new one", preview.length <= 20_000)
+        assertTrue("the fixture must clear the original cap", preview.length > 4_000)
         assertTrue("the session's FIRST words are still in the panel", preview.contains("Sentence number 1 of"))
         assertTrue("and its last", preview.contains("Sentence number 200 of"))
+        // EVERY sentence, not merely the ends: nothing is dropped from the middle either.
+        for (i in 1..200) {
+            assertTrue("sentence $i is missing from the panel", preview.contains("Sentence number $i of"))
+        }
+        sink.close()
+    }
+
+    @Test fun a_caller_that_asks_for_a_window_still_gets_one() {
+        // The cap is still a CONSTRUCTOR PARAMETER, and the trimming behind it still works —
+        // only the production default changed. Anything that ever needs a bounded panel again
+        // passes a number, and this is the row that says the machinery is still there rather
+        // than quietly dead.
+        val f = tmp()
+        val sink = TranscriptSink(f, previewCapChars = 200)
+        for (i in 1..50) {
+            val text = "Sentence number $i of a long conversation."
+            sink.append(seq = i.toLong(), spans = listOf(SpeakerSpan(0, text)), text = text)
+            sink.assign(seq = i.toLong(), ids = listOf(1), remap = emptyMap())
+        }
+        // The INCREMENTAL half, with one speaker: the tail buffer is still trimmed.
+        val plain = sink.preview.value
+        assertTrue("a caller-set window is still honoured", plain.length <= 200)
+        assertTrue("and it keeps the NEWEST words", plain.contains("Sentence number 50 of"))
+
+        // THE OTHER HALF, and the one the first version of this test never reached: with a
+        // second speaker confirmed the panel is rendered by SpeakerLabels.renderTail, which has
+        // its own capped path — the binary search this change short-circuits only at NO_CAP.
+        for (i in 51..80) {
+            val text = "Sentence number $i of a long conversation."
+            sink.append(seq = i.toLong(), spans = listOf(SpeakerSpan(0, text)), text = text)
+            sink.assign(seq = i.toLong(), ids = listOf(2), remap = emptyMap())
+        }
+        sink.setLabelsVisible(true)
+        val labelled = sink.preview.value
+        assertTrue("the labelled render honours a caller-set window too", labelled.length <= 200)
+        assertTrue("and it too keeps the NEWEST words", labelled.contains("Sentence number 80 of"))
+        assertFalse("a capped labelled render drops the oldest", labelled.contains("Sentence number 1 of"))
         sink.close()
     }
 

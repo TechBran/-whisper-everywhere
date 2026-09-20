@@ -1015,6 +1015,23 @@ class FloatingBubbleService : Service(),
     private lateinit var transcriptScrubber: com.whispereverywhere.ui.components.TranscriptScrubberView
     private lateinit var deltaScrubber: com.whispereverywhere.ui.components.TranscriptScrubberView
 
+    /**
+     * Does the committed panel ride its newest line? Written ONLY by a finger (the scrubber's
+     * `onTargetScrolled`, fenced by [panelScrollIsOurs]) and by [showSessionPreview]'s arm.
+     */
+    private val panelFollow = com.whispereverywhere.ui.components.PanelFollowLatch()
+
+    /**
+     * How close to the panel's bottom still counts as riding it, in pixels. Read at the moment a
+     * finger lands rather than cached: the Fold6's two displays do not share a density, so a
+     * value snapshotted at construction would be wrong for the rest of a session that unfolded.
+     */
+    private val panelFollowSlackPx: Int
+        get() = (PANEL_FOLLOW_SLACK_DP * resources.displayMetrics.density).toInt()
+
+    /** True only inside [scrollPanelTo] — see its KDoc for why the fence has to exist. */
+    private var panelScrollIsOurs = false
+
     private lateinit var audioRecorder: StreamingAudioRecorder
 
     // Device-audio (playback) capture source — active INSTEAD of the mic during media sessions.
@@ -2612,6 +2629,18 @@ class FloatingBubbleService : Service(),
         transcriptionDeltaText = bubbleView.findViewById(R.id.transcription_delta_text)
         transcriptScrubber = bubbleView.findViewById(R.id.transcript_scrubber)
         transcriptScrubber.bind(transcriptionEditText)
+        // A FINGER LANDED. The scrubber owns the view's single scroll-change slot, so it reports
+        // here rather than being displaced; and because that listener cannot tell a drag from
+        // the app's own scroll, [scrollPanelTo] fences ours out. Everything left is a finger:
+        // a drag of the text through ScrollingMovementMethod, or of the bar itself.
+        transcriptScrubber.onTargetScrolled = { scrollY, maxScroll ->
+            if (!panelScrollIsOurs) panelFollow.onUserScroll(scrollY, maxScroll, panelFollowSlackPx)
+        }
+        // Following means the BOTTOM, and the bottom moves when the panel is resized or the
+        // screen rotates — not only when words arrive. Posted because this fires during layout.
+        transcriptionEditText.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            transcriptionEditText.post { followPanelToBottom() }
+        }
         deltaScrubber = bubbleView.findViewById(R.id.delta_scrubber)
         deltaScrubber.bind(transcriptionDeltaText)
         resizeHandle = bubbleView.findViewById(R.id.resize_handle)
@@ -4331,6 +4360,46 @@ class FloatingBubbleService : Service(),
     }
 
     /**
+     * RIDE THE NEWEST LINE, IF THE READER STILL WANTS TO — the one place a repaint, a resize or
+     * a rotation is allowed to move the committed panel, and it moves it only to the bottom.
+     *
+     * A finger on the scrubber wins outright: a repaint landing mid-drag would fight the thumb
+     * the user is holding, and the bar is asked rather than a duplicate flag being kept.
+     */
+    private fun followPanelToBottom() {
+        val layout = transcriptionEditText.layout ?: return
+        if (transcriptScrubber.isScrubbing) return
+        val max = com.whispereverywhere.ui.components.TranscriptScrubberMath.maxScroll(
+            contentHeight = com.whispereverywhere.ui.components.TranscriptScrubberMath.contentHeight(
+                layoutHeight = layout.height,
+                paddingTop = transcriptionEditText.paddingTop,
+                paddingBottom = transcriptionEditText.paddingBottom,
+            ),
+            viewHeight = transcriptionEditText.height,
+        )
+        panelFollow.targetScrollY(max, transcriptionEditText.scrollY)?.let { scrollPanelTo(it) }
+    }
+
+    /**
+     * THE ONLY PLACE THE APP SCROLLS THE COMMITTED PANEL, and the fence that keeps its own
+     * scroll from being mistaken for the user's.
+     *
+     * `View.scrollTo` fires the scroll-change listener synchronously and indistinguishably from
+     * a finger drag, so without this flag every auto-scroll to the bottom would report itself to
+     * [PanelFollowLatch] as a user landing at the bottom — harmless while following, and a
+     * silent re-arm of a reader who had deliberately scrolled up. try/finally because a listener
+     * that throws must not leave the fence raised for the rest of the session.
+     */
+    private fun scrollPanelTo(y: Int) {
+        panelScrollIsOurs = true
+        try {
+            transcriptionEditText.scrollTo(0, y)
+        } finally {
+            panelScrollIsOurs = false
+        }
+    }
+
+    /**
      * The ONE preview pipeline (W2 unified preview): EVERY session — TEXT_FIELD, MEDIA_PLAYBACK,
      * NONE, live or batch — shows the accumulating transcript window and gets a bounded-memory
      * TranscriptSink. Mid-session text goes here and NOWHERE else; the single external write
@@ -4348,62 +4417,60 @@ class FloatingBubbleService : Service(),
         android.util.Log.i("WE-DIAG", "showSessionPreview: live=$live context=$sessionContext")
         transcriptionEditText.visibility = View.VISIBLE
         transcriptionEditText.text = ""
+        // A NEW SESSION RIDES ITS NEWEST LINE. This is the only site that empties the committed
+        // panel and the only one that subscribes a new preview flow, so it is the only place the
+        // latch is armed. It has to be armed rather than assumed: teardown leaves the previous
+        // session's text AND its scroll offset on the view, so without this a reader who had
+        // scrolled up last time would start the next session already disarmed.
+        panelFollow.arm()
+        scrollPanelTo(0)
         transcriptionDeltaText.text = ""
         transcriptionDeltaText.visibility = View.GONE
         transcriptionPreviewContainer.visibility = View.VISIBLE
 
         // The session's sink; the file on disk is the full transcript and the panel shows its
-        // newest TranscriptSink.PREVIEW_CAP_CHARS.
+        // whole committed text (4.11.3: TranscriptSink.PREVIEW_CAP_CHARS is NO_CAP).
         val sessionFile = java.io.File(filesDir, "transcript_session.txt").apply { if (exists()) delete() }
         val sink = com.whispereverywhere.transcription.TranscriptSink(sessionFile)
         transcriptSink = sink
         previewJob?.cancel()
         previewJob = serviceScope.launch(Dispatchers.Main) {
             sink.preview.collectLatest { text ->
-                // FOLLOW, DON'T YANK (owner, 2026-09-19: scrolling back up did not stay put).
-                // The whole panel is re-assigned on every repaint, and since the retrospective
-                // reclusterer a repaint can carry no new words at all — a relabel every few
-                // chunks, and one at stop. So the decision is made HERE, against the content as
-                // it stands BEFORE the text changes: only a reader already riding the newest
-                // line gets carried along. Everyone else — and anyone with a finger on the
-                // scrubber — keeps the offset they chose.
-                val was = transcriptionEditText.scrollY
-                val pinned = com.whispereverywhere.ui.components.TranscriptScrubberMath.atBottom(
-                    scrollY = was,
-                    maxScroll = com.whispereverywhere.ui.components.TranscriptScrubberMath.maxScroll(
-                        contentHeight = com.whispereverywhere.ui.components.TranscriptScrubberMath.contentHeight(
-                            layoutHeight = transcriptionEditText.layout?.height ?: 0,
-                            paddingTop = transcriptionEditText.paddingTop,
-                            paddingBottom = transcriptionEditText.paddingBottom,
-                        ),
-                        viewHeight = transcriptionEditText.height,
-                    ),
-                    thresholdPx = (PANEL_FOLLOW_SLACK_DP * resources.displayMetrics.density).toInt(),
-                )
+                // FOLLOW, DON'T YANK — and ASK, never re-derive (owner, 2026-09-20: "after a
+                // while … it will just drift off and then not follow the bottom").
+                //
+                // Through 4.11.2 this block read `scrollY` here, compared it against the layout,
+                // and used that verdict after the repaint. The comparison spans the `setText`
+                // below — which rebuilds the layout SYNCHRONOUSLY — while the correction waits
+                // for the post. A second repaint arriving in between (four triggers feed
+                // `_preview`, and `collectLatest` does not cancel a queued post) therefore read
+                // the OLD offset against the NEW, taller layout, concluded the reader was far
+                // from the bottom, and the panel stopped following for the rest of the session.
+                //
+                // So a repaint no longer has an opinion. [panelFollow] is written only by a
+                // finger, and this asks it.
+                // THE COST OF SHOWING EVERYTHING, measured rather than assumed (4.11.3 removed
+                // the panel's character ceiling). There are TWO O(session) passes per commit and
+                // the line reports both, because measuring only one would understate the very
+                // thing the measurement exists to decide: `renderMs` is the sink building the
+                // whole string (`SpeakerLabels.renderTail` over every run), which has already
+                // happened by the time this collector is handed `text`; `setTextMs` is the
+                // StaticLayout the panel measures for it, synchronously, on Main. Only past the
+                // old 20,000-character ceiling, so a normal session logs nothing, and through
+                // the native export so a Play build still reports it.
+                val panelStartNs = System.nanoTime()
                 transcriptionEditText.text = text
-                // TextView has no setSelection; the new content's extent is only known after
-                // the relayout this post waits for.
-                transcriptionEditText.post {
-                    val layout = transcriptionEditText.layout
-                    if (layout != null && !transcriptScrubber.isScrubbing) {
-                        val max = com.whispereverywhere.ui.components.TranscriptScrubberMath.maxScroll(
-                            contentHeight = com.whispereverywhere.ui.components.TranscriptScrubberMath.contentHeight(
-                                layoutHeight = layout.height,
-                                paddingTop = transcriptionEditText.paddingTop,
-                                paddingBottom = transcriptionEditText.paddingBottom,
-                            ),
-                            viewHeight = transcriptionEditText.height,
-                        )
-                        transcriptionEditText.scrollTo(
-                            0,
-                            com.whispereverywhere.ui.components.TranscriptScrubberMath.followScrollY(
-                                wasAtBottom = pinned,
-                                previousScrollY = was,
-                                maxScroll = max,
-                            ),
+                if (text.length > 20_000) {
+                    runCatching {
+                        com.whispereverywhere.whisper.WhisperNative.diag(
+                            "panel: chars=${text.length} renderMs=${sink.lastRenderMs}" +
+                                " setTextMs=${(System.nanoTime() - panelStartNs) / 1_000_000}",
                         )
                     }
                 }
+                // TextView has no setSelection; the new content's extent is only known after
+                // the relayout this post waits for.
+                transcriptionEditText.post { followPanelToBottom() }
             }
         }
     }

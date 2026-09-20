@@ -91,6 +91,13 @@ object SpeakerLabels {
     }
 
     /**
+     * RENDER EVERYTHING — the value [renderTail] reads as "no ceiling at all", and the panel's
+     * production setting since 4.11.3. It is not a large cap that nobody reaches; it is a
+     * distinct case, handled on its own line.
+     */
+    const val NO_CAP: Int = Int.MAX_VALUE
+
+    /**
      * The same table, applied to the NEWEST [maxChars] characters — the bubble panel's bounded
      * window (`TranscriptSink`'s preview).
      *
@@ -120,6 +127,13 @@ object SpeakerLabels {
         }
         val numbers = displayNumbers(runs)
         val labels = labelsVisible(mode)
+        // THE WHOLE SESSION, with no search to do (owner, 2026-09-20: the panel shows everything
+        // it has transcribed, because "they're gonna think the app is broken if things get cut
+        // off"). Short-circuited rather than left to fall out of the arithmetic below:
+        // [renderTailStart] accumulates a `bound` it compares against [maxChars], and at
+        // [NO_CAP] that sum overflows on a long enough session. It would still land on 0 by way
+        // of the wrap, which is the right answer for the wrong reason — so the case is named.
+        if (maxChars == NO_CAP) return build(runs, numbers, labels, from = 0, dropLeadingChars = 0)
         val from = renderTailStart(runs, numbers, labels, maxChars)
         var text = build(runs, numbers, labels, from, dropLeadingChars = 0)
         if (text.length > maxChars) {

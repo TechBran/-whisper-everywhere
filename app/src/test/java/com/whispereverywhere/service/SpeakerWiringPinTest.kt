@@ -158,14 +158,21 @@ class SpeakerWiringPinTest {
 
     @Test
     fun theOneDiagLinePerChunkGoesOutThroughNativeLoggingSoR8CannotStripIt() {
-        // THREE native lines, and no more: the per-chunk `speaker:` line, the once-per-session
-        // relabel (Task 5), and the per-pass `speaker-recluster:` line spike session 6 added.
-        // The relabel's is counted here rather than left to drift because it is guarded by the
+        // FOUR native lines, and no more: the per-chunk `speaker:` line, the once-per-session
+        // relabel (Task 5), the per-pass `speaker-recluster:` line spike session 6 added, and
+        // — since 4.11.3 removed the panel's character ceiling — the `panel:` line that reports
+        // what rendering the WHOLE session costs, so that decision stays a measurement. The
+        // relabel's is counted here rather than left to drift because it is guarded by the
         // latch's own "did it move" answer and must stay once per session however many callers
-        // ask for the latch. All three go out through WhisperNative.diag because R8 strips every
+        // ask for the latch. All four go out through WhisperNative.diag because R8 strips every
         // android.util.Log call from the release build, and the release build is the only one
         // the owner can install.
-        assertEquals(3, count(service, "WhisperNative.diag("))
+        assertEquals(4, count(service, "WhisperNative.diag("))
+        assertEquals(
+            "the panel's cost line is emitted from exactly one place, and only past the old cap",
+            1,
+            count(service, "panel: chars="),
+        )
         at(startRecording, "WhisperNative.diag(SpeakerDiag.line(assignment))", "startRecording")
         at(startRecording, "WhisperNative.diag(SpeakerDiag.reclusterLine(relabel))", "startRecording")
         assertEquals("the recluster line is emitted from exactly one place", 1, count(service, "SpeakerDiag.reclusterLine("))

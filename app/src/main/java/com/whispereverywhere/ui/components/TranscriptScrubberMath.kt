@@ -106,28 +106,12 @@ object TranscriptScrubberMath {
     fun atBottom(scrollY: Int, maxScroll: Int, thresholdPx: Int): Boolean =
         scrollY >= maxScroll - thresholdPx.coerceAtLeast(0)
 
-    /**
-     * WHERE THE PANEL SITS AFTER A REPAINT — the one rule behind the owner's 2026-09-19 report
-     * that scrolling back up did not stay put.
-     *
-     * The panel is re-assigned its whole text on every repaint, and since the retrospective
-     * reclusterer those repaints also happen when no new words arrived (a relabel every few
-     * chunks, and one at stop). Scrolling to the newest line unconditionally therefore yanked a
-     * reader — or a dragged scrubber — back to the bottom for a change they could not even see.
-     *
-     * So: follow the newest line only for a reader who was already there ([wasAtBottom]); anyone
-     * else keeps the offset they chose, clamped to whatever the content is now.
-     *
-     * What a length-preserving relabel does to the view therefore depends on which side of
-     * [atBottom]'s slack the reader sits. Exactly on `maxScroll`, or anywhere above the slack,
-     * both branches return where the view already was and nothing moves — which is the case the
-     * owner reported. INSIDE the slack it does move: a reader 1..(slack-1) px short of the bottom
-     * is [wasAtBottom], so this returns `maxScroll` and those last pixels are taken up. With
-     * `PANEL_FOLLOW_SLACK_DP = 24dp` (72px at density 3) against the panel's 14sp line (~17dp)
-     * that is up to about a line and a half of travel. It is the slack's intent rather than a
-     * leak — a reader that close to the end is still riding it, and the snap is toward the
-     * newest word, never away from what they were reading.
-     */
-    fun followScrollY(wasAtBottom: Boolean, previousScrollY: Int, maxScroll: Int): Int =
-        if (wasAtBottom) maxScroll else previousScrollY.coerceIn(0, maxScroll.coerceAtLeast(0))
+    // `followScrollY` lived here through 4.11.2 and is deliberately GONE. It answered "where
+    // does the panel sit after a repaint?" from a `wasAtBottom` the caller had to compute BEFORE
+    // the text changed — and that read, taken across a `setText` that rebuilds the layout
+    // synchronously while the scroll correction waits for a `post`, is exactly the race that
+    // stopped the panel following (owner, 2026-09-20). The question is now answered by
+    // [PanelFollowLatch], which no repaint may write to, so there is nothing to compute across
+    // the change. [atBottom] survives because the latch still needs it — to judge where a
+    // FINGER landed, which is a question about one moment and not about two.
 }

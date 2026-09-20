@@ -185,6 +185,30 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 105 = 4.11.3 — the panel follows the bottom again, and stops cutting text off.**
+ * 104 is spent: it was built, sideloaded onto the Tab S10+ and downloaded by the owner, so a
+ * higher code replaces it, and the name takes a PATCH because both halves are fixes to
+ * behaviour 4.11.2 already had.
+ *
+ * **The follow.** The panel answered "is the reader at the bottom?" fresh on every repaint — a
+ * `scrollY` read taken BEFORE `setText` and applied in a deferred `post`. A fixed-size
+ * `TextView` rebuilds its layout synchronously inside `setText`, and `_preview` is a StateFlow
+ * with four triggers collected by `collectLatest`, which cancels the coroutine body but not a
+ * queued post; so a second repaint read the OLD offset against the NEW layout, decided the
+ * reader had left, and the panel stopped following for the session. `PanelFollowLatch` is one
+ * boolean only a finger may write, armed once per session, so nothing is derived across a text
+ * change. The scrubber reports landings through a new `onTargetScrolled` because
+ * `setOnScrollChangeListener` is a single-slot setter it already owns on both transcript views;
+ * the service fences its own scroll out of that report. A review caught that the first cut had
+ * dropped the old clamp, stranding a reader past the end of shrunken content with no bar to
+ * drag back — `targetScrollY` now rescues a stranded view and still writes nothing to a reader
+ * who is in range.
+ *
+ * **The cap.** `TranscriptSink.PREVIEW_CAP_CHARS` is `SpeakerLabels.NO_CAP`: the panel shows the
+ * whole session. It was 4,000, then 20,000, and each raise only moved the session length at
+ * which "the earlier parts are disappearing" comes back. The cost is measured rather than
+ * assumed — a `panel:` diag reports the character count and BOTH O(session) passes per commit.
+ *
  * **versionCode 104 = 4.11.2 — a session may hold SIXTEEN speakers, not eight.** 103 is spent:
  * it was built, sideloaded onto the Tab S10+ at 02:38 and downloaded by the owner, so a higher
  * code is what replaces it, and the name takes a PATCH because sixteen speakers is the same
@@ -351,17 +375,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_11_2_at_version_code_104() {
+    fun release_identity_is_4_11_3_at_version_code_105() {
         assertEquals(
-            "versionName must be 4.11.2 for this release (app/build.gradle.kts defaultConfig)",
-            "4.11.2",
+            "versionName must be 4.11.3 for this release (app/build.gradle.kts defaultConfig)",
+            "4.11.3",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 104 for this release (app/build.gradle.kts defaultConfig). " +
-                "103 = 4.11.1 is spent — it was sideloaded onto the Tab S10+ at 2026-09-20 " +
-                "02:38 and downloaded by the owner, so only a higher code replaces it",
-            104,
+            "versionCode must be 105 for this release (app/build.gradle.kts defaultConfig). " +
+                "104 = 4.11.2 is spent — built, sideloaded onto the Tab S10+ and downloaded by " +
+                "the owner, so only a higher code replaces it",
+            105,
             BuildConfig.VERSION_CODE,
         )
     }

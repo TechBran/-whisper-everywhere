@@ -154,17 +154,10 @@ class TranscriptScrubberMathTest {
         assertFalse(TranscriptScrubberMath.atBottom(maxScroll - 1, maxScroll, 0))
     }
 
-    @Test fun a_repaint_carries_the_reader_only_when_the_reader_was_already_at_the_bottom() {
-        // Pinned to the newest line: the panel grows by 200px and the view follows it down.
-        assertEquals(960, TranscriptScrubberMath.followScrollY(wasAtBottom = true, previousScrollY = 760, maxScroll = 960))
-        // Reading further up: the offset is kept, whatever the repaint did to the content.
-        assertEquals(200, TranscriptScrubberMath.followScrollY(wasAtBottom = false, previousScrollY = 200, maxScroll = 960))
-        // THE RELABEL CASE: the text's length did not change, so neither branch moves the view.
-        assertEquals(200, TranscriptScrubberMath.followScrollY(wasAtBottom = false, previousScrollY = 200, maxScroll = 760))
-        assertEquals(760, TranscriptScrubberMath.followScrollY(wasAtBottom = true, previousScrollY = 760, maxScroll = 760))
-        // A repaint that SHRINKS the content clamps rather than leaving the view past its end.
-        assertEquals(100, TranscriptScrubberMath.followScrollY(wasAtBottom = false, previousScrollY = 700, maxScroll = 100))
-        assertEquals(0, TranscriptScrubberMath.followScrollY(wasAtBottom = false, previousScrollY = 700, maxScroll = 0))
-        assertEquals(0, TranscriptScrubberMath.followScrollY(wasAtBottom = true, previousScrollY = 0, maxScroll = 0))
-    }
+    // `followScrollY` and its rows are GONE at 4.11.3, and the deletion is the fix rather than
+    // tidying. It took a `wasAtBottom` the caller had to compute BEFORE a repaint changed the
+    // text, and that read — taken across a `setText` that rebuilds the layout synchronously
+    // while the scroll correction waits for a `post` — is the race that stopped the panel
+    // following at all. [PanelFollowLatchTest] holds the question now, and holds it as one that
+    // only a finger can answer.
 }
