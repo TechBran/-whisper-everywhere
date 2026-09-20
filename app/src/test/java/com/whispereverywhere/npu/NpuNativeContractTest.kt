@@ -3191,6 +3191,58 @@ class NpuNativeContractTest {
         )
     }
 
+    /**
+     * 4.11 FIX ROUND 2: `avg_logprob` AVERAGES OVER TEXT IDS AND THE EOT, NEVER OVER TIMESTAMPS.
+     *
+     * The second guard the emitted timestamps could disarm, and the more expensive of the two,
+     * because what stands behind it is SHIPPED: [NpuDecodePolicy.isNoSpeech] — `nsp > 0.6` AND
+     * `avgLogprob < -1.0` — is the 4.3.2 silence fix, in production since versionCode 86, and it
+     * was tuned against a decode prompted with `<|notimestamps|>`, i.e. against a mean taken over
+     * TEXT tokens alone. A timestamp emitted in timestamp mode is near-certain — the model has
+     * just been asked to say when — so its log-probability sits near 0, and averaging those in
+     * pulls the mean UP, past the −1.0 line, on exactly the dead-time segments the gate exists to
+     * blank. The symptom is not a crash and not a wrong number in a log: it is "Thank you."
+     * typing itself into silence again, on the owner's own device.
+     *
+     * The exclusion is pinned at `timestampBegin` rather than at `kEotToken` because term-for-term
+     * is the claim. Pre-4.11 every id this loop could emit was scored — the text, the EOT, and
+     * (unmasked, if never seen in practice) the language ids and `<|notimestamps|>` — and the only
+     * id [NpuDecodePolicy.suppressList]'s 4.11 change newly admits is a timestamp. Excluding the
+     * timestamp block and nothing else therefore leaves a stream with no timestamps in it scored
+     * exactly as it was, EOT included, which is `whisper_sequence_score`'s own rule.
+     */
+    @Test
+    fun theAvgLogprobDenominatorHoldsTextIdsAndTheEotButNeverATimestamp() {
+        val body = functionBody(cpp, "Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(")
+        assertTrue(
+            "the decode must derive <|0.00|> from the vocabulary it was given — the timestamp " +
+                "block is always the TOP kTimestampSlots ids, so nothing has to be passed in",
+            liveLines(body, "const int32_t timestampBegin = static_cast<int32_t>(g.vocab) - kTimestampSlots;").size == 1
+        )
+        assertTrue(
+            "the log-prob sum must be gated on tok < timestampBegin, on exactly one live line: " +
+                "a near-certain timestamp in the mean lifts it past NpuDecodePolicy.LOGPROB_THOLD " +
+                "and disarms the 4.3.2 silence fix",
+            liveLines(body, "if (scale > 0.0f && tok < timestampBegin) {").size == 1
+        )
+        assertTrue(
+            "the denominator must be counted where the numerator is summed, so the two cannot " +
+                "drift apart",
+            liveLines(body, "++scoredIds;").size == 1 &&
+                liveLines(body, "scored = scoredIds;").size == 1
+        )
+        assertTrue(
+            "nothing may still count the emitted ENTRIES: `count` includes the timestamps now",
+            liveLines(body, "scored = count + (hitEot ? 1 : 0);").isEmpty()
+        )
+        assertTrue(
+            "the EOT stays IN the average — whisper_sequence_score divides by result_len, which " +
+                "counts it — so the exclusion must not be written against kEotToken",
+            liveLines(body, "tok < kEotToken) sumLogprob").isEmpty() &&
+                liveLines(body, "tok >= kEotToken) continue;").isEmpty()
+        )
+    }
+
     /** Sampling never selects a suppressed id: mask first, then draw — the same shape as the argmax. */
     @Test
     fun temperatureSamplingMasksBeforeItDraws() {

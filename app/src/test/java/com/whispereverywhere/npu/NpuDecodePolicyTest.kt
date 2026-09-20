@@ -1351,6 +1351,39 @@ class NpuDecodePolicyTest {
     }
 
     /**
+     * 4.11 FIX ROUND 2: WHAT THE AVERAGE IS TAKEN OVER DECIDES THIS GATE, so the arithmetic is
+     * written out here rather than left to the native site the exclusion lives at.
+     *
+     * The shape is the one the 4.3.2 silence fix was built for: a dead-time segment where the
+     * model types a stock phrase it is not confident about. Four text tokens at ln p = −1.4 give
+     * a mean of −1.4 and [NpuDecodePolicy.isNoSpeech] blanks it. Since [NpuDecodePolicy.suppressList]
+     * stopped masking the timestamp block that same segment also emits its sentence bounds, and a
+     * timestamp in timestamp mode is near-certain — take ln p = −0.02 for it. Averaged in, four
+     * words and two timestamps give −0.94, the gate stops firing, and "Thank you." reaches the
+     * user's transcript out of silence: the owner-reported defect, re-opened by a change made in
+     * the prompt. `qnn_asr.cpp` therefore sums and counts text ids and the EOT only.
+     */
+    @Test
+    fun aTimestampInTheAverageWouldDisarmTheSilenceGateWhichIsWhyItIsExcluded() {
+        val word = -1.4                     // an unconfident stock phrase, the 4.3.2 population
+        val timestamp = -0.02               // near-certain: the model was asked to say WHEN
+        val nsp = 0.9f                      // an elevated silence vote, well past NO_SPEECH_THOLD
+
+        val textOnly = (4 * word) / 4.0
+        val diluted = (4 * word + 2 * timestamp) / 6.0
+
+        assertTrue(
+            "the mean over TEXT is what the -1.0 line was calibrated against",
+            NpuDecodePolicy.isNoSpeech(nsp, textOnly.toFloat()),
+        )
+        assertFalse(
+            "the same segment with its timestamps averaged in reads as speech — mean $diluted",
+            NpuDecodePolicy.isNoSpeech(nsp, diluted.toFloat()),
+        )
+        assertTrue("and the dilution is upward, always", diluted > textOnly)
+    }
+
+    /**
      * The stats array's slot names and terminator codes. Native mirrors them as `kStat*` /
      * `kTerm*` literals and NpuNativeContractTest holds the two copies equal by source text; this
      * test pins the Kotlin side's own values so that comparison has a fixed point.

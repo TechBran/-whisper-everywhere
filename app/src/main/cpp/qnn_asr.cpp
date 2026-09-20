@@ -3030,7 +3030,9 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeEncode(
 /// timestamps are now deliberately EMITTED: `NpuSentences` reads sentence bounds off them, which
 /// is the tier's only source of timing. So [jOut] interleaves timestamp ids with text ids, and
 /// anything here that reasons about the emitted stream must say which kind it means — see the
-/// text-only entropy window at the repetition guard below.
+/// text-only entropy window at the repetition guard below, and the text-only avg_logprob that
+/// keeps `NpuDecodePolicy.isNoSpeech` — the 4.3.2 silence fix, in production — reading the
+/// distribution it was tuned on.
 ///
 /// `position` is the single counter and the prompt consumes it too: positions 0..promptLen-1 feed
 /// the prompt through the same execute path, and the argmax produced at `position == promptLen - 1`
@@ -3191,12 +3193,19 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
     uint32_t lastPositionRun = 0;
     uint32_t stepsRun = 0;           // across every rung: the segment's real decode cost
 
+    // <|0.00|>, derived the way `validateSpecLocked` derives the language band: whisper appends
+    // its specials in a fixed order, so the timestamp block is always the TOP kTimestampSlots ids
+    // of the vocabulary and nothing has to be passed in for this. It is the line below which an
+    // emitted id is a WORD (or the EOT) and above which it is a clock reading - see the
+    // avg_logprob accumulation in the loop.
+    const int32_t timestampBegin = static_cast<int32_t>(g.vocab) - kTimestampSlots;
+
     // 4.3.1 A: THE LADDER. Each rung is a full re-decode against the SAME encode - self-KV zeroed,
     // prompt re-fed, cross-KV untouched - at temperatures[rung]. Rung 0 is the greedy loop this
     // function has always been; it is byte-identical in what it emits when no gate trips.
     float noSpeechProb = kStatUnreadable;
     double avgLogprob = 0.0;
-    int32_t scored = 0;              // ids in avgLogprob's denominator: count + the EOT, if it came
+    int32_t scored = 0;              // ids in avgLogprob's denominator: the TEXT ids, and the EOT
     double entropyLast = 0.0;
     int32_t distinctLast = 0;        // distinct ids in the window entropyLast was measured over
     bool entropyMeasured = false;    // the window check RAN on the returned rung
@@ -3213,6 +3222,9 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
         firstGenerated = -1;             // the result line names THIS rung's first token
         hitEot = false;
         double sumLogprob = 0.0;
+        // avg_logprob's DENOMINATOR, counted where its numerator is summed so the two cannot
+        // drift: the ids at or above `timestampBegin` are in neither. See the accumulation below.
+        int32_t scoredIds = 0;
         bool failedEntropy = false;
         int32_t windowStart = 0;         // trailingEntropy's answer for the step just measured
         int32_t cutTo = 0;               // where a tripping window began: the last-rung cut's new count
@@ -3340,7 +3352,28 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
                         std::to_string(position) + "; the graph produced no token");
                 return -3;
             }
-            if (scale > 0.0f) sumLogprob += maskedLogprobLocked(logits, g.vocab, scale, temperature, tok);
+            // 4.11 FIX ROUND 2: avg_logprob IS AN AVERAGE OVER TEXT, and the timestamps this tier
+            // started emitting must not be in it. This is the same defect as the entropy window's,
+            // arriving at the other guard. A timestamp in timestamp mode is all but certain - the
+            // model has just been told to say when - so its log-probability sits near 0 and
+            // dragging the mean toward 0 is exactly what it does. `NpuDecodePolicy.isNoSpeech`
+            // (nsp > 0.6 AND avgLogprob < -1.0) is the 4.3.2 SILENCE FIX, in production, and it
+            // was tuned on a decode prompted with <|notimestamps|>, i.e. on a mean over text
+            // tokens ALONE. Averaging the timestamps in would lift the mean past -1.0 on exactly
+            // the dead-time segments that gate exists to blank, and "Thank you." would type
+            // itself into silence again on the owner's own device.
+            //
+            // The cut is `timestampBegin` and not kEotToken, because term-for-term is the claim:
+            // pre-4.11 EVERY id this loop could emit was scored - text, the EOT, and the language
+            // ids and <|notimestamps|>, which were emittable because neither was in the mask -
+            // and the ONLY id the 4.11 mask change newly admits is a timestamp. So excluding the
+            // timestamp block and nothing else leaves a no-timestamp stream scored exactly as it
+            // was. The EOT stays IN, which is whisper_sequence_score's own rule (it divides by
+            // result_len, and result_len counts the EOT: whisper.cpp:6870-6876, :7662).
+            if (scale > 0.0f && tok < timestampBegin) {
+                sumLogprob += maskedLogprobLocked(logits, g.vocab, scale, temperature, tok);
+                ++scoredIds;
+            }
             if (firstGenerated < 0) firstGenerated = tok;
             if (tok == kEotToken) {
                 hitEot = true;
@@ -3386,10 +3419,19 @@ Java_com_whispereverywhere_npu_QnnAsrNative_nativeDecodeSegment(
             bindSelfKvLocked(1 - g.selfInSet);
         }
 
-        // whisper_sequence_score divides by result_len, which COUNTS the EOT whose log-prob the
-        // sum above already holds (whisper.cpp:6870-6876, :7662). Captured BEFORE the cut below
-        // shrinks `count`, so a cut line still reports the failing rung's pre-cut average.
-        scored = count + (hitEot ? 1 : 0);
+        // The denominator is the count of the ids whose log-probs the sum above actually holds -
+        // the text ids plus the EOT, never the timestamps (4.11 fix round 2; see the
+        // accumulation). whisper_sequence_score divides by result_len, which COUNTS the EOT
+        // (whisper.cpp:6870-6876, :7662), and on a stream with no timestamps in it `scoredIds`
+        // IS `count + (hitEot ? 1 : 0)`, term for term. Captured BEFORE the cut below shrinks
+        // `count`, so a cut line still reports the failing rung's pre-cut average.
+        //
+        // A segment that emitted NO text - only timestamps, or nothing at all - therefore keeps
+        // the answer the pre-4.11 code gave an empty text stream: `scoredIds == 0` unless the
+        // EOT came, so stats[kStatAvgLogprob] is NaN and `NpuDecodePolicy.isNoSpeech` answers
+        // false on it, which is the "a guard that cannot measure must not blank a segment" rule
+        // that KDoc already states. With the EOT it is the EOT's own log-prob, exactly as before.
+        scored = scoredIds;
         avgLogprob = (scale > 0.0f && scored > 0) ? sumLogprob / scored : 0.0;
         // whisper.cpp:7835 - a low-confidence rung falls back only when the model does NOT think
         // the segment is silent; a silent segment is judged by Kotlin, not re-decoded hotter.

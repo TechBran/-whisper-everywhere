@@ -244,6 +244,22 @@ object NpuDecodePolicy {
      * whisper.cpp:7865, both comparisons strict. NaN or a negative sentinel (native could not read
      * the logits' scale, so no probability was computed) answers false: a guard that cannot
      * measure must not blank a segment.
+     *
+     * ### [avgLogprob] IS A MEAN OVER TEXT IDS AND THE EOT — never over the timestamps (4.11)
+     *
+     * This is the SHIPPED silence fix (4.3.2, in production since versionCode 86) and its −1.0
+     * line was calibrated on a decode prompted with `<|notimestamps|>`, i.e. on a mean whose terms
+     * were words. Since [suppressList] stopped masking the timestamp block the decoder interleaves
+     * timestamps with the words, and a timestamp emitted in timestamp mode is near-certain — the
+     * model has just been told to say *when* — so its log-probability sits near 0. Averaging those
+     * in would pull the mean UP, past this threshold, on exactly the dead-time segments this gate
+     * exists to blank, and "Thank you." would type itself into silence again.
+     *
+     * `qnn_asr.cpp` therefore sums and counts only ids below `timestampBegin`, which on a stream
+     * with no timestamps in it is every id it used to sum, term for term. Pinned by
+     * `NpuNativeContractTest.theAvgLogprobDenominatorHoldsTextIdsAndTheEotButNeverATimestamp`.
+     * A segment that emitted no text at all keeps its pre-4.11 answer: NaN, and therefore false
+     * here, by the rule above.
      */
     fun isNoSpeech(noSpeechProb: Float, avgLogprob: Float): Boolean =
         noSpeechProb > NO_SPEECH_THOLD && avgLogprob < LOGPROB_THOLD
