@@ -79,6 +79,16 @@ class SpeakerSpansTest {
         }.toIntArray()
     }
 
+    /**
+     * `[t0cs, t1cs, byteStart, byteEnd]` * n from `lastTokenTimes` — the SAME four fields as
+     * [whisperRaw] at TOKEN grain, named separately because that is the only thing a reader of
+     * one of these tests needs to keep straight: both arrays are on the TRIMMED timeline and
+     * both carry byte offsets into the one returned buffer, and the difference is only how
+     * finely they cut it.
+     */
+    private fun tokenRaw(cs: List<Pair<Int, Int>>, bytes: List<Pair<Int, Int>>): IntArray =
+        whisperRaw(cs, bytes)
+
     // ------------------------------------------------------------------ vadSegments
 
     @Test
@@ -293,6 +303,187 @@ class SpeakerSpansTest {
         assertEquals(listOf(SpeakerWindow(0, 0, 12 * RATE)), SpeakerSpans.windows(IntArray(0), vad))
     }
 
+    // ------------------------------------------- windows cut at a WORD (4.11 Task 2)
+
+    @Test
+    fun aLongONESentenceSegmentIsCutAtTheTokenEdgeNEARESTItsMiddle() {
+        // SESSION 7's FAILURE, in miniature. The Fold6's hard-cut interview handed the endpointer
+        // one unbroken 9-15 s segment per chunk and whisper decoded it as ONE sentence, so both
+        // terms of the sentence split failed at once — `windows = 1`, chunk after chunk, and one
+        // label over a minute of two people talking. Token times give the only boundaries that
+        // exist inside a pause-free sentence.
+        //
+        // Three tokens at 0-1.10 s, 1.10-2.90 s, 2.90-6.00 s: edges at 17_600 and 46_400 samples.
+        // The candidate is the middle, 48_000, so 46_400 wins by 1_600 against 30_400 — and the
+        // point of asserting the NEAR one is that "the first edge that fits" would have taken
+        // 17_600 and cut a 1.1 s sliver off the front.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 6 * RATE, 0, 6 * RATE)))
+        val raw = whisperRaw(listOf(0 to 600), listOf(0 to 30))
+        val tokens = tokenRaw(
+            listOf(0 to 110, 110 to 290, 290 to 600),
+            listOf(0 to 10, 10 to 18, 18 to 30),
+        )
+
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 46_400), SpeakerWindow(0, 46_400, 6 * RATE)),
+            SpeakerSpans.windows(raw, vad, tokens),
+        )
+    }
+
+    @Test
+    fun theSameSegmentWithNOTokenTimesIsTodaysSingleWindow_unchanged() {
+        // The other half of the same claim, and the one that keeps every tier that has no token
+        // times — a chunk whose segment failed the native equality check, a fake in another
+        // test — on exactly the behaviour it had before this array existed.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 6 * RATE, 0, 6 * RATE)))
+        val raw = whisperRaw(listOf(0 to 600), listOf(0 to 30))
+
+        assertEquals(listOf(SpeakerWindow(0, 0, 6 * RATE)), SpeakerSpans.windows(raw, vad))
+        assertEquals(
+            "an empty array is the same as not passing one",
+            SpeakerSpans.windows(raw, vad),
+            SpeakerSpans.windows(raw, vad, IntArray(0)),
+        )
+    }
+
+    @Test
+    fun theCutRepeatsWhileAStretchIsStillLongEnoughToHoldTwoWindows() {
+        // The Fold6's actual shape: 15 s of unbroken speech in one VAD segment. One bisection
+        // would leave two 7.5 s windows, which is the same failure with a bigger number, so the
+        // cut recurses while a stretch is at least TOKEN_CUT_SECONDS — two windows of
+        // LONG_SEGMENT_SECONDS, the length this file already treats as big enough to hide a
+        // second voice. Thirty half-second tokens, so every 8_000 samples is an edge.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 15 * RATE, 0, 15 * RATE)))
+        val raw = whisperRaw(listOf(0 to 1_500), listOf(0 to 300))
+        val tokens = tokenRaw(
+            (0 until 30).map { it * 50 to (it + 1) * 50 },
+            (0 until 30).map { it * 10 to (it + 1) * 10 },
+        )
+
+        val windows = SpeakerSpans.windows(raw, vad, tokens)
+        assertEquals(
+            listOf(
+                SpeakerWindow(0, 0, 56_000),
+                SpeakerWindow(0, 56_000, 88_000),
+                SpeakerWindow(0, 88_000, 120_000),
+                SpeakerWindow(0, 120_000, 176_000),
+                SpeakerWindow(0, 176_000, 208_000),
+                SpeakerWindow(0, 208_000, 15 * RATE),
+            ),
+            windows,
+        )
+        assertEquals("the windows still partition the segment", 0, windows.first().origStart)
+        assertEquals(15 * RATE, windows.last().origEnd)
+        windows.zipWithNext().forEach { (a, b) -> assertEquals(a.origEnd, b.origStart) }
+    }
+
+    @Test
+    fun aStretchTooShortToHoldTwoRealWindowsIsLeftWhole_soTheMedianSentenceIsUntouched() {
+        // The 02:12 dump's median window was 3.0 s. If the token cut fired there it would double
+        // the embedding count across the whole session to buy two halves of one sentence, and
+        // spike session 4's reason for cutting — two VOICES in one window — is not what a 3 s
+        // sentence is. Below TOKEN_CUT_SECONDS the answer stays exactly today's.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 3 * RATE, 0, 3 * RATE)))
+        val raw = whisperRaw(listOf(0 to 300), listOf(0 to 30))
+        val tokens = tokenRaw(
+            (0 until 6).map { it * 50 to (it + 1) * 50 },
+            (0 until 6).map { it * 5 to (it + 1) * 5 },
+        )
+
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 3 * RATE)),
+            SpeakerSpans.windows(raw, vad, tokens),
+        )
+    }
+
+    @Test
+    fun aCutIsREFUSEDWhenEveryTokenEdgeWouldLeaveAWindowUnderTheFloor() {
+        // MIN_WINDOW_SECONDS is the embedder's floor as well as the tracker's lowest gate, so a
+        // cut that produced a 0.2 s window would spend an embedding on audio the tracker is not
+        // allowed to say anything about. One very short opening token and one long one: the only
+        // interior edge sits 0.2 s in, so there is nowhere to cut and the segment stays whole.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 5 * RATE, 0, 5 * RATE)))
+        val raw = whisperRaw(listOf(0 to 500), listOf(0 to 30))
+        val tokens = tokenRaw(listOf(0 to 20, 20 to 500), listOf(0 to 3, 3 to 30))
+
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 5 * RATE)),
+            SpeakerSpans.windows(raw, vad, tokens),
+        )
+    }
+
+    @Test
+    fun tokenEdgesFromANOTHERVadSegmentCannotCutThisOne() {
+        // Token times are process-global for the whole chunk, on the TRIMMED timeline, exactly
+        // like the segment geometry — so they must be attributed to a VAD segment and mapped
+        // through ITS offset before they are edges at all. Reading them as one flat list would
+        // let segment 1's words cut segment 0 at a place nobody spoke.
+        val vad = SpeakerSpans.vadSegments(
+            vadRaw(
+                VadSeg(0, 6 * RATE, 0, 6 * RATE),
+                VadSeg(200_000, 200_000 + 2 * RATE, 97_600, 97_600 + 2 * RATE),
+            )
+        )
+        val raw = whisperRaw(listOf(0 to 600, 610 to 810), listOf(0 to 30, 30 to 40))
+        // Every token belongs to segment 1 — segment 0 has no edges of its own.
+        val tokens = tokenRaw(
+            listOf(610 to 660, 660 to 730, 730 to 810),
+            listOf(30 to 33, 33 to 36, 36 to 40),
+        )
+
+        assertEquals(
+            listOf(
+                SpeakerWindow(0, 0, 6 * RATE),
+                SpeakerWindow(1, 200_000, 200_000 + 2 * RATE),
+            ),
+            SpeakerSpans.windows(raw, vad, tokens),
+        )
+    }
+
+    @Test
+    fun aTokenCutSplitsTheTEXTAtTheSameWord_contiguouslyAndWithNothingDropped() {
+        // A window the text cannot be cut at is a window that cannot carry a label: the spans
+        // mapper attributes a whole whisper segment by its MIDPOINT, so without this the 6 s
+        // sentence above would become two windows, two fingerprints, and one span wearing one
+        // id. The byte offsets the tokens carry are what make the second half addressable.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 6 * RATE, 0, 6 * RATE)))
+        val (bytes, ranges) = encode(" Hello there and you too now")
+        val raw = whisperRaw(listOf(0 to 600), ranges)
+        // " Hello there" | " and you" | " too now" — byte ranges that tile the segment exactly.
+        val tokens = tokenRaw(
+            listOf(0 to 110, 110 to 290, 290 to 600),
+            listOf(0 to 12, 12 to 20, 20 to 28),
+        )
+
+        val windows = SpeakerSpans.windows(raw, vad, tokens)
+        assertEquals(2, windows.size)
+        val spans = SpeakerSpans.spans(raw, bytes, vad, tokens, windows)
+        assertEquals(
+            listOf(SpeakerSpan(0, "Hello there and you"), SpeakerSpan(1, "too now")),
+            spans,
+        )
+        assertEquals(
+            "every word of the segment survives the cut",
+            "Hello there and you too now",
+            spans.joinToString(" ") { it.text },
+        )
+    }
+
+    @Test
+    fun withoutTokenTimesTheSpansAreExactlyTodays_evenWhenTheWindowsWereCut() {
+        // The fallback the native side's per-segment equality check can hand over at any moment
+        // (`token-times: segment N dropped`): the windows are then today's and so are the spans,
+        // and nothing about the pair is half-new.
+        val vad = SpeakerSpans.vadSegments(vadRaw(VadSeg(0, 6 * RATE, 0, 6 * RATE)))
+        val (bytes, ranges) = encode(" Hello there and you too now")
+        val raw = whisperRaw(listOf(0 to 600), ranges)
+
+        assertEquals(
+            listOf(SpeakerSpan(0, "Hello there and you too now")),
+            SpeakerSpans.spans(raw, bytes, vad),
+        )
+    }
+
     // ------------------------------------------------------------------ spans
 
     @Test
@@ -474,7 +665,7 @@ class SpeakerSpansTest {
         assertEquals(listOf(SpeakerWindow(0, 0, 96_000), SpeakerWindow(0, 96_000, 192_000)), windows)
         assertEquals(
             listOf(SpeakerSpan(0, "first"), SpeakerSpan(1, "second")),
-            SpeakerSpans.spans(raw, bytes, vad, windows),
+            SpeakerSpans.spans(raw, bytes, vad, windows = windows),
         )
     }
 

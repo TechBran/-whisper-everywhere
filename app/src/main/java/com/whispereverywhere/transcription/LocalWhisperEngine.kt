@@ -757,19 +757,29 @@ class LocalWhisperEngine(
         if (geometry == null) return SegmentOutcome.Text(cleaned)
         val vad = SpeakerSpans.vadSegments(geometry.vadSegments)
         if (vad.isEmpty()) return SegmentOutcome.Text(cleaned)
-        val windows = SpeakerSpans.windows(raw = geometry.whisperSegments, vad = vad)
+        val windows = SpeakerSpans.windows(
+            raw = geometry.whisperSegments,
+            vad = vad,
+            tokenTimes = geometry.tokenTimes,
+        )
         if (windows.isEmpty()) return SegmentOutcome.Text(cleaned)
         val spans = SpeakerSpans.spans(
             raw = geometry.whisperSegments,
             bytes = raw.toByteArray(Charsets.UTF_8),
             vad = vad,
+            // 4.11: the SAME array both halves were built from. The windows may now be cut at a
+            // word, and the spans are what makes such a window addressable in the text — hand
+            // one of them the tokens and not the other and the extra windows exist with nothing
+            // in them.
+            tokenTimes = geometry.tokenTimes,
             windows = windows,
         )
         if (spans.isEmpty()) return SegmentOutcome.Text(cleaned)
         // Numbers only — a span's text IS user speech and never reaches a log line.
         android.util.Log.i(
             "WE-DIAG",
-            "speaker-spans: vad=${vad.size} windows=${windows.size} spans=${spans.size}",
+            "speaker-spans: vad=${vad.size} windows=${windows.size} spans=${spans.size} " +
+                "tokens=${geometry.tokenTimes.size / 4}",
         )
         return SegmentOutcome.Text(cleaned, spans = spans, windows = windows)
     }

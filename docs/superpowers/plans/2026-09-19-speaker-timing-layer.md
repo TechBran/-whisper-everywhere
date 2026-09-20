@@ -111,11 +111,20 @@ Export with the existing `we_int_vector` helper; declare in Kotlin beside `lastW
 - Consumes: `WhisperNative.lastTokenTimes()` from Task 1.
 - Produces: `SegmentGeometry(vadSegments, whisperSegments, tokenTimes)` — third array defaulted to `IntArray(0)` so every existing construction compiles. `SpeakerSpans.windows(raw, vad, tokenTimes)` — when `tokenTimes` is non-empty a window boundary may fall at any token edge inside a sentence; when empty the behaviour is today's, unchanged.
 
-- [ ] **Step 1: failing tests.** A VAD segment holding one 6 s sentence whose tokens span two halves: with `tokenTimes` supplied, a requested split near the middle lands on the nearest token edge, never inside a token's byte range; with `tokenTimes` empty, the same input yields today's single window. Token edges outside the segment are ignored. Byte ranges of adjacent windows are contiguous and cover the text exactly.
-- [ ] **Step 2: run, expect failure.**
-- [ ] **Step 3: implement.** Keep `windows(raw, vad)` as an overload delegating with an empty array, so no call site outside this task changes. The cut rule: given a candidate time inside a VAD segment, choose the token boundary minimising |tokenEdge - candidate|, subject to both resulting windows being ≥ `MIN_WINDOW_SECONDS`.
-- [ ] **Step 4: run** the suite; the CPU route's existing tests must pass unchanged.
-- [ ] **Step 5: commit** — `feat(speakers): a window may end at a word, not only at a sentence`
+- [x] **Step 1: failing tests.** A VAD segment holding one 6 s sentence whose tokens span two halves: with `tokenTimes` supplied, a requested split near the middle lands on the nearest token edge, never inside a token's byte range; with `tokenTimes` empty, the same input yields today's single window. Token edges outside the segment are ignored. Byte ranges of adjacent windows are contiguous and cover the text exactly.
+- [x] **Step 2: run, expect failure.**
+- [x] **Step 3: implement.** Keep `windows(raw, vad)` as an overload delegating with an empty array, so no call site outside this task changes. The cut rule: given a candidate time inside a VAD segment, choose the token boundary minimising |tokenEdge - candidate|, subject to both resulting windows being ≥ `MIN_WINDOW_SECONDS`.
+
+**DECIDED (2026-09-19), two things the task text left open.**
+
+**Where the candidate time comes from.** Nothing in layer 1 detects a change of voice — that is layer 2 — so the only candidate available is a geometric one. Each window the sentence split produced is BISECTED at its own midpoint while it still spans `TOKEN_CUT_SECONDS`, which ships as `2 * LONG_SEGMENT_SECONDS` (4.0 s) written as that expression rather than as a literal. The derivation, not taste: the smallest stretch worth bisecting is the one whose two halves each clear the length this file already treats as big enough to hide a second voice. Alternatives rejected — making tokens the coalescing walk's atoms would chop every sentence to ~1 s windows and multiply the embedding count; bisecting at `2 * MIN_WINDOW_SECONDS` (2.0 s) would split the 02:12 dump's MEDIAN window and do the same at half the rate. At 4.0 s the ordinary sentence is untouched and the Fold6's 15 s segment becomes six windows instead of one. Inclusive and recursive, because one cut of 15 s leaves two 7.5 s windows — the same defect with a smaller number.
+
+**`spans` takes the tokens too.** The task's interface line names only `windows(...)`, but its own test list asks for byte ranges that "cover the text exactly", and windows carry no bytes. Rule 5 attributes a WHOLE decoded segment by its midpoint, so without this half a 15 s sentence cut into four windows is four fingerprints and ONE span wearing ONE id — the window cut would buy nothing a user sees. So `spans(raw, bytes, vad, tokenTimes, windows)` gains rule 7: a segment whose tokens straddle a window is cut between them at the next token's own `byteStart`, and the pieces tile the segment. `tokenTimes` sits BEFORE `windows` in the parameter list because the `windows` default has to be computed from it; the one positional four-argument call site in `SpeakerSpansTest` now names its argument.
+
+- [x] **Step 4: run** the suite; the CPU route's existing tests must pass unchanged. 3,273 tests, 0 failures; `:app:compileReleaseKotlin` green. No C++ touched.
+- [x] **Step 5: commit** — `feat(speakers): a window may end at a word, not only at a sentence`
+
+**Consequence for Task 4.** `SpeakerSpans` now has `windows(raw, vad, tokenTimes)` / `sentenceWindows` (private) and `spans(raw, bytes, vad, tokenTimes, windows)`; the NPU route's `wholeChunkWindows` is untouched and still knows nothing about either. `midOf` / `windowIndexAt` are the reusable halves of the old `windowIndexFor`.
 
 ---
 

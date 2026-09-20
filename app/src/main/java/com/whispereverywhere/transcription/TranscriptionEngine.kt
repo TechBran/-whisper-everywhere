@@ -170,7 +170,25 @@ data class NativeSegmentStats(
  * REFERENCE, so two snapshots with identical numbers would compare unequal and a test written
  * against `assertEquals` would pass or fail for reasons that have nothing to do with the geometry.
  */
-class SegmentGeometry(val vadSegments: IntArray, val whisperSegments: IntArray)
+class SegmentGeometry(
+    val vadSegments: IntArray,
+    val whisperSegments: IntArray,
+    /**
+     * `[t0cs, t1cs, byteStart, byteEnd]` * n at TOKEN grain, from
+     * [com.whispereverywhere.whisper.WhisperNative.lastTokenTimes] (4.11 Task 2). Same two
+     * timelines as [whisperSegments] — centiseconds on the stitched buffer, byte offsets into
+     * the returned bytes — only finer.
+     *
+     * **DEFAULTED TO EMPTY, and empty is a MEANINGFUL, ORDINARY reading**, unlike the other two:
+     * whisper published no per-token times for this chunk, or for part of it. It costs the
+     * splitter precision — a cut in that stretch falls back to a sentence boundary — and never
+     * costs text, so a backend or a test that knows nothing about it constructs the same
+     * snapshot it always did. **Its coverage may be PARTIAL**: the native side drops a segment's
+     * tokens when its own equality check fails, so a gap here is a stretch with no token times
+     * and never a stretch with no speech.
+     */
+    val tokenTimes: IntArray = IntArray(0),
+)
 
 /** Thin seam over the native layer so the engine can be tested without JNI. */
 interface WhisperBackend {
@@ -580,10 +598,20 @@ object WhisperNativeBackend : WhisperBackend {
      * is precisely where it should land.
      */
     private fun captureGeometry(ctx: Long) {
+        // 4.11: the token times are read in their OWN runCatching, OUTSIDE the pair's, and that
+        // is the one place this function deliberately breaks its own "one wrapper" rule. The two
+        // arrays above are half a snapshot without each other; the third is documented on both
+        // sides as optionally absent — `lastTokenTimes` is empty whenever whisper published no
+        // per-token times, and the splitter then cuts at sentence boundaries as it did before it
+        // existed. Folded into the pair's wrapper, an UnsatisfiedLinkError from one stale .so
+        // would take the speaker labels out entirely to protect a refinement; here it costs
+        // exactly the refinement.
+        val tokenTimes = runCatching { WhisperNative.lastTokenTimes() }.getOrNull() ?: IntArray(0)
         val geometry = runCatching {
             SegmentGeometry(
                 vadSegments = WhisperNative.lastVadSegments(),
                 whisperSegments = WhisperNative.lastWhisperSegments(),
+                tokenTimes = tokenTimes,
             )
         }.getOrNull() ?: return
         lastGeom = geometry   // payload FIRST

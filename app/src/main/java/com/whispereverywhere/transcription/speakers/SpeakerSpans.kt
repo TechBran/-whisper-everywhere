@@ -201,6 +201,34 @@ object SpeakerSpans {
      */
     const val MAX_COALESCE_GAP_SECONDS: Float = 0.30f
 
+    /**
+     * **4.0 s** — the shortest stretch [windows] will cut at a WORD, when it has token times to
+     * cut at (4.11 Task 2; the Fold6's session 7).
+     *
+     * It is not a new number: it is `2 * `[LONG_SEGMENT_SECONDS], written that way in the source
+     * so it cannot drift from the floor it is derived from. The derivation is the same sentence
+     * twice over — [LONG_SEGMENT_SECONDS] is the length at which this file already believes a
+     * stretch is big enough to hide a second voice, so the smallest stretch worth bisecting is
+     * the one whose two halves each clear it. Below 4.0 s a word-level cut would buy two halves
+     * of ONE sentence, which is not what the split is for: spike session 4's failure mode is two
+     * VOICES sharing a window, and the 02:12 dump's median window was 3.0 s, so firing there
+     * would roughly double the session's embedding count to answer a question nobody asked.
+     *
+     * **It is INCLUSIVE and it RECURSES**, and both follow from the derivation rather than from
+     * taste: a stretch of exactly 4.0 s is exactly the one that yields two windows of
+     * [LONG_SEGMENT_SECONDS], and a 15 s pause-free segment — the Fold6's actual shape, one
+     * label over a minute of two people — would still be two 7.5 s windows after a single cut,
+     * which is the same defect with a smaller number. Each half is therefore offered the same
+     * test until it is too short to take it.
+     *
+     * WHAT IT DOES NOT DO: it does not find a speaker change. Nothing in layer 1 does. It makes
+     * a long pause-free stretch ADDRESSABLE at word grain so the tracker gets more than one
+     * fingerprint out of it, and so that layer 2's change points — when they exist — have
+     * somewhere legal to land. A wrong cut costs a paragraph break in the middle of one
+     * person's sentence; the cut it replaces cost the other person's whole turn.
+     */
+    const val TOKEN_CUT_SECONDS: Float = 2 * LONG_SEGMENT_SECONDS
+
     /** 16 kHz: whisper reports centiseconds, the VAD bounds are samples. The one conversion. */
     private const val SAMPLES_PER_CENTISECOND = 160
 
@@ -235,8 +263,133 @@ object SpeakerSpans {
     }
 
     /**
-     * THE CHUNK'S FINGERPRINT WINDOWS, in chunk order — one per SENTENCE in nearly every segment
-     * since the 2026-09-18 late session, one per VAD segment only where there is nothing to cut.
+     * THE CHUNK'S FINGERPRINT WINDOWS, in chunk order — [sentenceWindows], and then, where the
+     * tier told us when it said each word, a stretch still long enough to hide a second voice is
+     * cut at the nearest WORD (4.11 Task 2).
+     *
+     * **`tokenTimes` EMPTY IS TODAY'S ANSWER, byte for byte**, and that is the contract every
+     * other caller in the app relies on: the two-argument overload passes an empty array, the
+     * NPU tier has no token times at all, and `lastTokenTimes` is documented to be empty — or to
+     * miss a stretch of the text — whenever whisper's own per-segment check refused to publish.
+     * Timing is additive here exactly as it is in the native layer.
+     *
+     * **WHY A SECOND KIND OF CUT AT ALL.** [sentenceWindows] needs two or more whisper segments
+     * inside a VAD segment to have anywhere to cut. Session 7's Fold6 dump is the case where it
+     * has neither: a hard-cut interview has no pauses, so Silero returns ONE 9-15 s segment per
+     * chunk, whisper decodes it as one run-on sentence, and `windows = 1` chunk after chunk —
+     * one speaker label over a minute of two people. A token edge is the only boundary that
+     * exists inside a pause-free sentence, and this is the machinery that uses it.
+     *
+     * The rule, exactly: each window [sentenceWindows] produced is bisected while it spans at
+     * least [TOKEN_CUT_SECONDS]. The candidate is the stretch's own midpoint; the cut goes to
+     * the token edge minimising `|edge - candidate|` **among the edges of that window's OWN VAD
+     * segment that leave both sides at least [MIN_WINDOW_SECONDS]**, and ties go to the earlier
+     * edge, as everywhere else in this file. No qualifying edge means no cut — the window stands
+     * exactly as [sentenceWindows] built it, which is the fail-downhill rule the spec asks for.
+     *
+     * Token times arrive on the TRIMMED timeline with byte offsets into the returned buffer,
+     * like `lastWhisperSegments` and for the same reason, so an edge is attributed to a VAD
+     * segment by the same overlap rule and mapped through THAT segment's own offset before it is
+     * an edge at all. Flattening them into one list would let one segment's words cut another
+     * at a place nobody spoke.
+     *
+     * @param tokenTimes `[t0cs, t1cs, byteStart, byteEnd]` * n from
+     *        `WhisperNative.lastTokenTimes`, or empty.
+     */
+    fun windows(raw: IntArray, vad: List<VadSeg>, tokenTimes: IntArray): List<SpeakerWindow> {
+        val base = sentenceWindows(raw, vad)
+        if (tokenTimes.isEmpty() || base.isEmpty()) return base
+        val edges = tokenEdges(tokenTimes, vad)
+        val minWindowSamples = (MIN_WINDOW_SECONDS * SAMPLE_RATE).toInt()
+        val cutSamples = (TOKEN_CUT_SECONDS * SAMPLE_RATE).toInt()
+        val out = ArrayList<SpeakerWindow>(base.size)
+        for (w in base) {
+            val own = edges[w.vadIndex]
+            if (own.isEmpty()) {
+                out += w
+            } else {
+                bisect(w.vadIndex, w.origStart, w.origEnd, own, minWindowSamples, cutSamples, out)
+            }
+        }
+        return out
+    }
+
+    /**
+     * [windows] with no token times — the pre-4.11 signature, kept so that no call site outside
+     * the timing work has to know this array exists, and so that every tier and every test
+     * without it keeps exactly the behaviour it had.
+     */
+    fun windows(raw: IntArray, vad: List<VadSeg>): List<SpeakerWindow> =
+        windows(raw, vad, IntArray(0))
+
+    /** Every token edge of the chunk, on the ORIGINAL timeline, bucketed by VAD segment. */
+    private fun tokenEdges(tokenTimes: IntArray, vad: List<VadSeg>): Array<IntArray> {
+        val n = tokenTimes.size / STRIDE
+        // Sorted and de-duplicated: a token's end is its neighbour's start, so a flat list would
+        // be half duplicates, and the nearest-edge search below reads best-first on ties only
+        // because the edges ascend.
+        val acc = Array(vad.size) { sortedSetOf<Int>() }
+        for (i in 0 until n) {
+            val o = i * STRIDE
+            val t0 = tokenTimes[o] * SAMPLES_PER_CENTISECOND
+            val t1 = tokenTimes[o + 1] * SAMPLES_PER_CENTISECOND
+            val index = vadIndexFor(t0, t1, vad)
+            val seg = vad[index]
+            acc[index] += toOriginal(seg, t0)
+            acc[index] += toOriginal(seg, t1)
+        }
+        return Array(vad.size) { acc[it].toIntArray() }
+    }
+
+    /**
+     * `[from, to)` as one window, or as two halves cut at the token edge nearest its middle, and
+     * then the same question asked of each half.
+     *
+     * The recursion terminates on the span, not on a depth counter: every cut leaves both sides
+     * at least [MIN_WINDOW_SECONDS] and a side is only cut again when it still spans
+     * [TOKEN_CUT_SECONDS], so the depth is bounded by `chunkSeconds / MIN_WINDOW_SECONDS` — a
+     * few dozen frames on a 30 s chunk, at a leaf count bounded by the same ratio.
+     */
+    private fun bisect(
+        vadIndex: Int,
+        from: Int,
+        to: Int,
+        edges: IntArray,
+        minWindowSamples: Int,
+        cutSamples: Int,
+        out: MutableList<SpeakerWindow>,
+    ) {
+        if (to - from < cutSamples) {
+            out += SpeakerWindow(vadIndex = vadIndex, origStart = from, origEnd = to)
+            return
+        }
+        val candidate = from + (to - from) / 2
+        var best = -1
+        var bestDistance = Int.MAX_VALUE
+        for (e in edges) {
+            // Both halves must be worth fingerprinting: MIN_WINDOW_SECONDS is the embedder's
+            // floor as well as the tracker's lowest gate, so a shorter half would cost an
+            // embedding to produce a window the tracker may say nothing about.
+            if (e - from < minWindowSamples || to - e < minWindowSamples) continue
+            val distance = if (e > candidate) e - candidate else candidate - e
+            // Strictly less, over ascending edges: ties go to the EARLIER edge, the same
+            // convention `spans` rule 3 uses.
+            if (distance < bestDistance) {
+                bestDistance = distance
+                best = e
+            }
+        }
+        if (best < 0) {
+            out += SpeakerWindow(vadIndex = vadIndex, origStart = from, origEnd = to)
+            return
+        }
+        bisect(vadIndex, from, best, edges, minWindowSamples, cutSamples, out)
+        bisect(vadIndex, best, to, edges, minWindowSamples, cutSamples, out)
+    }
+
+    /**
+     * THE SENTENCE SPLIT — one window per SENTENCE in nearly every segment since the 2026-09-18
+     * late session, one per VAD segment only where there is nothing to cut.
      *
      * A VAD segment is split when BOTH are true: it is at least [LONG_SEGMENT_SECONDS] long, and
      * whisper found two or more segments inside it. Both terms matter. Length alone is no reason
@@ -268,7 +421,7 @@ object SpeakerSpans {
      * @param raw `[t0cs, t1cs, byteStart, byteEnd]` * n, in TEXT order, from `lastWhisperSegments`.
      * @param vad the same chunk's [vadSegments]. EMPTY yields no windows: there is no timeline.
      */
-    fun windows(raw: IntArray, vad: List<VadSeg>): List<SpeakerWindow> {
+    private fun sentenceWindows(raw: IntArray, vad: List<VadSeg>): List<SpeakerWindow> {
         if (vad.isEmpty()) return emptyList()
         val n = raw.size / STRIDE
         val minWindowSamples = (MIN_WINDOW_SECONDS * SAMPLE_RATE).toInt()
@@ -415,10 +568,21 @@ object SpeakerSpans {
      *
      * @param raw `[t0cs, t1cs, byteStart, byteEnd]` * n, in TEXT order, from `lastWhisperSegments`.
      * @param vad the same chunk's [vadSegments]. EMPTY yields no spans, by the rule above.
+     * @param tokenTimes the same chunk's `WhisperNative.lastTokenTimes`, or empty. EMPTY IS
+     *        TODAY'S ANSWER, byte for byte, exactly as in [windows] — and the two arguments have
+     *        to agree, which is why one caller passes the same array to both.
      * @param windows the same chunk's [windows]. The default IS the right answer and the
      *        parameter exists for ONE caller: `LocalWhisperEngine` computes the list once and
      *        hands the same object to the assigner, because two independently computed window
      *        lists that disagree would put the ids of one window on another's text.
+     *
+     * **WHY THE TOKENS ARE NEEDED HERE TOO, and not only in [windows]** (4.11 Task 2). Rule 5
+     * below attributes a WHOLE decoded segment by its midpoint. That is exactly right while
+     * every window boundary is also a segment boundary — which was true until a window could be
+     * cut at a word. After it, a 15 s run-on sentence cut into four windows would still be ONE
+     * span wearing ONE id: four fingerprints, four tracker decisions, and no way for any of them
+     * to reach the text. The token byte offsets are what make the second half of a sentence
+     * addressable, and without this half of the change the window cut buys nothing a user sees.
      *
      * The rules, in the order they are applied per decoded segment:
      *  1. **Slice, then clean.** The byte range is clamped into [bytes] first: the geometry is
@@ -441,12 +605,20 @@ object SpeakerSpans {
      *     a speaker who comes back after someone else keeps a separate span, because the panel
      *     breaks a paragraph at every change. Two whisper segments that a split put in DIFFERENT
      *     windows no longer merge, which is the point of having split them.
+     *  7. **A segment whose tokens straddle a window is cut between them** (4.11), at the byte
+     *     offset the next token starts at, each piece taking the window its OWN midpoint falls
+     *     in. The pieces TILE the segment — the first opens where the segment opens and the last
+     *     closes where it closes — so no byte of the transcript is dropped by being between two
+     *     tokens, and rules 1, 2 and 6 then apply to each piece unchanged. A segment no token
+     *     covers (empty [tokenTimes], or the stretch the native side's per-segment check
+     *     refused) is one piece, which IS rule 5.
      */
     fun spans(
         raw: IntArray,
         bytes: ByteArray,
         vad: List<VadSeg>,
-        windows: List<SpeakerWindow> = windows(raw, vad),
+        tokenTimes: IntArray = IntArray(0),
+        windows: List<SpeakerWindow> = windows(raw, vad, tokenTimes),
     ): List<SpeakerSpan> {
         val n = raw.size / STRIDE
         if (n == 0 || vad.isEmpty() || bytes.isEmpty() || windows.isEmpty()) return emptyList()
@@ -456,20 +628,81 @@ object SpeakerSpans {
             val start = raw[o + 2].coerceIn(0, bytes.size)
             val end = raw[o + 3].coerceIn(start, bytes.size)
             if (end == start) continue
-            val text = TranscriptText.clean(String(bytes, start, end - start, Charsets.UTF_8))
-            if (text.isEmpty()) continue
             val t0 = raw[o] * SAMPLES_PER_CENTISECOND
             val t1 = raw[o + 1] * SAMPLES_PER_CENTISECOND
-            val index = windowIndexFor(t0, t1, vad, windows)
-            val previous = out.lastOrNull()
-            if (previous != null && previous.windowIndex == index) {
-                out[out.size - 1] = previous.copy(
-                    text = TextJoin.assemble(listOf(previous.text, text)),
-                )
-            } else {
-                out.add(SpeakerSpan(windowIndex = index, text = text))
+            for (piece in pieces(start, end, t0, t1, tokenTimes, vad, windows)) {
+                val from = piece[1]
+                val to = piece[2]
+                if (to <= from) continue
+                val text = TranscriptText.clean(String(bytes, from, to - from, Charsets.UTF_8))
+                if (text.isEmpty()) continue
+                val index = piece[0]
+                val previous = out.lastOrNull()
+                if (previous != null && previous.windowIndex == index) {
+                    out[out.size - 1] = previous.copy(
+                        text = TextJoin.assemble(listOf(previous.text, text)),
+                    )
+                } else {
+                    out.add(SpeakerSpan(windowIndex = index, text = text))
+                }
             }
         }
+        return out
+    }
+
+    /**
+     * Rule 7: one decoded segment as `[windowIndex, byteFrom, byteTo]` pieces that TILE
+     * `[byteStart, byteEnd)`, in text order.
+     *
+     * One piece is the common answer and the only possible one without token times — rule 5,
+     * unchanged. More than one happens where a window boundary was cut at a word INSIDE this
+     * segment, and the boundary between two pieces is the next token's own `byteStart`, never a
+     * computed offset: a cut in the middle of a UTF-8 sequence would decode to U+FFFD on exactly
+     * the multilingual models that made the byte return necessary.
+     */
+    private fun pieces(
+        byteStart: Int,
+        byteEnd: Int,
+        t0Samples: Int,
+        t1Samples: Int,
+        tokenTimes: IntArray,
+        vad: List<VadSeg>,
+        windows: List<SpeakerWindow>,
+    ): List<IntArray> {
+        val vadIndex = vadIndexFor(t0Samples, t1Samples, vad)
+        val whole = listOf(
+            intArrayOf(windowIndexAt(midOf(vad[vadIndex], t0Samples, t1Samples), vadIndex, windows),
+                byteStart, byteEnd),
+        )
+        if (tokenTimes.isEmpty()) return whole
+        val n = tokenTimes.size / STRIDE
+        val out = ArrayList<IntArray>(2)
+        var from = byteStart
+        var current = -1
+        for (k in 0 until n) {
+            val o = k * STRIDE
+            val tokenStart = tokenTimes[o + 2]
+            val tokenEnd = tokenTimes[o + 3]
+            // INSIDE this segment's bytes, in text order. The tokens of a segment were pushed by
+            // the same native loop that pushed the segment, so they are already ordered and
+            // already inside it; the test is a containment check rather than a search because a
+            // stale process-global array can name bytes of another chunk entirely.
+            if (tokenStart < byteStart || tokenEnd > byteEnd || tokenEnd <= tokenStart) continue
+            val seg = vad[vadIndex]
+            val at = midOf(seg, tokenTimes[o] * SAMPLES_PER_CENTISECOND,
+                tokenTimes[o + 1] * SAMPLES_PER_CENTISECOND)
+            val index = windowIndexAt(at, vadIndex, windows)
+            if (current < 0) {
+                current = index
+            } else if (index != current && tokenStart > from) {
+                out += intArrayOf(current, from, tokenStart)
+                from = tokenStart
+                current = index
+            }
+        }
+        // No token covered this segment: rule 5, which is also the whole of the pre-4.11 answer.
+        if (current < 0) return whole
+        out += intArrayOf(current, from, byteEnd)
         return out
     }
 
@@ -488,18 +721,18 @@ object SpeakerSpans {
         return bestIndex
     }
 
-    /** Rules 3, 4 and 5: the VAD segment by overlap, then the window by the midpoint inside it. */
-    private fun windowIndexFor(
-        t0Samples: Int,
-        t1Samples: Int,
-        vad: List<VadSeg>,
-        windows: List<SpeakerWindow>,
-    ): Int {
-        val vadIndex = vadIndexFor(t0Samples, t1Samples, vad)
-        val seg = vad[vadIndex]
-        // The last sample this segment could be attributed to, so a decoded segment sitting
-        // entirely in the zero-padded tail lands INSIDE the final window rather than past it.
-        val mid = toOriginal(seg, (t0Samples + t1Samples) / 2).coerceAtMost(seg.origEnd - 1)
+    /**
+     * A `[t0, t1)` on the TRIMMED timeline as ONE original sample inside [seg] — the point rule 5
+     * attributes by, for a decoded segment and (since 4.11) for a single token alike.
+     *
+     * The last sample this segment could be attributed to, so a decoded segment sitting entirely
+     * in the zero-padded tail lands INSIDE the final window rather than past it.
+     */
+    private fun midOf(seg: VadSeg, t0Samples: Int, t1Samples: Int): Int =
+        toOriginal(seg, (t0Samples + t1Samples) / 2).coerceAtMost(seg.origEnd - 1)
+
+    /** Rule 5: the window of [vadIndex] whose bounds hold [mid], else that segment's last. */
+    private fun windowIndexAt(mid: Int, vadIndex: Int, windows: List<SpeakerWindow>): Int {
         var fallback = -1
         for (w in windows.indices) {
             val window = windows[w]
