@@ -132,3 +132,23 @@ None of this changes the reading above: word-level timing is still not the lever
 | two voices: do paragraph changes appear, and how late | the panel, against the audio | |
 | one voice: no labels at all | the panel | |
 | the two costs together against the 3,000 ms finalize fence | `wallMs=` + `embedMs=` on the LAST chunk | |
+
+## Session 7 — the Z Fold6 on 4.10.1/101 (2026-09-19 20:37-20:41): both reported faults explained, neither is a new defect
+
+The owner's controlled run: NPU tier (no API keys on that device, so no cloud path), device audio, 3 min 20 s. Labels appeared, then "after about two minutes they just stopped, and everything just becomes one speaker". His six earlier sessions (17:30-19:08) logged nothing because they predate this capture; the app's native diag reaches logcat on this device fine.
+
+**Fault 1 — "stops after two minutes, everything becomes one speaker". Cause: the chunk-level rule meeting audio with no pauses.** The standalone VAD's segment lengths over the session:
+
+| chunk | windows | window seconds | ids |
+|---|---|---|---|
+| seq 1-7 | 1 each | 4.0, 9.0, 15.6, 7.1, 3.0, 15.0, 4.6, 2.9, 2.9 | 1 … then 2 |
+| seq 8-9 | 3, 2 | 1.4 / 2.7 / 4.2, 1.3 / 7.6 | 2,3,3 and 3,3 — labels alternate |
+| seq 10-21 | 1-2 | 12.8, 9.4 / 5.5, 9.3, 11.1, 7.8 / 6.3 | 2 … 3 … 2 |
+
+As the clip runs on without pauses the VAD returns ONE segment per chunk, 9-15 s long, so `windows = 1`, so the NPU tier's rule — one chunk, one speaker, the window holding the most speech — gives the whole 15 s one label. The tracker is still separating voices (ids 2 and 3 alternate to the end, and the reclusterer reports three confirmed clusters); what collapses is the *granularity at which text can carry a label*. It is exactly the limitation 4.10.1 documented, arriving sooner than expected because hard-cut media produces long unbroken VAD segments.
+
+**Fault 2 — "doesn't always start". Cause: confirmation takes as long as the material makes it take.** `confirmed=0` until seq 8, about 70 s into the session: the first seven chunks were one voice (or under the 1.0 s embed floor, `seq=0 dur=0.8 embedMs=0 ids=[0]`), so no second speaker could be confirmed and, by spec §2, nothing is labelled until one is. Working as designed; it reads as "not starting".
+
+**Cost on the Fold6, measured:** VAD 15-180 ms per chunk (median ~100), embeddings 84-832 ms per chunk (median ~260, the 832 being a 15.6 s window with the model's first load), reclustering under 1 ms at n=31. Nothing near the 3,000 ms fence.
+
+**Consequence for the plan.** Layer 1 of `2026-09-19-speaker-boundaries-design.md` (sentence times on the NPU tier) is not merely parity work — it is the fix for fault 1 on the owner's own device, turning one 15 s window into one window per sentence. Layer 2 then handles the mid-sentence changes that remain.
