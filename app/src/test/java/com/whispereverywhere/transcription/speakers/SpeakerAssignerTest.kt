@@ -1126,15 +1126,41 @@ class SpeakerAssignerTest {
             samples = buffer(15f),
             segments = pairs(0f to 15f),
             sentences = sentences(
-                intArrayOf(0, 400, 0, 10),
-                intArrayOf(400, 700, 10, 20),
-                intArrayOf(700, 1100, 20, 30),
-                intArrayOf(1100, 1500, 30, 40),
+                intArrayOf(0, 375, 0, 10),
+                intArrayOf(375, 750, 10, 20),
+                intArrayOf(750, 1125, 20, 30),
+                intArrayOf(1125, 1500, 30, 40),
             ),
         )
         assertEquals("one id per sentence", listOf(1, 2, 1, 2), assignment?.ids)
         assertEquals("one embedding per sentence", 4, voices.lengths.size)
         assertEquals("…and the segment count still says the endpointer found one", 1, assignment?.segs)
+    }
+
+    @Test
+    fun aRunOnDecodedAsONESentenceIsStillCutIntoSEVERALFingerprints() {
+        // THE CONTINGENCY UNDER THE ANSWER ABOVE (4.11 fix round 2). A sentence bound only helps
+        // where the decoder found one. If whisper reads the same fifteen seconds as a single
+        // run-on — which is exactly what hard-cut media invites — the sentence cut has nowhere
+        // to land and the route would answer `segs=1 windows=1` again, reproducing session 7
+        // with the fix installed. So the chunk is bisected geometrically, the same net the CPU
+        // tiers have had since Task 2, and the tracker gets four fingerprints instead of one
+        // blended average of two voices.
+        val voices = FakeVoices { index -> if (index % 2 == 0) unit(0.0) else unit(90.0) }
+        val assignment = assignVadRouteOnce(
+            voices = voices,
+            samples = buffer(15f),
+            segments = pairs(0f to 15f),
+            sentences = sentences(intArrayOf(0, 1500, 0, 40)),
+        )
+        assertEquals("one sentence, four fingerprint windows", 4, assignment?.ids?.size)
+        assertEquals(listOf(1, 2, 1, 2), assignment?.ids)
+        assertEquals("one embedding each — none of them is under the floor", 4, voices.lengths.size)
+        assertEquals("the endpointer still found exactly one segment", 1, assignment?.segs)
+        assertTrue(
+            "and none of them is still long enough to hide a second voice",
+            assignment!!.stats.durationsSec.all { it < SpeakerSpans.TOKEN_CUT_SECONDS },
+        )
     }
 
     @Test
@@ -1146,12 +1172,14 @@ class SpeakerAssignerTest {
         val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
         val assignment = assignVadRouteOnce(
             voices = voices,
-            samples = buffer(10f),
-            segments = pairs(0f to 10f),
+            samples = buffer(7f),
+            segments = pairs(0f to 7f),
+            // Every sentence under TOKEN_CUT_SECONDS, so the bisection of 4.11 fix round 2 adds
+            // no window here: this test is about the FLOOR, not about the ceiling.
             sentences = sentences(
-                intArrayOf(0, 400, 0, 10),
-                intArrayOf(400, 450, 10, 14),
-                intArrayOf(450, 1000, 14, 30),
+                intArrayOf(0, 300, 0, 10),
+                intArrayOf(300, 350, 10, 14),
+                intArrayOf(350, 700, 14, 30),
             ),
         )
         assertEquals("three windows for three sentences", 3, assignment?.ids?.size)
@@ -1186,12 +1214,15 @@ class SpeakerAssignerTest {
         val voices = FakeVoices { index -> if (index == 0) unit(0.0) else unit(90.0) }
         val assignment = assignVadRouteOnce(
             voices = voices,
-            samples = buffer(10f),
-            segments = pairs(0f to 10f),
-            sentences = sentences(intArrayOf(0, 300, 0, 10), intArrayOf(300, 1000, 10, 30)),
+            samples = buffer(6.5f),
+            segments = pairs(0f to 6.5f),
+            // Both sentences under TOKEN_CUT_SECONDS, so the pick is between two windows and not
+            // between one window and a bisected sentence's pieces — the question here is the
+            // FALLBACK, and a tie-break would answer it by accident.
+            sentences = sentences(intArrayOf(0, 300, 0, 10), intArrayOf(300, 650, 10, 30)),
         )
         assertNotNull("the VAD route always names a pick", assignment?.wholeChunkWindow)
-        assertEquals("the 7 s sentence over the 3 s one", 1, assignment?.wholeChunkWindow)
+        assertEquals("the 3.5 s sentence over the 3 s one", 1, assignment?.wholeChunkWindow)
 
         val runs = listOf(Run(seq = 7L, windowIndex = SpeakerRuns.NO_WINDOW_INDEX, text = "hi"))
         val pick = assignment!!.wholeChunkWindow!!

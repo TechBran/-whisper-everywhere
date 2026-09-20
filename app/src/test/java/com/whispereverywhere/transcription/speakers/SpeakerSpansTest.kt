@@ -909,27 +909,135 @@ class SpeakerSpansTest {
         // SESSION 7'S FAILURE, ANSWERED. A hard-cut interview has no pauses, so Silero hands over
         // ONE 15 s segment and 4.10.1's rule gave the whole minute one label. The decoder has
         // always known where each sentence began; asked, it turns that one window into four.
+        //
+        // AND THE SENTENCE CUT COMES FIRST. Four sentences of 3.75 s each are four windows and
+        // nothing else: the bisection added in 4.11 fix round 2 takes only what the sentence cut
+        // left at or over TOKEN_CUT_SECONDS, and none of these reaches it.
         val windows = SpeakerSpans.sentenceChunkWindows(
             pairs(0f to 15f),
             sentences(
-                intArrayOf(0, 400, 0, 10),
-                intArrayOf(400, 700, 10, 20),
-                intArrayOf(700, 1100, 20, 30),
-                intArrayOf(1100, 1500, 30, 40),
+                intArrayOf(0, 375, 0, 10),
+                intArrayOf(375, 750, 10, 20),
+                intArrayOf(750, 1125, 20, 30),
+                intArrayOf(1125, 1500, 30, 40),
             ),
         )
         assertEquals(
             listOf(
-                SpeakerWindow(0, 0, 4 * RATE),
-                SpeakerWindow(0, 4 * RATE, 7 * RATE),
-                SpeakerWindow(0, 7 * RATE, 11 * RATE),
-                SpeakerWindow(0, 11 * RATE, 15 * RATE),
+                SpeakerWindow(0, 0, (3.75f * RATE).toInt()),
+                SpeakerWindow(0, (3.75f * RATE).toInt(), (7.5f * RATE).toInt()),
+                SpeakerWindow(0, (7.5f * RATE).toInt(), (11.25f * RATE).toInt()),
+                SpeakerWindow(0, (11.25f * RATE).toInt(), 15 * RATE),
             ),
             windows,
         )
         assertTrue(
             "no window claims speech it does not hold",
             windows.all { it.speechSamples == it.origEnd - it.origStart },
+        )
+        assertEquals(
+            "the spans name those windows one for one, because nothing was bisected",
+            listOf(0, 1, 2, 3),
+            SpeakerSpans.sentenceSpans(
+                sentences(
+                    intArrayOf(0, 375, 0, 3),
+                    intArrayOf(375, 750, 3, 6),
+                    intArrayOf(750, 1125, 6, 9),
+                    intArrayOf(1125, 1500, 9, 12),
+                ),
+                "aa bb cc dd ".toByteArray(Charsets.UTF_8),
+            ).map { it.windowIndex },
+        )
+    }
+
+    @Test
+    fun aRunOnSENTENCETooLongForOneFingerprintIsBISECTEDLikeTheCpuRoutesAre() {
+        // THE SESSION 7 CONTINGENCY, and the case the sentence cut cannot reach. A sentence
+        // boundary only helps where the decoder found one; if whisper reads a 15 s hard-cut
+        // run-on as ONE sentence, the cut has nowhere to land and 4.11 reproduces session 7
+        // exactly — `segs=1 windows=1`, one label over fifteen seconds of two people. The CPU
+        // tiers have had the net since Task 2 and this is the same one: a window still spanning
+        // TOKEN_CUT_SECONDS is bisected, recursively, both halves kept at MIN_WINDOW_SECONDS.
+        val windows = SpeakerSpans.sentenceChunkWindows(
+            pairs(0f to 15f),
+            sentences(intArrayOf(0, 1500, 0, 40)),
+        )
+        assertTrue("one sentence, several windows — the whole point", windows.size > 1)
+        assertEquals(
+            listOf(
+                SpeakerWindow(0, 0, (3.75f * RATE).toInt()),
+                SpeakerWindow(0, (3.75f * RATE).toInt(), (7.5f * RATE).toInt()),
+                SpeakerWindow(0, (7.5f * RATE).toInt(), (11.25f * RATE).toInt()),
+                SpeakerWindow(0, (11.25f * RATE).toInt(), 15 * RATE),
+            ),
+            windows,
+        )
+        val cut = (SpeakerSpans.TOKEN_CUT_SECONDS * RATE).toInt()
+        val floor = (SpeakerSpans.MIN_WINDOW_SECONDS * RATE).toInt()
+        assertTrue(
+            "the recursion runs until nothing is still too long — one cut of 15 s would leave " +
+                "two 7.5 s windows, the same defect with a smaller number",
+            windows.all { it.origEnd - it.origStart < cut },
+        )
+        assertTrue(
+            "and never below the embedder's floor",
+            windows.all { it.origEnd - it.origStart >= floor },
+        )
+        assertEquals("the pieces tile the speech exactly", 0, windows.first().origStart)
+        assertEquals(15 * RATE, windows.last().origEnd)
+        for (i in 1 until windows.size) {
+            assertEquals("contiguous at $i", windows[i - 1].origEnd, windows[i].origStart)
+        }
+        // The TEXT cannot be cut inside a sentence on this tier — there are no sub-sentence byte
+        // offsets — so it wears the FIRST of the four, which is the window that starts where the
+        // sentence starts. The other three are fingerprints, not labels.
+        assertEquals(
+            listOf(SpeakerSpan(0, "Hello.")),
+            SpeakerSpans.sentenceSpans(
+                sentences(intArrayOf(0, 1500, 0, 6)),
+                "Hello.".toByteArray(Charsets.UTF_8),
+            ),
+        )
+    }
+
+    @Test
+    fun aBisectedSentenceShiftsEveryLATERSentencesWindowAndBothHalvesAgreeOnByHowMuch() {
+        // THE INVARIANT THE BISECTION COULD HAVE BROKEN SILENTLY. The audio is cut here and the
+        // text is cut by `sentenceSpans` on another thread ~60 ms earlier, and the two are
+        // matched by POSITION in `SpeakerAssignment.ids`. A sentence that becomes four windows
+        // therefore moves every later sentence's index by three — and the text half has no VAD
+        // pass to learn that from, so the shift has to be a function of the SENTENCE array,
+        // which a territory `[start[i], start[i+1])` is.
+        val sentences = sentences(
+            intArrayOf(0, 800, 0, 6),      // 8 s: bisected into four 2 s windows
+            intArrayOf(800, 1000, 6, 12),  // 2 s: one window, and it is index 4, not index 1
+        )
+        val windows = SpeakerSpans.sentenceChunkWindows(pairs(0f to 10f), sentences)
+        assertEquals(5, windows.size)
+        assertEquals(
+            listOf(0, 2 * RATE, 4 * RATE, 6 * RATE, 8 * RATE),
+            windows.map { it.origStart },
+        )
+        assertEquals(
+            listOf(SpeakerSpan(0, "Hello."), SpeakerSpan(4, "World.")),
+            SpeakerSpans.sentenceSpans(sentences, "Hello.World.".toByteArray(Charsets.UTF_8)),
+        )
+        assertTrue(
+            "every span names a window that exists",
+            SpeakerSpans.sentenceSpans(sentences, "Hello.World.".toByteArray(Charsets.UTF_8))
+                .all { it.windowIndex in windows.indices },
+        )
+    }
+
+    @Test
+    fun theNoSENTENCESRouteIsUntouchedByTheBisection() {
+        // 4.10.1, byte for byte. `wholeChunkWindows` is the fork `assignVadRoute` takes when the
+        // decoder emitted no timestamps, and nothing in fix round 2 may reach it: a chunk with
+        // no sentence bounds has no territory to bisect and the owner's ruling for it stands —
+        // one label per chunk, which was "good enough" at the chunk level.
+        assertEquals(
+            listOf(SpeakerWindow(0, 0, 15 * RATE)),
+            SpeakerSpans.wholeChunkWindows(pairs(0f to 15f)),
         )
     }
 
@@ -940,12 +1048,14 @@ class SpeakerSpansTest {
         // thread, and the two never meet: a span's `windowIndex` is matched to an id by POSITION.
         // So a sentence the VAD heard no speech in may not be dropped — every later sentence's
         // text would then wear the previous one's label.
+        // Every sentence here is under TOKEN_CUT_SECONDS, so nothing is bisected and the index
+        // is still the sentence's own — which is the case the whole route was built on.
         val windows = SpeakerSpans.sentenceChunkWindows(
             pairs(0f to 2f, 6f to 8f),
             sentences(
                 intArrayOf(0, 200, 0, 10),
-                intArrayOf(200, 400, 10, 20),
-                intArrayOf(400, 800, 20, 30),
+                intArrayOf(200, 500, 10, 20),
+                intArrayOf(500, 800, 20, 30),
             ),
         )
         assertEquals("one window per sentence, silent ones included", 3, windows.size)
@@ -963,14 +1073,17 @@ class SpeakerSpansTest {
         // The same rule `wholeChunkWindows` needed and for the same reason: every gate below
         // this file is a question about VOICE, so a sentence that straddles two speech segments
         // must not claim the silence between them as seconds it spoke.
+        // Held under TOKEN_CUT_SECONDS on purpose: this test is about the SUM, and a sentence
+        // long enough to be bisected would be answering a different question (see
+        // `aRunOnSENTENCETooLongForOneFingerprintIsBISECTEDLikeTheCpuRoutesAre`).
         val windows = SpeakerSpans.sentenceChunkWindows(
-            pairs(0f to 2f, 6f to 8f),
-            sentences(intArrayOf(0, 800, 0, 30)),
+            pairs(0f to 1f, 2f to 3f),
+            sentences(intArrayOf(0, 300, 0, 30)),
         )
         assertEquals(1, windows.size)
         assertEquals(0, windows.single().origStart)
-        assertEquals(8 * RATE, windows.single().origEnd)
-        assertEquals("4 s of voice inside an 8 s span", 4 * RATE, windows.single().speechSamples)
+        assertEquals(3 * RATE, windows.single().origEnd)
+        assertEquals("2 s of voice inside a 3 s span", 2 * RATE, windows.single().speechSamples)
     }
 
     @Test

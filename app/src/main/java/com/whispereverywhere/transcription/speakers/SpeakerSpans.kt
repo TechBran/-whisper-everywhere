@@ -303,12 +303,27 @@ object SpeakerSpans {
         val minWindowSamples = (MIN_WINDOW_SECONDS * SAMPLE_RATE).toInt()
         val cutSamples = (TOKEN_CUT_SECONDS * SAMPLE_RATE).toInt()
         val out = ArrayList<SpeakerWindow>(base.size)
+        val cuts = ArrayList<Int>()
         for (w in base) {
             val own = edges[w.vadIndex]
             if (own.isEmpty()) {
+                // NO TOKEN TIMES FOR THIS SEGMENT, SO NO CUT — and that is the fail-downhill rule
+                // rather than an oversight, which is worth saying because [bisect] reads an EMPTY
+                // edge list as "cut at the midpoint" for the NPU route. Here an empty list means
+                // whisper's own per-segment equality check refused to publish this segment's
+                // times (`token-times: segment N dropped`), and the spec's answer to a failed
+                // timing source is today's windows, not a geometric guess the CPU tier has never
+                // made. The NPU route has no finer source to lose, which is why it may.
                 out += w
             } else {
-                bisect(w.vadIndex, w.origStart, w.origEnd, own, minWindowSamples, cutSamples, out)
+                cuts.clear()
+                bisect(w.origStart, w.origEnd, own, minWindowSamples, cutSamples, cuts)
+                var start = w.origStart
+                for (c in cuts) {
+                    out += SpeakerWindow(vadIndex = w.vadIndex, origStart = start, origEnd = c)
+                    start = c
+                }
+                out += SpeakerWindow(vadIndex = w.vadIndex, origStart = start, origEnd = w.origEnd)
             }
         }
         return out
@@ -342,8 +357,31 @@ object SpeakerSpans {
     }
 
     /**
-     * `[from, to)` as one window, or as two halves cut at the token edge nearest its middle, and
-     * then the same question asked of each half.
+     * THE ONE BISECTION, shared by both tiers (the second half added in 4.11 fix round 2).
+     *
+     * Appends to [out] the INTERIOR cut points of `[from, to)`, ascending and strictly between
+     * the two ends — so `k` cut points mean `k + 1` windows and an empty answer means the
+     * stretch stands as one. It deals in cut POINTS rather than in windows because its two
+     * callers build different things out of them: the CPU route a [SpeakerWindow] per piece of a
+     * VAD segment, the NPU route a piece of a SENTENCE's territory.
+     *
+     * The rule: while the stretch spans at least [TOKEN_CUT_SECONDS] it is cut in two, and each
+     * half is asked the same question. The candidate is always the stretch's own midpoint —
+     * nothing in layer 1 detects a change of voice, so a geometric guess is the only candidate
+     * there is — and [edges] decides what may be done with it:
+     *
+     *  - **NON-EMPTY** (the CPU tiers): the cut goes to the edge minimising `|edge - candidate|`,
+     *    so a window boundary always falls where the text can be cut too. Ties go to the EARLIER
+     *    edge, the convention `spans` rule 3 uses. No qualifying edge means no cut.
+     *  - **EMPTY** (the NPU tier): the midpoint IS the cut. That tier has no boundary finer than
+     *    a sentence — word times there need cross-attention weights out of the QNN graph, which
+     *    is out of scope by the spec — so inside a sentence there is nothing to snap to. The
+     *    caller that must NOT take this reading is [windows]' missing-token-times branch, which
+     *    says so where it declines it.
+     *
+     * Either way both halves come out at least [MIN_WINDOW_SECONDS] long: that is the embedder's
+     * floor as well as the tracker's lowest gate, so a shorter half would cost an embedding to
+     * produce a window the tracker may say nothing about.
      *
      * The recursion terminates on the span, not on a depth counter: every cut leaves both sides
      * at least [MIN_WINDOW_SECONDS] and a side is only cut again when it still spans
@@ -351,40 +389,37 @@ object SpeakerSpans {
      * few dozen frames on a 30 s chunk, at a leaf count bounded by the same ratio.
      */
     private fun bisect(
-        vadIndex: Int,
         from: Int,
         to: Int,
         edges: IntArray,
         minWindowSamples: Int,
         cutSamples: Int,
-        out: MutableList<SpeakerWindow>,
+        out: MutableList<Int>,
     ) {
-        if (to - from < cutSamples) {
-            out += SpeakerWindow(vadIndex = vadIndex, origStart = from, origEnd = to)
-            return
-        }
+        if (to - from < cutSamples) return
         val candidate = from + (to - from) / 2
         var best = -1
-        var bestDistance = Int.MAX_VALUE
-        for (e in edges) {
-            // Both halves must be worth fingerprinting: MIN_WINDOW_SECONDS is the embedder's
-            // floor as well as the tracker's lowest gate, so a shorter half would cost an
-            // embedding to produce a window the tracker may say nothing about.
-            if (e - from < minWindowSamples || to - e < minWindowSamples) continue
-            val distance = if (e > candidate) e - candidate else candidate - e
-            // Strictly less, over ascending edges: ties go to the EARLIER edge, the same
-            // convention `spans` rule 3 uses.
-            if (distance < bestDistance) {
-                bestDistance = distance
-                best = e
+        if (edges.isEmpty()) {
+            if (candidate - from >= minWindowSamples && to - candidate >= minWindowSamples) {
+                best = candidate
+            }
+        } else {
+            var bestDistance = Int.MAX_VALUE
+            for (e in edges) {
+                if (e - from < minWindowSamples || to - e < minWindowSamples) continue
+                val distance = if (e > candidate) e - candidate else candidate - e
+                if (distance < bestDistance) {
+                    bestDistance = distance
+                    best = e
+                }
             }
         }
-        if (best < 0) {
-            out += SpeakerWindow(vadIndex = vadIndex, origStart = from, origEnd = to)
-            return
-        }
-        bisect(vadIndex, from, best, edges, minWindowSamples, cutSamples, out)
-        bisect(vadIndex, best, to, edges, minWindowSamples, cutSamples, out)
+        if (best < 0) return
+        // Left first, then this cut, then right: the answer has to ASCEND, because both callers
+        // walk it once and turn consecutive pairs into windows.
+        bisect(from, best, edges, minWindowSamples, cutSamples, out)
+        out += best
+        bisect(best, to, edges, minWindowSamples, cutSamples, out)
     }
 
     /**
@@ -573,7 +608,7 @@ object SpeakerSpans {
      * (`docs/measurements/2026-09-18-speaker-spike.md` §Session 7). A sentence boundary is a
      * boundary that exists inside a pause-free stretch, and since Task 3 this tier emits them.
      *
-     * ### ONE WINDOW PER SENTENCE, ALWAYS, IN SENTENCE ORDER
+     * ### AT LEAST ONE WINDOW PER SENTENCE, ALWAYS, IN SENTENCE ORDER
      *
      * That is the contract and it is load-bearing rather than tidy. The TEXT is cut by
      * [sentenceSpans] on the native thread, at the moment the chunk is delivered; the AUDIO is
@@ -584,12 +619,31 @@ object SpeakerSpans {
      * instead, which the assigner reads as fate 1 and labels by inheritance, and both files
      * derive that decision from the SAME array so neither can be out of step with the other.
      *
+     * ### AND THE SAFETY NET THE CPU ROUTE ALREADY HAD (4.11 fix round 2)
+     *
+     * A sentence cut is a cut only where the decoder found a sentence, and Session 7's shape is
+     * precisely the shape with none: if whisper decodes a 15 s hard-cut run-on as ONE sentence
+     * this function used to answer `segs=1 windows=1` and reproduce the defect exactly. The CPU
+     * tiers have had a net for that since Task 2 — a window still spanning [TOKEN_CUT_SECONDS]
+     * is bisected, recursively — and this route now runs the SAME [bisect] over each sentence's
+     * territory, with the midpoint as the cut because there is no finer boundary on this tier to
+     * snap to. Sentence cuts come first and the bisection takes only what is still too long, so
+     * a chunk of four ordinary sentences is four windows exactly as before.
+     *
+     * The windows a bisection adds carry no text of their own — this tier has no sub-sentence
+     * byte offsets, so the sentence's words stay with its FIRST window (see
+     * [sentenceWindowStarts], which is how the text half computes the same index). What they buy
+     * is that fifteen seconds of two voices stop being ONE fingerprint that teaches the tracker
+     * a blended voice. Nothing here detects a change of VOICE; the cut is geometric, which is
+     * layer 2's job.
+     *
      * ### What a window is, exactly
      *
      * Sentence `i` owns the chunk's timeline from its own start to the NEXT sentence's start —
      * the first sentence owns everything before it and the last everything after, so no audio
-     * falls between two sentences. Inside that stretch the window is the TIGHTEST span covering
-     * the speech [raw] reported, and [SpeakerWindow.speechSamples] is how much speech that is.
+     * falls between two sentences — and that territory is then bisected as above. Inside each
+     * piece the window is the TIGHTEST span covering the speech [raw] reported, and
+     * [SpeakerWindow.speechSamples] is how much speech that is.
      *
      * Trimming to speech matters at both ends and for different reasons: whisper's timestamps
      * are its own estimate and a sentence can open a beat before the voice does, and
@@ -606,7 +660,8 @@ object SpeakerSpans {
      * @param raw `[start, end]` * n from `WhisperNative.vadSegmentsOf`, on the CHUNK's own
      *        timeline (there is no second timeline on this route — see [wholeChunkWindows]).
      * @param sentences `[t0cs, t1cs, byteStart, byteEnd]` * n from `WhisperBackend.lastSentences`.
-     * @return one window per sentence, or EMPTY when either input is. EMPTY is NOT a request to
+     * @return one window per sentence, plus one more for every bisection of a sentence too long
+     *         to be a single fingerprint; or EMPTY when either input is. EMPTY is NOT a request to
      *         fall back: the route is chosen before this call — `SpeakerAssigner.assignVadRoute`
      *         forks on `sentences.isEmpty()` first, so the empty-`sentences` return is unreachable
      *         from there, and an empty list publishes NO `SpeakerAssignment` for the chunk,
@@ -627,58 +682,132 @@ object SpeakerSpans {
         }
         if (speech.isEmpty()) return emptyList()
 
-        // The cut points, in samples, forced NON-DECREASING. Nothing on this tier enforces
-        // whisper's increasing-timestamp mask — `NpuSentences` refuses a stream that runs
-        // backwards outright, but a monotone array can still repeat a time, and a cut that went
-        // backwards would make window i+1 start before window i and attribute text by position
-        // to audio in the wrong order.
+        val cuts = sentenceStarts(sentences)
+        val minWindowSamples = (MIN_WINDOW_SECONDS * SAMPLE_RATE).toInt()
+        val cutSamples = (TOKEN_CUT_SECONDS * SAMPLE_RATE).toInt()
+        val chunkEnd = speech.last()[1]
+
+        val out = ArrayList<SpeakerWindow>(n)
+        val interior = ArrayList<Int>()
+        for (i in 0 until n) {
+            // THE SENTENCE'S TERRITORY, and then [bisect] inside it. For every sentence but the
+            // last it is `[cuts[i], cuts[i + 1])`, which is a function of [sentences] ALONE and
+            // is what lets [sentenceSpans] name the same windows without a VAD pass. For the
+            // LAST it may run to the chunk's own last speech sample, and that one may be
+            // VAD-derived precisely because no sentence after it needs an index.
+            val from = cuts[i]
+            val to = if (i < n - 1) cuts[i + 1] else maxOf(from, chunkEnd)
+            interior.clear()
+            bisect(from, to, IntArray(0), minWindowSamples, cutSamples, interior)
+            val pieces = interior.size + 1
+
+            for (j in 0 until pieces) {
+                val pieceFrom = if (j == 0) from else interior[j - 1]
+                val pieceTo = if (j == pieces - 1) to else interior[j]
+                // The FIRST sentence owns everything before it and the LAST everything after it,
+                // so no speech falls outside every window: the tail past the last timestamp is
+                // the chunk's own words, and the lead-in before the first is too.
+                val lo = if (i == 0 && j == 0) Int.MIN_VALUE else pieceFrom
+                val hi = if (i == n - 1 && j == pieces - 1) Int.MAX_VALUE else pieceTo
+                var wFrom = -1
+                var wTo = -1
+                var held = 0
+                var vadIndex = -1
+                for (segment in speech) {
+                    val a = maxOf(segment[0], lo)
+                    val b = minOf(segment[1], hi)
+                    if (b <= a) continue
+                    if (wFrom < 0) {
+                        wFrom = a
+                        vadIndex = segment[2]
+                    }
+                    wTo = b
+                    held += b - a
+                }
+                if (wFrom < 0) {
+                    // No speech under this piece — whisper heard words the endpointer did not,
+                    // the bound ran past the chunk, or a bisected sentence straddles a pause and
+                    // this half of it is the pause. It keeps its INDEX and nothing else.
+                    val at = pieceFrom.coerceIn(speech.first()[0], speech.last()[1])
+                    val nearest = speech.firstOrNull { it[1] > pieceFrom } ?: speech.last()
+                    out += SpeakerWindow(
+                        vadIndex = nearest[2],
+                        origStart = at,
+                        origEnd = at,
+                        speechSamples = 0,
+                    )
+                } else {
+                    out += SpeakerWindow(
+                        vadIndex = vadIndex,
+                        origStart = wFrom,
+                        origEnd = wTo,
+                        speechSamples = held,
+                    )
+                }
+            }
+        }
+        return out
+    }
+
+    /**
+     * Each sentence's start in SAMPLES, forced NON-DECREASING.
+     *
+     * Nothing on the NPU tier enforces whisper's increasing-timestamp mask — `NpuSentences`
+     * refuses a stream that runs backwards outright, but a monotone array can still repeat a
+     * time, and a start that went backwards would make sentence `i + 1` begin before sentence
+     * `i` and attribute text by position to audio in the wrong order.
+     */
+    private fun sentenceStarts(sentences: IntArray): IntArray {
+        val n = sentences.size / STRIDE
         val cuts = IntArray(n)
         for (i in 0 until n) {
             val at = sentences[i * STRIDE] * SAMPLES_PER_CENTISECOND
             cuts[i] = if (i == 0) at else maxOf(at, cuts[i - 1])
         }
+        return cuts
+    }
 
-        val out = ArrayList<SpeakerWindow>(n)
+    /**
+     * WHICH WINDOW EACH SENTENCE'S TEXT WEARS — the index of the FIRST window
+     * [sentenceChunkWindows] gives sentence `i`, computed from [sentences] and nothing else.
+     *
+     * ### Why this function exists, and why it may not look at the audio
+     *
+     * The route's load-bearing invariant is that the TEXT is cut by sentence on the whisper
+     * thread, at the instant the chunk is delivered, and the AUDIO by sentence ~60 ms later on
+     * the embed thread — and that the two halves never meet: a [SpeakerSpan.windowIndex] is
+     * matched to an id by POSITION in `SpeakerAssignment.ids`. Until 4.11 fix round 2 the two
+     * agreed because there was exactly one window per sentence, so the sentence's own index was
+     * the answer. Once a sentence too long for one fingerprint is bisected that is no longer
+     * true, and the mapping has to be a function BOTH sides can compute alone — which rules out
+     * anything that depends on what the VAD found.
+     *
+     * It is, because a sentence's territory is `[start[i], start[i + 1])` and both bounds come
+     * out of [sentences]. The one territory that is NOT pure is the LAST sentence's, which runs
+     * to the chunk's last speech sample — and that is exactly the one whose window count no
+     * later sentence needs, so it is never asked for here.
+     *
+     * A sentence bisected into several windows therefore gives its TEXT to the FIRST of them —
+     * the window that starts where the sentence starts. The rest are fingerprinted and carry no
+     * text, which is the honest shape of what this tier knows: it has no sub-sentence byte
+     * offsets to cut words at (word times need cross-attention weights out of the QNN graph),
+     * so the value of the extra windows is that a 15 s stretch of two voices stops teaching the
+     * tracker ONE blended voice — not that the sentence's words can be split between them.
+     */
+    private fun sentenceWindowStarts(sentences: IntArray): IntArray {
+        val n = sentences.size / STRIDE
+        val cuts = sentenceStarts(sentences)
+        val minWindowSamples = (MIN_WINDOW_SECONDS * SAMPLE_RATE).toInt()
+        val cutSamples = (TOKEN_CUT_SECONDS * SAMPLE_RATE).toInt()
+        val out = IntArray(n)
+        val interior = ArrayList<Int>()
+        var next = 0
         for (i in 0 until n) {
-            // The FIRST sentence owns everything before it and the LAST everything after it, so
-            // no speech falls outside every window: the tail past the last timestamp is the
-            // chunk's own words, and the lead-in before the first is too.
-            val lo = if (i == 0) Int.MIN_VALUE else cuts[i]
-            val hi = if (i == n - 1) Int.MAX_VALUE else cuts[i + 1]
-            var from = -1
-            var to = -1
-            var held = 0
-            var vadIndex = -1
-            for (segment in speech) {
-                val a = maxOf(segment[0], lo)
-                val b = minOf(segment[1], hi)
-                if (b <= a) continue
-                if (from < 0) {
-                    from = a
-                    vadIndex = segment[2]
-                }
-                to = b
-                held += b - a
-            }
-            if (from < 0) {
-                // A sentence with no speech under it — whisper heard words the endpointer did
-                // not, or the bound ran past the chunk. It keeps its INDEX and nothing else.
-                val at = cuts[i].coerceIn(speech.first()[0], speech.last()[1])
-                val nearest = speech.firstOrNull { it[1] > cuts[i] } ?: speech.last()
-                out += SpeakerWindow(
-                    vadIndex = nearest[2],
-                    origStart = at,
-                    origEnd = at,
-                    speechSamples = 0,
-                )
-            } else {
-                out += SpeakerWindow(
-                    vadIndex = vadIndex,
-                    origStart = from,
-                    origEnd = to,
-                    speechSamples = held,
-                )
-            }
+            out[i] = next
+            if (i == n - 1) break
+            interior.clear()
+            bisect(cuts[i], cuts[i + 1], IntArray(0), minWindowSamples, cutSamples, interior)
+            next += interior.size + 1
         }
         return out
     }
@@ -690,15 +819,21 @@ object SpeakerSpans {
      * It is [spans]' opposite number and deliberately a separate function rather than a mode of
      * it. [spans] answers a hard question — which of several whisper segments, on two timelines,
      * belongs to which of several windows — and every one of its seven rules exists to get an
-     * ATTRIBUTION right. Here there is nothing to attribute: `NpuSentences.of` publishes one
-     * sentence per window in the same order, with byte ranges that TILE the text it decoded, so
-     * the span's index IS its position and the only work left is slicing and cleaning.
+     * ATTRIBUTION right. Here there is nothing to attribute: `NpuSentences.of` publishes the
+     * sentences in window order, with byte ranges that TILE the text it decoded, so the only
+     * work left is looking the index up, slicing and cleaning.
      *
      * **The index is STATED, never implied by position in the result.** A sentence whose text
      * cleans away contributes no span (rule 2 of [spans], unchanged: whisper's non-speech
      * markers must not open a paragraph for a speaker who said nothing), and if the index were
      * the position in the returned list, dropping one would shift every later sentence onto the
      * previous sentence's id.
+     *
+     * **And since 4.11 fix round 2 it is LOOKED UP rather than counted**, because a sentence too
+     * long to be one fingerprint is bisected into several windows on the other thread. The
+     * lookup is [sentenceWindowStarts] — the same arithmetic over the same array, deliberately
+     * not a number passed between the two halves, because there is no thread on which they
+     * could meet to pass it.
      *
      * Byte ranges are clamped before they are sliced, for rule 1's reason: they crossed a thread
      * boundary from a process-global slot, and an exception here would cost the user the
@@ -713,6 +848,11 @@ object SpeakerSpans {
     fun sentenceSpans(sentences: IntArray, bytes: ByteArray): List<SpeakerSpan> {
         val n = sentences.size / STRIDE
         if (n == 0 || bytes.isEmpty()) return emptyList()
+        // Sentence i's window is i only while every sentence is short enough to be ONE window.
+        // Since 4.11 fix round 2 a sentence at or over TOKEN_CUT_SECONDS is bisected, so the
+        // index has to be looked up — from the same array, by the same arithmetic the assigner
+        // runs on the other thread. See [sentenceWindowStarts].
+        val windowOf = sentenceWindowStarts(sentences)
         val out = ArrayList<SpeakerSpan>(n)
         for (i in 0 until n) {
             val o = i * STRIDE
@@ -721,7 +861,7 @@ object SpeakerSpans {
             if (end == start) continue
             val text = TranscriptText.clean(String(bytes, start, end - start, Charsets.UTF_8))
             if (text.isEmpty()) continue
-            out += SpeakerSpan(windowIndex = i, text = text)
+            out += SpeakerSpan(windowIndex = windowOf[i], text = text)
         }
         return out
     }
