@@ -1,0 +1,829 @@
+09-20 00:56:38.979 I/WE-DIAG (11389): VAD: 15360 -> 15200 samples (1 segments) wallMs=8.6
+09-20 00:56:41.308 I/WE-DIAG (11389): finalize: wallMs=2329 audio_ctx=512 threads=4 audioMs=1100 segments=1
+09-20 00:56:41.311 I/WE-DIAG (11389): speaker: seq=0 segs=1 windows=1 embedMs=0 ids=[0] best=[-] dur=[0.9] confirmed=0 load=0 route=geom
+09-20 00:56:54.106 I/WE-DIAG (11389): VAD: 233008 -> 234608 samples (2 segments) wallMs=120.7
+09-20 00:57:01.734 I/WE-DIAG (11389): finalize: wallMs=7628 audio_ctx=797 threads=4 audioMs=14663 segments=4
+09-20 00:57:02.314 I/WE-DIAG (11389): speaker: seq=1 segs=2 windows=6 embedMs=576 ids=[1,1,1,1,1,1] best=[-,0.77,0.68,0.71,0.72,0.78] dur=[2.3,2.3,1.9,2.3,2.3,3.5] confirmed=0 load=1 route=geom
+09-20 00:57:09.113 I/WE-DIAG (11389): VAD: 247248 -> 247248 samples (3 segments) wallMs=125.4
+09-20 00:57:23.738 I/WE-DIAG (11389): finalize: wallMs=14621 audio_ctx=836 threads=4 audioMs=15453 segments=4
+09-20 00:57:24.108 I/WE-DIAG (11389): speaker: seq=2 segs=3 windows=6 embedMs=366 ids=[1,1,1,1,1,1] best=[0.80,0.73,0.81,0.81,0.84,0.74] dur=[2.2,2.2,3.2,3.2,3.3,1.2] confirmed=0 load=0 route=geom
+09-20 00:57:24.119 I/WE-DIAG (11389): VAD: 194048 -> 195648 samples (2 segments) wallMs=126.8
+09-20 00:57:30.043 I/WE-DIAG (11389): finalize: wallMs=5923 audio_ctx=675 threads=4 audioMs=12228 segments=3
+09-20 00:57:30.323 I/WE-DIAG (11389): speaker: seq=3 segs=2 windows=6 embedMs=277 ids=[1,1,1,1,1,1] best=[0.62,0.79,0.79,0.81,0.81,0.68] dur=[1.1,2.1,2.3,2.4,2.5,1.7] confirmed=0 load=0 route=geom
+09-20 00:57:39.148 I/WE-DIAG (11389): VAD: 286208 -> 286688 samples (3 segments) wallMs=143.0
+09-20 00:57:48.957 I/WE-DIAG (11389): finalize: wallMs=9809 audio_ctx=959 threads=4 audioMs=17918 segments=4
+09-20 00:57:49.355 I/WE-DIAG (11389): speaker: seq=4 segs=3 windows=6 embedMs=393 ids=[1,1,1,1,1,1] best=[0.81,0.74,0.76,0.81,0.79,0.77] dur=[3.0,3.0,2.0,2.3,3.5,3.9] confirmed=0 load=0 route=geom
+09-20 00:57:54.138 I/WE-DIAG (11389): VAD: 225280 -> 227520 samples (3 segments) wallMs=129.3
+09-20 00:58:01.864 I/WE-DIAG (11389): finalize: wallMs=7726 audio_ctx=775 threads=4 audioMs=14220 segments=5
+09-20 00:58:01.925 I/WE-DIAG (11389): VAD: 114688 -> 113440 samples (2 segments) wallMs=59.1
+09-20 00:58:02.261 I/WE-DIAG (11389): speaker: seq=5 segs=3 windows=6 embedMs=395 ids=[1,1,1,1,1,1] best=[0.53,0.78,0.76,0.78,0.63,0.81] dur=[1.0,3.3,2.5,2.4,1.9,2.9] confirmed=0 load=0 route=geom
+09-20 00:58:05.515 I/WE-DIAG (11389): finalize: wallMs=3590 audio_ctx=512 threads=4 audioMs=7090 segments=2
+09-20 00:58:05.675 I/WE-DIAG (11389): speaker: seq=6 segs=2 windows=2 embedMs=158 ids=[1,1] best=[0.82,0.82] dur=[3.3,3.7] confirmed=0 load=0 route=geom
+09-20 00:58:15.374 I/WE-DIAG (11389): VAD: 240128 -> 243008 samples (3 segments) wallMs=116.9
+09-20 00:58:24.162 I/WE-DIAG (11389): finalize: wallMs=8787 audio_ctx=823 threads=4 audioMs=15188 segments=5
+09-20 00:58:24.510 I/WE-DIAG (11389): speaker: seq=7 segs=3 windows=6 embedMs=345 ids=[1,1,1,1,1,1] best=[0.77,0.79,0.69,0.70,0.77,0.76] dur=[2.5,2.4,2.2,2.3,2.3,3.3] confirmed=0 load=0 route=geom
+09-20 00:58:30.390 I/WE-DIAG (11389): VAD: 240128 -> 243008 samples (3 segments) wallMs=119.8
+09-20 00:58:44.675 I/WE-DIAG (11389): finalize: wallMs=14285 audio_ctx=823 threads=4 audioMs=15188 segments=3
+09-20 00:58:44.679 I/WE-DIAG (11389): VAD: 5120 -> 0 samples (0 segments) wallMs=2.6
+09-20 00:58:45.006 I/WE-DIAG (11389): speaker: seq=8 segs=3 windows=5 embedMs=329 ids=[1,1,1,1,1] best=[0.75,0.77,0.81,0.77,0.80] dur=[2.4,2.2,3.6,3.5,3.2] confirmed=0 load=0 route=geom
+09-20 00:58:45.009 I/WE-DIAG (11389): finalize-timing: speaker-drain=329ms settled=true
+09-20 00:58:58.641 I/WE-DIAG (11389): VAD: 7648 -> 7008 samples (1 segments) wallMs=5.1
+09-20 00:59:01.002 I/WE-DIAG (11389): finalize: wallMs=2360 audio_ctx=512 threads=4 audioMs=1100 segments=1
+09-20 00:59:01.003 I/WE-DIAG (11389): speaker: seq=0 segs=1 windows=1 embedMs=0 ids=[0] best=[-] dur=[0.4] confirmed=0 load=0 route=geom
+09-20 00:59:13.097 I/WE-DIAG (11389): VAD: 240160 -> 235680 samples (1 segments) wallMs=59.1
+09-20 00:59:20.461 I/WE-DIAG (11389): finalize: wallMs=7363 audio_ctx=800 threads=4 audioMs=14730 segments=4
+09-20 00:59:21.003 I/WE-DIAG (11389): speaker: seq=1 segs=1 windows=6 embedMs=540 ids=[1,1,1,1,1,1] best=[-,0.60,0.66,0.78,0.71,0.51] dur=[3.0,2.0,2.5,2.5,2.1,2.6] confirmed=0 load=1 route=geom
+09-20 00:59:28.172 I/WE-DIAG (11389): VAD: 228320 -> 136000 samples (1 segments) wallMs=125.5
+09-20 00:59:31.938 I/WE-DIAG (11389): finalize: wallMs=3764 audio_ctx=512 threads=4 audioMs=8500 segments=2
+09-20 00:59:32.126 I/WE-DIAG (11389): speaker: seq=2 segs=1 windows=3 embedMs=186 ids=[1,1,1] best=[0.67,0.63,0.65] dur=[3.4,2.8,2.3] confirmed=0 load=0 route=geom
+09-20 00:59:39.599 I/WE-DIAG (11389): VAD: 195104 -> 193120 samples (2 segments) wallMs=95.4
+09-20 00:59:45.416 I/WE-DIAG (11389): finalize: wallMs=5817 audio_ctx=667 threads=4 audioMs=12070 segments=3
+09-20 00:59:45.688 I/WE-DIAG (11389): speaker: seq=3 segs=2 windows=4 embedMs=270 ids=[1,1,1,1] best=[0.58,0.62,0.73,0.61] dur=[3.1,3.8,2.5,2.6] confirmed=0 load=0 route=geom
+09-20 00:59:50.694 I/WE-DIAG (11389): VAD: 177664 -> 86880 samples (2 segments) wallMs=85.8
+09-20 00:59:54.430 I/WE-DIAG (11389): finalize: wallMs=3736 audio_ctx=512 threads=4 audioMs=5430 segments=2
+09-20 00:59:54.549 I/WE-DIAG (11389): speaker: seq=4 segs=2 windows=2 embedMs=117 ids=[1,2] best=[0.45,0.09] dur=[3.2,2.1] confirmed=0 load=0 route=geom
+09-20 00:59:57.996 I/WE-DIAG (11389): VAD: 117248 -> 26400 samples (1 segments) wallMs=62.3
+09-20 01:00:01.049 I/WE-DIAG (11389): finalize: wallMs=3053 audio_ctx=512 threads=4 audioMs=1650 segments=1
+09-20 01:00:01.088 I/WE-DIAG (11389): speaker-labels: confirmed=2 runs=12 relabelled=1
+09-20 01:00:01.088 I/WE-DIAG (11389): speaker: seq=5 segs=1 windows=1 embedMs=37 ids=[2] best=[0.97] dur=[1.6] confirmed=1 load=0 route=geom
+09-20 01:00:04.577 I/WE-DIAG (11389): VAD: 105472 -> 87200 samples (1 segments) wallMs=51.7
+09-20 01:00:07.798 I/WE-DIAG (11389): finalize: wallMs=3221 audio_ctx=512 threads=4 audioMs=5450 segments=1
+09-20 01:00:07.919 I/WE-DIAG (11389): speaker: seq=6 segs=1 windows=2 embedMs=119 ids=[3,3] best=[0.19,0.43] dur=[2.6,2.8] confirmed=1 load=0 route=geom
+09-20 01:00:19.653 I/WE-DIAG (11389): VAD: 224256 -> 225856 samples (2 segments) wallMs=118.3
+09-20 01:00:27.440 I/WE-DIAG (11389): finalize: wallMs=7787 audio_ctx=769 threads=4 audioMs=14116 segments=7
+09-20 01:00:27.769 I/WE-DIAG (11389): speaker: seq=7 segs=2 windows=8 embedMs=326 ids=[4,4,4,4,4,4,4,4] best=[0.27,0.52,0.52,0.37,0.50,0.55,0.58,0.56] dur=[2.4,1.2,1.3,1.3,1.2,1.3,2.9,2.4] confirmed=1 load=0 route=geom
+09-20 01:00:28.702 I/WE-DIAG (11389): VAD: 161280 -> 158560 samples (2 segments) wallMs=81.5
+09-20 01:00:33.041 I/WE-DIAG (11389): finalize: wallMs=4338 audio_ctx=559 threads=4 audioMs=9910 segments=2
+09-20 01:00:33.267 I/WE-DIAG (11389): speaker: seq=8 segs=2 windows=4 embedMs=224 ids=[4,4,5,5] best=[0.61,0.63,0.20,0.72] dur=[1.7,2.4,2.5,3.3] confirmed=1 load=0 route=geom
+09-20 01:00:41.069 I/WE-DIAG (11389): VAD: 197632 -> 189120 samples (4 segments) wallMs=95.8
+09-20 01:00:46.619 I/WE-DIAG (11389): finalize: wallMs=5549 audio_ctx=655 threads=4 audioMs=11820 segments=4
+09-20 01:00:46.855 I/WE-DIAG (11389): speaker: seq=9 segs=4 windows=5 embedMs=234 ids=[5,5,5,5,5] best=[0.78,-,0.86,0.70,0.77] dur=[3.7,0.9,2.8,1.4,2.8] confirmed=1 load=0 route=geom
+09-20 01:00:46.856 I/WE-DIAG (11389): speaker-recluster: n=34 clusters=3 confirmed=3 changed=20 ms=0
+09-20 01:00:49.398 I/WE-DIAG (11389): VAD: 133632 -> 131040 samples (2 segments) wallMs=69.5
+09-20 01:00:53.017 I/WE-DIAG (11389): finalize: wallMs=3619 audio_ctx=512 threads=4 audioMs=8190 segments=2
+09-20 01:00:53.199 I/WE-DIAG (11389): speaker: seq=10 segs=2 windows=3 embedMs=179 ids=[3,3,3] best=[0.80,0.70,0.81] dur=[3.2,2.5,2.4] confirmed=1 load=0 route=geom
+09-20 01:00:55.941 I/WE-DIAG (11389): VAD: 104960 -> 102720 samples (2 segments) wallMs=54.2
+09-20 01:00:59.590 I/WE-DIAG (11389): finalize: wallMs=3649 audio_ctx=512 threads=4 audioMs=6420 segments=2
+09-20 01:00:59.735 I/WE-DIAG (11389): speaker: seq=11 segs=2 windows=3 embedMs=143 ids=[3,3,3] best=[0.73,0.78,0.70] dur=[1.9,2.1,2.3] confirmed=1 load=0 route=geom
+09-20 01:01:04.958 I/WE-DIAG (11389): VAD: 143872 -> 140640 samples (1 segments) wallMs=79.4
+09-20 01:01:09.604 I/WE-DIAG (11389): finalize: wallMs=4646 audio_ctx=512 threads=4 audioMs=8790 segments=9
+09-20 01:01:09.806 I/WE-DIAG (11389): speaker: seq=12 segs=1 windows=5 embedMs=200 ids=[3,3,3,3,2] best=[0.59,0.40,0.54,0.41,0.59] dur=[1.1,1.7,1.7,1.7,2.7] confirmed=1 load=0 route=geom
+09-20 01:01:18.781 I/WE-DIAG (11389): VAD: 220672 -> 218240 samples (2 segments) wallMs=107.1
+09-20 01:01:26.268 I/WE-DIAG (11389): finalize: wallMs=7487 audio_ctx=746 threads=4 audioMs=13640 segments=8
+09-20 01:01:26.570 I/WE-DIAG (11389): speaker: seq=13 segs=2 windows=5 embedMs=299 ids=[3,2,2,2,2] best=[0.65,0.60,0.44,0.54,0.60] dur=[2.1,3.6,1.7,2.6,3.5] confirmed=1 load=0 route=geom
+09-20 01:01:33.804 I/WE-DIAG (11389): VAD: 224256 -> 225216 samples (2 segments) wallMs=121.1
+09-20 01:01:40.934 I/WE-DIAG (11389): finalize: wallMs=7130 audio_ctx=767 threads=4 audioMs=14076 segments=4
+09-20 01:01:40.997 I/WE-DIAG (11389): VAD: 114176 -> 110240 samples (2 segments) wallMs=61.2
+09-20 01:01:41.323 I/WE-DIAG (11389): speaker: seq=14 segs=2 windows=6 embedMs=387 ids=[3,3,3,3,3,3] best=[0.67,0.74,0.76,0.77,0.66,0.71] dur=[2.3,2.4,3.2,2.0,2.1,1.9] confirmed=1 load=0 route=geom
+09-20 01:01:41.328 I/WE-DIAG (11389): speaker-recluster: n=56 clusters=3 confirmed=3 changed=2 ms=0
+09-20 01:01:44.651 I/WE-DIAG (11389): finalize: wallMs=3653 audio_ctx=512 threads=4 audioMs=6890 segments=1
+09-20 01:01:44.811 I/WE-DIAG (11389): speaker: seq=15 segs=2 windows=3 embedMs=158 ids=[3,3,3] best=[0.73,0.76,0.76] dur=[2.2,2.5,2.1] confirmed=1 load=0 route=geom
+09-20 01:01:54.982 I/WE-DIAG (11389): VAD: 240128 -> 242048 samples (3 segments) wallMs=150.8
+09-20 01:02:05.819 I/WE-DIAG (11389): finalize: wallMs=10837 audio_ctx=820 threads=4 audioMs=15128 segments=7
+09-20 01:02:06.190 I/WE-DIAG (11389): speaker: seq=16 segs=3 windows=6 embedMs=368 ids=[3,3,3,3,3,3] best=[0.77,0.77,0.70,0.31,0.37,0.76] dur=[3.1,2.8,1.5,2.0,2.3,3.1] confirmed=1 load=0 route=geom
+09-20 01:02:09.964 I/WE-DIAG (11389): VAD: 235008 -> 239808 samples (4 segments) wallMs=121.3
+09-20 01:02:18.992 I/WE-DIAG (11389): finalize: wallMs=9028 audio_ctx=813 threads=4 audioMs=14988 segments=3
+09-20 01:02:19.086 I/WE-DIAG (11389): VAD: 139264 -> 138560 samples (4 segments) wallMs=92.0
+09-20 01:02:19.438 I/WE-DIAG (11389): speaker: seq=17 segs=4 windows=5 embedMs=443 ids=[3,3,3,3,3] best=[0.82,0.80,0.54,0.80,0.55] dur=[3.0,2.9,3.8,3.3,1.7] confirmed=1 load=0 route=geom
+09-20 01:02:23.613 I/WE-DIAG (11389): finalize: wallMs=4527 audio_ctx=512 threads=4 audioMs=8660 segments=2
+09-20 01:02:23.857 I/WE-DIAG (11389): speaker: seq=18 segs=4 windows=5 embedMs=242 ids=[3,3,3,3,3] best=[0.65,0.78,0.60,0.58,0.55] dur=[2.4,2.5,1.2,1.2,1.1] confirmed=1 load=0 route=geom
+09-20 01:02:26.236 I/WE-DIAG (11389): VAD: 126976 -> 123040 samples (1 segments) wallMs=77.6
+09-20 01:02:30.962 I/WE-DIAG (11389): finalize: wallMs=4725 audio_ctx=512 threads=4 audioMs=7690 segments=3
+09-20 01:02:31.188 I/WE-DIAG (11389): speaker: seq=19 segs=1 windows=3 embedMs=219 ids=[3,3,2] best=[0.82,0.83,0.51] dur=[2.8,2.8,2.1] confirmed=1 load=0 route=geom
+09-20 01:02:31.189 I/WE-DIAG (11389): speaker-recluster: n=78 clusters=3 confirmed=3 changed=2 ms=1
+09-20 01:02:41.312 I/WE-DIAG (11389): VAD: 224240 -> 218800 samples (2 segments) wallMs=144.6
+09-20 01:02:50.355 I/WE-DIAG (11389): finalize: wallMs=9044 audio_ctx=747 threads=4 audioMs=13675 segments=10
+09-20 01:02:50.737 I/WE-DIAG (11389): speaker: seq=20 segs=2 windows=7 embedMs=368 ids=[3,3,3,2,2,3,3] best=[0.74,0.52,0.75,0.52,0.53,0.66,0.76] dur=[1.6,1.4,2.1,2.9,1.7,1.7,2.2] confirmed=1 load=0 route=geom
+09-20 01:02:56.317 I/WE-DIAG (11389): VAD: 256016 -> 255856 samples (1 segments) wallMs=141.1
+09-20 01:03:05.630 I/WE-DIAG (11389): finalize: wallMs=9313 audio_ctx=863 threads=4 audioMs=15991 segments=3
+09-20 01:03:05.685 I/WE-DIAG (11389): VAD: 99328 -> 95520 samples (1 segments) wallMs=53.3
+09-20 01:03:06.149 I/WE-DIAG (11389): speaker: seq=21 segs=1 windows=6 embedMs=513 ids=[3,3,3,3,3,3] best=[0.75,0.81,0.81,0.75,0.75,0.79] dur=[2.2,2.2,3.2,3.4,2.5,2.5] confirmed=1 load=0 route=geom
+09-20 01:03:09.882 I/WE-DIAG (11389): finalize: wallMs=4197 audio_ctx=512 threads=4 audioMs=5970 segments=1
+09-20 01:03:10.042 I/WE-DIAG (11389): speaker: seq=22 segs=1 windows=2 embedMs=157 ids=[3,3] best=[0.80,0.82] dur=[3.0,2.9] confirmed=1 load=0 route=geom
+09-20 01:03:17.546 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=153.0
+09-20 01:03:27.774 I/WE-DIAG (11389): finalize: wallMs=10228 audio_ctx=814 threads=4 audioMs=15008 segments=10
+09-20 01:03:28.189 I/WE-DIAG (11389): speaker: seq=23 segs=1 windows=8 embedMs=412 ids=[3,2,2,2,2,3,3,2] best=[0.66,0.61,0.56,0.63,0.59,0.70,0.58,0.59] dur=[1.4,1.8,1.2,2.3,2.5,1.8,2.0,2.1] confirmed=1 load=0 route=geom
+09-20 01:03:28.499 I/WE-DIAG (11389): VAD: 176128 -> 165280 samples (2 segments) wallMs=100.6
+09-20 01:03:33.900 I/WE-DIAG (11389): finalize: wallMs=5401 audio_ctx=580 threads=4 audioMs=10330 segments=2
+09-20 01:03:34.185 I/WE-DIAG (11389): speaker: seq=24 segs=2 windows=4 embedMs=280 ids=[3,2,2,2] best=[0.54,0.64,0.52,0.54] dur=[2.1,2.1,3.0,3.1] confirmed=1 load=0 route=geom
+09-20 01:03:34.186 I/WE-DIAG (11389): speaker-recluster: n=105 clusters=3 confirmed=3 changed=0 ms=1
+09-20 01:03:37.477 I/WE-DIAG (11389): VAD: 143872 -> 142080 samples (1 segments) wallMs=88.5
+09-20 01:03:42.332 I/WE-DIAG (11389): finalize: wallMs=4855 audio_ctx=512 threads=4 audioMs=8880 segments=6
+09-20 01:03:42.602 I/WE-DIAG (11389): speaker: seq=25 segs=1 windows=5 embedMs=263 ids=[2,2,2,2,4] best=[0.60,0.52,0.19,0.51,0.30] dur=[2.4,1.7,1.5,1.1,2.2] confirmed=1 load=0 route=geom
+09-20 01:03:47.773 I/WE-DIAG (11389): VAD: 164352 -> 162400 samples (2 segments) wallMs=108.5
+09-20 01:03:53.773 I/WE-DIAG (11389): finalize: wallMs=6000 audio_ctx=571 threads=4 audioMs=10150 segments=7
+09-20 01:03:54.058 I/WE-DIAG (11389): speaker: seq=26 segs=2 windows=4 embedMs=269 ids=[2,2,2,2] best=[0.54,0.52,0.52,0.62] dur=[2.8,3.5,1.4,2.3] confirmed=1 load=0 route=geom
+09-20 01:03:54.863 I/WE-DIAG (11389): VAD: 114176 -> 105920 samples (3 segments) wallMs=66.0
+09-20 01:03:59.202 I/WE-DIAG (11389): finalize: wallMs=4320 audio_ctx=512 threads=4 audioMs=6620 segments=5
+09-20 01:03:59.356 I/WE-DIAG (11389): speaker: seq=27 segs=3 windows=4 embedMs=150 ids=[2,2,2,5] best=[0.35,0.48,-,0.15] dur=[1.3,2.3,0.9,2.0] confirmed=1 load=0 route=geom
+09-20 01:04:04.234 I/WE-DIAG (11389): VAD: 149504 -> 140640 samples (3 segments) wallMs=91.7
+09-20 01:04:08.769 I/WE-DIAG (11389): finalize: wallMs=4535 audio_ctx=512 threads=4 audioMs=8790 segments=2
+09-20 01:04:09.022 I/WE-DIAG (11389): speaker: seq=28 segs=3 windows=4 embedMs=238 ids=[5,5,5,5] best=[0.49,0.42,0.48,0.43] dur=[2.5,1.4,2.3,2.5] confirmed=1 load=0 route=geom
+09-20 01:04:19.283 I/WE-DIAG (11389): VAD: 229888 -> 230688 samples (2 segments) wallMs=132.1
+09-20 01:04:27.718 I/WE-DIAG (11389): finalize: wallMs=8434 audio_ctx=784 threads=4 audioMs=14418 segments=11
+09-20 01:04:28.071 I/WE-DIAG (11389): speaker: seq=29 segs=2 windows=7 embedMs=346 ids=[5,5,5,5,5,2,2] best=[0.49,0.37,0.41,0.46,0.44,0.55,0.46] dur=[2.5,2.5,2.2,1.4,1.7,1.9,2.1] confirmed=1 load=0 route=geom
+09-20 01:04:28.072 I/WE-DIAG (11389): speaker-recluster: n=128 clusters=4 confirmed=4 changed=11 ms=2
+09-20 01:04:30.095 I/WE-DIAG (11389): VAD: 183808 -> 182720 samples (3 segments) wallMs=95.7
+09-20 01:04:36.021 I/WE-DIAG (11389): finalize: wallMs=5926 audio_ctx=635 threads=4 audioMs=11420 segments=5
+09-20 01:04:36.317 I/WE-DIAG (11389): speaker: seq=30 segs=3 windows=5 embedMs=286 ids=[2,4,4,4,4] best=[0.47,0.52,0.59,0.55,0.69] dur=[1.5,1.6,1.7,3.1,3.3] confirmed=1 load=0 route=geom
+09-20 01:04:39.261 I/WE-DIAG (11389): VAD: 146944 -> 130080 samples (3 segments) wallMs=80.2
+09-20 01:04:43.971 I/WE-DIAG (11389): finalize: wallMs=4709 audio_ctx=512 threads=4 audioMs=8130 segments=5
+09-20 01:04:44.208 I/WE-DIAG (11389): speaker: seq=31 segs=3 windows=5 embedMs=235 ids=[4,4,4,2,4] best=[0.55,0.42,0.40,0.57,0.64] dur=[1.5,1.4,1.1,1.2,2.8] confirmed=1 load=0 route=geom
+09-20 01:04:45.487 I/WE-DIAG (11389): VAD: 99840 -> 92480 samples (1 segments) wallMs=65.9
+09-20 01:04:50.261 I/WE-DIAG (11389): finalize: wallMs=4774 audio_ctx=512 threads=4 audioMs=5780 segments=5
+09-20 01:04:50.434 I/WE-DIAG (11389): speaker: seq=32 segs=1 windows=4 embedMs=170 ids=[4,4,4,4] best=[0.49,0.66,0.36,0.42] dur=[1.2,1.4,1.7,1.5] confirmed=1 load=0 route=geom
+09-20 01:05:00.576 I/WE-DIAG (11389): VAD: 240128 -> 237888 samples (3 segments) wallMs=147.4
+09-20 01:05:10.772 I/WE-DIAG (11389): finalize: wallMs=10196 audio_ctx=807 threads=4 audioMs=14868 segments=10
+09-20 01:05:10.862 I/WE-DIAG (11389): VAD: 155136 -> 147520 samples (2 segments) wallMs=88.0
+09-20 01:05:11.217 I/WE-DIAG (11389): speaker: seq=33 segs=3 windows=7 embedMs=443 ids=[4,2,4,4,4,4,4] best=[0.47,0.60,0.62,0.43,0.53,0.46,0.62] dur=[1.9,2.2,2.8,1.1,1.1,2.3,3.3] confirmed=1 load=0 route=geom
+09-20 01:05:15.722 I/WE-DIAG (11389): finalize: wallMs=4859 audio_ctx=525 threads=4 audioMs=9220 segments=4
+09-20 01:05:15.963 I/WE-DIAG (11389): speaker: seq=34 segs=2 windows=4 embedMs=239 ids=[2,2,4,4] best=[0.60,0.43,0.69,0.65] dur=[2.4,1.8,1.7,3.2] confirmed=1 load=0 route=geom
+09-20 01:05:15.977 I/WE-DIAG (11389): speaker-recluster: n=153 clusters=5 confirmed=5 changed=137 ms=3
+09-20 01:05:20.176 I/WE-DIAG (11389): VAD: 159232 -> 149920 samples (3 segments) wallMs=94.9
+09-20 01:05:28.890 I/WE-DIAG (11389): finalize: wallMs=8712 audio_ctx=532 threads=4 audioMs=9370 segments=2
+09-20 01:05:29.140 I/WE-DIAG (11389): speaker: seq=35 segs=3 windows=4 embedMs=249 ids=[5,5,3,5] best=[0.62,-,0.58,0.58] dur=[2.3,0.7,3.0,3.2] confirmed=1 load=0 route=geom
+09-20 01:05:35.251 I/WE-DIAG (11389): VAD: 240128 -> 239488 samples (3 segments) wallMs=162.1
+09-20 01:05:45.788 I/WE-DIAG (11389): finalize: wallMs=10536 audio_ctx=812 threads=4 audioMs=14968 segments=10
+09-20 01:05:46.196 I/WE-DIAG (11389): speaker: seq=36 segs=3 windows=9 embedMs=405 ids=[5,5,5,5,3,3,3,3,3] best=[0.37,0.51,0.65,0.48,0.71,0.53,0.59,0.61,0.53] dur=[1.0,2.0,1.7,1.9,1.8,1.8,1.9,1.6,1.0] confirmed=1 load=0 route=geom
+09-20 01:05:50.236 I/WE-DIAG (11389): VAD: 240128 -> 242368 samples (3 segments) wallMs=140.4
+09-20 01:06:00.815 I/WE-DIAG (11389): finalize: wallMs=10579 audio_ctx=821 threads=4 audioMs=15148 segments=4
+09-20 01:06:01.251 I/WE-DIAG (11389): speaker: seq=37 segs=3 windows=6 embedMs=433 ids=[3,3,3,3,3,3] best=[0.55,0.61,0.64,0.66,0.62,0.54] dur=[2.0,2.1,2.2,2.2,3.0,3.3] confirmed=1 load=0 route=geom
+09-20 01:06:02.707 I/WE-DIAG (11389): VAD: 199680 -> 196000 samples (1 segments) wallMs=131.5
+09-20 01:06:10.620 I/WE-DIAG (11389): finalize: wallMs=7912 audio_ctx=676 threads=4 audioMs=12250 segments=8
+09-20 01:06:10.980 I/WE-DIAG (11389): speaker: seq=38 segs=1 windows=6 embedMs=358 ids=[3,3,3,3,3,3] best=[0.55,0.82,0.57,0.53,0.69,0.63] dur=[1.4,2.0,2.0,2.0,3.0,1.9] confirmed=1 load=0 route=geom
+09-20 01:06:17.741 I/WE-DIAG (11389): VAD: 208448 -> 202048 samples (3 segments) wallMs=159.9
+09-20 01:06:25.567 I/WE-DIAG (11389): finalize: wallMs=7825 audio_ctx=695 threads=4 audioMs=12628 segments=7
+09-20 01:06:25.905 I/WE-DIAG (11389): speaker: seq=39 segs=3 windows=7 embedMs=335 ids=[5,5,5,5,5,5,3] best=[0.60,0.42,0.62,0.66,0.58,0.44,0.65] dur=[2.5,1.1,1.5,3.0,1.3,1.6,1.5] confirmed=1 load=0 route=geom
+09-20 01:06:25.920 I/WE-DIAG (11389): speaker-recluster: n=184 clusters=5 confirmed=5 changed=2 ms=4
+09-20 01:06:32.752 I/WE-DIAG (11389): VAD: 269744 -> 269584 samples (1 segments) wallMs=161.5
+09-20 01:06:44.200 I/WE-DIAG (11389): finalize: wallMs=11447 audio_ctx=906 threads=4 audioMs=16849 segments=7
+09-20 01:06:44.297 I/WE-DIAG (11389): VAD: 144912 -> 141120 samples (1 segments) wallMs=95.1
+09-20 01:06:44.698 I/WE-DIAG (11389): speaker: seq=40 segs=1 windows=7 embedMs=496 ids=[3,3,5,5,5,5,5] best=[0.50,0.46,0.59,0.45,0.63,0.58,0.46] dur=[1.8,2.0,3.8,2.1,3.6,2.0,1.5] confirmed=1 load=0 route=geom
+09-20 01:06:49.662 I/WE-DIAG (11389): finalize: wallMs=5365 audio_ctx=512 threads=4 audioMs=8820 segments=7
+09-20 01:06:49.905 I/WE-DIAG (11389): speaker: seq=41 segs=1 windows=5 embedMs=241 ids=[3,3,3,3,5] best=[0.54,0.41,0.49,0.49,0.64] dur=[1.6,1.3,2.0,2.1,1.9] confirmed=1 load=0 route=geom
+09-20 01:06:56.694 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=164.8
+09-20 01:07:09.285 I/WE-DIAG (11389): finalize: wallMs=12591 audio_ctx=814 threads=4 audioMs=15008 segments=10
+09-20 01:07:09.682 I/WE-DIAG (11389): speaker: seq=42 segs=1 windows=8 embedMs=394 ids=[3,3,5,5,5,3,3,3] best=[0.53,0.64,0.63,0.50,0.63,0.55,0.56,0.59] dur=[1.0,2.2,2.0,1.3,1.5,2.5,2.7,1.8] confirmed=1 load=0 route=geom
+09-20 01:07:11.668 I/WE-DIAG (11389): VAD: 195040 -> 195040 samples (1 segments) wallMs=131.7
+09-20 01:07:20.537 I/WE-DIAG (11389): finalize: wallMs=8869 audio_ctx=673 threads=4 audioMs=12190 segments=10
+09-20 01:07:20.900 I/WE-DIAG (11389): speaker: seq=43 segs=1 windows=8 embedMs=360 ids=[3,3,3,3,3,3,5,5] best=[0.50,0.58,0.63,0.64,0.48,0.56,0.55,0.48] dur=[1.5,1.2,1.4,2.3,1.7,1.8,1.0,1.3] confirmed=1 load=0 route=geom
+09-20 01:07:26.723 I/WE-DIAG (11389): VAD: 278032 -> 279792 samples (3 segments) wallMs=175.4
+09-20 01:07:39.108 I/WE-DIAG (11389): finalize: wallMs=12385 audio_ctx=938 threads=4 audioMs=17487 segments=5
+09-20 01:07:39.212 I/WE-DIAG (11389): VAD: 170000 -> 164000 samples (1 segments) wallMs=101.1
+09-20 01:07:39.633 I/WE-DIAG (11389): speaker: seq=44 segs=3 windows=7 embedMs=522 ids=[5,5,3,5,3,5,5] best=[0.63,0.46,0.53,0.59,0.68,0.73,0.62] dur=[2.5,2.4,2.9,2.0,3.0,2.2,2.3] confirmed=1 load=0 route=geom
+09-20 01:07:39.643 I/WE-DIAG (11389): speaker-recluster: n=219 clusters=5 confirmed=5 changed=2 ms=6
+09-20 01:07:45.529 I/WE-DIAG (11389): finalize: wallMs=6317 audio_ctx=576 threads=4 audioMs=10250 segments=7
+09-20 01:07:45.609 I/WE-DIAG (11389): VAD: 126464 -> 112960 samples (3 segments) wallMs=77.1
+09-20 01:07:45.902 I/WE-DIAG (11389): speaker: seq=45 segs=1 windows=7 embedMs=370 ids=[5,3,3,3,5,5,5] best=[0.48,0.56,0.54,0.51,0.56,0.48,0.61] dur=[1.0,1.6,1.9,1.8,1.2,1.1,1.7] confirmed=1 load=0 route=geom
+09-20 01:07:50.375 I/WE-DIAG (11389): finalize: wallMs=4766 audio_ctx=512 threads=4 audioMs=7060 segments=4
+09-20 01:07:50.578 I/WE-DIAG (11389): speaker: seq=46 segs=3 windows=4 embedMs=201 ids=[5,3,3,3] best=[0.45,0.58,0.44,0.50] dur=[1.8,2.5,1.1,1.5] confirmed=1 load=0 route=geom
+09-20 01:07:51.057 I/WE-DIAG (11389): VAD: 101888 -> 83520 samples (2 segments) wallMs=65.2
+09-20 01:07:55.258 I/WE-DIAG (11389): finalize: wallMs=4201 audio_ctx=512 threads=4 audioMs=5220 segments=1
+09-20 01:07:55.379 I/WE-DIAG (11389): speaker: seq=47 segs=2 windows=3 embedMs=120 ids=[3,3,3] best=[-,0.43,0.59] dur=[1.0,2.2,2.0] confirmed=1 load=0 route=geom
+09-20 01:08:01.795 I/WE-DIAG (11389): VAD: 171008 -> 158400 samples (2 segments) wallMs=112.8
+09-20 01:08:07.385 I/WE-DIAG (11389): finalize: wallMs=5590 audio_ctx=559 threads=4 audioMs=9900 segments=4
+09-20 01:08:07.660 I/WE-DIAG (11389): speaker: seq=48 segs=2 windows=4 embedMs=266 ids=[6,6,3,3] best=[0.13,0.47,0.65,0.51] dur=[2.3,2.0,3.8,1.7] confirmed=1 load=0 route=geom
+09-20 01:08:16.843 I/WE-DIAG (11389): VAD: 218608 -> 218560 samples (1 segments) wallMs=155.5
+09-20 01:08:26.013 I/WE-DIAG (11389): finalize: wallMs=9169 audio_ctx=747 threads=4 audioMs=13660 segments=7
+09-20 01:08:26.364 I/WE-DIAG (11389): speaker: seq=49 segs=1 windows=7 embedMs=349 ids=[7,3,3,3,3,3,3] best=[0.28,0.57,0.63,0.61,0.42,0.62,0.62] dur=[2.4,1.4,1.3,2.7,1.8,2.2,1.9] confirmed=1 load=0 route=geom
+09-20 01:08:26.380 I/WE-DIAG (11389): speaker-recluster: n=243 clusters=5 confirmed=5 changed=3 ms=7
+09-20 01:08:31.841 I/WE-DIAG (11389): VAD: 261648 -> 263088 samples (2 segments) wallMs=144.2
+09-20 01:08:43.209 I/WE-DIAG (11389): finalize: wallMs=11367 audio_ctx=886 threads=4 audioMs=16443 segments=5
+09-20 01:08:43.680 I/WE-DIAG (11389): speaker: seq=50 segs=2 windows=6 embedMs=469 ids=[6,6,6,6,6,6] best=[0.27,0.70,0.76,0.80,0.72,0.35] dur=[2.9,2.2,3.1,3.6,2.3,2.4] confirmed=1 load=0 route=geom
+09-20 01:08:46.853 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=150.8
+09-20 01:08:57.293 I/WE-DIAG (11389): finalize: wallMs=10440 audio_ctx=814 threads=4 audioMs=15008 segments=7
+09-20 01:08:57.369 I/WE-DIAG (11389): VAD: 121344 -> 119200 samples (2 segments) wallMs=73.6
+09-20 01:08:57.772 I/WE-DIAG (11389): speaker: seq=51 segs=1 windows=8 embedMs=476 ids=[3,3,3,3,4,4,3,3] best=[0.50,0.61,0.63,0.54,0.66,0.40,0.56,0.64] dur=[2.0,2.7,2.5,2.1,1.5,1.0,1.0,2.2] confirmed=1 load=0 route=geom
+09-20 01:09:02.001 I/WE-DIAG (11389): finalize: wallMs=4632 audio_ctx=512 threads=4 audioMs=7450 segments=2
+09-20 01:09:02.214 I/WE-DIAG (11389): speaker: seq=52 segs=2 windows=3 embedMs=210 ids=[3,4,4] best=[0.69,0.72,0.69] dur=[1.8,3.6,2.0] confirmed=1 load=0 route=geom
+09-20 01:09:09.447 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (4 segments) wallMs=150.7
+09-20 01:09:19.897 I/WE-DIAG (11389): finalize: wallMs=10450 audio_ctx=814 threads=4 audioMs=15008 segments=9
+09-20 01:09:20.295 I/WE-DIAG (11389): speaker: seq=53 segs=4 windows=7 embedMs=394 ids=[3,4,4,4,4,7,7] best=[0.67,0.61,0.47,0.46,0.67,0.26,0.52] dur=[2.2,1.4,1.5,1.2,3.9,1.8,2.8] confirmed=1 load=0 route=geom
+09-20 01:09:20.471 I/WE-DIAG (11389): VAD: 177152 -> 173920 samples (1 segments) wallMs=104.1
+09-20 01:09:27.251 I/WE-DIAG (11389): finalize: wallMs=6780 audio_ctx=607 threads=4 audioMs=10870 segments=3
+09-20 01:09:27.567 I/WE-DIAG (11389): speaker: seq=54 segs=1 windows=4 embedMs=313 ids=[8,8,7,2] best=[0.19,0.75,0.25,0.23] dur=[3.6,2.0,2.2,3.0] confirmed=1 load=0 route=geom
+09-20 01:09:27.584 I/WE-DIAG (11389): speaker-recluster: n=271 clusters=6 confirmed=6 changed=8 ms=11
+09-20 01:09:30.845 I/WE-DIAG (11389): VAD: 165888 -> 164960 samples (3 segments) wallMs=111.5
+09-20 01:09:37.089 I/WE-DIAG (11389): finalize: wallMs=6243 audio_ctx=579 threads=4 audioMs=10310 segments=4
+09-20 01:09:37.381 I/WE-DIAG (11389): speaker: seq=55 segs=3 windows=4 embedMs=289 ids=[7,4,4,4] best=[0.27,0.59,0.74,0.80] dur=[2.0,2.9,2.8,2.4] confirmed=1 load=0 route=geom
+09-20 01:09:37.524 I/WE-DIAG (11389): VAD: 107520 -> 94240 samples (3 segments) wallMs=69.6
+09-20 01:09:41.850 I/WE-DIAG (11389): finalize: wallMs=4326 audio_ctx=512 threads=4 audioMs=5890 segments=1
+09-20 01:09:42.019 I/WE-DIAG (11389): speaker: seq=56 segs=3 windows=3 embedMs=167 ids=[3,8,8] best=[0.56,0.27,0.29] dur=[2.7,1.9,1.0] confirmed=1 load=0 route=geom
+09-20 01:09:45.282 I/WE-DIAG (11389): VAD: 123904 -> 95520 samples (3 segments) wallMs=84.0
+09-20 01:09:49.510 I/WE-DIAG (11389): finalize: wallMs=4228 audio_ctx=512 threads=4 audioMs=5970 segments=2
+09-20 01:09:49.638 I/WE-DIAG (11389): speaker: seq=57 segs=3 windows=4 embedMs=126 ids=[8,8,3,3] best=[-,0.46,0.52,-] dur=[0.9,2.1,2.0,0.8] confirmed=1 load=0 route=geom
+09-20 01:09:53.114 I/WE-DIAG (11389): VAD: 125440 -> 124480 samples (3 segments) wallMs=76.5
+09-20 01:09:58.096 I/WE-DIAG (11389): finalize: wallMs=4982 audio_ctx=512 threads=4 audioMs=7780 segments=2
+09-20 01:09:58.306 I/WE-DIAG (11389): speaker: seq=58 segs=3 windows=3 embedMs=208 ids=[3,3,3] best=[0.60,0.65,0.71] dur=[2.3,3.0,2.3] confirmed=1 load=0 route=geom
+09-20 01:10:01.834 I/WE-DIAG (11389): VAD: 139264 -> 119040 samples (3 segments) wallMs=90.3
+09-20 01:10:06.634 I/WE-DIAG (11389): finalize: wallMs=4800 audio_ctx=512 threads=4 audioMs=7440 segments=2
+09-20 01:10:06.833 I/WE-DIAG (11389): speaker: seq=59 segs=3 windows=3 embedMs=197 ids=[3,3,3] best=[0.69,0.51,0.71] dur=[3.0,1.1,3.2] confirmed=1 load=0 route=geom
+09-20 01:10:06.845 I/WE-DIAG (11389): speaker-recluster: n=286 clusters=6 confirmed=6 changed=274 ms=11
+09-20 01:10:16.890 I/WE-DIAG (11389): VAD: 203776 -> 198016 samples (4 segments) wallMs=138.4
+09-20 01:10:24.909 I/WE-DIAG (11389): finalize: wallMs=8018 audio_ctx=682 threads=4 audioMs=12376 segments=7
+09-20 01:10:24.987 I/WE-DIAG (11389): VAD: 136192 -> 119360 samples (3 segments) wallMs=76.6
+09-20 01:10:25.240 I/WE-DIAG (11389): speaker: seq=60 segs=4 windows=7 embedMs=329 ids=[2,2,2,2,2,2,2] best=[0.41,-,0.62,0.40,0.49,0.65,0.65] dur=[1.3,0.9,1.9,1.2,1.9,2.4,2.5] confirmed=1 load=0 route=geom
+09-20 01:10:29.475 I/WE-DIAG (11389): finalize: wallMs=4487 audio_ctx=512 threads=4 audioMs=7460 segments=2
+09-20 01:10:29.663 I/WE-DIAG (11389): speaker: seq=61 segs=3 windows=3 embedMs=186 ids=[2,2,2] best=[0.61,0.40,0.62] dur=[3.5,1.1,2.6] confirmed=1 load=0 route=geom
+09-20 01:10:34.407 I/WE-DIAG (11389): VAD: 180736 -> 108800 samples (5 segments) wallMs=118.1
+09-20 01:10:38.482 I/WE-DIAG (11389): finalize: wallMs=4075 audio_ctx=512 threads=4 audioMs=6800 segments=1
+09-20 01:10:38.607 I/WE-DIAG (11389): speaker: seq=62 segs=5 windows=5 embedMs=123 ids=[2,7,7,7,7] best=[-,0.18,-,-,0.37] dur=[0.9,3.0,0.6,0.6,1.4] confirmed=1 load=0 route=geom
+09-20 01:10:49.437 I/WE-DIAG (11389): VAD: 240128 -> 241888 samples (3 segments) wallMs=142.3
+09-20 01:10:59.068 I/WE-DIAG (11389): finalize: wallMs=9631 audio_ctx=819 threads=4 audioMs=15118 segments=8
+09-20 01:10:59.443 I/WE-DIAG (11389): speaker: seq=63 segs=3 windows=7 embedMs=372 ids=[7,2,2,2,2,2,2] best=[0.36,0.57,0.52,0.53,0.53,0.55,0.20] dur=[1.3,3.3,1.1,2.7,2.1,3.0,1.4] confirmed=1 load=0 route=geom
+09-20 01:11:03.517 I/WE-DIAG (11389): VAD: 225280 -> 214720 samples (1 segments) wallMs=140.9
+09-20 01:11:12.404 I/WE-DIAG (11389): finalize: wallMs=8887 audio_ctx=735 threads=4 audioMs=13420 segments=7
+09-20 01:11:12.796 I/WE-DIAG (11389): speaker: seq=64 segs=1 windows=7 embedMs=387 ids=[2,2,2,2,2,2,2] best=[0.62,0.53,0.36,0.46,0.47,0.28,0.58] dur=[2.3,1.6,1.4,2.1,1.9,1.4,2.7] confirmed=1 load=0 route=geom
+09-20 01:11:12.810 I/WE-DIAG (11389): speaker-recluster: n=311 clusters=6 confirmed=6 changed=5 ms=15
+09-20 01:11:16.205 I/WE-DIAG (11389): VAD: 203264 -> 197280 samples (3 segments) wallMs=126.3
+09-20 01:11:23.815 I/WE-DIAG (11389): finalize: wallMs=7609 audio_ctx=680 threads=4 audioMs=12330 segments=6
+09-20 01:11:24.133 I/WE-DIAG (11389): speaker: seq=65 segs=3 windows=6 embedMs=316 ids=[2,2,2,2,2,2] best=[-,0.64,0.56,0.57,0.49,0.63] dur=[0.6,2.6,3.3,1.5,1.6,2.5] confirmed=1 load=0 route=geom
+09-20 01:11:30.297 I/WE-DIAG (11389): VAD: 225280 -> 221600 samples (1 segments) wallMs=136.3
+09-20 01:11:39.214 I/WE-DIAG (11389): finalize: wallMs=8917 audio_ctx=756 threads=4 audioMs=13850 segments=7
+09-20 01:11:39.281 I/WE-DIAG (11389): VAD: 114176 -> 110880 samples (1 segments) wallMs=65.2
+09-20 01:11:39.643 I/WE-DIAG (11389): speaker: seq=66 segs=1 windows=7 embedMs=424 ids=[2,2,2,2,2,2,2] best=[0.46,0.65,0.57,0.67,0.66,0.60,0.58] dur=[1.4,3.6,2.4,2.1,1.6,1.2,1.6] confirmed=1 load=0 route=geom
+09-20 01:11:44.079 I/WE-DIAG (11389): finalize: wallMs=4798 audio_ctx=512 threads=4 audioMs=6930 segments=5
+09-20 01:11:44.293 I/WE-DIAG (11389): speaker: seq=67 segs=1 windows=5 embedMs=211 ids=[2,2,2,2,2] best=[0.50,0.47,0.42,0.52,0.62] dur=[1.2,1.2,1.0,1.6,1.9] confirmed=1 load=0 route=geom
+09-20 01:11:52.467 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=162.1
+09-20 01:12:01.803 I/WE-DIAG (11389): finalize: wallMs=9335 audio_ctx=814 threads=4 audioMs=15008 segments=4
+09-20 01:12:02.196 I/WE-DIAG (11389): speaker: seq=68 segs=1 windows=6 embedMs=390 ids=[2,2,2,2,2,2] best=[0.60,0.56,0.64,0.59,0.65,0.63] dur=[2.5,2.5,2.5,2.1,2.6,2.8] confirmed=1 load=0 route=geom
+09-20 01:12:07.455 I/WE-DIAG (11389): VAD: 219648 -> 222368 samples (4 segments) wallMs=143.1
+09-20 01:12:15.850 I/WE-DIAG (11389): finalize: wallMs=8395 audio_ctx=758 threads=4 audioMs=13898 segments=3
+09-20 01:12:16.182 I/WE-DIAG (11389): speaker: seq=69 segs=4 windows=8 embedMs=329 ids=[2,2,2,2,2,2,2,2] best=[-,0.53,-,0.58,0.60,0.44,0.57,0.54] dur=[0.7,2.3,0.6,2.1,2.0,2.0,2.2,1.7] confirmed=1 load=0 route=geom
+09-20 01:12:16.201 I/WE-DIAG (11389): speaker-recluster: n=340 clusters=6 confirmed=6 changed=0 ms=18
+09-20 01:12:22.473 I/WE-DIAG (11389): VAD: 260608 -> 260448 samples (1 segments) wallMs=154.7
+09-20 01:12:34.069 I/WE-DIAG (11389): finalize: wallMs=11595 audio_ctx=877 threads=4 audioMs=16278 segments=9
+09-20 01:12:34.538 I/WE-DIAG (11389): speaker: seq=70 segs=1 windows=6 embedMs=467 ids=[2,2,2,2,2,2] best=[0.58,0.59,0.36,0.32,0.42,0.33] dur=[3.8,2.0,2.7,2.9,1.5,3.3] confirmed=1 load=0 route=geom
+09-20 01:12:34.896 I/WE-DIAG (11389): VAD: 199168 -> 191520 samples (2 segments) wallMs=127.5
+09-20 01:12:42.705 I/WE-DIAG (11389): finalize: wallMs=7809 audio_ctx=662 threads=4 audioMs=11970 segments=8
+09-20 01:12:43.054 I/WE-DIAG (11389): speaker: seq=71 segs=2 windows=5 embedMs=347 ids=[7,1,1,1,1] best=[0.23,0.50,0.39,0.52,0.59] dur=[1.6,3.1,1.7,2.2,3.2] confirmed=1 load=0 route=geom
+09-20 01:12:49.949 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=173.7
+09-20 01:13:00.270 I/WE-DIAG (11389): finalize: wallMs=10320 audio_ctx=814 threads=4 audioMs=15008 segments=3
+09-20 01:13:00.703 I/WE-DIAG (11389): speaker: seq=72 segs=1 windows=6 embedMs=431 ids=[1,1,4,1,4,4] best=[0.57,0.50,0.66,0.58,0.73,0.49] dur=[2.3,2.3,2.6,2.9,2.4,2.4] confirmed=1 load=0 route=geom
+09-20 01:13:04.337 I/WE-DIAG (11389): VAD: 226304 -> 226240 samples (1 segments) wallMs=177.1
+09-20 01:13:13.600 I/WE-DIAG (11389): finalize: wallMs=9263 audio_ctx=771 threads=4 audioMs=14140 segments=9
+09-20 01:13:14.028 I/WE-DIAG (11389): speaker: seq=73 segs=1 windows=9 embedMs=424 ids=[1,1,1,1,1,1,1,1,1] best=[0.53,0.47,0.27,0.55,0.49,0.42,0.45,0.34,0.53] dur=[2.4,1.0,1.0,2.7,1.0,1.0,1.0,1.0,3.0] confirmed=1 load=0 route=geom
+09-20 01:13:14.051 I/WE-DIAG (11389): finalize-timing: speaker-drain=448ms settled=true
+09-20 01:13:14.051 I/WE-DIAG (11389): speaker-recluster: n=366 clusters=7 confirmed=7 changed=5 ms=22
+09-20 01:13:50.287 I/WE-DIAG (11389): VAD: 16384 -> 15200 samples (1 segments) wallMs=8.2
+09-20 01:13:52.572 I/WE-DIAG (11389): finalize: wallMs=2285 audio_ctx=512 threads=4 audioMs=1100 segments=1
+09-20 01:13:52.573 I/WE-DIAG (11389): speaker: seq=0 segs=1 windows=1 embedMs=0 ids=[0] best=[-] dur=[0.9] confirmed=0 load=0 route=geom
+09-20 01:14:05.423 I/WE-DIAG (11389): VAD: 232448 -> 226528 samples (2 segments) wallMs=128.8
+09-20 01:14:12.758 I/WE-DIAG (11389): finalize: wallMs=7335 audio_ctx=771 threads=4 audioMs=14158 segments=3
+09-20 01:14:13.245 I/WE-DIAG (11389): speaker: seq=1 segs=2 windows=6 embedMs=485 ids=[0,1,1,1,1,1] best=[-,-,0.43,0.43,0.43,0.43] dur=[1.2,3.0,3.2,2.9,2.5,1.3] confirmed=0 load=1 route=geom
+09-20 01:14:18.269 I/WE-DIAG (11389): VAD: 213504 -> 211360 samples (2 segments) wallMs=114.8
+09-20 01:14:25.074 I/WE-DIAG (11389): finalize: wallMs=6803 audio_ctx=724 threads=4 audioMs=13210 segments=2
+09-20 01:14:25.442 I/WE-DIAG (11389): speaker-labels: confirmed=2 runs=10 relabelled=1
+09-20 01:14:25.442 I/WE-DIAG (11389): speaker: seq=2 segs=2 windows=5 embedMs=366 ids=[1,2,2,2,3] best=[0.51,0.29,0.59,0.36,0.27] dur=[3.4,2.4,2.4,2.4,2.5] confirmed=1 load=0 route=geom
+09-20 01:14:28.299 I/WE-DIAG (11389): VAD: 160768 -> 158240 samples (3 segments) wallMs=97.7
+09-20 01:14:33.682 I/WE-DIAG (11389): finalize: wallMs=5383 audio_ctx=558 threads=4 audioMs=9890 segments=4
+09-20 01:14:33.928 I/WE-DIAG (11389): speaker: seq=3 segs=3 windows=5 embedMs=244 ids=[3,1,2,2,1] best=[-,0.52,0.70,0.54,0.58] dur=[0.9,1.8,2.1,1.9,3.0] confirmed=1 load=0 route=geom
+09-20 01:14:34.697 I/WE-DIAG (11389): VAD: 102912 -> 68160 samples (2 segments) wallMs=65.1
+09-20 01:15:13.744 I/WE-DIAG (11389): finalize: wallMs=39047 audio_ctx=512 threads=4 audioMs=4260 segments=1
+09-20 01:15:13.883 I/WE-DIAG (11389): speaker: seq=4 segs=2 windows=2 embedMs=137 ids=[2,2] best=[0.66,0.53] dur=[3.2,1.0] confirmed=1 load=0 route=geom
+09-20 01:15:13.889 I/WE-DIAG (11389): speaker-recluster: n=17 clusters=2 confirmed=2 changed=5 ms=0
+09-20 01:15:13.900 I/WE-DIAG (11389): VAD: 223744 -> 217760 samples (2 segments) wallMs=151.7
+09-20 01:15:23.737 I/WE-DIAG (11389): finalize: wallMs=9836 audio_ctx=744 threads=4 audioMs=13610 segments=8
+09-20 01:15:23.917 I/WE-DIAG (11389): VAD: 240128 -> 240448 samples (3 segments) wallMs=176.8
+09-20 01:15:24.220 I/WE-DIAG (11389): speaker: seq=5 segs=2 windows=7 embedMs=480 ids=[2,2,2,2,1,2,2] best=[0.65,0.70,0.43,0.19,0.55,0.66,0.63] dur=[2.2,3.2,1.7,1.4,1.8,2.1,1.0] confirmed=1 load=0 route=geom
+09-20 01:15:34.313 I/WE-DIAG (11389): finalize: wallMs=10396 audio_ctx=815 threads=4 audioMs=15028 segments=3
+09-20 01:15:34.383 I/WE-DIAG (11389): VAD: 96256 -> 86560 samples (2 segments) wallMs=67.6
+09-20 01:15:34.862 I/WE-DIAG (11389): speaker: seq=6 segs=3 windows=6 embedMs=546 ids=[2,2,2,2,2,2] best=[0.66,0.78,0.58,0.66,0.78,0.70] dur=[1.2,3.0,3.1,2.9,2.8,1.9] confirmed=1 load=0 route=geom
+09-20 01:15:39.226 I/WE-DIAG (11389): finalize: wallMs=4843 audio_ctx=512 threads=4 audioMs=5410 segments=2
+09-20 01:15:39.316 I/WE-DIAG (11389): VAD: 130560 -> 120320 samples (2 segments) wallMs=88.0
+09-20 01:15:39.389 I/WE-DIAG (11389): speaker: seq=7 segs=2 windows=3 embedMs=161 ids=[2,2,2] best=[-,0.81,0.71] dur=[0.6,3.0,1.7] confirmed=1 load=0 route=geom
+09-20 01:15:43.932 I/WE-DIAG (11389): finalize: wallMs=4616 audio_ctx=512 threads=4 audioMs=7520 segments=1
+09-20 01:15:44.038 I/WE-DIAG (11389): VAD: 137728 -> 101280 samples (2 segments) wallMs=103.2
+09-20 01:15:44.186 I/WE-DIAG (11389): speaker: seq=8 segs=2 windows=3 embedMs=252 ids=[2,1,1] best=[0.33,0.68,0.42] dur=[2.3,2.9,2.3] confirmed=1 load=0 route=geom
+09-20 01:15:48.945 I/WE-DIAG (11389): finalize: wallMs=4907 audio_ctx=512 threads=4 audioMs=6330 segments=4
+09-20 01:15:49.026 I/WE-DIAG (11389): VAD: 116736 -> 100480 samples (2 segments) wallMs=78.8
+09-20 01:15:49.160 I/WE-DIAG (11389): speaker: seq=9 segs=2 windows=3 embedMs=213 ids=[1,2,2] best=[0.57,0.67,0.40] dur=[2.9,2.3,1.0] confirmed=1 load=0 route=geom
+09-20 01:15:49.162 I/WE-DIAG (11389): speaker-recluster: n=38 clusters=2 confirmed=2 changed=1 ms=0
+09-20 01:15:54.040 I/WE-DIAG (11389): finalize: wallMs=5014 audio_ctx=512 threads=4 audioMs=6280 segments=4
+09-20 01:15:54.157 I/WE-DIAG (11389): VAD: 155648 -> 133440 samples (2 segments) wallMs=113.1
+09-20 01:15:54.245 I/WE-DIAG (11389): speaker: seq=10 segs=2 windows=3 embedMs=203 ids=[1,3,1] best=[0.61,0.20,0.66] dur=[2.6,2.0,1.5] confirmed=1 load=0 route=geom
+09-20 01:15:59.407 I/WE-DIAG (11389): finalize: wallMs=5250 audio_ctx=512 threads=4 audioMs=8340 segments=3
+09-20 01:15:59.526 I/WE-DIAG (11389): VAD: 161280 -> 155200 samples (2 segments) wallMs=116.9
+09-20 01:15:59.693 I/WE-DIAG (11389): speaker: seq=11 segs=2 windows=4 embedMs=284 ids=[1,4,2,2] best=[0.60,-0.00,0.61,0.75] dur=[1.8,1.8,2.0,2.6] confirmed=1 load=0 route=geom
+09-20 01:16:13.794 I/WE-DIAG (11389): finalize: wallMs=14267 audio_ctx=549 threads=4 audioMs=9700 segments=2
+09-20 01:16:13.891 I/WE-DIAG (11389): VAD: 136192 -> 134400 samples (2 segments) wallMs=95.4
+09-20 01:16:14.126 I/WE-DIAG (11389): speaker: seq=12 segs=2 windows=4 embedMs=331 ids=[2,2,2,2] best=[0.73,0.74,0.76,0.72] dur=[1.9,3.6,2.0,2.1] confirmed=1 load=0 route=geom
+09-20 01:16:18.735 I/WE-DIAG (11389): finalize: wallMs=4844 audio_ctx=512 threads=4 audioMs=8400 segments=2
+09-20 01:16:18.870 I/WE-DIAG (11389): VAD: 184320 -> 180960 samples (2 segments) wallMs=131.2
+09-20 01:16:19.019 I/WE-DIAG (11389): speaker: seq=13 segs=2 windows=3 embedMs=281 ids=[2,2,2] best=[0.71,0.70,0.77] dur=[3.0,2.6,2.8] confirmed=1 load=0 route=geom
+09-20 01:16:25.636 I/WE-DIAG (11389): finalize: wallMs=6766 audio_ctx=629 threads=4 audioMs=11310 segments=3
+09-20 01:16:25.729 I/WE-DIAG (11389): VAD: 119808 -> 116640 samples (1 segments) wallMs=90.3
+09-20 01:16:26.022 I/WE-DIAG (11389): speaker: seq=14 segs=2 windows=4 embedMs=383 ids=[2,2,2,2] best=[0.68,0.82,0.73,0.74] dur=[2.8,2.9,3.0,2.5] confirmed=1 load=0 route=geom
+09-20 01:16:26.023 I/WE-DIAG (11389): speaker-recluster: n=56 clusters=2 confirmed=2 changed=2 ms=1
+09-20 01:16:30.746 I/WE-DIAG (11389): finalize: wallMs=5017 audio_ctx=512 threads=4 audioMs=7290 segments=3
+09-20 01:16:30.988 I/WE-DIAG (11389): speaker: seq=15 segs=1 windows=4 embedMs=240 ids=[2,2,2,3] best=[0.67,0.65,0.18,0.24] dur=[2.1,2.2,1.0,2.0] confirmed=1 load=0 route=geom
+09-20 01:16:31.328 I/WE-DIAG (11389): VAD: 162816 -> 156480 samples (3 segments) wallMs=116.3
+09-20 01:16:36.833 I/WE-DIAG (11389): finalize: wallMs=5505 audio_ctx=553 threads=4 audioMs=9780 segments=1
+09-20 01:16:37.136 I/WE-DIAG (11389): speaker: seq=16 segs=3 windows=4 embedMs=300 ids=[3,3,3,3] best=[0.66,0.67,0.69,0.62] dur=[1.8,3.4,2.3,2.1] confirmed=1 load=0 route=geom
+09-20 01:16:43.803 I/WE-DIAG (11389): VAD: 199168 -> 189280 samples (3 segments) wallMs=144.6
+09-20 01:16:50.883 I/WE-DIAG (11389): finalize: wallMs=7080 audio_ctx=655 threads=4 audioMs=11830 segments=3
+09-20 01:16:51.223 I/WE-DIAG (11389): speaker: seq=17 segs=3 windows=5 embedMs=338 ids=[3,3,3,3,3] best=[0.45,0.51,0.74,0.75,0.68] dur=[2.7,1.2,2.2,2.3,3.2] confirmed=1 load=0 route=geom
+09-20 01:16:58.818 I/WE-DIAG (11389): VAD: 228880 -> 232080 samples (4 segments) wallMs=150.5
+09-20 01:17:07.120 I/WE-DIAG (11389): finalize: wallMs=8302 audio_ctx=789 threads=4 audioMs=14505 segments=2
+09-20 01:17:07.184 I/WE-DIAG (11389): VAD: 115696 -> 111360 samples (1 segments) wallMs=62.2
+09-20 01:17:07.566 I/WE-DIAG (11389): speaker: seq=18 segs=4 windows=5 embedMs=443 ids=[2,2,2,3,3] best=[0.71,0.75,0.74,0.61,0.68] dur=[2.9,3.7,3.3,1.8,2.5] confirmed=1 load=0 route=geom
+09-20 01:17:11.565 I/WE-DIAG (11389): finalize: wallMs=4381 audio_ctx=512 threads=4 audioMs=6960 segments=2
+09-20 01:17:11.754 I/WE-DIAG (11389): speaker: seq=19 segs=1 windows=2 embedMs=187 ids=[3,3] best=[0.67,0.76] dur=[3.3,3.7] confirmed=1 load=0 route=geom
+09-20 01:17:11.757 I/WE-DIAG (11389): speaker-recluster: n=76 clusters=3 confirmed=3 changed=2 ms=0
+09-20 01:17:11.758 I/WE-DIAG (11389): VAD: 103936 -> 100640 samples (1 segments) wallMs=70.0
+09-20 01:17:16.095 I/WE-DIAG (11389): finalize: wallMs=4336 audio_ctx=512 threads=4 audioMs=6290 segments=3
+09-20 01:17:16.288 I/WE-DIAG (11389): speaker: seq=20 segs=1 windows=3 embedMs=191 ids=[3,2,2] best=[0.69,0.58,0.61] dur=[2.9,2.0,1.5] confirmed=1 load=0 route=geom
+09-20 01:17:25.777 I/WE-DIAG (11389): VAD: 223232 -> 202720 samples (2 segments) wallMs=137.3
+09-20 01:17:34.211 I/WE-DIAG (11389): finalize: wallMs=8434 audio_ctx=697 threads=4 audioMs=12670 segments=3
+09-20 01:17:34.581 I/WE-DIAG (11389): speaker: seq=21 segs=2 windows=5 embedMs=368 ids=[3,3,3,2,2] best=[0.70,0.70,0.59,0.71,0.77] dur=[2.0,2.9,2.0,2.8,2.8] confirmed=1 load=0 route=geom
+09-20 01:17:38.751 I/WE-DIAG (11389): VAD: 207872 -> 187680 samples (3 segments) wallMs=117.0
+09-20 01:17:45.329 I/WE-DIAG (11389): finalize: wallMs=6577 audio_ctx=650 threads=4 audioMs=11730 segments=6
+09-20 01:17:45.664 I/WE-DIAG (11389): speaker: seq=22 segs=3 windows=6 embedMs=333 ids=[2,2,3,3,2,2] best=[0.31,0.70,0.51,0.61,0.78,0.58] dur=[1.8,2.7,1.0,2.0,2.5,1.4] confirmed=1 load=0 route=geom
+09-20 01:17:53.785 I/WE-DIAG (11389): VAD: 240128 -> 223008 samples (1 segments) wallMs=143.3
+09-20 01:18:02.124 I/WE-DIAG (11389): finalize: wallMs=8339 audio_ctx=760 threads=4 audioMs=13938 segments=5
+09-20 01:18:02.498 I/WE-DIAG (11389): speaker: seq=23 segs=1 windows=5 embedMs=371 ids=[2,2,2,2,2] best=[0.74,0.33,0.33,0.73,0.73] dur=[1.6,3.8,3.0,3.2,2.3] confirmed=1 load=0 route=geom
+09-20 01:18:08.798 I/WE-DIAG (11389): VAD: 240128 -> 241888 samples (4 segments) wallMs=146.8
+09-20 01:18:18.334 I/WE-DIAG (11389): finalize: wallMs=9536 audio_ctx=819 threads=4 audioMs=15118 segments=4
+09-20 01:18:18.737 I/WE-DIAG (11389): speaker: seq=24 segs=4 windows=6 embedMs=400 ids=[2,2,2,2,4,4] best=[0.68,0.74,0.76,0.78,0.21,0.63] dur=[2.2,2.4,2.7,3.3,2.7,1.6] confirmed=1 load=0 route=geom
+09-20 01:18:18.742 I/WE-DIAG (11389): speaker-recluster: n=101 clusters=4 confirmed=4 changed=2 ms=1
+09-20 01:18:21.280 I/WE-DIAG (11389): VAD: 200192 -> 196960 samples (1 segments) wallMs=117.1
+09-20 01:18:28.611 I/WE-DIAG (11389): finalize: wallMs=7331 audio_ctx=679 threads=4 audioMs=12310 segments=5
+09-20 01:18:28.975 I/WE-DIAG (11389): speaker: seq=25 segs=1 windows=6 embedMs=360 ids=[4,4,4,4,4,3] best=[0.65,0.64,0.71,0.72,0.48,0.55] dur=[2.0,2.0,2.5,1.5,1.0,3.3] confirmed=1 load=0 route=geom
+09-20 01:18:36.341 I/WE-DIAG (11389): VAD: 240128 -> 232768 samples (1 segments) wallMs=168.5
+09-20 01:18:46.662 I/WE-DIAG (11389): finalize: wallMs=10320 audio_ctx=791 threads=4 audioMs=14548 segments=6
+09-20 01:18:47.082 I/WE-DIAG (11389): speaker: seq=26 segs=1 windows=7 embedMs=417 ids=[4,4,4,3,3,4,4] best=[0.69,0.32,0.29,0.54,0.38,0.71,0.43] dur=[3.0,1.0,1.0,2.0,3.0,2.3,2.2] confirmed=1 load=0 route=geom
+09-20 01:18:51.327 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=150.6
+09-20 01:19:01.342 I/WE-DIAG (11389): finalize: wallMs=10015 audio_ctx=814 threads=4 audioMs=15008 segments=3
+09-20 01:19:01.423 I/WE-DIAG (11389): VAD: 125952 -> 124320 samples (2 segments) wallMs=78.3
+09-20 01:19:01.863 I/WE-DIAG (11389): speaker: seq=27 segs=1 windows=5 embedMs=517 ids=[4,4,4,3,2] best=[0.73,0.78,0.35,0.63,0.59] dur=[3.2,3.2,2.7,2.7,3.1] confirmed=1 load=0 route=geom
+09-20 01:19:06.508 I/WE-DIAG (11389): finalize: wallMs=5084 audio_ctx=512 threads=4 audioMs=7770 segments=3
+09-20 01:19:06.765 I/WE-DIAG (11389): speaker: seq=28 segs=2 windows=4 embedMs=255 ids=[2,2,2,2] best=[0.48,0.70,0.61,0.59] dur=[1.1,3.4,1.0,2.2] confirmed=1 load=0 route=geom
+09-20 01:19:14.234 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=172.7
+09-20 01:19:24.194 I/WE-DIAG (11389): finalize: wallMs=9960 audio_ctx=814 threads=4 audioMs=15008 segments=5
+09-20 01:19:24.636 I/WE-DIAG (11389): speaker: seq=29 segs=1 windows=7 embedMs=440 ids=[2,5,2,2,2,2,2] best=[0.31,0.29,0.64,0.70,0.54,0.74,0.65] dur=[2.8,2.5,1.9,2.1,1.2,2.2,2.3] confirmed=1 load=0 route=geom
+09-20 01:19:24.645 I/WE-DIAG (11389): speaker-recluster: n=130 clusters=5 confirmed=5 changed=4 ms=2
+09-20 01:19:27.081 I/WE-DIAG (11389): VAD: 206336 -> 203680 samples (5 segments) wallMs=127.9
+09-20 01:19:34.411 I/WE-DIAG (11389): finalize: wallMs=7330 audio_ctx=700 threads=4 audioMs=12730 segments=3
+09-20 01:19:34.749 I/WE-DIAG (11389): speaker: seq=30 segs=5 windows=7 embedMs=336 ids=[2,2,2,2,2,2,2] best=[-,0.71,0.74,0.65,0.73,0.73,0.70] dur=[0.4,1.6,2.2,2.2,2.4,2.0,1.5] confirmed=1 load=0 route=geom
+09-20 01:19:42.135 I/WE-DIAG (11389): VAD: 217088 -> 217248 samples (3 segments) wallMs=168.9
+09-20 01:19:50.526 I/WE-DIAG (11389): finalize: wallMs=8391 audio_ctx=742 threads=4 audioMs=13578 segments=3
+09-20 01:19:50.618 I/WE-DIAG (11389): VAD: 145408 -> 138880 samples (1 segments) wallMs=89.3
+09-20 01:19:50.951 I/WE-DIAG (11389): speaker: seq=31 segs=3 windows=6 embedMs=421 ids=[2,5,2,5,5,5] best=[-,0.53,0.73,0.60,0.67,0.53] dur=[0.9,3.9,2.0,2.0,2.4,2.2] confirmed=1 load=0 route=geom
+09-20 01:19:55.722 I/WE-DIAG (11389): finalize: wallMs=5104 audio_ctx=512 threads=4 audioMs=8680 segments=3
+09-20 01:19:55.985 I/WE-DIAG (11389): speaker: seq=32 segs=1 windows=3 embedMs=260 ids=[5,2,2] best=[0.36,0.73,0.79] dur=[2.2,3.0,3.5] confirmed=1 load=0 route=geom
+09-20 01:20:04.787 I/WE-DIAG (11389): VAD: 240128 -> 240608 samples (2 segments) wallMs=166.4
+09-20 01:20:15.282 I/WE-DIAG (11389): finalize: wallMs=10495 audio_ctx=815 threads=4 audioMs=15038 segments=5
+09-20 01:20:15.724 I/WE-DIAG (11389): speaker: seq=33 segs=2 windows=6 embedMs=439 ids=[2,2,3,3,2,2] best=[0.80,0.35,0.64,0.65,0.69,0.74] dur=[3.2,1.2,3.0,2.5,2.5,2.5] confirmed=1 load=0 route=geom
+09-20 01:20:19.771 I/WE-DIAG (11389): VAD: 196576 -> 171136 samples (2 segments) wallMs=143.1
+09-20 01:20:26.043 I/WE-DIAG (11389): finalize: wallMs=6272 audio_ctx=598 threads=4 audioMs=10696 segments=2
+09-20 01:20:26.329 I/WE-DIAG (11389): speaker: seq=34 segs=2 windows=4 embedMs=283 ids=[2,2,2,2] best=[-,0.64,0.69,0.74] dur=[0.7,4.0,3.0,3.0] confirmed=1 load=0 route=geom
+09-20 01:20:26.335 I/WE-DIAG (11389): speaker-recluster: n=153 clusters=4 confirmed=4 changed=9 ms=3
+09-20 01:20:34.822 I/WE-DIAG (11389): VAD: 253488 -> 252048 samples (3 segments) wallMs=186.2
+09-20 01:20:45.020 I/WE-DIAG (11389): finalize: wallMs=10197 audio_ctx=851 threads=4 audioMs=15753 segments=3
+09-20 01:20:45.424 I/WE-DIAG (11389): speaker: seq=35 segs=3 windows=7 embedMs=402 ids=[2,2,2,5,5,5,5] best=[0.70,0.77,-,0.23,0.71,0.70,0.56] dur=[3.0,2.9,0.8,2.3,2.2,2.3,2.1] confirmed=1 load=0 route=geom
+09-20 01:20:49.808 I/WE-DIAG (11389): VAD: 248288 -> 247648 samples (1 segments) wallMs=162.6
+09-20 01:20:59.649 I/WE-DIAG (11389): finalize: wallMs=9841 audio_ctx=837 threads=4 audioMs=15478 segments=3
+09-20 01:21:00.130 I/WE-DIAG (11389): speaker: seq=36 segs=1 windows=5 embedMs=478 ids=[5,5,5,5,5] best=[0.74,0.80,0.80,0.78,0.73] dur=[3.1,3.5,2.6,3.3,3.0] confirmed=1 load=0 route=geom
+09-20 01:21:04.828 I/WE-DIAG (11389): VAD: 251936 -> 249856 samples (2 segments) wallMs=176.5
+09-20 01:21:15.536 I/WE-DIAG (11389): finalize: wallMs=10707 audio_ctx=844 threads=4 audioMs=15616 segments=4
+09-20 01:21:15.999 I/WE-DIAG (11389): speaker: seq=37 segs=2 windows=6 embedMs=460 ids=[5,3,2,3,2,2] best=[0.38,0.61,0.58,0.53,0.68,0.73] dur=[2.0,2.2,1.7,3.0,3.3,3.4] confirmed=1 load=0 route=geom
+09-20 01:21:19.823 I/WE-DIAG (11389): VAD: 250352 -> 249872 samples (2 segments) wallMs=164.9
+09-20 01:21:30.430 I/WE-DIAG (11389): finalize: wallMs=10607 audio_ctx=844 threads=4 audioMs=15617 segments=4
+09-20 01:21:30.903 I/WE-DIAG (11389): speaker: seq=38 segs=2 windows=6 embedMs=471 ids=[2,2,2,2,2,2] best=[0.61,0.73,0.78,0.84,0.73,0.81] dur=[1.8,2.2,4.0,2.9,2.3,2.3] confirmed=1 load=0 route=geom
+09-20 01:21:34.838 I/WE-DIAG (11389): VAD: 223264 -> 184544 samples (2 segments) wallMs=171.7
+09-20 01:21:41.874 I/WE-DIAG (11389): finalize: wallMs=7035 audio_ctx=640 threads=4 audioMs=11534 segments=3
+09-20 01:21:41.952 I/WE-DIAG (11389): VAD: 118752 -> 114240 samples (3 segments) wallMs=76.1
+09-20 01:21:42.242 I/WE-DIAG (11389): speaker: seq=39 segs=2 windows=5 embedMs=366 ids=[3,2,2,6,2] best=[0.55,0.70,0.32,0.22,0.68] dur=[2.0,2.1,2.6,2.6,2.2] confirmed=1 load=0 route=geom
+09-20 01:21:42.255 I/WE-DIAG (11389): speaker-recluster: n=181 clusters=6 confirmed=6 changed=20 ms=6
+09-20 01:21:46.382 I/WE-DIAG (11389): finalize: wallMs=4430 audio_ctx=512 threads=4 audioMs=7140 segments=2
+09-20 01:21:46.593 I/WE-DIAG (11389): speaker: seq=40 segs=3 windows=3 embedMs=209 ids=[2,2,2] best=[0.43,0.52,0.73] dur=[1.5,1.9,3.6] confirmed=1 load=0 route=geom
+09-20 01:21:56.199 I/WE-DIAG (11389): VAD: 240128 -> 238048 samples (2 segments) wallMs=156.4
+09-20 01:22:07.257 I/WE-DIAG (11389): finalize: wallMs=11057 audio_ctx=807 threads=4 audioMs=14878 segments=10
+09-20 01:22:07.689 I/WE-DIAG (11389): speaker: seq=41 segs=2 windows=9 embedMs=429 ids=[2,2,2,5,5,5,5,5,2] best=[0.63,0.47,0.58,0.65,0.61,0.59,0.63,0.45,0.60] dur=[1.4,1.9,1.1,2.1,1.4,1.4,2.7,1.2,1.5] confirmed=1 load=0 route=geom
+09-20 01:22:10.973 I/WE-DIAG (11389): VAD: 236544 -> 241280 samples (6 segments) wallMs=146.5
+09-20 01:22:19.962 I/WE-DIAG (11389): finalize: wallMs=8989 audio_ctx=818 threads=4 audioMs=15080 segments=2
+09-20 01:22:20.390 I/WE-DIAG (11389): speaker: seq=42 segs=6 windows=6 embedMs=426 ids=[2,2,2,2,2,2] best=[0.66,0.44,0.69,0.72,0.74,0.76] dur=[1.4,1.2,3.1,2.2,3.4,3.3] confirmed=1 load=0 route=geom
+09-20 01:22:25.992 I/WE-DIAG (11389): VAD: 240128 -> 238048 samples (4 segments) wallMs=156.8
+09-20 01:22:36.467 I/WE-DIAG (11389): finalize: wallMs=10474 audio_ctx=807 threads=4 audioMs=14878 segments=4
+09-20 01:22:36.550 I/WE-DIAG (11389): VAD: 128000 -> 125600 samples (2 segments) wallMs=80.5
+09-20 01:22:36.998 I/WE-DIAG (11389): speaker: seq=43 segs=4 windows=6 embedMs=529 ids=[2,2,2,2,2,2] best=[0.73,0.79,0.76,0.41,0.80,0.71] dur=[2.6,2.9,2.6,1.2,3.5,1.8] confirmed=1 load=0 route=geom
+09-20 01:22:41.638 I/WE-DIAG (11389): finalize: wallMs=5088 audio_ctx=512 threads=4 audioMs=7850 segments=4
+09-20 01:22:41.871 I/WE-DIAG (11389): speaker: seq=44 segs=2 windows=3 embedMs=230 ids=[2,2,2] best=[0.59,0.77,0.76] dur=[1.5,2.8,3.5] confirmed=1 load=0 route=geom
+09-20 01:22:41.879 I/WE-DIAG (11389): speaker-recluster: n=208 clusters=6 confirmed=6 changed=1 ms=7
+09-20 01:22:43.912 I/WE-DIAG (11389): VAD: 159744 -> 153280 samples (1 segments) wallMs=95.8
+09-20 01:22:50.216 I/WE-DIAG (11389): finalize: wallMs=6304 audio_ctx=543 threads=4 audioMs=9580 segments=5
+09-20 01:22:50.526 I/WE-DIAG (11389): speaker: seq=45 segs=1 windows=4 embedMs=308 ids=[2,2,2,2] best=[0.70,0.77,0.46,0.65] dur=[3.2,3.1,1.8,1.5] confirmed=1 load=0 route=geom
+09-20 01:22:58.980 I/WE-DIAG (11389): VAD: 204784 -> 207984 samples (3 segments) wallMs=151.2
+09-20 01:23:06.801 I/WE-DIAG (11389): finalize: wallMs=7821 audio_ctx=713 threads=4 audioMs=12999 segments=3
+09-20 01:23:07.135 I/WE-DIAG (11389): speaker: seq=46 segs=3 windows=5 embedMs=331 ids=[5,2,2,2,2] best=[0.67,0.74,0.58,0.78,0.85] dur=[3.0,3.3,1.2,2.6,2.6] confirmed=1 load=0 route=geom
+09-20 01:23:09.631 I/WE-DIAG (11389): VAD: 206352 -> 201280 samples (2 segments) wallMs=115.1
+09-20 01:23:16.747 I/WE-DIAG (11389): finalize: wallMs=7116 audio_ctx=693 threads=4 audioMs=12580 segments=3
+09-20 01:23:16.819 I/WE-DIAG (11389): VAD: 108544 -> 44000 samples (2 segments) wallMs=70.2
+09-20 01:23:17.129 I/WE-DIAG (11389): speaker: seq=47 segs=2 windows=4 embedMs=379 ids=[2,2,2,2] best=[0.79,0.80,0.82,0.75] dur=[3.7,3.3,3.0,2.4] confirmed=1 load=0 route=geom
+09-20 01:23:20.607 I/WE-DIAG (11389): finalize: wallMs=3788 audio_ctx=512 threads=4 audioMs=2750 segments=1
+09-20 01:23:20.686 I/WE-DIAG (11389): speaker: seq=48 segs=2 windows=2 embedMs=77 ids=[2,7] best=[0.47,0.18] dur=[1.0,1.6] confirmed=1 load=0 route=geom
+09-20 01:23:31.476 I/WE-DIAG (11389): VAD: 240128 -> 237568 samples (3 segments) wallMs=170.4
+09-20 01:23:41.904 I/WE-DIAG (11389): finalize: wallMs=10427 audio_ctx=806 threads=4 audioMs=14848 segments=8
+09-20 01:23:42.190 I/WE-DIAG (11389): VAD: 172544 -> 172480 samples (4 segments) wallMs=101.5
+09-20 01:23:42.330 I/WE-DIAG (11389): speaker: seq=49 segs=3 windows=9 embedMs=424 ids=[7,7,7,2,2,2,2,2,2] best=[0.43,0.37,0.47,0.53,0.66,0.70,0.75,0.41,0.44] dur=[1.0,1.6,2.4,1.0,2.3,2.3,2.1,1.0,1.0] confirmed=1 load=0 route=geom
+09-20 01:23:42.344 I/WE-DIAG (11389): speaker-recluster: n=232 clusters=6 confirmed=6 changed=76 ms=12
+09-20 01:23:47.811 I/WE-DIAG (11389): finalize: wallMs=5621 audio_ctx=603 threads=4 audioMs=10780 segments=2
+09-20 01:23:48.134 I/WE-DIAG (11389): speaker: seq=50 segs=4 windows=5 embedMs=320 ids=[7,7,8,4,4] best=[0.23,0.41,0.29,0.60,0.52] dur=[3.1,2.3,2.1,2.0,1.1] confirmed=1 load=0 route=geom
+09-20 01:23:55.705 I/WE-DIAG (11389): VAD: 215552 -> 179520 samples (3 segments) wallMs=142.0
+09-20 01:24:02.216 I/WE-DIAG (11389): finalize: wallMs=6511 audio_ctx=625 threads=4 audioMs=11220 segments=5
+09-20 01:24:02.543 I/WE-DIAG (11389): speaker: seq=51 segs=3 windows=5 embedMs=324 ids=[4,4,5,5,5] best=[0.30,0.60,0.59,0.72,0.47] dur=[1.8,1.5,3.5,3.0,1.2] confirmed=1 load=0 route=geom
+09-20 01:24:04.388 I/WE-DIAG (11389): VAD: 139776 -> 136000 samples (1 segments) wallMs=90.3
+09-20 01:24:08.908 I/WE-DIAG (11389): finalize: wallMs=4520 audio_ctx=512 threads=4 audioMs=8500 segments=5
+09-20 01:24:09.148 I/WE-DIAG (11389): speaker: seq=52 segs=1 windows=4 embedMs=237 ids=[5,2,2,2] best=[0.62,0.54,0.79,0.69] dur=[1.6,1.2,3.4,2.4] confirmed=1 load=0 route=geom
+09-20 01:24:13.125 I/WE-DIAG (11389): VAD: 139776 -> 121120 samples (2 segments) wallMs=89.0
+09-20 01:24:17.707 I/WE-DIAG (11389): finalize: wallMs=4583 audio_ctx=512 threads=4 audioMs=7570 segments=2
+09-20 01:24:17.926 I/WE-DIAG (11389): speaker: seq=53 segs=2 windows=3 embedMs=215 ids=[2,2,2] best=[0.70,0.74,0.73] dur=[2.9,2.3,2.3] confirmed=1 load=0 route=geom
+09-20 01:24:23.803 I/WE-DIAG (11389): VAD: 170496 -> 156640 samples (3 segments) wallMs=114.4
+09-20 01:24:29.224 I/WE-DIAG (11389): finalize: wallMs=5420 audio_ctx=553 threads=4 audioMs=9790 segments=4
+09-20 01:24:29.492 I/WE-DIAG (11389): speaker: seq=54 segs=3 windows=4 embedMs=265 ids=[2,2,2,2] best=[0.82,0.56,0.65,0.75] dur=[3.2,1.5,3.2,1.7] confirmed=1 load=0 route=geom
+09-20 01:24:29.502 I/WE-DIAG (11389): speaker-recluster: n=253 clusters=7 confirmed=7 changed=4 ms=10
+09-20 01:24:30.446 I/WE-DIAG (11389): VAD: 107008 -> 87200 samples (3 segments) wallMs=68.3
+09-20 01:24:34.902 I/WE-DIAG (11389): finalize: wallMs=4456 audio_ctx=512 threads=4 audioMs=5450 segments=3
+09-20 01:24:35.028 I/WE-DIAG (11389): speaker: seq=55 segs=3 windows=3 embedMs=123 ids=[2,4,4] best=[0.50,0.69,-] dur=[1.1,3.3,0.8] confirmed=1 load=0 route=geom
+09-20 01:24:45.535 I/WE-DIAG (11389): VAD: 207824 -> 201424 samples (2 segments) wallMs=147.0
+09-20 01:24:53.693 I/WE-DIAG (11389): finalize: wallMs=8158 audio_ctx=693 threads=4 audioMs=12589 segments=6
+09-20 01:24:54.042 I/WE-DIAG (11389): speaker: seq=56 segs=2 windows=6 embedMs=346 ids=[4,4,4,5,5,5] best=[0.78,0.44,0.56,0.64,0.55,0.55] dur=[2.9,1.1,1.1,2.9,1.4,3.1] confirmed=1 load=0 route=geom
+09-20 01:25:00.559 I/WE-DIAG (11389): VAD: 272432 -> 272592 samples (3 segments) wallMs=165.9
+09-20 01:25:12.206 I/WE-DIAG (11389): finalize: wallMs=11647 audio_ctx=915 threads=4 audioMs=17037 segments=4
+09-20 01:25:12.286 I/WE-DIAG (11389): VAD: 128000 -> 125120 samples (3 segments) wallMs=77.3
+09-20 01:25:12.732 I/WE-DIAG (11389): speaker: seq=57 segs=3 windows=7 embedMs=522 ids=[4,4,4,5,4,4,4] best=[0.68,0.64,0.75,0.55,0.58,0.63,0.65] dur=[2.2,1.8,3.5,2.4,2.0,2.5,2.4] confirmed=1 load=0 route=geom
+09-20 01:25:16.769 I/WE-DIAG (11389): finalize: wallMs=4483 audio_ctx=512 threads=4 audioMs=7820 segments=2
+09-20 01:25:16.845 I/WE-DIAG (11389): VAD: 109568 -> 106720 samples (1 segments) wallMs=74.3
+09-20 01:25:17.038 I/WE-DIAG (11389): speaker: seq=58 segs=3 windows=3 embedMs=267 ids=[4,4,4] best=[0.58,0.64,0.57] dur=[3.9,1.6,2.1] confirmed=1 load=0 route=geom
+09-20 01:25:21.533 I/WE-DIAG (11389): finalize: wallMs=4688 audio_ctx=512 threads=4 audioMs=6670 segments=1
+09-20 01:25:21.743 I/WE-DIAG (11389): speaker: seq=59 segs=1 windows=2 embedMs=208 ids=[2,2] best=[0.60,0.66] dur=[3.4,3.2] confirmed=1 load=0 route=geom
+09-20 01:25:21.762 I/WE-DIAG (11389): speaker-recluster: n=273 clusters=7 confirmed=7 changed=1 ms=15
+09-20 01:25:27.285 I/WE-DIAG (11389): VAD: 190464 -> 178400 samples (2 segments) wallMs=137.7
+09-20 01:25:34.959 I/WE-DIAG (11389): finalize: wallMs=7674 audio_ctx=621 threads=4 audioMs=11150 segments=4
+09-20 01:25:35.052 I/WE-DIAG (11389): VAD: 113152 -> 108800 samples (2 segments) wallMs=90.6
+09-20 01:25:35.360 I/WE-DIAG (11389): speaker: seq=60 segs=2 windows=4 embedMs=396 ids=[2,2,2,2] best=[0.76,0.76,0.79,0.76] dur=[2.9,2.7,2.8,2.6] confirmed=1 load=0 route=geom
+09-20 01:25:39.765 I/WE-DIAG (11389): finalize: wallMs=4713 audio_ctx=512 threads=4 audioMs=6800 segments=1
+09-20 01:25:39.964 I/WE-DIAG (11389): speaker: seq=61 segs=2 windows=3 embedMs=197 ids=[2,2,2] best=[0.70,0.76,0.70] dur=[1.8,2.4,2.5] confirmed=1 load=0 route=geom
+09-20 01:25:48.192 I/WE-DIAG (11389): VAD: 221184 -> 213120 samples (3 segments) wallMs=149.5
+09-20 01:25:57.277 I/WE-DIAG (11389): finalize: wallMs=9085 audio_ctx=730 threads=4 audioMs=13320 segments=7
+09-20 01:25:57.350 I/WE-DIAG (11389): VAD: 120832 -> 113920 samples (3 segments) wallMs=70.6
+09-20 01:25:57.692 I/WE-DIAG (11389): speaker: seq=62 segs=3 windows=6 embedMs=411 ids=[6,4,4,2,2,2] best=[0.58,0.61,0.50,0.72,0.81,0.76] dur=[1.5,3.0,1.2,1.4,3.5,2.5] confirmed=1 load=0 route=geom
+09-20 01:26:01.966 I/WE-DIAG (11389): finalize: wallMs=4616 audio_ctx=512 threads=4 audioMs=7120 segments=2
+09-20 01:26:02.145 I/WE-DIAG (11389): speaker: seq=63 segs=3 windows=3 embedMs=177 ids=[2,4,4] best=[-,0.74,0.70] dur=[0.6,2.9,3.4] confirmed=1 load=0 route=geom
+09-20 01:26:03.607 I/WE-DIAG (11389): VAD: 126976 -> 94080 samples (4 segments) wallMs=77.0
+09-20 01:26:07.900 I/WE-DIAG (11389): finalize: wallMs=4293 audio_ctx=512 threads=4 audioMs=5880 segments=4
+09-20 01:26:08.063 I/WE-DIAG (11389): speaker: seq=64 segs=4 windows=4 embedMs=160 ids=[2,2,2,2] best=[0.76,0.52,0.29,-] dur=[2.8,1.1,1.0,0.7] confirmed=1 load=0 route=geom
+09-20 01:26:08.081 I/WE-DIAG (11389): speaker-recluster: n=291 clusters=7 confirmed=7 changed=103 ms=16
+09-20 01:26:09.680 I/WE-DIAG (11389): VAD: 97280 -> 88160 samples (2 segments) wallMs=70.4
+09-20 01:26:14.367 I/WE-DIAG (11389): finalize: wallMs=4687 audio_ctx=512 threads=4 audioMs=5510 segments=2
+09-20 01:26:14.538 I/WE-DIAG (11389): speaker: seq=65 segs=2 windows=2 embedMs=169 ids=[2,2] best=[0.48,0.49] dur=[3.9,1.5] confirmed=1 load=0 route=geom
+09-20 01:26:24.461 I/WE-DIAG (11389): VAD: 235008 -> 227520 samples (2 segments) wallMs=163.0
+09-20 01:26:35.047 I/WE-DIAG (11389): finalize: wallMs=10586 audio_ctx=775 threads=4 audioMs=14220 segments=7
+09-20 01:26:35.449 I/WE-DIAG (11389): speaker: seq=66 segs=2 windows=6 embedMs=399 ids=[3,2,3,3,3,3] best=[0.66,0.55,0.69,0.49,0.48,0.54] dur=[3.6,1.3,3.3,1.3,1.1,3.6] confirmed=1 load=0 route=geom
+09-20 01:26:39.471 I/WE-DIAG (11389): VAD: 240128 -> 238368 samples (3 segments) wallMs=162.8
+09-20 01:26:49.388 I/WE-DIAG (11389): finalize: wallMs=9917 audio_ctx=808 threads=4 audioMs=14898 segments=3
+09-20 01:26:49.834 I/WE-DIAG (11389): speaker: seq=67 segs=3 windows=4 embedMs=444 ids=[3,3,3,3] best=[0.63,0.66,0.69,0.69] dur=[3.6,4.0,3.7,3.4] confirmed=1 load=0 route=geom
+09-20 01:26:51.854 I/WE-DIAG (11389): VAD: 198656 -> 193440 samples (2 segments) wallMs=132.3
+09-20 01:26:59.604 I/WE-DIAG (11389): finalize: wallMs=7750 audio_ctx=668 threads=4 audioMs=12090 segments=3
+09-20 01:26:59.996 I/WE-DIAG (11389): speaker: seq=68 segs=2 windows=5 embedMs=389 ids=[3,5,5,5,2] best=[0.56,0.70,0.75,0.70,0.67] dur=[1.2,2.8,2.4,2.3,3.4] confirmed=1 load=0 route=geom
+09-20 01:27:00.363 I/WE-DIAG (11389): VAD: 136704 -> 132800 samples (1 segments) wallMs=96.7
+09-20 01:27:05.327 I/WE-DIAG (11389): finalize: wallMs=4964 audio_ctx=512 threads=4 audioMs=8300 segments=2
+09-20 01:27:05.597 I/WE-DIAG (11389): speaker: seq=69 segs=1 windows=3 embedMs=267 ids=[5,5,5] best=[0.72,0.75,0.76] dur=[3.1,3.3,1.9] confirmed=1 load=0 route=geom
+09-20 01:27:05.617 I/WE-DIAG (11389): speaker-recluster: n=311 clusters=8 confirmed=8 changed=69 ms=19
+09-20 01:27:15.225 I/WE-DIAG (11389): VAD: 236544 -> 230880 samples (2 segments) wallMs=176.2
+09-20 01:27:24.456 I/WE-DIAG (11389): finalize: wallMs=9230 audio_ctx=785 threads=4 audioMs=14430 segments=2
+09-20 01:27:24.876 I/WE-DIAG (11389): speaker: seq=70 segs=2 windows=5 embedMs=418 ids=[2,2,2,2,2] best=[0.68,0.70,0.77,0.70,0.73] dur=[3.1,2.9,2.5,3.0,2.8] confirmed=1 load=0 route=geom
+09-20 01:27:26.819 I/WE-DIAG (11389): VAD: 186368 -> 168960 samples (3 segments) wallMs=119.7
+09-20 01:27:33.281 I/WE-DIAG (11389): finalize: wallMs=6462 audio_ctx=592 threads=4 audioMs=10560 segments=6
+09-20 01:27:33.599 I/WE-DIAG (11389): speaker: seq=71 segs=3 windows=6 embedMs=315 ids=[2,2,2,2,2,2] best=[0.73,0.73,0.22,0.28,0.63,0.51] dur=[2.2,2.9,1.0,1.0,1.9,1.4] confirmed=1 load=0 route=geom
+09-20 01:27:35.591 I/WE-DIAG (11389): VAD: 140800 -> 133920 samples (1 segments) wallMs=92.5
+09-20 01:27:40.289 I/WE-DIAG (11389): finalize: wallMs=4697 audio_ctx=512 threads=4 audioMs=8370 segments=2
+09-20 01:27:40.543 I/WE-DIAG (11389): speaker: seq=72 segs=1 windows=3 embedMs=252 ids=[2,5,3] best=[0.42,0.71,0.53] dur=[3.3,3.1,2.0] confirmed=1 load=0 route=geom
+09-20 01:27:44.435 I/WE-DIAG (11389): VAD: 141312 -> 138080 samples (1 segments) wallMs=101.1
+09-20 01:27:49.702 I/WE-DIAG (11389): finalize: wallMs=5267 audio_ctx=512 threads=4 audioMs=8630 segments=4
+09-20 01:27:49.985 I/WE-DIAG (11389): speaker: seq=73 segs=1 windows=4 embedMs=281 ids=[3,3,3,3] best=[0.58,0.49,0.49,0.43] dur=[3.7,1.2,2.0,1.8] confirmed=1 load=0 route=geom
+09-20 01:27:50.416 I/WE-DIAG (11389): VAD: 96256 -> 86880 samples (2 segments) wallMs=69.2
+09-20 01:27:54.842 I/WE-DIAG (11389): finalize: wallMs=4426 audio_ctx=512 threads=4 audioMs=5430 segments=1
+09-20 01:27:55.016 I/WE-DIAG (11389): speaker: seq=74 segs=2 windows=2 embedMs=173 ids=[3,3] best=[0.64,0.62] dur=[2.0,3.4] confirmed=1 load=0 route=geom
+09-20 01:27:55.040 I/WE-DIAG (11389): speaker-recluster: n=331 clusters=8 confirmed=8 changed=53 ms=23
+09-20 01:28:02.346 I/WE-DIAG (11389): VAD: 189952 -> 185600 samples (1 segments) wallMs=129.7
+09-20 01:28:09.213 I/WE-DIAG (11389): finalize: wallMs=6867 audio_ctx=644 threads=4 audioMs=11600 segments=2
+09-20 01:28:09.538 I/WE-DIAG (11389): speaker: seq=75 segs=1 windows=4 embedMs=322 ids=[3,3,3,2] best=[0.56,0.64,0.65,0.67] dur=[2.3,2.3,3.3,3.7] confirmed=1 load=0 route=geom
+09-20 01:28:12.979 I/WE-DIAG (11389): VAD: 170496 -> 162880 samples (2 segments) wallMs=104.9
+09-20 01:28:18.921 I/WE-DIAG (11389): finalize: wallMs=5941 audio_ctx=573 threads=4 audioMs=10180 segments=4
+09-20 01:28:19.221 I/WE-DIAG (11389): speaker: seq=76 segs=2 windows=4 embedMs=297 ids=[2,2,2,3] best=[0.62,0.67,0.70,0.61] dur=[2.4,2.1,1.8,3.7] confirmed=1 load=0 route=geom
+09-20 01:28:28.037 I/WE-DIAG (11389): VAD: 240128 -> 231328 samples (1 segments) wallMs=154.1
+09-20 01:28:37.664 I/WE-DIAG (11389): finalize: wallMs=9627 audio_ctx=786 threads=4 audioMs=14458 segments=4
+09-20 01:28:38.066 I/WE-DIAG (11389): speaker: seq=77 segs=1 windows=6 embedMs=399 ids=[6,6,6,6,6,6] best=[0.70,0.76,0.75,0.82,0.76,0.48] dur=[3.0,3.0,1.2,3.3,2.9,1.0] confirmed=1 load=0 route=geom
+09-20 01:28:43.042 I/WE-DIAG (11389): VAD: 213504 -> 216640 samples (3 segments) wallMs=151.2
+09-20 01:28:51.293 I/WE-DIAG (11389): finalize: wallMs=8251 audio_ctx=741 threads=4 audioMs=13540 segments=4
+09-20 01:28:51.683 I/WE-DIAG (11389): speaker: seq=78 segs=3 windows=5 embedMs=388 ids=[3,3,3,3,3] best=[0.59,0.69,0.73,0.65,0.69] dur=[3.3,2.6,2.5,3.2,1.8] confirmed=1 load=0 route=geom
+09-20 01:28:53.352 I/WE-DIAG (11389): VAD: 192000 -> 187040 samples (2 segments) wallMs=124.5
+09-20 01:29:00.570 I/WE-DIAG (11389): finalize: wallMs=7218 audio_ctx=648 threads=4 audioMs=11690 segments=3
+09-20 01:29:00.920 I/WE-DIAG (11389): speaker: seq=79 segs=2 windows=4 embedMs=347 ids=[2,2,2,2] best=[0.62,0.66,0.71,0.71] dur=[2.0,2.1,3.8,3.7] confirmed=1 load=0 route=geom
+09-20 01:29:00.946 I/WE-DIAG (11389): speaker-recluster: n=354 clusters=8 confirmed=8 changed=0 ms=26
+09-20 01:29:01.413 I/WE-DIAG (11389): VAD: 129536 -> 126400 samples (2 segments) wallMs=90.9
+09-20 01:29:07.004 I/WE-DIAG (11389): finalize: wallMs=5591 audio_ctx=512 threads=4 audioMs=7900 segments=6
+09-20 01:29:07.251 I/WE-DIAG (11389): speaker: seq=80 segs=2 windows=5 embedMs=245 ids=[2,2,2,2,2] best=[0.54,0.53,0.59,0.52,0.64] dur=[1.4,1.1,1.4,1.5,2.5] confirmed=1 load=0 route=geom
+09-20 01:29:16.498 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=167.0
+09-20 01:29:26.389 I/WE-DIAG (11389): finalize: wallMs=9890 audio_ctx=814 threads=4 audioMs=15008 segments=2
+09-20 01:29:26.763 I/WE-DIAG (11389): VAD: 164864 -> 164800 samples (2 segments) wallMs=130.0
+09-20 01:29:26.867 I/WE-DIAG (11389): speaker: seq=81 segs=1 windows=5 embedMs=475 ids=[6,6,6,6,6] best=[0.57,0.78,0.81,0.87,0.82] dur=[2.0,2.1,3.8,3.8,3.4] confirmed=1 load=0 route=geom
+09-20 01:29:32.735 I/WE-DIAG (11389): finalize: wallMs=5972 audio_ctx=579 threads=4 audioMs=10300 segments=2
+09-20 01:29:33.027 I/WE-DIAG (11389): speaker: seq=82 segs=2 windows=4 embedMs=290 ids=[6,6,3,3] best=[0.61,0.85,0.68,0.61] dur=[1.2,3.5,2.7,2.8] confirmed=1 load=0 route=geom
+09-20 01:29:41.816 I/WE-DIAG (11389): VAD: 240128 -> 225888 samples (2 segments) wallMs=171.0
+09-20 01:29:51.165 I/WE-DIAG (11389): finalize: wallMs=9349 audio_ctx=769 threads=4 audioMs=14118 segments=3
+09-20 01:29:51.250 I/WE-DIAG (11389): VAD: 132096 -> 128320 samples (1 segments) wallMs=81.9
+09-20 01:29:51.612 I/WE-DIAG (11389): speaker: seq=83 segs=2 windows=5 embedMs=441 ids=[3,3,3,3,3] best=[0.56,0.69,0.65,0.68,0.61] dur=[2.3,2.3,2.8,2.8,3.7] confirmed=1 load=0 route=geom
+09-20 01:29:56.300 I/WE-DIAG (11389): finalize: wallMs=5050 audio_ctx=512 threads=4 audioMs=8020 segments=4
+09-20 01:29:56.540 I/WE-DIAG (11389): speaker: seq=84 segs=1 windows=4 embedMs=238 ids=[3,3,3,3] best=[0.39,0.49,0.66,0.70] dur=[1.2,1.4,2.6,2.9] confirmed=1 load=0 route=geom
+09-20 01:29:56.570 I/WE-DIAG (11389): speaker-recluster: n=377 clusters=8 confirmed=8 changed=0 ms=29
+09-20 01:30:05.079 I/WE-DIAG (11389): VAD: 227840 -> 220320 samples (3 segments) wallMs=172.8
+09-20 01:30:14.072 I/WE-DIAG (11389): finalize: wallMs=8992 audio_ctx=752 threads=4 audioMs=13770 segments=3
+09-20 01:30:14.462 I/WE-DIAG (11389): speaker: seq=85 segs=3 windows=4 embedMs=388 ids=[2,2,2,2] best=[0.57,0.76,0.78,0.80] dur=[3.5,3.6,3.5,2.9] confirmed=1 load=0 route=geom
+09-20 01:30:20.074 I/WE-DIAG (11389): VAD: 252416 -> 242336 samples (2 segments) wallMs=158.7
+09-20 01:30:30.547 I/WE-DIAG (11389): finalize: wallMs=10473 audio_ctx=821 threads=4 audioMs=15146 segments=5
+09-20 01:30:30.994 I/WE-DIAG (11389): speaker: seq=86 segs=2 windows=6 embedMs=443 ids=[2,2,2,2,3,3] best=[0.81,0.82,0.81,0.48,0.59,0.47] dur=[2.8,3.1,3.1,2.2,2.2,1.6] confirmed=1 load=0 route=geom
+09-20 01:30:35.074 I/WE-DIAG (11389): VAD: 240128 -> 241728 samples (2 segments) wallMs=154.1
+09-20 01:30:45.615 I/WE-DIAG (11389): finalize: wallMs=10541 audio_ctx=819 threads=4 audioMs=15108 segments=5
+09-20 01:30:45.688 I/WE-DIAG (11389): VAD: 106496 -> 99200 samples (3 segments) wallMs=70.3
+09-20 01:30:46.139 I/WE-DIAG (11389): speaker: seq=87 segs=2 windows=5 embedMs=520 ids=[3,3,3,3,3] best=[0.67,0.63,0.72,0.74,0.73] dur=[3.4,2.5,2.2,3.1,3.8] confirmed=1 load=0 route=geom
+09-20 01:30:50.252 I/WE-DIAG (11389): finalize: wallMs=4563 audio_ctx=512 threads=4 audioMs=6200 segments=1
+09-20 01:30:50.341 I/WE-DIAG (11389): VAD: 128000 -> 121440 samples (2 segments) wallMs=86.8
+09-20 01:30:50.415 I/WE-DIAG (11389): speaker: seq=88 segs=3 windows=4 embedMs=161 ids=[3,3,3,3] best=[-,0.76,0.73,-] dur=[0.5,2.6,2.2,0.8] confirmed=1 load=0 route=geom
+09-20 01:30:55.076 I/WE-DIAG (11389): finalize: wallMs=4735 audio_ctx=512 threads=4 audioMs=7590 segments=2
+09-20 01:30:55.315 I/WE-DIAG (11389): speaker: seq=89 segs=2 windows=3 embedMs=237 ids=[2,2,4] best=[0.77,0.69,0.52] dur=[2.1,2.1,3.3] confirmed=1 load=0 route=geom
+09-20 01:30:55.354 I/WE-DIAG (11389): speaker-recluster: n=397 clusters=8 confirmed=8 changed=68 ms=38
+09-20 01:31:00.973 I/WE-DIAG (11389): VAD: 180224 -> 171680 samples (1 segments) wallMs=129.1
+09-20 01:31:08.326 I/WE-DIAG (11389): finalize: wallMs=7353 audio_ctx=600 threads=4 audioMs=10730 segments=4
+09-20 01:31:08.644 I/WE-DIAG (11389): speaker: seq=90 segs=1 windows=5 embedMs=315 ids=[4,3,3,2,2] best=[0.44,0.75,0.48,0.61,0.69] dur=[2.0,2.0,2.0,2.4,2.4] confirmed=1 load=0 route=geom
+09-20 01:31:13.190 I/WE-DIAG (11389): VAD: 195584 -> 191840 samples (1 segments) wallMs=123.1
+09-20 01:31:21.217 I/WE-DIAG (11389): finalize: wallMs=8026 audio_ctx=663 threads=4 audioMs=11990 segments=6
+09-20 01:31:21.578 I/WE-DIAG (11389): speaker: seq=91 segs=1 windows=6 embedMs=356 ids=[2,2,2,2,2,2] best=[0.69,0.65,0.64,0.73,0.68,0.44] dur=[3.1,2.3,1.4,1.3,2.6,1.4] confirmed=1 load=0 route=geom
+09-20 01:31:23.381 I/WE-DIAG (11389): VAD: 163328 -> 158400 samples (2 segments) wallMs=108.2
+09-20 01:31:28.801 I/WE-DIAG (11389): finalize: wallMs=5420 audio_ctx=559 threads=4 audioMs=9900 segments=2
+09-20 01:31:29.097 I/WE-DIAG (11389): speaker: seq=92 segs=2 windows=4 embedMs=293 ids=[3,3,3,3] best=[0.61,0.60,0.68,0.60] dur=[3.4,1.9,2.6,1.9] confirmed=1 load=0 route=geom
+09-20 01:31:35.141 I/WE-DIAG (11389): VAD: 187904 -> 170560 samples (2 segments) wallMs=124.2
+09-20 01:31:41.752 I/WE-DIAG (11389): finalize: wallMs=6611 audio_ctx=597 threads=4 audioMs=10660 segments=6
+09-20 01:31:42.071 I/WE-DIAG (11389): speaker: seq=93 segs=2 windows=4 embedMs=316 ids=[3,2,8,8] best=[0.63,0.75,0.24,0.44] dur=[3.0,3.1,1.7,2.8] confirmed=1 load=0 route=geom
+09-20 01:31:42.555 I/WE-DIAG (11389): VAD: 119296 -> 113600 samples (3 segments) wallMs=82.9
+09-20 01:31:47.187 I/WE-DIAG (11389): finalize: wallMs=4631 audio_ctx=512 threads=4 audioMs=7100 segments=1
+09-20 01:31:47.392 I/WE-DIAG (11389): speaker: seq=94 segs=3 windows=3 embedMs=203 ids=[3,3,3] best=[0.60,0.54,0.72] dur=[2.3,1.3,3.3] confirmed=1 load=0 route=geom
+09-20 01:31:47.431 I/WE-DIAG (11389): speaker-recluster: n=419 clusters=7 confirmed=7 changed=125 ms=40
+09-20 01:31:57.632 I/WE-DIAG (11389): VAD: 240128 -> 204768 samples (3 segments) wallMs=151.2
+09-20 01:32:05.725 I/WE-DIAG (11389): finalize: wallMs=8092 audio_ctx=703 threads=4 audioMs=12798 segments=6
+09-20 01:32:06.039 I/WE-DIAG (11389): speaker: seq=95 segs=3 windows=6 embedMs=312 ids=[4,4,4,4,4,2] best=[0.49,-,0.31,0.65,0.70,0.68] dur=[2.6,0.9,1.1,2.5,2.0,3.5] confirmed=1 load=0 route=geom
+09-20 01:32:12.647 I/WE-DIAG (11389): VAD: 240128 -> 241728 samples (2 segments) wallMs=152.9
+09-20 01:32:20.523 I/WE-DIAG (11389): finalize: wallMs=7875 audio_ctx=819 threads=4 audioMs=15108 segments=1
+09-20 01:32:20.948 I/WE-DIAG (11389): speaker: seq=96 segs=2 windows=3 embedMs=423 ids=[2,8,8] best=[0.60,0.27,0.66] dur=[2.0,2.3,10.7] confirmed=1 load=0 route=geom
+09-20 01:32:27.649 I/WE-DIAG (11389): VAD: 213024 -> 212864 samples (1 segments) wallMs=147.5
+09-20 01:32:36.598 I/WE-DIAG (11389): finalize: wallMs=8949 audio_ctx=729 threads=4 audioMs=13304 segments=3
+09-20 01:32:36.986 I/WE-DIAG (11389): speaker: seq=97 segs=1 windows=6 embedMs=384 ids=[8,1,2,2,2,1] best=[0.41,0.30,0.64,0.61,0.77,0.57] dur=[2.0,2.0,2.1,2.1,2.7,2.4] confirmed=1 load=0 route=geom
+09-20 01:32:42.676 I/WE-DIAG (11389): VAD: 263680 -> 264640 samples (3 segments) wallMs=168.5
+09-20 01:32:55.007 I/WE-DIAG (11389): finalize: wallMs=12331 audio_ctx=891 threads=4 audioMs=16540 segments=12
+09-20 01:32:55.089 I/WE-DIAG (11389): VAD: 131552 -> 120960 samples (1 segments) wallMs=79.9
+09-20 01:32:55.611 I/WE-DIAG (11389): speaker: seq=98 segs=3 windows=10 embedMs=600 ids=[1,2,2,1,1,1,2,6,6,6] best=[0.59,0.24,0.29,0.63,0.49,0.39,0.51,0.67,0.29,0.36] dur=[1.0,1.6,1.0,3.0,1.2,1.0,1.3,1.8,1.4,2.9] confirmed=1 load=0 route=geom
+09-20 01:33:00.402 I/WE-DIAG (11389): finalize: wallMs=5313 audio_ctx=512 threads=4 audioMs=7560 segments=4
+09-20 01:33:00.650 I/WE-DIAG (11389): speaker: seq=99 segs=1 windows=4 embedMs=245 ids=[2,2,2,2] best=[0.83,0.37,0.68,0.47] dur=[3.6,1.5,1.2,1.3] confirmed=1 load=0 route=geom
+09-20 01:33:00.699 I/WE-DIAG (11389): speaker-recluster: n=447 clusters=9 confirmed=9 changed=90 ms=48
+09-20 01:33:05.685 I/WE-DIAG (11389): VAD: 240128 -> 226208 samples (1 segments) wallMs=170.9
+09-20 01:33:15.897 I/WE-DIAG (11389): finalize: wallMs=10212 audio_ctx=770 threads=4 audioMs=14138 segments=7
+09-20 01:33:16.352 I/WE-DIAG (11389): speaker: seq=100 segs=1 windows=7 embedMs=452 ids=[2,4,2,1,1,1,1] best=[0.45,0.70,0.58,0.54,0.62,0.27,0.64] dur=[1.4,2.2,1.5,2.3,2.2,1.1,3.3] confirmed=1 load=0 route=geom
+09-20 01:33:20.685 I/WE-DIAG (11389): VAD: 240128 -> 243328 samples (3 segments) wallMs=162.3
+09-20 01:33:30.553 I/WE-DIAG (11389): finalize: wallMs=9867 audio_ctx=824 threads=4 audioMs=15208 segments=3
+09-20 01:33:30.969 I/WE-DIAG (11389): speaker: seq=101 segs=3 windows=5 embedMs=414 ids=[1,1,9,9,9] best=[0.70,0.71,0.76,0.76,0.77] dur=[3.0,3.0,2.8,3.1,3.1] confirmed=1 load=0 route=geom
+09-20 01:33:33.484 I/WE-DIAG (11389): VAD: 205312 -> 201600 samples (1 segments) wallMs=130.8
+09-20 01:33:41.934 I/WE-DIAG (11389): finalize: wallMs=8450 audio_ctx=694 threads=4 audioMs=12600 segments=11
+09-20 01:33:42.376 I/WE-DIAG (11389): speaker: seq=102 segs=1 windows=10 embedMs=438 ids=[9,1,1,1,1,1,1,1,1,1] best=[0.31,0.72,0.23,0.34,0.40,0.29,0.34,0.49,0.22,0.32] dur=[1.0,2.2,1.0,1.0,1.0,1.0,1.0,2.0,1.0,1.4] confirmed=1 load=0 route=geom
+09-20 01:33:48.532 I/WE-DIAG (11389): VAD: 240128 -> 237408 samples (2 segments) wallMs=166.7
+09-20 01:33:59.435 I/WE-DIAG (11389): finalize: wallMs=10903 audio_ctx=805 threads=4 audioMs=14838 segments=9
+09-20 01:33:59.508 I/WE-DIAG (11389): VAD: 116736 -> 112960 samples (1 segments) wallMs=71.1
+09-20 01:33:59.970 I/WE-DIAG (11389): speaker: seq=103 segs=2 windows=8 embedMs=532 ids=[5,5,5,5,2,2,2,4] best=[0.21,0.46,0.24,0.41,0.59,0.70,0.46,0.51] dur=[1.6,2.0,1.0,1.0,1.7,3.3,2.7,1.4] confirmed=1 load=0 route=geom
+09-20 01:34:04.310 I/WE-DIAG (11389): finalize: wallMs=4801 audio_ctx=512 threads=4 audioMs=7060 segments=3
+09-20 01:34:04.522 I/WE-DIAG (11389): speaker: seq=104 segs=1 windows=4 embedMs=210 ids=[2,4,4,4] best=[0.57,0.64,0.65,0.55] dur=[1.2,2.3,2.3,1.3] confirmed=1 load=0 route=geom
+09-20 01:34:04.572 I/WE-DIAG (11389): speaker-recluster: n=481 clusters=9 confirmed=9 changed=4 ms=49
+09-20 01:34:10.843 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=176.7
+09-20 01:34:22.080 I/WE-DIAG (11389): finalize: wallMs=11236 audio_ctx=814 threads=4 audioMs=15008 segments=9
+09-20 01:34:22.525 I/WE-DIAG (11389): speaker: seq=105 segs=1 windows=8 embedMs=441 ids=[7,7,7,2,2,2,2,1] best=[0.65,0.65,0.53,0.26,0.41,0.41,0.42,0.66] dur=[1.7,2.9,1.1,1.7,1.3,3.0,1.1,2.2] confirmed=1 load=0 route=geom
+09-20 01:34:24.602 I/WE-DIAG (11389): VAD: 220672 -> 203840 samples (3 segments) wallMs=142.6
+09-20 01:34:33.103 I/WE-DIAG (11389): finalize: wallMs=8500 audio_ctx=701 threads=4 audioMs=12740 segments=4
+09-20 01:34:33.193 I/WE-DIAG (11389): VAD: 124416 -> 102080 samples (1 segments) wallMs=87.8
+09-20 01:34:33.526 I/WE-DIAG (11389): speaker: seq=106 segs=3 windows=5 embedMs=419 ids=[1,1,1,1,1] best=[0.77,0.65,0.60,0.69,0.81] dur=[2.7,2.0,2.2,2.9,2.7] confirmed=1 load=0 route=geom
+09-20 01:34:37.783 I/WE-DIAG (11389): finalize: wallMs=4589 audio_ctx=512 threads=4 audioMs=6380 segments=1
+09-20 01:34:37.983 I/WE-DIAG (11389): speaker: seq=107 segs=1 windows=2 embedMs=198 ids=[2,2] best=[0.79,0.75] dur=[3.3,3.1] confirmed=1 load=0 route=geom
+09-20 01:34:40.873 I/WE-DIAG (11389): VAD: 136704 -> 114880 samples (4 segments) wallMs=96.5
+09-20 01:34:45.591 I/WE-DIAG (11389): finalize: wallMs=4717 audio_ctx=512 threads=4 audioMs=7180 segments=1
+09-20 01:34:45.742 I/WE-DIAG (11389): speaker: seq=108 segs=4 windows=5 embedMs=149 ids=[2,2,2,1,1] best=[-,-,-,0.68,0.69] dur=[0.7,0.7,0.7,2.5,2.2] confirmed=1 load=0 route=geom
+09-20 01:34:55.961 I/WE-DIAG (11389): VAD: 240128 -> 240128 samples (1 segments) wallMs=174.5
+09-20 01:35:06.748 I/WE-DIAG (11389): finalize: wallMs=10787 audio_ctx=814 threads=4 audioMs=15008 segments=8
+09-20 01:35:06.809 I/WE-DIAG (11389): VAD: 97280 -> 93600 samples (1 segments) wallMs=59.1
+09-20 01:35:07.229 I/WE-DIAG (11389): speaker: seq=109 segs=1 windows=7 embedMs=469 ids=[2,1,2,2,2,2,2] best=[0.56,0.61,0.73,0.72,0.74,0.68,0.65] dur=[2.2,1.7,2.4,2.3,3.4,1.5,1.6] confirmed=1 load=0 route=geom
+09-20 01:35:07.291 I/WE-DIAG (11389): speaker-recluster: n=505 clusters=11 confirmed=11 changed=232 ms=60
+09-20 01:35:11.425 I/WE-DIAG (11389): finalize: wallMs=4615 audio_ctx=512 threads=4 audioMs=5850 segments=2
+09-20 01:35:11.510 I/WE-DIAG (11389): VAD: 122368 -> 120160 samples (2 segments) wallMs=81.8
+09-20 01:35:11.613 I/WE-DIAG (11389): speaker: seq=110 segs=1 windows=2 embedMs=186 ids=[2,2] best=[0.69,0.66] dur=[2.8,3.0] confirmed=1 load=0 route=geom
+09-20 01:35:16.342 I/WE-DIAG (11389): finalize: wallMs=4832 audio_ctx=512 threads=4 audioMs=7510 segments=3
+09-20 01:35:16.567 I/WE-DIAG (11389): speaker: seq=111 segs=2 windows=3 embedMs=222 ids=[5,5,5] best=[0.53,0.73,0.70] dur=[1.8,3.3,2.4] confirmed=1 load=0 route=geom
+09-20 01:35:22.791 I/WE-DIAG (11389): VAD: 209920 -> 207840 samples (2 segments) wallMs=154.0
+09-20 01:35:31.298 I/WE-DIAG (11389): finalize: wallMs=8507 audio_ctx=713 threads=4 audioMs=12990 segments=5
+09-20 01:35:31.685 I/WE-DIAG (11389): speaker: seq=112 segs=2 windows=5 embedMs=384 ids=[5,5,5,5,5] best=[0.71,0.69,0.76,0.69,0.61] dur=[2.6,2.2,3.4,3.2,1.5] confirmed=1 load=0 route=geom
+09-20 01:35:36.081 I/WE-DIAG (11389): VAD: 212992 -> 210720 samples (2 segments) wallMs=134.0
+09-20 01:35:44.553 I/WE-DIAG (11389): finalize: wallMs=8472 audio_ctx=722 threads=4 audioMs=13170 segments=3
+09-20 01:35:44.948 I/WE-DIAG (11389): speaker: seq=113 segs=2 windows=4 embedMs=393 ids=[5,5,5,2] best=[0.73,0.70,0.71,0.78] dur=[3.4,3.2,3.3,3.2] confirmed=1 load=0 route=geom
+09-20 01:35:51.131 I/WE-DIAG (11389): VAD: 240128 -> 238208 samples (3 segments) wallMs=177.3
+09-20 01:35:59.537 I/WE-DIAG (11389): finalize: wallMs=8406 audio_ctx=808 threads=4 audioMs=14888 segments=1
+09-20 01:35:59.954 I/WE-DIAG (11389): speaker: seq=114 segs=3 windows=3 embedMs=415 ids=[5,5,5] best=[0.57,0.72,0.78] dur=[2.5,6.6,5.5] confirmed=1 load=0 route=geom
+09-20 01:36:00.018 I/WE-DIAG (11389): speaker-recluster: n=522 clusters=10 confirmed=10 changed=157 ms=63
+09-20 01:36:06.120 I/WE-DIAG (11389): VAD: 228352 -> 228160 samples (3 segments) wallMs=156.8
+09-20 01:36:14.933 I/WE-DIAG (11389): finalize: wallMs=8813 audio_ctx=777 threads=4 audioMs=14260 segments=4
+09-20 01:36:15.005 I/WE-DIAG (11389): VAD: 118272 -> 116480 samples (2 segments) wallMs=69.8
+09-20 01:36:15.377 I/WE-DIAG (11389): speaker: seq=115 segs=3 windows=6 embedMs=438 ids=[6,6,6,6,6,6] best=[0.78,0.68,0.71,0.68,0.63,0.65] dur=[3.2,2.0,2.2,2.1,2.2,2.4] confirmed=1 load=0 route=geom
+09-20 01:36:19.561 I/WE-DIAG (11389): finalize: wallMs=4556 audio_ctx=512 threads=4 audioMs=7280 segments=3
+09-20 01:36:19.793 I/WE-DIAG (11389): speaker: seq=116 segs=2 windows=3 embedMs=230 ids=[6,2,2] best=[0.63,0.64,0.66] dur=[2.4,2.0,2.8] confirmed=1 load=0 route=geom
+09-20 01:36:20.063 I/WE-DIAG (11389): VAD: 117760 -> 107840 samples (2 segments) wallMs=87.5
+09-20 01:36:24.760 I/WE-DIAG (11389): finalize: wallMs=4696 audio_ctx=512 threads=4 audioMs=6740 segments=1
+09-20 01:36:24.974 I/WE-DIAG (11389): speaker: seq=117 segs=2 windows=3 embedMs=212 ids=[2,2,2] best=[0.57,0.67,0.69] dur=[2.3,2.5,1.9] confirmed=1 load=0 route=geom
+09-20 01:36:32.669 I/WE-DIAG (11389): VAD: 200704 -> 192160 samples (1 segments) wallMs=145.8
+09-20 01:36:38.838 I/WE-DIAG (11389): finalize: wallMs=6169 audio_ctx=664 threads=4 audioMs=12010 segments=1
+09-20 01:36:39.217 I/WE-DIAG (11389): speaker: seq=118 segs=1 windows=2 embedMs=377 ids=[2,6] best=[0.58,0.75] dur=[1.0,11.0] confirmed=1 load=0 route=geom
+09-20 01:36:47.691 I/WE-DIAG (11389): VAD: 240128 -> 241408 samples (2 segments) wallMs=160.5
+09-20 01:36:57.369 I/WE-DIAG (11389): finalize: wallMs=9678 audio_ctx=818 threads=4 audioMs=15088 segments=6
+09-20 01:36:57.772 I/WE-DIAG (11389): speaker: seq=119 segs=2 windows=7 embedMs=400 ids=[6,6,6,6,6,6,6] best=[-,0.77,0.67,0.73,0.76,0.63,0.67] dur=[0.7,2.7,2.3,2.5,2.0,1.9,2.9] confirmed=1 load=0 route=geom
+09-20 01:36:57.840 I/WE-DIAG (11389): speaker-recluster: n=542 clusters=10 confirmed=10 changed=0 ms=67
+09-20 01:36:59.651 I/WE-DIAG (11389): VAD: 192000 -> 171840 samples (3 segments) wallMs=120.4
+09-20 01:37:06.135 I/WE-DIAG (11389): finalize: wallMs=6484 audio_ctx=601 threads=4 audioMs=10740 segments=5
+09-20 01:37:06.254 I/WE-DIAG (11389): VAD: 106496 -> 104800 samples (2 segments) wallMs=69.3
+09-20 01:37:06.497 I/WE-DIAG (11389): speaker: seq=120 segs=3 windows=6 embedMs=360 ids=[6,2,6,6,6,6] best=[0.73,0.55,0.71,0.63,0.28,0.60] dur=[2.0,1.3,2.2,2.4,1.0,1.7] confirmed=1 load=0 route=geom
+09-20 01:37:11.125 I/WE-DIAG (11389): finalize: wallMs=4871 audio_ctx=512 threads=4 audioMs=6550 segments=4
+09-20 01:37:11.334 I/WE-DIAG (11389): speaker: seq=121 segs=2 windows=3 embedMs=208 ids=[6,6,6] best=[0.58,0.68,0.71] dur=[1.4,2.6,2.4] confirmed=1 load=0 route=geom
+09-20 01:37:12.524 I/WE-DIAG (11389): VAD: 100352 -> 74240 samples (2 segments) wallMs=70.1
+09-20 01:37:17.012 I/WE-DIAG (11389): finalize: wallMs=4488 audio_ctx=512 threads=4 audioMs=4640 segments=1
+09-20 01:37:17.163 I/WE-DIAG (11389): speaker: seq=122 segs=2 windows=2 embedMs=149 ids=[6,2] best=[0.49,0.68] dur=[1.6,2.9] confirmed=1 load=0 route=geom
+09-20 01:37:26.184 I/WE-DIAG (11389): VAD: 217088 -> 197440 samples (3 segments) wallMs=155.9
+09-20 01:37:33.795 I/WE-DIAG (11389): finalize: wallMs=7611 audio_ctx=681 threads=4 audioMs=12340 segments=4
+09-20 01:37:34.153 I/WE-DIAG (11389): speaker: seq=123 segs=3 windows=6 embedMs=355 ids=[2,2,2,2,2,2] best=[0.61,0.61,0.65,0.63,0.59,0.75] dur=[2.2,2.2,2.3,1.3,2.0,2.1] confirmed=1 load=0 route=geom
+09-20 01:37:39.576 I/WE-DIAG (11389): VAD: 214528 -> 210080 samples (4 segments) wallMs=139.1
+09-20 01:37:48.241 I/WE-DIAG (11389): finalize: wallMs=8665 audio_ctx=720 threads=4 audioMs=13130 segments=8
+09-20 01:37:48.286 I/WE-DIAG (11389): VAD: 71168 -> 74048 samples (3 segments) wallMs=43.2
+09-20 01:37:48.667 I/WE-DIAG (11389): speaker: seq=124 segs=4 windows=7 embedMs=421 ids=[2,2,6,6,6,6,1] best=[0.43,0.66,0.66,0.52,0.44,0.50,0.53] dur=[1.3,2.1,1.8,1.8,1.5,1.7,2.5] confirmed=1 load=0 route=geom
+09-20 01:37:48.762 I/WE-DIAG (11389): speaker-recluster: n=566 clusters=10 confirmed=10 changed=240 ms=96
+09-20 01:37:52.384 I/WE-DIAG (11389): finalize: wallMs=4098 audio_ctx=512 threads=4 audioMs=4628 segments=2
+09-20 01:37:52.495 I/WE-DIAG (11389): speaker: seq=125 segs=3 windows=3 embedMs=109 ids=[2,6,6] best=[0.53,0.70,-] dur=[1.1,2.6,0.7] confirmed=1 load=0 route=geom
+09-20 01:37:52.576 I/WE-DIAG (11389): speaker-recluster: n=568 clusters=10 confirmed=10 changed=0 ms=79
+09-20 01:37:52.579 I/WE-DIAG (11389): finalize-timing: speaker-drain=191ms settled=true
+09-20 01:39:05.225 I/WE-DIAG (11389): VAD: 17408 -> 16768 samples (1 segments) wallMs=10.8
+09-20 01:39:06.106 I/WE-DIAG (11389): finalize: wallMs=881 audio_ctx=512 threads=4 audioMs=1100 segments=1
+09-20 01:39:06.272 I/WE-DIAG (11389): speaker: seq=0 segs=1 windows=1 embedMs=164 ids=[0] best=[-] dur=[1.0] confirmed=0 load=1 route=geom
+09-20 01:39:11.258 I/WE-DIAG (11389): VAD: 96256 -> 92960 samples (1 segments) wallMs=26.4
+09-20 01:39:12.234 I/WE-DIAG (11389): finalize: wallMs=974 audio_ctx=512 threads=4 audioMs=5810 segments=2
+09-20 01:39:12.333 I/WE-DIAG (11389): speaker: seq=1 segs=1 windows=3 embedMs=96 ids=[1,1,1] best=[-,0.41,0.03] dur=[2.5,2.2,1.1] confirmed=0 load=0 route=geom
+09-20 01:39:17.795 I/WE-DIAG (11389): VAD: 104448 -> 101280 samples (1 segments) wallMs=35.3
+09-20 01:39:18.938 I/WE-DIAG (11389): finalize: wallMs=1143 audio_ctx=512 threads=4 audioMs=6330 segments=4
+09-20 01:39:19.044 I/WE-DIAG (11389): speaker: seq=2 segs=1 windows=4 embedMs=104 ids=[2,2,2,2] best=[0.12,0.30,0.42,0.39] dur=[2.3,1.5,1.1,1.4] confirmed=0 load=0 route=geom
+09-20 01:39:32.897 I/WE-DIAG (11389): VAD: 210432 -> 211840 samples (3 segments) wallMs=123.2
+09-20 01:39:35.787 I/WE-DIAG (11389): finalize: wallMs=2890 audio_ctx=726 threads=4 audioMs=13240 segments=4
+09-20 01:39:36.114 I/WE-DIAG (11389): speaker: seq=3 segs=3 windows=5 embedMs=325 ids=[2,2,2,2,2] best=[0.55,0.56,0.62,0.65,0.75] dur=[3.5,1.5,2.6,2.8,2.6] confirmed=0 load=0 route=geom
+09-20 01:39:47.921 I/WE-DIAG (11389): VAD: 252480 -> 253280 samples (3 segments) wallMs=145.3
+09-20 01:39:51.218 I/WE-DIAG (11389): finalize: wallMs=3296 audio_ctx=855 threads=4 audioMs=15830 segments=3
+09-20 01:39:51.625 I/WE-DIAG (11389): speaker-labels: confirmed=2 runs=19 relabelled=1
+09-20 01:39:51.625 I/WE-DIAG (11389): speaker-recluster: n=20 clusters=3 confirmed=3 changed=3 ms=0
+09-20 01:39:51.625 I/WE-DIAG (11389): speaker: seq=4 segs=3 windows=7 embedMs=403 ids=[2,2,2,3,3,3,3] best=[0.74,0.67,0.56,0.25,0.35,0.44,0.34] dur=[2.0,2.2,1.8,2.6,2.6,2.3,2.2] confirmed=0 load=0 route=geom
+09-20 01:40:02.934 I/WE-DIAG (11389): VAD: 257472 -> 255072 samples (2 segments) wallMs=147.4
+09-20 01:40:07.126 I/WE-DIAG (11389): finalize: wallMs=4191 audio_ctx=861 threads=4 audioMs=15942 segments=7
+09-20 01:40:07.566 I/WE-DIAG (11389): speaker: seq=5 segs=2 windows=8 embedMs=436 ids=[2,2,2,2,2,2,2,2] best=[0.57,0.44,0.71,0.67,0.67,0.61,0.19,0.64] dur=[2.0,1.9,2.6,2.9,2.5,1.5,1.0,1.4] confirmed=1 load=0 route=geom
+09-20 01:40:17.944 I/WE-DIAG (11389): VAD: 215520 -> 215520 samples (1 segments) wallMs=149.3
+09-20 01:40:20.948 I/WE-DIAG (11389): finalize: wallMs=3002 audio_ctx=737 threads=4 audioMs=13470 segments=4
+09-20 01:40:21.308 I/WE-DIAG (11389): speaker: seq=6 segs=1 windows=6 embedMs=358 ids=[2,2,2,2,2,2] best=[0.71,0.60,0.78,0.76,0.60,0.62] dur=[2.2,2.0,3.8,2.3,2.1,1.0] confirmed=1 load=0 route=geom
+09-20 01:40:32.962 I/WE-DIAG (11389): VAD: 219232 -> 165632 samples (2 segments) wallMs=159.1
+09-20 01:40:35.181 I/WE-DIAG (11389): finalize: wallMs=2218 audio_ctx=581 threads=4 audioMs=10352 segments=3
+09-20 01:40:35.457 I/WE-DIAG (11389): speaker: seq=7 segs=2 windows=3 embedMs=274 ids=[2,1,1] best=[0.65,0.59,0.88] dur=[3.2,3.1,4.0] confirmed=1 load=0 route=geom
+09-20 01:40:47.978 I/WE-DIAG (11389): VAD: 285632 -> 283392 samples (1 segments) wallMs=165.6
+09-20 01:40:52.631 I/WE-DIAG (11389): finalize: wallMs=4653 audio_ctx=949 threads=4 audioMs=17712 segments=4
+09-20 01:40:53.097 I/WE-DIAG (11389): speaker: seq=8 segs=1 windows=8 embedMs=461 ids=[1,1,1,1,1,1,4,1] best=[0.70,0.78,0.75,0.76,0.74,0.63,0.12,0.64] dur=[2.2,2.4,1.9,2.2,2.4,2.2,2.0,2.3] confirmed=1 load=0 route=geom
+09-20 01:40:59.334 I/WE-DIAG (11389): VAD: 182784 -> 179520 samples (1 segments) wallMs=100.5
+09-20 01:41:08.443 I/WE-DIAG (11389): finalize: wallMs=9109 audio_ctx=625 threads=4 audioMs=11220 segments=1
+09-20 01:41:08.743 I/WE-DIAG (11389): speaker: seq=9 segs=1 windows=4 embedMs=298 ids=[4,4,4,4] best=[0.57,0.65,0.61,0.43] dur=[2.7,2.7,2.9,3.0] confirmed=1 load=0 route=geom
+09-20 01:41:08.744 I/WE-DIAG (11389): speaker-recluster: n=49 clusters=4 confirmed=4 changed=2 ms=0
+09-20 01:41:11.193 I/WE-DIAG (11389): VAD: 189440 -> 183200 samples (3 segments) wallMs=118.0
+09-20 01:41:13.797 I/WE-DIAG (11389): finalize: wallMs=2604 audio_ctx=636 threads=4 audioMs=11450 segments=2
+09-20 01:41:14.119 I/WE-DIAG (11389): speaker: seq=10 segs=3 windows=5 embedMs=319 ids=[2,2,2,2,2] best=[0.54,0.71,0.72,0.71,0.70] dur=[1.8,2.3,2.6,2.3,2.3] confirmed=1 load=0 route=geom
+09-20 01:41:26.241 I/WE-DIAG (11389): VAD: 240128 -> 241728 samples (2 segments) wallMs=158.6
+09-20 01:41:30.314 I/WE-DIAG (11389): finalize: wallMs=4072 audio_ctx=819 threads=4 audioMs=15108 segments=4
+09-20 01:41:30.734 I/WE-DIAG (11389): speaker: seq=11 segs=2 windows=7 embedMs=418 ids=[2,2,2,2,2,2,2] best=[-,0.74,0.75,0.69,0.70,0.66,0.63] dur=[0.7,2.5,3.5,2.2,2.1,2.8,1.2] confirmed=1 load=0 route=geom
+09-20 01:41:33.801 I/WE-DIAG (11389): VAD: 122368 -> 115200 samples (2 segments) wallMs=72.5
+09-20 01:41:35.536 I/WE-DIAG (11389): finalize: wallMs=1735 audio_ctx=512 threads=4 audioMs=7200 segments=3
+09-20 01:41:35.709 I/WE-DIAG (11389): speaker: seq=12 segs=2 windows=4 embedMs=171 ids=[2,2,2,2] best=[-,0.52,0.58,0.77] dur=[0.7,1.2,2.0,3.2] confirmed=1 load=0 route=geom
+09-20 01:41:48.886 I/WE-DIAG (11389): VAD: 240128 -> 233408 samples (4 segments) wallMs=145.2
+09-20 01:41:52.101 I/WE-DIAG (11389): finalize: wallMs=3215 audio_ctx=793 threads=4 audioMs=14588 segments=4
+09-20 01:41:52.478 I/WE-DIAG (11389): speaker: seq=13 segs=4 windows=6 embedMs=375 ids=[2,2,2,2,2,1] best=[0.43,0.48,0.68,0.69,0.57,0.57] dur=[2.6,2.5,2.1,1.9,2.6,2.6] confirmed=1 load=0 route=geom
+09-20 01:41:59.295 I/WE-DIAG (11389): VAD: 167424 -> 102080 samples (3 segments) wallMs=91.2
+09-20 01:42:00.709 I/WE-DIAG (11389): finalize: wallMs=1415 audio_ctx=512 threads=4 audioMs=6380 segments=1
+09-20 01:42:00.835 I/WE-DIAG (11389): speaker: seq=14 segs=3 windows=4 embedMs=124 ids=[1,1,1,1] best=[0.58,0.46,-,-] dur=[2.6,2.4,0.6,0.6] confirmed=1 load=0 route=geom
+09-20 01:42:00.836 I/WE-DIAG (11389): speaker-recluster: n=71 clusters=4 confirmed=4 changed=2 ms=0
+09-20 01:42:08.989 I/WE-DIAG (11389): VAD: 155136 -> 149280 samples (3 segments) wallMs=89.5
+09-20 01:42:10.701 I/WE-DIAG (11389): finalize: wallMs=1712 audio_ctx=530 threads=4 audioMs=9330 segments=2
+09-20 01:42:10.948 I/WE-DIAG (11389): speaker: seq=15 segs=3 windows=4 embedMs=245 ids=[4,4,4,4] best=[0.58,0.65,0.71,0.70] dur=[2.5,2.6,2.3,1.7] confirmed=1 load=0 route=geom
+09-20 01:42:24.043 I/WE-DIAG (11389): VAD: 233440 -> 226880 samples (3 segments) wallMs=133.4
+09-20 01:42:27.063 I/WE-DIAG (11389): finalize: wallMs=3020 audio_ctx=773 threads=4 audioMs=14180 segments=5
+09-20 01:42:27.419 I/WE-DIAG (11389): speaker: seq=16 segs=3 windows=7 embedMs=353 ids=[4,4,4,4,2,2,2] best=[0.68,0.67,0.51,0.32,0.62,0.60,-] dur=[2.1,2.1,1.3,2.0,3.5,2.5,0.4] confirmed=1 load=0 route=geom
+09-20 01:42:34.407 I/WE-DIAG (11389): VAD: 173088 -> 168160 samples (1 segments) wallMs=100.8
+09-20 01:42:36.661 I/WE-DIAG (11389): finalize: wallMs=2253 audio_ctx=589 threads=4 audioMs=10510 segments=5
+09-20 01:42:36.950 I/WE-DIAG (11389): speaker: seq=17 segs=1 windows=5 embedMs=286 ids=[2,2,2,2,2] best=[0.50,0.67,0.54,0.59,0.67] dur=[1.5,2.8,2.1,2.1,2.1] confirmed=1 load=0 route=geom
+09-20 01:42:41.479 I/WE-DIAG (11389): VAD: 113664 -> 107520 samples (2 segments) wallMs=71.2
+09-20 01:42:43.124 I/WE-DIAG (11389): finalize: wallMs=1644 audio_ctx=512 threads=4 audioMs=6720 segments=2
+09-20 01:42:43.304 I/WE-DIAG (11389): speaker: seq=18 segs=2 windows=3 embedMs=179 ids=[2,2,5] best=[0.64,0.53,0.29] dur=[2.5,2.3,1.8] confirmed=1 load=0 route=geom
+09-20 01:42:56.559 I/WE-DIAG (11389): VAD: 240128 -> 219648 samples (2 segments) wallMs=140.9
+09-20 01:42:59.844 I/WE-DIAG (11389): finalize: wallMs=3285 audio_ctx=750 threads=4 audioMs=13728 segments=4
+09-20 01:43:00.208 I/WE-DIAG (11389): speaker: seq=19 segs=2 windows=5 embedMs=361 ids=[5,2,2,2,2] best=[0.49,0.55,0.70,0.66,0.47] dur=[3.6,3.0,3.0,2.0,2.0] confirmed=1 load=0 route=geom
+09-20 01:43:00.216 I/WE-DIAG (11389): speaker-recluster: n=94 clusters=4 confirmed=4 changed=3 ms=1
+09-20 01:43:04.524 I/WE-DIAG (11389): VAD: 128512 -> 120480 samples (2 segments) wallMs=74.4
+09-20 01:43:06.051 I/WE-DIAG (11389): finalize: wallMs=1527 audio_ctx=512 threads=4 audioMs=7530 segments=2
+09-20 01:43:06.245 I/WE-DIAG (11389): speaker: seq=20 segs=2 windows=3 embedMs=192 ids=[2,2,2] best=[0.61,0.79,0.59] dur=[2.1,3.5,1.9] confirmed=1 load=0 route=geom
+09-20 01:43:13.462 I/WE-DIAG (11389): VAD: 142848 -> 139520 samples (1 segments) wallMs=84.1
+09-20 01:43:15.283 I/WE-DIAG (11389): finalize: wallMs=1820 audio_ctx=512 threads=4 audioMs=8720 segments=4
+09-20 01:43:15.518 I/WE-DIAG (11389): speaker: seq=21 segs=1 windows=4 embedMs=233 ids=[2,2,4,4] best=[0.68,0.70,0.62,0.48] dur=[2.5,2.3,1.4,2.5] confirmed=1 load=0 route=geom
+09-20 01:43:25.326 I/WE-DIAG (11389): VAD: 189440 -> 172800 samples (3 segments) wallMs=110.2
+09-20 01:43:27.604 I/WE-DIAG (11389): finalize: wallMs=2278 audio_ctx=604 threads=4 audioMs=10800 segments=3
+09-20 01:43:27.869 I/WE-DIAG (11389): speaker: seq=22 segs=3 windows=4 embedMs=262 ids=[4,4,2,2] best=[-,0.43,0.70,0.71] dur=[0.6,3.8,2.9,3.3] confirmed=1 load=0 route=geom
+09-20 01:43:38.431 I/WE-DIAG (11389): VAD: 209408 -> 196800 samples (2 segments) wallMs=120.6
+09-20 01:43:41.194 I/WE-DIAG (11389): finalize: wallMs=2763 audio_ctx=679 threads=4 audioMs=12300 segments=3
+09-20 01:43:41.513 I/WE-DIAG (11389): speaker: seq=23 segs=2 windows=5 embedMs=317 ids=[2,2,2,2,2] best=[0.68,0.70,0.68,0.64,0.64] dur=[2.7,2.7,2.7,2.5,1.6] confirmed=1 load=0 route=geom
+09-20 01:43:51.934 I/WE-DIAG (11389): VAD: 216064 -> 209120 samples (2 segments) wallMs=124.8
+09-20 01:43:54.726 I/WE-DIAG (11389): finalize: wallMs=2792 audio_ctx=717 threads=4 audioMs=13070 segments=3
+09-20 01:43:55.085 I/WE-DIAG (11389): speaker: seq=24 segs=2 windows=6 embedMs=356 ids=[2,2,2,2,2,2] best=[0.70,0.65,0.63,0.63,0.69,0.70] dur=[2.2,2.6,2.2,2.0,1.8,2.2] confirmed=1 load=0 route=geom
+09-20 01:43:55.087 I/WE-DIAG (11389): speaker-recluster: n=115 clusters=4 confirmed=4 changed=1 ms=2
+09-20 01:44:03.540 I/WE-DIAG (11389): VAD: 185856 -> 182080 samples (1 segments) wallMs=113.6
+09-20 01:44:06.242 I/WE-DIAG (11389): finalize: wallMs=2702 audio_ctx=633 threads=4 audioMs=11380 segments=5
+09-20 01:44:06.558 I/WE-DIAG (11389): speaker: seq=25 segs=1 windows=5 embedMs=313 ids=[2,2,2,2,2] best=[0.69,0.57,0.65,0.70,0.67] dur=[2.5,3.0,2.0,2.3,1.6] confirmed=1 load=0 route=geom
+09-20 01:44:10.239 I/WE-DIAG (11389): VAD: 108032 -> 102400 samples (2 segments) wallMs=63.1
+09-20 01:44:12.023 I/WE-DIAG (11389): finalize: wallMs=1783 audio_ctx=512 threads=4 audioMs=6400 segments=3
+09-20 01:44:12.197 I/WE-DIAG (11389): speaker: seq=26 segs=2 windows=3 embedMs=172 ids=[2,4,4] best=[0.46,0.60,0.65] dur=[1.4,1.3,3.6] confirmed=1 load=0 route=geom
+09-20 01:44:18.869 I/WE-DIAG (11389): VAD: 137728 -> 122720 samples (3 segments) wallMs=83.3
+09-20 01:44:20.488 I/WE-DIAG (11389): finalize: wallMs=1619 audio_ctx=512 threads=4 audioMs=7670 segments=2
+09-20 01:44:20.693 I/WE-DIAG (11389): speaker: seq=27 segs=3 windows=3 embedMs=203 ids=[4,4,4] best=[0.70,0.72,0.67] dur=[2.9,2.5,2.1] confirmed=1 load=0 route=geom
+09-20 01:44:33.931 I/WE-DIAG (11389): VAD: 240128 -> 237408 samples (3 segments) wallMs=136.8
+09-20 01:44:37.198 I/WE-DIAG (11389): finalize: wallMs=3267 audio_ctx=805 threads=4 audioMs=14838 segments=5
+09-20 01:44:37.577 I/WE-DIAG (11389): speaker: seq=28 segs=3 windows=6 embedMs=377 ids=[4,4,4,4,4,4] best=[0.75,0.75,0.76,0.67,0.77,0.73] dur=[2.3,2.0,2.6,1.8,3.4,2.6] confirmed=1 load=0 route=geom
+09-20 01:44:48.941 I/WE-DIAG (11389): VAD: 240128 -> 239808 samples (2 segments) wallMs=136.3
+09-20 01:44:52.218 I/WE-DIAG (11389): finalize: wallMs=3277 audio_ctx=813 threads=4 audioMs=14988 segments=6
+09-20 01:44:52.607 I/WE-DIAG (11389): speaker: seq=29 segs=2 windows=7 embedMs=385 ids=[4,4,4,4,4,4,2] best=[0.63,0.69,0.80,0.73,0.73,0.47,0.70] dur=[1.3,1.4,3.9,2.7,1.4,2.1,2.2] confirmed=1 load=0 route=geom
+09-20 01:44:52.620 I/WE-DIAG (11389): speaker-recluster: n=139 clusters=4 confirmed=4 changed=1 ms=2
+09-20 01:45:02.626 I/WE-DIAG (11389): VAD: 219136 -> 216800 samples (3 segments) wallMs=126.5
+09-20 01:45:05.519 I/WE-DIAG (11389): finalize: wallMs=2893 audio_ctx=741 threads=4 audioMs=13550 segments=3
+09-20 01:45:05.887 I/WE-DIAG (11389): speaker: seq=30 segs=3 windows=6 embedMs=363 ids=[2,2,2,2,1,1] best=[0.66,0.72,0.60,0.71,0.61,0.72] dur=[1.4,3.2,2.0,2.3,1.9,2.6] confirmed=1 load=0 route=geom
+09-20 01:45:17.653 I/WE-DIAG (11389): VAD: 240128 -> 232928 samples (2 segments) wallMs=146.2
+09-20 01:45:21.158 I/WE-DIAG (11389): finalize: wallMs=3505 audio_ctx=791 threads=4 audioMs=14558 segments=4
+09-20 01:45:21.554 I/WE-DIAG (11389): speaker: seq=31 segs=2 windows=5 embedMs=394 ids=[2,2,2,2,2] best=[0.68,0.81,0.74,0.70,0.68] dur=[3.9,3.3,2.4,2.3,2.6] confirmed=1 load=0 route=geom
+09-20 01:45:29.511 I/WE-DIAG (11389): VAD: 190464 -> 190400 samples (3 segments) wallMs=104.3
+09-20 01:45:31.740 I/WE-DIAG (11389): finalize: wallMs=2228 audio_ctx=659 threads=4 audioMs=11900 segments=3
+09-20 01:45:32.036 I/WE-DIAG (11389): speaker: seq=32 segs=3 windows=4 embedMs=294 ids=[2,2,2,1] best=[0.69,0.67,0.63,0.56] dur=[3.7,3.2,3.2,1.7] confirmed=1 load=0 route=geom
+09-20 01:45:37.443 I/WE-DIAG (11389): VAD: 127488 -> 119520 samples (1 segments) wallMs=68.7
+09-20 01:45:38.909 I/WE-DIAG (11389): finalize: wallMs=1465 audio_ctx=512 threads=4 audioMs=7470 segments=2
+09-20 01:45:39.097 I/WE-DIAG (11389): speaker: seq=33 segs=1 windows=3 embedMs=186 ids=[1,1,1] best=[0.60,0.75,0.79] dur=[2.4,3.0,2.1] confirmed=1 load=0 route=geom
+09-20 01:45:52.499 I/WE-DIAG (11389): VAD: 196096 -> 194496 samples (2 segments) wallMs=110.1
+09-20 01:45:55.051 I/WE-DIAG (11389): finalize: wallMs=2552 audio_ctx=671 threads=4 audioMs=12156 segments=6
+09-20 01:45:55.363 I/WE-DIAG (11389): speaker: seq=34 segs=2 windows=6 embedMs=309 ids=[2,2,2,2,2,2] best=[0.57,0.63,0.54,0.64,0.66,0.70] dur=[1.9,2.4,1.5,2.3,2.2,1.9] confirmed=1 load=0 route=geom
+09-20 01:45:55.383 I/WE-DIAG (11389): speaker-recluster: n=163 clusters=5 confirmed=5 changed=8 ms=3
+09-20 01:46:07.543 I/WE-DIAG (11389): VAD: 255968 -> 254208 samples (1 segments) wallMs=145.4
+09-20 01:46:11.224 I/WE-DIAG (11389): finalize: wallMs=3680 audio_ctx=858 threads=4 audioMs=15888 segments=8
+09-20 01:46:11.634 I/WE-DIAG (11389): speaker: seq=35 segs=1 windows=8 embedMs=408 ids=[2,2,2,2,2,2,2,2] best=[0.73,0.31,0.62,0.73,0.56,0.71,0.63,0.46] dur=[3.3,1.4,1.8,2.8,2.1,1.9,1.6,1.1] confirmed=1 load=0 route=geom
+09-20 01:46:18.222 I/WE-DIAG (11389): VAD: 199712 -> 188160 samples (2 segments) wallMs=107.9
+09-20 01:46:20.508 I/WE-DIAG (11389): finalize: wallMs=2285 audio_ctx=652 threads=4 audioMs=11760 segments=3
+09-20 01:46:20.791 I/WE-DIAG (11389): speaker: seq=36 segs=2 windows=4 embedMs=281 ids=[5,5,5,5] best=[0.76,0.74,0.78,0.61] dur=[3.0,3.6,3.5,1.4] confirmed=1 load=0 route=geom
+09-20 01:46:33.262 I/WE-DIAG (11389): VAD: 226768 -> 225008 samples (1 segments) wallMs=133.8
+09-20 01:46:36.145 I/WE-DIAG (11389): finalize: wallMs=2883 audio_ctx=767 threads=4 audioMs=14063 segments=4
+09-20 01:46:36.500 I/WE-DIAG (11389): speaker: seq=37 segs=1 windows=6 embedMs=350 ids=[5,5,5,5,2,2] best=[0.76,0.73,0.44,0.75,0.54,0.54] dur=[2.8,2.9,1.0,3.0,2.2,2.1] confirmed=1 load=0 route=geom
+09-20 01:46:48.263 I/WE-DIAG (11389): VAD: 243760 -> 243600 samples (3 segments) wallMs=133.9
+09-20 01:46:51.808 I/WE-DIAG (11389): finalize: wallMs=3544 audio_ctx=825 threads=4 audioMs=15225 segments=8
+09-20 01:46:52.199 I/WE-DIAG (11389): speaker: seq=38 segs=3 windows=7 embedMs=384 ids=[2,5,2,2,2,2,2] best=[0.55,0.51,0.70,0.67,0.61,0.62,0.65] dur=[1.4,1.7,3.2,2.3,1.4,2.4,2.7] confirmed=1 load=0 route=geom
+09-20 01:46:55.523 I/WE-DIAG (11389): VAD: 126976 -> 96960 samples (3 segments) wallMs=64.3
+09-20 01:46:57.039 I/WE-DIAG (11389): finalize: wallMs=1515 audio_ctx=512 threads=4 audioMs=6060 segments=3
+09-20 01:46:57.201 I/WE-DIAG (11389): speaker-recluster: n=191 clusters=5 confirmed=5 changed=2 ms=5
+09-20 01:46:57.201 I/WE-DIAG (11389): speaker: seq=39 segs=3 windows=3 embedMs=147 ids=[2,6,6] best=[0.75,0.21,0.53] dur=[1.8,2.4,1.6] confirmed=1 load=0 route=geom
+09-20 01:47:02.461 I/WE-DIAG (11389): VAD: 111104 -> 101440 samples (4 segments) wallMs=60.6
+09-20 01:47:03.972 I/WE-DIAG (11389): finalize: wallMs=1511 audio_ctx=512 threads=4 audioMs=6340 segments=1
+09-20 01:47:04.137 I/WE-DIAG (11389): speaker: seq=40 segs=4 windows=4 embedMs=164 ids=[5,5,5,6] best=[0.17,0.21,0.22,0.24] dur=[1.0,1.5,1.2,2.4] confirmed=1 load=0 route=geom
+09-20 01:47:09.083 I/WE-DIAG (11389): VAD: 105984 -> 100160 samples (4 segments) wallMs=59.9
+09-20 01:47:10.626 I/WE-DIAG (11389): finalize: wallMs=1543 audio_ctx=512 threads=4 audioMs=6260 segments=1
+09-20 01:47:10.790 I/WE-DIAG (11389): speaker: seq=41 segs=4 windows=4 embedMs=162 ids=[7,7,7,7] best=[0.28,0.55,0.68,0.61] dur=[1.9,1.2,1.5,1.4] confirmed=1 load=0 route=geom
+09-20 01:47:16.916 I/WE-DIAG (11389): VAD: 124928 -> 119840 samples (3 segments) wallMs=85.0
+09-20 01:47:18.821 I/WE-DIAG (11389): finalize: wallMs=1905 audio_ctx=512 threads=4 audioMs=7490 segments=2
+09-20 01:47:19.021 I/WE-DIAG (11389): speaker: seq=42 segs=3 windows=4 embedMs=198 ids=[7,7,6,6] best=[0.72,0.78,0.54,0.32] dur=[2.0,2.1,1.6,1.6] confirmed=1 load=0 route=geom
+09-20 01:47:23.710 I/WE-DIAG (11389): VAD: 104960 -> 101760 samples (2 segments) wallMs=74.3
+09-20 01:47:25.371 I/WE-DIAG (11389): finalize: wallMs=1660 audio_ctx=512 threads=4 audioMs=6360 segments=3
+09-20 01:47:25.536 I/WE-DIAG (11389): speaker: seq=43 segs=2 windows=3 embedMs=163 ids=[7,8,8] best=[0.59,0.19,0.73] dur=[1.6,2.4,2.3] confirmed=1 load=0 route=geom
+09-20 01:47:25.550 I/WE-DIAG (11389): speaker-recluster: n=206 clusters=7 confirmed=7 changed=4 ms=6
+09-20 01:47:25.551 I/WE-DIAG (11389): finalize-timing: speaker-drain=178ms settled=true
+09-20 01:47:31.429 I/WE-DIAG (11389): VAD: 8704 -> 8000 samples (1 segments) wallMs=2.9
+09-20 01:47:32.354 I/WE-DIAG (11389): finalize: wallMs=925 audio_ctx=512 threads=4 audioMs=1100 segments=1
+09-20 01:47:32.356 I/WE-DIAG (11389): speaker: seq=0 segs=1 windows=1 embedMs=0 ids=[0] best=[-] dur=[0.5] confirmed=0 load=0 route=geom
+09-20 01:47:46.567 I/WE-DIAG (11389): VAD: 200656 -> 193920 samples (2 segments) wallMs=125.8
+09-20 01:47:49.129 I/WE-DIAG (11389): finalize: wallMs=2561 audio_ctx=670 threads=4 audioMs=12120 segments=3
+09-20 01:47:49.660 I/WE-DIAG (11389): speaker: seq=1 segs=2 windows=5 embedMs=529 ids=[1,1,2,2,2] best=[-,0.47,0.10,0.84,0.86] dur=[2.4,2.3,2.5,2.6,2.2] confirmed=0 load=1 route=geom
+09-20 01:47:58.856 I/WE-DIAG (11389): VAD: 236080 -> 228640 samples (5 segments) wallMs=125.9
+09-20 01:48:02.060 I/WE-DIAG (11389): finalize: wallMs=3203 audio_ctx=778 threads=4 audioMs=14290 segments=7
+09-20 01:48:02.395 I/WE-DIAG (11389): speaker: seq=2 segs=5 windows=7 embedMs=333 ids=[2,2,2,2,2,2,2] best=[0.42,0.39,0.40,0.37,-,0.81,0.79] dur=[2.4,2.0,1.3,2.5,0.7,2.5,2.5] confirmed=0 load=0 route=geom
+09-20 01:48:10.412 I/WE-DIAG (11389): VAD: 185344 -> 183520 samples (3 segments) wallMs=101.6
+09-20 01:48:12.686 I/WE-DIAG (11389): finalize: wallMs=2274 audio_ctx=637 threads=4 audioMs=11470 segments=5
+09-20 01:48:12.967 I/WE-DIAG (11389): speaker-labels: confirmed=2 runs=17 relabelled=1
+09-20 01:48:12.967 I/WE-DIAG (11389): speaker: seq=3 segs=3 windows=5 embedMs=278 ids=[3,3,3,3,2] best=[0.19,0.71,0.62,-,0.77] dur=[1.6,3.4,3.0,0.9,2.4] confirmed=1 load=0 route=geom
