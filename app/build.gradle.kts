@@ -1095,6 +1095,9 @@ val npuPackCensusRows = listOf(
     listOf("npu_turbo", "soc_8elite_galaxy", 775_544_832L, 295_821_312L),
     listOf("npu_turbo", "soc_8elite5_galaxy", 777_441_280L, 295_911_424L),
     listOf("npu_turbo", "soc_7gen4", 846_360_576L, 295_895_040L),
+    // 8 Gen 2 (SM8550), added 2026-09-22 — device-executed on an S23 Ultra.
+    listOf("npu_small", "soc_qcs8550", 132931584L, 225312768L),
+    listOf("npu_turbo", "soc_qcs8550", 775_843_840L, 295_854_080L),
 )
 val verifyNpuPacks = tasks.register("verifyNpuPacks") {
     description = "Verifies every NPU asset-pack variant against the census byte counts and " +

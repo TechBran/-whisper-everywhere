@@ -251,17 +251,20 @@ class NpuFleetCensusTest {
     @Test
     fun theCpuLedgerNamesTheSixAbsentPartsAndStaysDisjointFromTheCensus() {
         assertEquals(
-            "seven checked-absent strings for six absent parts (the 8 Gen 2 has two bins) — " +
-                "8 Gen 2, 8+ Gen 1, 8 Gen 1, 888, and the two non-Galaxy Elite plains",
-            setOf("SM8550", "SM8550-AC", "SM8475", "SM8450", "SM8350", "SM8750", "SM8850"),
+            "five checked-absent strings for five absent parts — 8+ Gen 1, 8 Gen 1, 888, and " +
+                "the two non-Galaxy Elite plains. The 8 Gen 2's two bins LEFT this ledger on " +
+                "2026-09-22 for the qcs8550 family, which is the only way out of it: a " +
+                "measurement with a date, and this one device-executed",
+            setOf("SM8475", "SM8450", "SM8350", "SM8750", "SM8850"),
             NpuFleetCensus.CPU_BY_CENSUS.keys
         )
         assertEquals(
-            "the named example line, verbatim — the ledger's format contract: part, the absence, " +
-                "the date, the method",
-            "8 Gen 2 — no published w8a16 package as of 2026-08-29 " +
+            "the named example line, verbatim — the ledger's format contract: part, the " +
+                "absence, the date, the method. It was the 8 Gen 2's until that part earned a " +
+                "family; the 8+ Gen 1 carries the identical shape",
+            "8+ Gen 1 — no published w8a16 package as of 2026-08-29 " +
                 "(both release manifests re-fetched)",
-            NpuFleetCensus.CPU_BY_CENSUS["SM8550"]
+            NpuFleetCensus.CPU_BY_CENSUS["SM8475"]
         )
         val censusStrings = families.flatMap { it.socModels }.toSet()
         for (key in NpuFleetCensus.CPU_BY_CENSUS.keys) {
@@ -307,7 +310,7 @@ class NpuFleetCensusTest {
     @Test
     fun theArtifactCensusHasEightRowsFamilyMajorInTableOrderUnderTheCatalogsNames() {
         assertEquals(
-            "eight measured pairs: 4 families x 2 tiers, family-major in families order, " +
+            "ten measured pairs: 5 families x 2 tiers, family-major in families order, " +
                 "npu before npu-turbo — a missing row is a family that cannot verify an " +
                 "arrival, a surplus row is a measurement nobody made",
             families.flatMap { f -> listOf(f.id to "npu", f.id to "npu-turbo") },
@@ -342,7 +345,7 @@ class NpuFleetCensusTest {
     fun allSixteenArtifactDigestsAreSixtyFourHexAndPairwiseDistinct() {
         val hex = Regex("^[0-9a-f]{64}$")
         val digests = artifacts.flatMap { listOf(it.encoder.sha256, it.decoder.sha256) }
-        assertEquals("eight pairs carry sixteen digests", 16, digests.size)
+        assertEquals("ten pairs carry twenty digests", 20, digests.size)
         for (d in digests) {
             assertTrue(
                 "every artifact digest is 64 lowercase hex — got \"$d\"; anything else is a " +

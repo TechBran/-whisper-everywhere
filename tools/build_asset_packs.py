@@ -188,6 +188,7 @@ EXPECTED_ZIP_BYTES = {
     ("npu-turbo", "8elite5_galaxy"): 860_709_425,
     ("npu-turbo", "7gen4"): 871_118_305,
     ("npu-turbo", "qcs8550"): 859_787_787,
+    ("npu", "qcs8550"): 293_600_815,
 }
 
 # ---------------------------------------------------------------------------- the census
@@ -219,10 +220,15 @@ CENSUS = {
         133_554_176, "3c63c40b09374773903855f587bc0530f199a3aa74136fdd4e395c94d258eda5",
         225_411_072, "a5f6c090a4df6f987e3b47dce04d999fc941f7ef87c5960db8fdf447edc82ab8",
     ),
-    # Blank so the instrument measures it. Both tiers are catalogued for every family: 4.3's
+    # Measured 2026-09-22; reproduces the spike's hand-hashed values, with the metadata and
+    # graph-IO gates passing this time. Both tiers are catalogued for every family: 4.3's
     # one-tier rule hides the small tier from a capable device's CHOOSER and touches the pack
     # machinery not at all (WhisperCatalogHelpersTest pins exactly that).
-    ("npu", "qcs8550"): None,
+    ("npu", "qcs8550"): (
+        293_600_815,
+        132_931_584, "b9416b7200e69c715f197e7c5169760483ea39fa30bcae89f9ff6045691523bf",
+        225_312_768, "0349446e32462ca2923fa8244b32c1272167f1cc1d692153b6efa54777d385ec",
+    ),
     ("npu", "7gen4"): (
         295_361_549,
         147_595_264, "83a678810bad8b06f3dfab369c2bb87a4ae8aef14cb1886ba3b7a58f7acf2c13",

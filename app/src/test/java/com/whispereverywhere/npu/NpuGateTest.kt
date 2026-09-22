@@ -85,11 +85,25 @@ class NpuGateTest {
     @Test
     fun aDifferentSnapdragonDenies() {
         assertFalse(
-            "SM8550 is the 8 Gen 2 — a Qualcomm part, a real Hexagon, and a part with NO " +
+            "SM8475 is the 8+ Gen 1 — a Qualcomm part, a real Hexagon, and a part with NO " +
                 "published w8a16 package (CPU_BY_CENSUS carries its evidence line, dated). It is " +
                 "the single most likely false allow, because everything about it looks right — " +
                 "and its absence is a checked fact, not an oversight.",
+            NpuGate.isSocSupported("SM8475", "QTI")
+        )
+        // THE 8 GEN 2 USED TO BE THIS TEST'S EXAMPLE, and on 2026-09-22 it stopped being one:
+        // AI Hub v0.62.2 published a qcs8550-proxy pack compiled for soc_model 43, it was
+        // device-executed on an S23 Ultra, and SM8550 became a census family. So the part that
+        // was named here as the most likely FALSE allow is now a TRUE one — asserted as such,
+        // beside its former role, because a reader of this file should not have to wonder
+        // whether the old line was deleted or forgotten.
+        assertTrue(
+            "SM8550 (8 Gen 2) ALLOWS since 2026-09-22 — the qcs8550 family, on device evidence",
             NpuGate.isSocSupported("SM8550", "QTI")
+        )
+        assertTrue(
+            "and its Galaxy bin with it",
+            NpuGate.isSocSupported("SM8550-AC", "QTI")
         )
         assertFalse(
             "SM8750 (the non-Galaxy 8 Elite) denies too — the vendor publishes for the Galaxy " +
@@ -233,11 +247,13 @@ class NpuGateTest {
             NpuGate.isSocSupported(" SM8650", "QTI")
         )
         assertEquals(
-            "the gate's set is exactly the census's five strings — the four families' socModels, " +
-                "suffix bins written out. If this ever grows, it grows by a census edit with " +
-                "evidence (and the device-group XML regenerated in the same commit), not because " +
-                "a part looked close.",
-            setOf("SM8650", "SM8650-AC", "SM8750-AC", "SM8850-AD", "SM7750"),
+            "the gate's set is exactly the census's seven strings — the five families' " +
+                "socModels, suffix bins written out. It grew by two on 2026-09-22 (the 8 Gen 2's " +
+                "plain and Galaxy bins), which is how it is allowed to grow: a census edit with " +
+                "evidence, and the device-group XML regenerated in the same commit. Never " +
+                "because a part looked close.",
+            setOf("SM8650", "SM8650-AC", "SM8750-AC", "SM8850-AD", "SM7750",
+                "SM8550", "SM8550-AC"),
             NpuGate.SUPPORTED_SOCS
         )
         assertEquals(

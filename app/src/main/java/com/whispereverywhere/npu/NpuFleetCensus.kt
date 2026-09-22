@@ -341,6 +341,20 @@ object NpuFleetCensus {
         ),
         PackArtifact(
             familyId = "qcs8550",
+            tierId = "npu",
+            vendorZipBytes = 293_600_815L,
+            encoder = PackEntry(
+                "encoder_qairt_context.bin", 132931584L,
+                "b9416b7200e69c715f197e7c5169760483ea39fa30bcae89f9ff6045691523bf",
+            ),
+            decoder = PackEntry(
+                "decoder_qairt_context.bin", 225312768L,
+                "0349446e32462ca2923fa8244b32c1272167f1cc1d692153b6efa54777d385ec",
+            ),
+            evidence = MEASURED,
+        ),
+        PackArtifact(
+            familyId = "qcs8550",
             tierId = "npu-turbo",
             vendorZipBytes = 859_787_787L,
             encoder = PackEntry(

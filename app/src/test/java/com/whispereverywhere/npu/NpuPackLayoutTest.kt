@@ -378,8 +378,9 @@ class NpuPackLayoutTest {
                 )
             }
             assertEquals(
-                "$module must carry the four census variants plus the empty #group_other",
-                5, names.size
+                "$module must carry the FIVE census variants plus the empty #group_other — " +
+                    "four until 2026-09-22, when the 8 Gen 2 became a family on device evidence",
+                6, names.size
             )
             names.toSet()
         }
