@@ -8,7 +8,7 @@ Face ``release_assets.json`` (release v0.61.0 asserted -- a different release st
 failure naming both), resolves the ``precompiled_qnn_onnx`` zip URL for each census family's
 chipset key, and holds every zip to the same gates:
 
-  1. HEAD first: HTTP 200; ``Last-Modified`` on the 2026-08-25 hash-stable re-upload event the
+  1. HEAD first: HTTP 200; ``Last-Modified`` on the pinned hash-stable re-upload event the
      research pinned (a bucket rewrite fails loudly rather than silently measuring new bytes);
      ``Content-Length`` asserted against EXPECTED_ZIP_BYTES where a measurement already existed
      (the four turbo zips + the 8gen3 small zip) and recorded where not (the other three small
@@ -95,12 +95,20 @@ import zipfile
 
 RELEASE = "0.62.2"
 
-# The hash-stable re-upload event (research doc 2026-08-29-pad-soc-delivery.md section 7).
-# Substring-matched against the RFC 1123 Last-Modified header, so a bucket rewrite on any
-# later date fails the HEAD gate by name.
-LAST_MODIFIED_DAY = "25 Aug 2026"
+# The hash-stable re-upload event. Substring-matched against the RFC 1123 Last-Modified header,
+# so a bucket rewrite on any later date fails the HEAD gate by name.
+#
+# 2026-09-22: was "25 Aug 2026" (release v0.61.0, research doc
+# 2026-08-29-pad-soc-delivery.md section 7). Qualcomm rebuilt every pack with QAIRT 2.45.0 for
+# v0.62.2 and re-uploaded on 11 Sep 2026 — small at 20:36, turbo at 20:34, so the DAY covers
+# both models. This gate was the THIRD independent guard to refuse the new bytes, after the
+# release string and the zip-length pins. All three named the same fact, which is the point of
+# having three: no single edit can wave a vendor rebuild through.
+LAST_MODIFIED_DAY = "11 Sep 2026"
 
-DEFAULT_WORKSPACE = r"C:\Users\bastr\.androidbuild\fleet-packs"
+# Portable since the 2026-09-22 Linux port: the workspace holds multi-GB vendor zips and
+# lives outside the repo on whatever machine is measuring. An explicit argument still wins.
+DEFAULT_WORKSPACE = os.path.join(os.path.expanduser("~"), ".androidbuild", "fleet-packs")
 
 # Vendor bare entry names -- identical across BOTH models and ALL families (the 4.1 L8
 # measurement); located by bare name wherever the vendor nested them, ambiguity refused.
