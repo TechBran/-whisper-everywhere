@@ -205,10 +205,13 @@ class NpuFleetCensusTest {
     @Test
     fun everyEvidenceLineCarriesARecordedDate() {
         for (f in families) {
+            // 2026-09-22: was "2026-08-2" (the v0.61.0 measurement). The re-measurement at
+            // v0.62.2 recorded 2026-09-22, so the assertion is that a date is PRESENT and is
+            // the one the current census was measured on — not that it is August's.
             assertTrue(
-                "family ${f.id}'s evidence must carry a recorded 2026-08-2x date — a date was " +
+                "family ${f.id}'s evidence must carry a recorded 2026-09-2x date — a date was " +
                     "recorded, not a vibe. Got: \"${f.evidence}\"",
-                f.evidence.contains("2026-08-2")
+                f.evidence.contains("2026-09-2")
             )
         }
         for ((soc, line) in NpuFleetCensus.CPU_BY_CENSUS) {
@@ -368,12 +371,16 @@ class NpuFleetCensusTest {
                 a.vendorZipBytes > 0L
             )
         }
-        // The four turbo zips: the research's HEAD-measured table, byte for byte (the values
-        // the measure run ASSERTS at HEAD rather than records).
-        assertEquals(859_786_903L, artifact("8gen3", "npu-turbo").vendorZipBytes)
-        assertEquals(859_689_781L, artifact("8elite_galaxy", "npu-turbo").vendorZipBytes)
-        assertEquals(860_709_426L, artifact("8elite5_galaxy", "npu-turbo").vendorZipBytes)
-        assertEquals(871_118_306L, artifact("7gen4", "npu-turbo").vendorZipBytes)
+        // The four turbo zips, byte for byte (the values the measure run ASSERTS at HEAD).
+        //
+        // EACH ONE LOST EXACTLY ONE BYTE at v0.62.2 — 903->902, 781->780, 426->425, 306->305.
+        // That is the whole of what the re-release changed in this table: the archive wrapper,
+        // not the payload. All sixteen binary digests below reproduced the v0.61.0 measurement
+        // unchanged, which is why only these four lines moved.
+        assertEquals(859_786_902L, artifact("8gen3", "npu-turbo").vendorZipBytes)
+        assertEquals(859_689_780L, artifact("8elite_galaxy", "npu-turbo").vendorZipBytes)
+        assertEquals(860_709_425L, artifact("8elite5_galaxy", "npu-turbo").vendorZipBytes)
+        assertEquals(871_118_305L, artifact("7gen4", "npu-turbo").vendorZipBytes)
         // The small zips: 8gen3 was known (the spike's download); the other three were
         // RECORDED by the 2026-08-30 measure run and are exact values from here on.
         assertEquals(293_598_974L, artifact("8gen3", "npu").vendorZipBytes)
@@ -462,13 +469,16 @@ class NpuFleetCensusTest {
                 )
             )
         }
+        // Both moved on 2026-09-22 with the re-measurement (was 0.61.0 / "25 Aug 2026").
+        // They are pinned HERE as well as in the script so the two tables cannot drift: a
+        // release bump in the instrument without a re-measured census fails this line.
         assertEquals(
             "the script pins the release the census describes",
-            1, count(script, "RELEASE = \"0.61.0\"")
+            1, count(script, "RELEASE = \"0.62.2\"")
         )
         assertEquals(
             "and the hash-stable Last-Modified day every HEAD must reproduce",
-            1, count(script, "LAST_MODIFIED_DAY = \"25 Aug 2026\"")
+            1, count(script, "LAST_MODIFIED_DAY = \"11 Sep 2026\"")
         )
     }
 
@@ -501,11 +511,11 @@ class NpuFleetCensusTest {
             assertTrue(
                 "${a.familyId}/${a.tierId}: evidence must carry the measure date — got " +
                     "\"${a.evidence}\"",
-                a.evidence.contains("2026-08-30")
+                a.evidence.contains("2026-09-22")
             )
             assertTrue(
                 "and the pinned Last-Modified event the gates held it to",
-                a.evidence.contains("Last-Modified 2026-08-25")
+                a.evidence.contains("Last-Modified 2026-09-11")
             )
             assertTrue(
                 "and the instrument, by name — a row nobody can re-measure is a row nobody " +
