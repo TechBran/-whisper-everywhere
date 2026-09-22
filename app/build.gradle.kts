@@ -42,7 +42,17 @@ android {
             // Keep the ninja build tree OUT of OneDrive: the default .cxx staging dir lives in
             // the (OneDrive-synced) project folder, and OneDrive's placeholder/reparse handling
             // corrupts hard-linked build outputs ("Cannot snapshot ... not a regular file").
-            buildStagingDirectory = file("C:/Users/bastr/.androidbuild/WhisperEverywhere/cxx-staging")
+            //
+            // CONDITIONAL SINCE THE LINUX PORT (2026-09-22), and it has to be. `file()` resolves
+            // a relative path against the project directory, and "C:/Users/..." IS relative
+            // anywhere but Windows — so on Linux this line silently asked for
+            // `<project>/app/C:/Users/bastr/.androidbuild/...` rather than failing. The root
+            // build.gradle.kts guards its own relocation on `localBuildRoot.isDirectory` for the
+            // same reason; this is that guard, applied to the half that was missing it.
+            val oneDriveEscape = File("C:/Users/bastr/.androidbuild/WhisperEverywhere/cxx-staging")
+            if (oneDriveEscape.parentFile?.isDirectory == true) {
+                buildStagingDirectory = oneDriveEscape
+            }
         }
     }
 
