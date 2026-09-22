@@ -124,7 +124,7 @@ object NpuFleetCensus {
             skelAsset = "libQnnHtpV75Skel.so",
             skelBytes = 17_913_608L,
             skelSha256 = "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c",
-            evidence = "AI Hub v0.61.0 HEAD-verified 2026-08-29; Last-Modified 2026-08-25; " +
+            evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "device-executed (Fold6) 2026-08-29",
         ),
         NpuSocFamily(
@@ -135,7 +135,7 @@ object NpuFleetCensus {
             skelAsset = "libQnnHtpV79Skel.so",
             skelBytes = 17_721_548L,
             skelSha256 = "9cad65a621d154e5282ea9d2849d0a8838932ed91dc7e2514db4e992e2d933c6",
-            evidence = "AI Hub v0.61.0 HEAD-verified 2026-08-29; Last-Modified 2026-08-25; " +
+            evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "no device evidence",
         ),
         NpuSocFamily(
@@ -146,7 +146,7 @@ object NpuFleetCensus {
             skelAsset = "libQnnHtpV81Skel.so",
             skelBytes = 18_844_384L,
             skelSha256 = "b3453265c4574c69bb446bcb98dda117ded531b86b2307e0f02c595050fab8b1",
-            evidence = "AI Hub v0.61.0 HEAD-verified 2026-08-29; Last-Modified 2026-08-25; " +
+            evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "no device evidence",
         ),
         NpuSocFamily(
@@ -157,7 +157,7 @@ object NpuFleetCensus {
             skelAsset = "libQnnHtpV73Skel.so",
             skelBytes = 17_909_588L,
             skelSha256 = "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1",
-            evidence = "AI Hub v0.61.0 HEAD-verified 2026-08-29; Last-Modified 2026-08-25; " +
+            evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "no device evidence",
         ),
     )
@@ -166,9 +166,11 @@ object NpuFleetCensus {
     fun familyById(id: String): NpuSocFamily? = families.firstOrNull { it.id == id }
 
     /** Every artifact row's shared measurement record — see [PackArtifact.evidence]. */
-    private const val MEASURED = "measured 2026-08-30 by build_asset_packs.py measure " +
-        "(manifest v0.61.0; Last-Modified 2026-08-25; CRC-clean; vendor metadata htp + IO " +
-        "census verified)"
+    private const val MEASURED = "re-measured 2026-09-22 by build_asset_packs.py measure " +
+        "(manifest v0.62.2; Last-Modified 2026-09-11; CRC-clean; vendor metadata htp + IO " +
+        "census verified). Every binary digest below REPRODUCES the 2026-08-30 v0.61.0 " +
+        "measurement exactly: 0.62.2 is a re-release, not a rebuild, and only the four turbo " +
+        "ZIP lengths moved (one byte each, archive wrapper only)"
 
     /**
      * The artifact census: eight measured pairs — 4 families x 2 tiers, family-major in
@@ -203,7 +205,7 @@ object NpuFleetCensus {
         PackArtifact(
             familyId = "8gen3",
             tierId = "npu-turbo",
-            vendorZipBytes = 859_786_903L,
+            vendorZipBytes = 859_786_902L,
             encoder = PackEntry(
                 "turbo_encoder_qairt_context.bin", 775_831_552L,
                 "f7d11c08a20ea671f59b3ace2f9421da00b06170ac9fe946f29092ee59be6bbe",
@@ -231,7 +233,7 @@ object NpuFleetCensus {
         PackArtifact(
             familyId = "8elite_galaxy",
             tierId = "npu-turbo",
-            vendorZipBytes = 859_689_781L,
+            vendorZipBytes = 859_689_780L,
             encoder = PackEntry(
                 "turbo_encoder_qairt_context.bin", 775_544_832L,
                 "4776799f89514e2e96bd2ccb9a2fb9bdca246bdbeba8c7df84d671e2a6ca024c",
@@ -259,7 +261,7 @@ object NpuFleetCensus {
         PackArtifact(
             familyId = "8elite5_galaxy",
             tierId = "npu-turbo",
-            vendorZipBytes = 860_709_426L,
+            vendorZipBytes = 860_709_425L,
             encoder = PackEntry(
                 "turbo_encoder_qairt_context.bin", 777_441_280L,
                 "841cecfeade064bed27956401c298a2df86eeaac5c33270a284c34d11619c7a2",
@@ -287,7 +289,7 @@ object NpuFleetCensus {
         PackArtifact(
             familyId = "7gen4",
             tierId = "npu-turbo",
-            vendorZipBytes = 871_118_306L,
+            vendorZipBytes = 871_118_305L,
             encoder = PackEntry(
                 "turbo_encoder_qairt_context.bin", 846_360_576L,
                 "c482288d5899590a87cfea3faea3e39df30242095b8c93e0e02e7d1f1c79a813",
