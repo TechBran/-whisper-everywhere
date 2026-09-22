@@ -1,0 +1,158 @@
+{
+ "models": {
+  "npu-turbo/8elite_galaxy/encoder": {
+   "id": "mnj8v519m",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8elite_galaxy/decoder": {
+   "id": "mqy51rgvn",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8elite5_galaxy/encoder": {
+   "id": "mq26x2vln",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8elite5_galaxy/decoder": {
+   "id": "mq9yw03rn",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/7gen4/encoder": {
+   "id": "mq80z533n",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/7gen4/decoder": {
+   "id": "mn4ox930q",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/qcs8550/encoder": {
+   "id": "mqkpg0rwm",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/qcs8550/decoder": {
+   "id": "mqvozygjm",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8gen3/encoder": {
+   "id": "mqey8kwym",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8gen3/decoder": {
+   "id": "mn0g6y4xm",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  }
+ },
+ "jobs": {
+  "npu-turbo/8elite_galaxy/encoder@Samsung Galaxy S25": {
+   "id": "jgjrqe6ep",
+   "status": "SUCCESS",
+   "inference_ms": 1188.5,
+   "first_load_ms": 1038.5,
+   "warm_load_ms": 935.8,
+   "peak_mem_mb": 156.3
+  },
+  "npu-turbo/8elite_galaxy/encoder@Snapdragon 8 Elite QRD": {
+   "id": "jpe7yk0v5",
+   "status": "SUCCESS",
+   "inference_ms": 970.5,
+   "first_load_ms": 960.2,
+   "warm_load_ms": 930.7,
+   "peak_mem_mb": 147.4
+  },
+  "npu-turbo/8elite_galaxy/decoder@Samsung Galaxy S25": {
+   "id": "j5qlv3xop",
+   "status": "SUCCESS",
+   "inference_ms": 3.7,
+   "first_load_ms": 156.6,
+   "warm_load_ms": 164.9,
+   "peak_mem_mb": 174.3
+  },
+  "npu-turbo/8elite_galaxy/decoder@Snapdragon 8 Elite QRD": {
+   "id": "jglyl3dm5",
+   "status": "SUCCESS",
+   "inference_ms": 3.9,
+   "first_load_ms": 143.7,
+   "warm_load_ms": 145.0,
+   "peak_mem_mb": 160.8
+  },
+  "npu-turbo/8elite5_galaxy/encoder@Samsung Galaxy S26": {
+   "id": "jgjrqe9ep",
+   "status": "SUCCESS",
+   "inference_ms": 1142.4,
+   "first_load_ms": 1100.3,
+   "warm_load_ms": 991.2,
+   "peak_mem_mb": 167.5
+  },
+  "npu-turbo/8elite5_galaxy/encoder@Snapdragon 8 Elite Gen 5 QRD": {
+   "id": "jpe7ykqv5",
+   "status": "SUCCESS",
+   "inference_ms": 763.2,
+   "first_load_ms": 935.8,
+   "warm_load_ms": 897.0,
+   "peak_mem_mb": 148.8
+  },
+  "npu-turbo/8elite5_galaxy/decoder@Samsung Galaxy S26": {
+   "id": "jgzlnr6x5",
+   "status": "SUCCESS",
+   "inference_ms": 3.3,
+   "first_load_ms": 238.5,
+   "warm_load_ms": 164.3,
+   "peak_mem_mb": 185.7
+  },
+  "npu-turbo/8elite5_galaxy/decoder@Snapdragon 8 Elite Gen 5 QRD": {
+   "id": "j5wl4qkmp",
+   "status": "SUCCESS",
+   "inference_ms": 3.3,
+   "first_load_ms": 131.6,
+   "warm_load_ms": 125.9,
+   "peak_mem_mb": 160.1
+  },
+  "npu-turbo/7gen4/encoder@Snapdragon 7 Gen 4 QRD": {
+   "id": "j5wl4qk4p",
+   "status": "SUCCESS",
+   "inference_ms": 2220.7,
+   "first_load_ms": 1926.0,
+   "warm_load_ms": 1806.4,
+   "peak_mem_mb": 104.2
+  },
+  "npu-turbo/7gen4/decoder@Snapdragon 7 Gen 4 QRD": {
+   "id": "jp1n6e9ng",
+   "status": "SUCCESS",
+   "inference_ms": 8.5,
+   "first_load_ms": 205.0,
+   "warm_load_ms": 177.2,
+   "peak_mem_mb": 186.4
+  },
+  "npu-turbo/qcs8550/encoder@Samsung Galaxy S23": {
+   "id": "jprlwerkp",
+   "status": "SUCCESS",
+   "inference_ms": 1734.7,
+   "first_load_ms": 2817.7,
+   "warm_load_ms": 1404.5,
+   "peak_mem_mb": 125.3
+  },
+  "npu-turbo/qcs8550/decoder@Samsung Galaxy S23": {
+   "id": "jp2rel16g",
+   "status": "SUCCESS",
+   "inference_ms": 5.9,
+   "first_load_ms": 514.1,
+   "warm_load_ms": 321.5,
+   "peak_mem_mb": 129.0
+  },
+  "npu-turbo/8gen3/encoder@Samsung Galaxy S24": {
+   "id": "jgk283jvg",
+   "status": "SUCCESS",
+   "inference_ms": 1399.6,
+   "first_load_ms": 1889.1,
+   "warm_load_ms": 1238.2,
+   "peak_mem_mb": 120.4
+  },
+  "npu-turbo/8gen3/decoder@Samsung Galaxy S24": {
+   "id": "jglyl3j25",
+   "status": "SUCCESS",
+   "inference_ms": 4.5,
+   "first_load_ms": 354.6,
+   "warm_load_ms": 220.1,
+   "peak_mem_mb": 138.8
+  }
+ }
+}

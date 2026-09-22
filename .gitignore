@@ -140,3 +140,6 @@ app/src/main/cpp/include/Qnn*.h
 # branch's discipline gates on `git status --porcelain` being empty, and a stray capture file
 # would make the tree dirty at exactly the moment nobody wants to debug why.
 capture.txt
+
+# tools/aihub_matrix.py run state (model/job ids); the committed record lives in docs/measurements/raw/
+aihub_state.json

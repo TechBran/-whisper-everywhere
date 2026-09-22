@@ -151,8 +151,15 @@ object NpuFleetCensus {
         // same QNN soc_model (69 for SM8750, 87 for SM8850) at the same HTP version, the 8gen3 and
         // qcs8550 rows already serve plain and Galaxy bins from one binary (both device-executed),
         // and a context that still refuses to load takes NpuWhisperBackend's loud CPU fallback —
-        // `npu: unavailable stage=init` and the card note — never a wrong answer. What it does NOT
-        // rest on: a device run. Neither family has executed on any phone yet.
+        // `npu: unavailable stage=init` and the card note — never a wrong answer.
+        //
+        // AND IT WAS THEN EXECUTED, the same day, on real silicon nobody here owns: Qualcomm AI
+        // Hub's hosted Galaxy S25 and S26 and, the question the ruling actually turned on, its
+        // PLAIN-bin reference phones, "Snapdragon 8 Elite QRD" and "Snapdragon 8 Elite Gen 5
+        // QRD". The exact shipped turbo binaries (hashed against this file's digests first)
+        // loaded and ran on all four (docs/measurements/2026-09-22-aihub-hosted-device-matrix.md).
+        // What that still is not: the app. Delivery, capture, mel and the decode loop have run on
+        // no such phone.
         NpuSocFamily(
             id = "8elite_galaxy",
             packGroup = "soc_8elite_galaxy",
@@ -163,7 +170,11 @@ object NpuFleetCensus {
             skelSha256 = "9cad65a621d154e5282ea9d2849d0a8838932ed91dc7e2514db4e992e2d933c6",
             evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "SOC_MODEL read plain SM8750 on S25/S25+/S25 Ultra/S25 Edge/Z Fold7, Play " +
-                "catalog agrees (2026-09-22 census, docs/measurements/2026-09-22-npu-device-census.md); no device-executed run",
+                "catalog agrees (2026-09-22 census, " +
+                "docs/measurements/2026-09-22-npu-device-census.md); turbo AI-Hub-executed " +
+                "2026-09-22 on Galaxy S25 + plain 8 Elite QRD, both PASS " +
+                "(docs/measurements/2026-09-22-aihub-hosted-device-matrix.md); " +
+                "no in-app device run",
         ),
         NpuSocFamily(
             id = "8elite5_galaxy",
@@ -175,7 +186,10 @@ object NpuFleetCensus {
             skelSha256 = "b3453265c4574c69bb446bcb98dda117ded531b86b2307e0f02c595050fab8b1",
             evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "SOC_MODEL read plain SM8850 on S26/S26 Ultra/Z Fold8, Play catalog agrees " +
-                "(2026-09-22 census, docs/measurements/2026-09-22-npu-device-census.md); no device-executed run",
+                "(2026-09-22 census, docs/measurements/2026-09-22-npu-device-census.md); " +
+                "turbo AI-Hub-executed 2026-09-22 on Galaxy S26 + plain 8 Elite Gen 5 QRD, both " +
+                "PASS (docs/measurements/2026-09-22-aihub-hosted-device-matrix.md); " +
+                "no in-app device run",
         ),
         NpuSocFamily(
             id = "7gen4",
@@ -186,7 +200,10 @@ object NpuFleetCensus {
             skelBytes = 17_909_588L,
             skelSha256 = "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1",
             evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
-                "no device evidence",
+                "turbo AI-Hub-executed 2026-09-22 on the Snapdragon 7 Gen 4 QRD, PASS, the " +
+                "tightest family (~48% of the 8 s floor projected) " +
+                "(docs/measurements/2026-09-22-aihub-hosted-device-matrix.md); " +
+                "no in-app device run",
         ),
         // THE 8 GEN 2 (SM8550) — the S23, S23+ and S23 Ultra, and every other 8 Gen 2 phone.
         //
