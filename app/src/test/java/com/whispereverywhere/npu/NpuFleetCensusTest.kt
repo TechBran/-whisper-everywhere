@@ -359,10 +359,16 @@ class NpuFleetCensusTest {
                 "metadata check",
             20, digests.toSet().size
         )
+        // Twenty artifact digests plus FOUR skels, not five: qcs8550 and 7gen4 are both HTP
+        // v73 and name the same blob, so the union is 24 rather than 25. Derived from the
+        // census rather than spelled, because the two counts now move independently — a new
+        // family adds two artifact digests and a skel only if it brings a new architecture.
+        val skels = families.map { it.skelSha256 }.toSet()
         assertEquals(
-            "and none of them collides with a skel digest — twenty distinct measurements " +
-                "across the two censuses",
-            20, (digests + families.map { it.skelSha256 }).toSet().size
+            "and none of them collides with a skel digest — every artifact digest and every " +
+                "architecture's skel digest is its own measurement",
+            digests.toSet().size + skels.size,
+            (digests + skels).toSet().size
         )
     }
 
