@@ -163,22 +163,6 @@ FAMILIES = {
     "qcs8550": ("qualcomm-qcs8550-proxy", 73, "soc_qcs8550"),
 }
 
-# family -> the tiers it publishes AND we want. Absent = every tier in MODELS.
-#
-# OWNER RULING 2026-09-22, on the 8 Gen 2: "we want the Q8 V3 Turbo only. All of the other
-# models should stay hidden ... no need to use any other lower end model for this chip." The app
-# already behaves that way on any capable device (WhisperCatalog.ONE_TIER_ID narrows the chooser
-# to npu-turbo alone), so expressing it HERE is what stops the build from shipping a 280 MB
-# small variant nothing can offer. It also removes the 80-bin mel-donor dependency from this
-# family entirely, which is what failed the first spike attempt on a wiped device.
-FAMILY_TIERS = {
-    "qcs8550": {"npu-turbo"},
-}
-
-
-def tiers_for(family: str) -> set:
-    """The tiers this family carries — every tier unless FAMILY_TIERS narrows it."""
-    return FAMILY_TIERS.get(family, set(MODELS))
 
 # tier id -> the asset-pack MODULE that ships it. The delivery names above are per-TIER; the
 # module split is what lets Play deliver small without turbo (and price the fetch decision per
@@ -235,6 +219,10 @@ CENSUS = {
         133_554_176, "3c63c40b09374773903855f587bc0530f199a3aa74136fdd4e395c94d258eda5",
         225_411_072, "a5f6c090a4df6f987e3b47dce04d999fc941f7ef87c5960db8fdf447edc82ab8",
     ),
+    # Blank so the instrument measures it. Both tiers are catalogued for every family: 4.3's
+    # one-tier rule hides the small tier from a capable device's CHOOSER and touches the pack
+    # machinery not at all (WhisperCatalogHelpersTest pins exactly that).
+    ("npu", "qcs8550"): None,
     ("npu", "7gen4"): (
         295_361_549,
         147_595_264, "83a678810bad8b06f3dfab369c2bb87a4ae8aef14cb1886ba3b7a58f7acf2c13",
@@ -477,10 +465,6 @@ def measure(workspace: str) -> dict:
         manifest = fetch_manifest(tier)
         print(f"manifest ok: {tier} release v{RELEASE}")
         for family in FAMILIES:
-            if tier not in tiers_for(family):
-                print(f"SKIP tier={tier} family={family} (family carries "
-                      f"{sorted(tiers_for(family))} only)")
-                continue
             print(f"ROW tier={tier} family={family}")
             url = resolve_zip_url(tier, manifest, family)
             print(f"  url: {url}")
@@ -653,8 +637,6 @@ def build_packs(workspace: str) -> None:
     for tier in MODELS:
         module = PACK_MODULE_BY_TIER[tier]
         for family in FAMILIES:
-            if tier not in tiers_for(family):
-                continue
             _, _, pack_group = FAMILIES[family]
             out_dir = os.path.join(root, module, "src", "main", "assets",
                                    f"{module}#group_{pack_group}")

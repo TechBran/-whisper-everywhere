@@ -149,6 +149,17 @@ object NpuFleetCensus {
             evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "no device evidence",
         ),
+        NpuSocFamily(
+            id = "7gen4",
+            packGroup = "soc_7gen4",
+            htpVersion = 73,
+            socModels = setOf("SM7750"),
+            skelAsset = "libQnnHtpV73Skel.so",
+            skelBytes = 17_909_588L,
+            skelSha256 = "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1",
+            evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
+                "no device evidence",
+        ),
         // THE 8 GEN 2 (SM8550) — the S23, S23+ and S23 Ultra, and every other 8 Gen 2 phone.
         //
         // CPU_BY_CENSUS carried this silicon as "no published w8a16 package" from 2026-08-29 and
@@ -165,10 +176,18 @@ object NpuFleetCensus {
         // 1.40x the Fold6's cost one HTP generation back. Sentence windows, a speaker change
         // inside a chunk, and live words all worked. It shares 7gen4's V73 skel byte for byte.
         //
-        // TURBO ONLY, by owner ruling the same day: "we want the Q8 V3 Turbo only. All of the
-        // other models should stay hidden ... no need to use any other lower end model for this
-        // chip." There is deliberately no ("qcs8550", "npu") artifact below, so the 80-bin tier
-        // is not merely hidden on this family — `artifactFor` answers null and it is undeliverable.
+        // TURBO ALONE IS WHAT A USER SEES, and it needs nothing from this row. Owner ruling the
+        // same day: "we want the Q8 V3 Turbo only. All of the other models should stay hidden,
+        // just like we do on the CPU tier models." HIDDEN, and the CPU tier is the precedent he
+        // named: 4.8's retired Q5 rungs stayed catalogued and downloadable for anyone who had
+        // one, and simply left the chooser. `WhisperCatalog.ONE_TIER_ID` already narrows a
+        // capable device's chooser to npu-turbo alone, so this family inherits that by existing.
+        //
+        // So BOTH tiers are catalogued here, as they are for every other family. An earlier cut
+        // of this row omitted the npu artifact to make the small tier undeliverable rather than
+        // hidden; WhisperCatalogHelpersTest refused it in so many words — "the pack machinery is
+        // untouched by 4.3, which hides a tier from the chooser and nothing else" — and it was
+        // right. Deleting coverage is not the same act as hiding a card.
         NpuSocFamily(
             id = "qcs8550",
             packGroup = "soc_qcs8550",
@@ -179,17 +198,6 @@ object NpuFleetCensus {
             skelSha256 = "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1",
             evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "device-executed (S23 Ultra, SM8550) 2026-09-22",
-        ),
-        NpuSocFamily(
-            id = "7gen4",
-            packGroup = "soc_7gen4",
-            htpVersion = 73,
-            socModels = setOf("SM7750"),
-            skelAsset = "libQnnHtpV73Skel.so",
-            skelBytes = 17_909_588L,
-            skelSha256 = "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1",
-            evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
-                "no device evidence",
         ),
     )
 
@@ -303,21 +311,6 @@ object NpuFleetCensus {
             ),
             evidence = MEASURED,
         ),
-        // TURBO ONLY for this family — see the qcs8550 family row above for the owner's ruling.
-        PackArtifact(
-            familyId = "qcs8550",
-            tierId = "npu-turbo",
-            vendorZipBytes = 859_787_787L,
-            encoder = PackEntry(
-                "turbo_encoder_qairt_context.bin", 775_843_840L,
-                "785043fbef7a17f80404f17423f97ae0ef1e2a8f4a5d446d413346445d6b9e6d",
-            ),
-            decoder = PackEntry(
-                "turbo_decoder_qairt_context.bin", 295_854_080L,
-                "ca70b66c3035a35af78ed43b488ff201d30413edde59f5832208925da080a4b2",
-            ),
-            evidence = MEASURED,
-        ),
         PackArtifact(
             familyId = "7gen4",
             tierId = "npu",
@@ -343,6 +336,20 @@ object NpuFleetCensus {
             decoder = PackEntry(
                 "turbo_decoder_qairt_context.bin", 295_895_040L,
                 "ce8ad981b89999f4eb9dace8dfb9b64129322e976ac89188a719e59842baacc5",
+            ),
+            evidence = MEASURED,
+        ),
+        PackArtifact(
+            familyId = "qcs8550",
+            tierId = "npu-turbo",
+            vendorZipBytes = 859_787_787L,
+            encoder = PackEntry(
+                "turbo_encoder_qairt_context.bin", 775_843_840L,
+                "785043fbef7a17f80404f17423f97ae0ef1e2a8f4a5d446d413346445d6b9e6d",
+            ),
+            decoder = PackEntry(
+                "turbo_decoder_qairt_context.bin", 295_854_080L,
+                "ca70b66c3035a35af78ed43b488ff201d30413edde59f5832208925da080a4b2",
             ),
             evidence = MEASURED,
         ),

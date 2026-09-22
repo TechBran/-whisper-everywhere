@@ -57,19 +57,21 @@ class NpuFleetCensusTest {
         n.toString().reversed().chunked(3).joinToString("_").reversed()
 
     @Test
-    fun theCensusHasExactlyTheFourPublishedFamiliesInTableOrder() {
+    fun theCensusHasExactlyTheFivePublishedFamiliesInTableOrder() {
         assertEquals(
-            "four families have published w8a16 packages (release manifests re-fetched " +
-                "2026-08-29) — a fifth row is a vendor event with evidence, a dropped row is " +
-                "lost coverage nothing reports",
-            listOf("8gen3", "8elite_galaxy", "8elite5_galaxy", "7gen4"),
+            "five families have published w8a16 packages (manifests re-fetched 2026-09-22) — " +
+                "a sixth row is a vendor event with evidence, a dropped row is lost coverage " +
+                "nothing reports. qcs8550 is the 8 Gen 2, appended 2026-09-22 on DEVICE " +
+                "evidence (S23 Ultra) rather than a HEAD check alone",
+            listOf("8gen3", "8elite_galaxy", "8elite5_galaxy", "7gen4", "qcs8550"),
             families.map { it.id }
         )
         assertEquals(
             "and each family's Play device group carries the census id under the soc_ prefix — " +
                 "F4 regenerates the device-group XML from THESE strings, so a drift here is a " +
                 "store/gate disagreement",
-            listOf("soc_8gen3", "soc_8elite_galaxy", "soc_8elite5_galaxy", "soc_7gen4"),
+            listOf("soc_8gen3", "soc_8elite_galaxy", "soc_8elite5_galaxy", "soc_7gen4",
+                "soc_qcs8550"),
             families.map { it.packGroup }
         )
     }
@@ -84,9 +86,32 @@ class NpuFleetCensusTest {
             "duplicate pack groups would collapse two pack variants into one bundle directory",
             families.size, families.map { it.packGroup }.toSet().size
         )
+        // THE SKEL IS A FUNCTION OF THE HTP VERSION, NOT OF THE FAMILY, and until 2026-09-22
+        // nothing had to say so: there were four families with four distinct HTP versions, so
+        // "all skels distinct" and "one skel per architecture" were the same assertion. qcs8550
+        // (8 Gen 2) is HTP v73 exactly as 7gen4 is, and shares libQnnHtpV73Skel.so with it byte
+        // for byte — which is correct, and would have failed a distinctness count.
+        //
+        // What must hold is the BIJECTION: two families share a skel if and only if they share
+        // an architecture. Either half failing is the defect the old count was reaching for —
+        // one family's skel staged under another family's silicon.
+        val skelByHtp = families.groupBy { it.htpVersion }
+        for ((htp, group) in skelByHtp) {
+            assertEquals(
+                "every family on HTP v$htp must name the SAME skel: the blob is the " +
+                    "architecture's, and two names for one architecture would stage the wrong " +
+                    "one somewhere",
+                1, group.map { it.skelAsset }.toSet().size
+            )
+            assertEquals(
+                "...and the same bytes and digest with it",
+                1, group.map { it.skelBytes to it.skelSha256 }.toSet().size
+            )
+        }
         assertEquals(
-            "duplicate skel assets would stage one family's skel under another family's silicon",
-            families.size, families.map { it.skelAsset }.toSet().size
+            "and no skel may appear under two ARCHITECTURES — that is the original hazard, a " +
+                "v73 blob staged for a v75 device",
+            skelByHtp.size, families.map { it.skelAsset }.toSet().size
         )
     }
 
