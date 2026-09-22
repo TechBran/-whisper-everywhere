@@ -185,6 +185,14 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 107 = 4.13.0 — the Galaxy S25 and S26 generations get the AI chip.** 106 went to
+ * the internal track on 2026-09-22, so its code is spent. Both census rows for these chips named
+ * `SM8750-AC` / `SM8850-AD` — AI Hub chipset aliases — and no device reports a suffix: the
+ * 2026-09-22 device census read plain `SM8750` on every S25-family phone and plain `SM8850` on
+ * every S26-family phone, and Play's device catalog holds zero suffixed strings. From 4.2 to 4.12
+ * both rows therefore matched nothing. The plain strings admit every 8 Elite / 8 Elite Gen 5 bin,
+ * by owner ruling; neither family has executed on a device yet.
+ *
  * **versionCode 106 = 4.12.0 — the 8 Gen 2 gets the AI chip.** 105 is spent twice over: the
  * owner promoted 4.11.3 to production on 2026-09-22 after testing the internal track, so Play
  * refuses the code and every installed phone already carries it. The name takes a MINOR because
@@ -400,17 +408,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_12_0_at_version_code_106() {
+    fun release_identity_is_4_13_0_at_version_code_107() {
         assertEquals(
-            "versionName must be 4.12.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.12.0",
+            "versionName must be 4.13.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.13.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 106 for this release (app/build.gradle.kts defaultConfig). " +
-                "105 = 4.11.3 IS IN PRODUCTION (promoted 2026-09-22), so it is spent twice " +
-                "over: Play refuses the code and every installed phone already carries it",
-            106,
+            "versionCode must be 107 for this release (app/build.gradle.kts defaultConfig). " +
+                "106 = 4.12.0 went to the internal track on 2026-09-22, so Play refuses the " +
+                "code; 105 = 4.11.3 is in production",
+            107,
             BuildConfig.VERSION_CODE,
         )
     }

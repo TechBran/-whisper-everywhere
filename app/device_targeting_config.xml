@@ -11,17 +11,21 @@
   </config:device-group>
   <config:device-group name="soc_8elite_galaxy">
     <config:device-selector>
+      <config:system-on-chip manufacturer="QTI" model="SM8750"/>
       <config:system-on-chip manufacturer="QTI" model="SM8750-AC"/>
     </config:device-selector>
     <config:device-selector>
+      <config:system-on-chip manufacturer="Qualcomm" model="SM8750"/>
       <config:system-on-chip manufacturer="Qualcomm" model="SM8750-AC"/>
     </config:device-selector>
   </config:device-group>
   <config:device-group name="soc_8elite5_galaxy">
     <config:device-selector>
+      <config:system-on-chip manufacturer="QTI" model="SM8850"/>
       <config:system-on-chip manufacturer="QTI" model="SM8850-AD"/>
     </config:device-selector>
     <config:device-selector>
+      <config:system-on-chip manufacturer="Qualcomm" model="SM8850"/>
       <config:system-on-chip manufacturer="Qualcomm" model="SM8850-AD"/>
     </config:device-selector>
   </config:device-group>

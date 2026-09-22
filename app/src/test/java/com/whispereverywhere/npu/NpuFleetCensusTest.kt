@@ -141,13 +141,14 @@ class NpuFleetCensusTest {
             setOf("SM8650", "SM8650-AC"), byId("8gen3").socModels
         )
         assertEquals(
-            "the 8 Elite row is the Galaxy bin ONLY — plain SM8750 belongs to CPU_BY_CENSUS, " +
-                "and the suffix is the entire difference",
-            setOf("SM8750-AC"), byId("8elite_galaxy").socModels
+            "the 8 Elite row leads with PLAIN SM8750 — what every S25-family phone reports; " +
+                "the suffixed alias stays beside it. Until 2026-09-22 this row was the alias " +
+                "alone and matched no device",
+            setOf("SM8750", "SM8750-AC"), byId("8elite_galaxy").socModels
         )
         assertEquals(
-            "the 8 Elite Gen 5 row is the Galaxy bin ONLY, same shape one generation on",
-            setOf("SM8850-AD"), byId("8elite5_galaxy").socModels
+            "the 8 Elite Gen 5 row, same shape one generation on: plain SM8850 first",
+            setOf("SM8850", "SM8850-AD"), byId("8elite5_galaxy").socModels
         )
         assertEquals(
             "the 7 Gen 4 ships suffix-free — one string until a device proves another",
@@ -249,13 +250,14 @@ class NpuFleetCensusTest {
     }
 
     @Test
-    fun theCpuLedgerNamesTheSixAbsentPartsAndStaysDisjointFromTheCensus() {
+    fun theCpuLedgerNamesTheAbsentPartsAndStaysDisjointFromTheCensus() {
         assertEquals(
-            "five checked-absent strings for five absent parts — 8+ Gen 1, 8 Gen 1, 888, and " +
-                "the two non-Galaxy Elite plains. The 8 Gen 2's two bins LEFT this ledger on " +
-                "2026-09-22 for the qcs8550 family, which is the only way out of it: a " +
-                "measurement with a date, and this one device-executed",
-            setOf("SM8475", "SM8450", "SM8350", "SM8750", "SM8850"),
+            "three checked-absent strings for three absent parts — 8+ Gen 1, 8 Gen 1, 888. Four " +
+                "strings LEFT this ledger on 2026-09-22, which is the only way out of it, a " +
+                "measurement with a date: the 8 Gen 2's two for the qcs8550 family " +
+                "(device-executed), then plain SM8750 and SM8850, which were never 'non-Galaxy' " +
+                "strings at all — the Galaxy phones report them too",
+            setOf("SM8475", "SM8450", "SM8350"),
             NpuFleetCensus.CPU_BY_CENSUS.keys
         )
         assertEquals(

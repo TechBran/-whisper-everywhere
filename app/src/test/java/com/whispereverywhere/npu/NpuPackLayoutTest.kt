@@ -27,11 +27,12 @@ import javax.xml.parsers.DocumentBuilderFactory
  *
  * ### Why Play's copy must be exact, not merely similar
  *
- * The research-sketch groups listed plain `SM8750`/`SM8850`; the spec's census superseded
- * them (widening is a measurement, never a guess), and two censuses is how a device passes
- * one gate and fails the other. So the pins here are exhaustive in BOTH directions: every
- * census string under both spellings, and nothing the census does not name — asserted over
- * exact attribute values, never substrings, because `SM8750-AC` contains `SM8750`.
+ * Two censuses is how a device passes one gate and fails the other, so the pins here are
+ * exhaustive in BOTH directions: every census string under both spellings, and nothing the
+ * census does not name — asserted over exact attribute values, never substrings, because
+ * `SM8750-AC` contains `SM8750`. (A cautionary history: the 08-29 research sketch listed plain
+ * `SM8750`/`SM8850`, and the spec "superseded" them with the `-AC`/`-AD` aliases — which no
+ * device reports. The sketch was right. Both plain strings are census strings since 2026-09-22.)
  *
  * ### The EMPTY default is a correctness feature
  *
@@ -214,10 +215,11 @@ class NpuPackLayoutTest {
             censusStrings.flatMap { s -> listOf(s, s) }.sorted(),
             modelValues.sorted()
         )
-        // The superseded research-sketch strings, live-zero BY EXACT VALUE: the sketch's wider
-        // groups listed the plain bins and SM7750-AB; the spec's census superseded it, and the
-        // wider census must not creep back in through the store's copy.
-        for (sketch in listOf("SM8750", "SM8850", "SM7750-AB")) {
+        // The research sketch's one string still outside the census, live-zero BY EXACT VALUE:
+        // SM7750-AB is a part number, not a string any device reports. (The sketch's plain
+        // SM8750/SM8850 were on this list until 2026-09-22 — pinned OUT, and they were the
+        // strings the Galaxy S25/S26 report. They are census strings now; see the KDoc.)
+        for (sketch in listOf("SM7750-AB")) {
             assertEquals(
                 "'$sketch' is not a census string and must not be a Play string — widening " +
                     "is a census edit with evidence (which regenerates this file), never an " +

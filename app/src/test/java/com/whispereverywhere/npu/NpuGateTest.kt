@@ -105,10 +105,12 @@ class NpuGateTest {
             "and its Galaxy bin with it",
             NpuGate.isSocSupported("SM8550-AC", "QTI")
         )
-        assertFalse(
-            "SM8750 (the non-Galaxy 8 Elite) denies too — the vendor publishes for the Galaxy " +
-                "bin only, so the plain string stays CPU by census. Widening is a census edit " +
-                "with evidence, and this row is what makes a guess fail.",
+        // SM8750 STOOD HERE AS A DENY until 2026-09-22, labelled "the non-Galaxy 8 Elite". It
+        // is the string the Galaxy S25 itself reports, so the deny was turning away the very
+        // phones the 8elite_galaxy pack was built for. It allows now, on device reads; the
+        // 8+ Gen 1 above keeps this test's role.
+        assertTrue(
+            "SM8750 ALLOWS since 2026-09-22 — it is what every Galaxy S25-family phone reports",
             NpuGate.isSocSupported("SM8750", "QTI")
         )
     }
@@ -126,12 +128,16 @@ class NpuGateTest {
                 "which census row answers",
             NpuGate.isSocSupported("SM8750-AC", "Qualcomm")
         )
-        assertFalse(
-            "SM8750 PLAIN still denies: the non-Galaxy 8 Elite has no published w8a16 package " +
-                "(CPU_BY_CENSUS carries its evidence line). The suffix is the difference between " +
-                "a covered Galaxy bin and an uncovered plain bin — which is why the census " +
-                "writes suffix variants out and why nothing here matches by prefix.",
+        assertTrue(
+            "SM8750 PLAIN passes, and it is the string that matters: Build.SOC_MODEL carries no " +
+                "bin suffix, so an S25 reports SM8750 (device reads and Play's catalog, " +
+                "2026-09-22). Until then this line asserted the opposite and the whole S25 " +
+                "generation fell to CPU",
             NpuGate.isSocSupported("SM8750", "QTI")
+        )
+        assertTrue(
+            "and under the other Qualcomm spelling",
+            NpuGate.isSocSupported("SM8750", "Qualcomm")
         )
     }
 
@@ -146,10 +152,14 @@ class NpuGateTest {
             "and under the other Qualcomm spelling",
             NpuGate.isSocSupported("SM8850-AD", "Qualcomm")
         )
-        assertFalse(
-            "SM8850 plain denies — the non-Galaxy 8 Elite Gen 5 has no published w8a16 package " +
-                "as of 2026-08-29; same suffix trap as SM8750, one generation on",
+        assertTrue(
+            "SM8850 PLAIN passes — what every Galaxy S26-family phone reports (S26, S26 Ultra, " +
+                "Z Fold8 reads, 2026-09-22); same lesson as SM8750, one generation on",
             NpuGate.isSocSupported("SM8850", "QTI")
+        )
+        assertTrue(
+            "and under the other Qualcomm spelling",
+            NpuGate.isSocSupported("SM8850", "Qualcomm")
         )
     }
 
@@ -247,12 +257,13 @@ class NpuGateTest {
             NpuGate.isSocSupported(" SM8650", "QTI")
         )
         assertEquals(
-            "the gate's set is exactly the census's seven strings — the five families' " +
-                "socModels, suffix bins written out. It grew by two on 2026-09-22 (the 8 Gen 2's " +
-                "plain and Galaxy bins), which is how it is allowed to grow: a census edit with " +
-                "evidence, and the device-group XML regenerated in the same commit. Never " +
-                "because a part looked close.",
-            setOf("SM8650", "SM8650-AC", "SM8750-AC", "SM8850-AD", "SM7750",
+            "the gate's set is exactly the census's nine strings — the five families' " +
+                "socModels. It grew twice on 2026-09-22: by the 8 Gen 2's two strings, then by " +
+                "plain SM8750 and SM8850, the strings the S25 and S26 generations actually " +
+                "report. That is how it is allowed to grow: a census edit with evidence, and " +
+                "the device-group XML regenerated in the same commit. Never because a part " +
+                "looked close.",
+            setOf("SM8650", "SM8650-AC", "SM8750", "SM8750-AC", "SM8850", "SM8850-AD", "SM7750",
                 "SM8550", "SM8550-AC"),
             NpuGate.SUPPORTED_SOCS
         )
@@ -317,8 +328,16 @@ class NpuGateTest {
             gen3, NpuGate.familyFor("SM8650-AC", "QTI")
         )
         assertSame(
+            "SM8750 — the string an S25 reports — resolves to the v79 family",
+            elite, NpuGate.familyFor("SM8750", "QTI")
+        )
+        assertSame(
             "SM8750-AC resolves to the v79 family — NOT to anything 8gen3-shaped",
             elite, NpuGate.familyFor("SM8750-AC", "QTI")
+        )
+        assertSame(
+            "SM8850 — the string an S26 reports — resolves to the v81 family",
+            elite5, NpuGate.familyFor("SM8850", "QTI")
         )
         assertSame(
             "SM8850-AD resolves to the v81 family",

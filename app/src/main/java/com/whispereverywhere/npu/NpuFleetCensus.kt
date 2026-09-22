@@ -17,7 +17,8 @@ package com.whispereverywhere.npu
  *   binaries are compiled for. Not ordinal across rows in any useful sense: v73 is both the oldest
  *   architecture in the census and its newest part (the 7 Gen 4).
  * @property socModels every `Build.SOC_MODEL` string known to name this silicon — exact, complete,
- *   suffix bins written out (maintenance rule 1 in the [NpuFleetCensus] KDoc).
+ *   and taken from what DEVICES REPORT, never from a spec sheet or a vendor catalog's alias
+ *   (maintenance rule 1 in the [NpuFleetCensus] KDoc).
  * @property skelAsset the packaged asset name of the skel this family stages at arm time (F2).
  * @property skelBytes exact byte length of [skelAsset], measured out of `qnn-runtime-2.49.0.aar`.
  * @property skelSha256 sha256 of [skelAsset], from the same measurement.
@@ -91,14 +92,23 @@ data class PackArtifact(
  *
  * TWO MAINTENANCE RULES, WITH TEETH.
  *
- * **1. The -AC/-AD trap.** Play device targeting and `NpuGate` both match literal
- * `Build.SOC_MODEL` strings. Samsung bins are DIFFERENT strings for the same silicon — the
- * 8 Elite for Galaxy reports `SM8750-AC`, never plain `SM8750` — and a suffix missing from a row
- * lands a capable device in the empty default variant: fail-safe, but lost coverage that nothing
- * anywhere reports. THIS census is where a suffix gets added, with the measurement recorded in the
- * row's [NpuSocFamily.evidence], and the device-group XML must be regenerated in the SAME commit —
- * F4's layout pin enforces the agreement, so a census edit that forgets the XML fails loudly
- * instead of shipping a gate and a store that disagree about a device.
+ * **1. A string is what a DEVICE REPORTS — and devices report no bin suffix.** Play device
+ * targeting and `NpuGate` both match literal `Build.SOC_MODEL` strings, so a row that names a
+ * string no device reports lands every capable device in the empty default variant: fail-safe,
+ * but lost coverage that nothing anywhere reports. This rule used to read the other way round —
+ * "the 8 Elite for Galaxy reports `SM8750-AC`, never plain `SM8750`" — and it was wrong, and it
+ * cost the whole Galaxy S25 and S26 generations from 4.2 to 4.12. `SM8750-AC` and `SM8850-AD` are
+ * Qualcomm AI Hub CHIPSET ALIASES; `ro.soc.model` is copied from the part's fused chip id, which
+ * carries no bin, so an S25 reports `SM8750` exactly as a OnePlus 13 does. Measured 2026-09-22
+ * (`docs/measurements/2026-09-22-npu-device-census.md`): every S25/S26-family read is plain, and
+ * Play's own device catalog — 25,016 rows, the list Play targets against — holds ZERO suffixed
+ * strings. The suffixed spellings stay in their rows because they cost nothing and a firmware
+ * could still expose one; the PLAIN string is the one that does the work, in every row.
+ * **How to apply:** a new string comes from a real `getprop ro.soc.model` or from the Play
+ * catalog's System on Chip column, recorded in the row's [NpuSocFamily.evidence], and the
+ * device-group XML is regenerated in the SAME commit — F4's layout pin enforces the agreement, so
+ * a census edit that forgets the XML fails loudly instead of shipping a gate and a store that
+ * disagree about a device.
  *
  * **2. Widening is a measurement, never a guess.** The 4.0 rule, unchanged by the census growing
  * fourfold: a QAIRT context binary handed to the wrong HTP architecture does not degrade — it
@@ -110,7 +120,7 @@ data class PackArtifact(
 object NpuFleetCensus {
 
     /**
-     * The four families with published w8a16 packages, in the spec table's order. Verified against
+     * The five families with published w8a16 packages, in the spec table's order. Verified against
      * the live release manifests and the live asset bucket on 2026-08-29 (research doc
      * `2026-08-29-pad-soc-delivery.md` §7); skel rows measured out of `qnn-runtime-2.49.0.aar` the
      * same day, and the 8gen3 row reproduces the 4.1-shipped pins exactly.
@@ -127,27 +137,45 @@ object NpuFleetCensus {
             evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "device-executed (Fold6) 2026-08-29",
         ),
+        // THE GALAXY S25 AND S26 GENERATIONS, reachable at last (4.13.0, 2026-09-22). These two
+        // rows used to carry ONLY "SM8750-AC" / "SM8850-AD" — AI Hub's chipset aliases — and no
+        // device has ever reported either: every S25, S25+, S25 Ultra, S25 Edge and Z Fold7 read
+        // is plain SM8750, every S26, S26 Ultra and Z Fold8 read is plain SM8850, and Play's
+        // device catalog lists all of them that way. So from 4.2 to 4.12 both rows matched
+        // NOTHING: the gate denied every one of the phones these packs were built for, and Play
+        // delivered their variants to no one.
+        //
+        // THE PLAIN STRING ADMITS EVERY BIN, AND THAT WAS RULED ON. The string cannot tell a
+        // Galaxy part from a OnePlus 13's or a Xiaomi 17's, because it is the die's own chip id.
+        // Owner ruling 2026-09-22: admit them all. What that rests on: the same die answers to the
+        // same QNN soc_model (69 for SM8750, 87 for SM8850) at the same HTP version, the 8gen3 and
+        // qcs8550 rows already serve plain and Galaxy bins from one binary (both device-executed),
+        // and a context that still refuses to load takes NpuWhisperBackend's loud CPU fallback —
+        // `npu: unavailable stage=init` and the card note — never a wrong answer. What it does NOT
+        // rest on: a device run. Neither family has executed on any phone yet.
         NpuSocFamily(
             id = "8elite_galaxy",
             packGroup = "soc_8elite_galaxy",
             htpVersion = 79,
-            socModels = setOf("SM8750-AC"),
+            socModels = setOf("SM8750", "SM8750-AC"),
             skelAsset = "libQnnHtpV79Skel.so",
             skelBytes = 17_721_548L,
             skelSha256 = "9cad65a621d154e5282ea9d2849d0a8838932ed91dc7e2514db4e992e2d933c6",
             evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
-                "no device evidence",
+                "SOC_MODEL read plain SM8750 on S25/S25+/S25 Ultra/S25 Edge/Z Fold7, Play " +
+                "catalog agrees (2026-09-22 census, docs/measurements/2026-09-22-npu-device-census.md); no device-executed run",
         ),
         NpuSocFamily(
             id = "8elite5_galaxy",
             packGroup = "soc_8elite5_galaxy",
             htpVersion = 81,
-            socModels = setOf("SM8850-AD"),
+            socModels = setOf("SM8850", "SM8850-AD"),
             skelAsset = "libQnnHtpV81Skel.so",
             skelBytes = 18_844_384L,
             skelSha256 = "b3453265c4574c69bb446bcb98dda117ded531b86b2307e0f02c595050fab8b1",
             evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
-                "no device evidence",
+                "SOC_MODEL read plain SM8850 on S26/S26 Ultra/Z Fold8, Play catalog agrees " +
+                "(2026-09-22 census, docs/measurements/2026-09-22-npu-device-census.md); no device-executed run",
         ),
         NpuSocFamily(
             id = "7gen4",
@@ -430,9 +458,9 @@ object NpuFleetCensus {
             "(both release manifests re-fetched)",
         "SM8350" to "888 — no published w8a16 package as of 2026-08-29 " +
             "(both release manifests re-fetched)",
-        "SM8750" to "non-Galaxy 8 Elite — no published w8a16 package as of 2026-08-29 " +
-            "(both release manifests re-fetched)",
-        "SM8850" to "non-Galaxy 8 Elite Gen 5 — no published w8a16 package as of 2026-08-29 " +
-            "(both release manifests re-fetched)",
+        // SM8750 / SM8850 LEFT THIS LEDGER on 2026-09-22 for the 8elite_galaxy / 8elite5_galaxy
+        // rows. Their lines read "non-Galaxy 8 Elite — no published w8a16 package", which
+        // mistook a plain string for a plain BIN: the plain string is what the Galaxy phones
+        // report too (see the rows' comment), so it was never evidence of an uncovered part.
     )
 }

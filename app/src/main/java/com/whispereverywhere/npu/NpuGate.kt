@@ -62,10 +62,10 @@ object NpuGate {
      * families wide, and wider only by census edit. Not a prefix match — that also accepts every
      * future superstring part nobody has run. Not `equals(ignoreCase = true)` — `Build.SOC_MODEL`
      * is a vendor field, and a device whose OEM spells a part differently is a device we have not
-     * seen, which is the whole population this function exists to keep out. The Samsung suffix
-     * bins are the sharpest case: the census writes every variant out as its own string, because a
-     * covered `-AC` bin and an uncovered plain bin differ by exactly the characters a prefix match
-     * would ignore.
+     * seen, which is the whole population this function exists to keep out. Exact matching also
+     * means the census must name what devices REPORT: it once named `SM8750-AC` and `SM8850-AD`,
+     * catalog aliases no phone reports, and this function then correctly — exactly — denied the
+     * whole Galaxy S25 and S26 generations (maintenance rule 1, [NpuFleetCensus]).
      *
      * **`null` denies, and so does `unknown`/`UNKNOWN`** — by falling out of every row rather than
      * by a special case. `null` is the below-API-31 device (see the class KDoc); `Build.UNKNOWN`
