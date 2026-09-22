@@ -155,7 +155,30 @@ FAMILIES = {
     "8elite_galaxy": ("qualcomm-snapdragon-8-elite-for-galaxy", 79, "soc_8elite_galaxy"),
     "8elite5_galaxy": ("qualcomm-snapdragon-8-elite-gen5-for-galaxy", 81, "soc_8elite5_galaxy"),
     "7gen4": ("qualcomm-snapdragon-7gen4", 73, "soc_7gen4"),
+    # 8 Gen 2 (SM8550). Added 2026-09-22 after the qcs8550-proxy pack was DEVICE-EXECUTED on an
+    # S23 Ultra: soc_model 43 / htp_version 73, encode p50 2,472 ms, 37% of the 8 s commit floor.
+    # The vendor key says "proxy" because AI Hub benchmarks the embedded QCS8550; the binary is
+    # compiled for soc_model 43, which is the SM8550's own number — that is why this is a family
+    # and not the cross-load CPU_BY_CENSUS rejected (7 Gen 4's, compiled for soc_model 86).
+    "qcs8550": ("qualcomm-qcs8550-proxy", 73, "soc_qcs8550"),
 }
+
+# family -> the tiers it publishes AND we want. Absent = every tier in MODELS.
+#
+# OWNER RULING 2026-09-22, on the 8 Gen 2: "we want the Q8 V3 Turbo only. All of the other
+# models should stay hidden ... no need to use any other lower end model for this chip." The app
+# already behaves that way on any capable device (WhisperCatalog.ONE_TIER_ID narrows the chooser
+# to npu-turbo alone), so expressing it HERE is what stops the build from shipping a 280 MB
+# small variant nothing can offer. It also removes the 80-bin mel-donor dependency from this
+# family entirely, which is what failed the first spike attempt on a wiped device.
+FAMILY_TIERS = {
+    "qcs8550": {"npu-turbo"},
+}
+
+
+def tiers_for(family: str) -> set:
+    """The tiers this family carries — every tier unless FAMILY_TIERS narrows it."""
+    return FAMILY_TIERS.get(family, set(MODELS))
 
 # tier id -> the asset-pack MODULE that ships it. The delivery names above are per-TIER; the
 # module split is what lets Play deliver small without turbo (and price the fetch decision per
@@ -231,6 +254,10 @@ CENSUS = {
         777_441_280, "841cecfeade064bed27956401c298a2df86eeaac5c33270a284c34d11619c7a2",
         295_911_424, "ceca18cf506f14d8eaf141c69cf7674aca210b825316f0f4c481289cca457430",
     ),
+    # Blank on purpose: the spike hashed these two binaries by hand with sha256sum, which is a
+    # measurement but not one that passed the metadata and graph-IO gates. Let the instrument
+    # measure it, then paste what it prints.
+    ("npu-turbo", "qcs8550"): None,
     ("npu-turbo", "7gen4"): (
         871_118_305,
         846_360_576, "c482288d5899590a87cfea3faea3e39df30242095b8c93e0e02e7d1f1c79a813",
@@ -445,6 +472,10 @@ def measure(workspace: str) -> dict:
         manifest = fetch_manifest(tier)
         print(f"manifest ok: {tier} release v{RELEASE}")
         for family in FAMILIES:
+            if tier not in tiers_for(family):
+                print(f"SKIP tier={tier} family={family} (family carries "
+                      f"{sorted(tiers_for(family))} only)")
+                continue
             print(f"ROW tier={tier} family={family}")
             url = resolve_zip_url(tier, manifest, family)
             print(f"  url: {url}")
@@ -617,6 +648,8 @@ def build_packs(workspace: str) -> None:
     for tier in MODELS:
         module = PACK_MODULE_BY_TIER[tier]
         for family in FAMILIES:
+            if tier not in tiers_for(family):
+                continue
             _, _, pack_group = FAMILIES[family]
             out_dir = os.path.join(root, module, "src", "main", "assets",
                                    f"{module}#group_{pack_group}")
