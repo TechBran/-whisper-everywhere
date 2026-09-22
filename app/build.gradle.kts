@@ -60,13 +60,20 @@ val python3Executable: String =
  * quietly produce a RELEASE artifact with a backend missing — so [requireOpenClForRelease] below
  * makes the release bundle refuse instead.
  */
+val hasOpenCl: (File) -> Boolean = {
+    File(it, "include/CL/cl.h").isFile && File(it, "lib/libOpenCL.so").isFile
+}
+
 val openClRoot: File? =
-    ((findProperty("openclRoot") as String?)?.let(::File)
+    // The predicate belongs INSIDE firstOrNull. A bare firstOrNull() returns the first element
+    // unconditionally, so the trailing takeIf only ever examined the Windows candidate and this
+    // answered null on Linux even with the headers in place — caught by requireOpenClForRelease
+    // on the first release build (2026-09-22), which is the whole reason that guard exists.
+    (findProperty("openclRoot") as String?)?.let(::File)?.takeIf(hasOpenCl)
         ?: sequenceOf(
             File("D:/gemma-inference/tools/opencl"),                        // Windows dev box
             File(System.getProperty("user.home"), "toolchains/opencl"),     // MS-02 Ultra
-        ).firstOrNull())
-        ?.takeIf { File(it, "include/CL/cl.h").isFile && File(it, "lib/libOpenCL.so").isFile }
+        ).firstOrNull(hasOpenCl)
 
 android {
     namespace = "com.whispereverywhere"
