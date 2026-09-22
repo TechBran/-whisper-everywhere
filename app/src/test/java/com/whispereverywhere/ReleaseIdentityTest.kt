@@ -185,6 +185,31 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 106 = 4.12.0 — the 8 Gen 2 gets the AI chip.** 105 is spent twice over: the
+ * owner promoted 4.11.3 to production on 2026-09-22 after testing the internal track, so Play
+ * refuses the code and every installed phone already carries it. The name takes a MINOR because
+ * a whole silicon generation gaining the best tier is a new capability, not a fix to one.
+ *
+ * `CPU_BY_CENSUS` had carried the SM8550 as "no published w8a16 package" since 2026-08-29, with
+ * its own reopening condition written down: an 8 Gen 2 device turning up. The device turned up
+ * AND the question improved — the cross-load that ledger rejected was the 7 Gen 4's binary,
+ * compiled for `soc_model` 86, and AI Hub v0.62.2 publishes a `qcs8550-proxy` package reading
+ * `soc_model 43`, which is the SM8550's own number. Device-executed before it was written down:
+ * `npu: offer soc=SM8550:pass probe=pass`, encode p50 2,472 ms, 37% of the 8 s commit floor,
+ * 1.40x the Fold6 one HTP generation back, with sentence windows and live words working.
+ *
+ * `qcs8550` is the fifth census family and carries BOTH tiers like its siblings: the ruling was
+ * that other models "stay hidden, just like we do on the CPU tier", and hidden rungs there stay
+ * catalogued. `ONE_TIER_ID` gives the chooser turbo alone for free.
+ *
+ * The census is also **re-measured at v0.62.2**, which is what let a fifth family exist at all
+ * — the instrument asserts one release string for the whole census. Nothing moved: all sixteen
+ * existing digests reproduce August exactly and only the four turbo ZIP lengths changed, by one
+ * byte each. The packs are reproducible from the repo again.
+ *
+ * **The bundle is ~6.63 GB against 105's 5.48, and whether that crosses a Play total is
+ * UNVERIFIED** — check before uploading. One 8 Gen 2 downloads 1.07 GB of it.
+ *
  * **versionCode 105 = 4.11.3 — the panel follows the bottom again, and stops cutting text off.**
  * 104 is spent: it was built, sideloaded onto the Tab S10+ and downloaded by the owner, so a
  * higher code replaces it, and the name takes a PATCH because both halves are fixes to
@@ -375,17 +400,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_11_3_at_version_code_105() {
+    fun release_identity_is_4_12_0_at_version_code_106() {
         assertEquals(
-            "versionName must be 4.11.3 for this release (app/build.gradle.kts defaultConfig)",
-            "4.11.3",
+            "versionName must be 4.12.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.12.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 105 for this release (app/build.gradle.kts defaultConfig). " +
-                "104 = 4.11.2 is spent — built, sideloaded onto the Tab S10+ and downloaded by " +
-                "the owner, so only a higher code replaces it",
-            105,
+            "versionCode must be 106 for this release (app/build.gradle.kts defaultConfig). " +
+                "105 = 4.11.3 IS IN PRODUCTION (promoted 2026-09-22), so it is spent twice " +
+                "over: Play refuses the code and every installed phone already carries it",
+            106,
             BuildConfig.VERSION_CODE,
         )
     }
