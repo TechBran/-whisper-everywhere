@@ -511,7 +511,11 @@ def measure(workspace: str) -> dict:
         for tier, family, _ in unmeasured:
             print(f"  ({tier}, {family})")
         raise SystemExit(2)
-    print("measure OK: all 8 rows reproduce the embedded 16-digest census exactly")
+    # Counted, not spelled: the row and digest totals moved when the fifth family arrived
+    # (2026-09-22), and a hardcoded "8 rows / 16 digests" would have gone quietly stale in the
+    # one line a reader trusts to tell them the run was complete.
+    print(f"measure OK: all {len(CENSUS)} rows reproduce the embedded "
+          f"{len(CENSUS) * 2}-digest census exactly")
     return paths
 
 

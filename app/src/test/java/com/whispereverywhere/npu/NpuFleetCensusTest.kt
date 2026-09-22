@@ -342,7 +342,7 @@ class NpuFleetCensusTest {
     }
 
     @Test
-    fun allSixteenArtifactDigestsAreSixtyFourHexAndPairwiseDistinct() {
+    fun allTwentyArtifactDigestsAreSixtyFourHexAndPairwiseDistinct() {
         val hex = Regex("^[0-9a-f]{64}$")
         val digests = artifacts.flatMap { listOf(it.encoder.sha256, it.decoder.sha256) }
         assertEquals("ten pairs carry twenty digests", 20, digests.size)
@@ -354,10 +354,10 @@ class NpuFleetCensusTest {
             )
         }
         assertEquals(
-            "sixteen DISTINCT digests — a copy-paste between rows would install one " +
+            "twenty DISTINCT digests — a copy-paste between rows would install one " +
                 "family's binary under another family's verification with a passing " +
                 "metadata check",
-            16, digests.toSet().size
+            20, digests.toSet().size
         )
         assertEquals(
             "and none of them collides with a skel digest — twenty distinct measurements " +

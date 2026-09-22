@@ -163,12 +163,19 @@ class NpuSkelPackagingTest {
                 liveLineCount(extractTask, tripleRowFor(family)),
             )
         }
+        // ONE ROW PER ARCHITECTURE, not per family — and until 2026-09-22 those were the same
+        // number, so this line could say "family" and be right by coincidence. The skel is the
+        // HTP version's blob: qcs8550 (8 Gen 2) is v73 exactly as 7gen4 is and names the same
+        // libQnnHtpV73Skel.so, so five families now stage four skels. Both halves of the
+        // original intent still hold and are still asserted — the loop above proves every
+        // family's skel IS in the table (no stage a gate offers but the APK lacks), and this
+        // count proves no Triple is unnamed by any family (no dead asset).
         assertEquals(
-            "and the table carries exactly one row per census family — an extra Triple is a " +
-                "skel no census row will ever stage (dead assets) or a family the census does " +
-                "not gate (a stage no gate offers); either way the census and the build have " +
-                "parted company",
-            NpuFleetCensus.families.size,
+            "the table carries exactly one row per census ARCHITECTURE — an extra Triple is a " +
+                "skel no census row will ever stage (dead assets); a missing one is a family " +
+                "whose stage declines at arm. Either way the census and the build have parted " +
+                "company",
+            NpuFleetCensus.families.map { it.skelAsset }.toSet().size,
             liveLineCount(extractTask, "Triple(\""),
         )
     }
