@@ -30,6 +30,44 @@ val keystoreProps = Properties().apply {
 // structurally cannot be committed.
 val qnnSkelAssetDir = layout.buildDirectory.dir("generated/qnnSkel/assets")
 
+// ============================ PER-MACHINE TOOLCHAIN LOCATIONS ============================
+// Resolved rather than hardcoded, since the 2026-09-22 Linux port. Three of these paths were
+// absolute Windows paths, and `file()` resolves a RELATIVE path against the project directory
+// — so "C:/Users/..." on Linux did not fail loudly, it silently asked for
+// `<project>/app/C:/Users/...`. Each resolver takes an explicit override first, then the known
+// machines, so a new machine needs a property rather than an edit.
+
+/**
+ * A Python 3 interpreter. Needed twice: by CMake (which otherwise picks the Windows-Store alias
+ * stub and fails) and by [fetchQnnHeaders]. Override with `-Ppython3=/path/to/python3`.
+ * Falls back to the bare name so PATH resolution applies on a machine neither listed.
+ */
+val python3Executable: String =
+    (findProperty("python3") as String?)
+        ?: sequenceOf(
+            "C:/Users/bastr/AppData/Local/Programs/Python/Python313/python.exe", // Windows dev box
+            "/usr/bin/python3",                                                   // MS-02 Ultra
+        ).firstOrNull { File(it).canExecute() }
+        ?: "python3"
+
+/**
+ * The Khronos OpenCL headers plus the aarch64 Android link stub that `GGML_OPENCL=ON` needs
+ * (OpenCL-Headers 2024.10.24, Apache-2.0; the real `libOpenCL.so` comes from the device vendor at
+ * runtime). Override with `-PopenclRoot=/path/to/opencl`.
+ *
+ * NULL is a legitimate answer and must stay one: a checkout that only runs the JVM tests has no
+ * business needing OpenCL headers, and failing here would block them. What it must NOT do is
+ * quietly produce a RELEASE artifact with a backend missing — so [requireOpenClForRelease] below
+ * makes the release bundle refuse instead.
+ */
+val openClRoot: File? =
+    ((findProperty("openclRoot") as String?)?.let(::File)
+        ?: sequenceOf(
+            File("D:/gemma-inference/tools/opencl"),                        // Windows dev box
+            File(System.getProperty("user.home"), "toolchains/opencl"),     // MS-02 Ultra
+        ).firstOrNull())
+        ?.takeIf { File(it, "include/CL/cl.h").isFile && File(it, "lib/libOpenCL.so").isFile }
+
 android {
     namespace = "com.whispereverywhere"
     compileSdk = 36
@@ -98,11 +136,13 @@ android {
                 // devices whose vendor ships libOpenCL.so). Without this, System.loadLibrary
                 // died on Tensor/Mali devices before CPU transcription could even exist.
                 arguments += "-DGGML_BACKEND_DL=ON"
-                arguments += "-DGGML_OPENCL=ON"
-                arguments += "-DOpenCL_INCLUDE_DIR=D:/gemma-inference/tools/opencl/include"
-                arguments += "-DOpenCL_LIBRARY=D:/gemma-inference/tools/opencl/lib/libOpenCL.so"
+                arguments += "-DGGML_OPENCL=" + if (openClRoot != null) "ON" else "OFF"
+                openClRoot?.let {
+                    arguments += "-DOpenCL_INCLUDE_DIR=" + File(it, "include").absolutePath
+                    arguments += "-DOpenCL_LIBRARY=" + File(it, "lib/libOpenCL.so").absolutePath
+                }
                 // CMake otherwise picks the Windows-Store python alias stub and fails.
-                arguments += "-DPython3_EXECUTABLE=C:/Users/bastr/AppData/Local/Programs/Python/Python313/python.exe"
+                arguments += "-DPython3_EXECUTABLE=$python3Executable"
                 // Vulkan CLOSED on Adreno (driver-compiler aborts + DeviceLost at Queue::submit,
                 // proven on-device 2026-07-17). Revisit only for Mali/Xclipse experiments.
                 arguments += "-DGGML_VULKAN=OFF"
@@ -805,15 +845,37 @@ tasks.withType<Test>().configureEach {
 // QnnSdkBuildId.h matches it, because a silent 2.45-vs-2.49 header/runtime skew COMPILES CLEAN;
 // same discipline as fetchSherpaAar's sha256 check below.
 val qnnHeaderRoot = file("src/main/cpp/include")
+/**
+ * A RELEASE ARTIFACT MUST NOT QUIETLY LOSE A BACKEND. `openClRoot` is allowed to be null so that a
+ * checkout with no OpenCL headers can still run the JVM tests — but `GGML_OPENCL=OFF` changes what
+ * ships, and a build that silently drops the Adreno GPU backend would be indistinguishable from one
+ * that kept it until a device told us. So the release bundle depends on this and refuses instead.
+ */
+val requireOpenClForRelease = tasks.register("requireOpenClForRelease") {
+    doFirst {
+        if (openClRoot == null) {
+            error(
+                "GGML_OPENCL would be OFF: no OpenCL headers found, so this release would ship " +
+                    "without the Adreno GPU backend. Pass -PopenclRoot=/path/to/opencl (needs " +
+                    "include/CL/cl.h and lib/libOpenCL.so) or build a debug variant instead.",
+            )
+        }
+    }
+}
+
+tasks.matching { it.name == "bundleRelease" || it.name == "assembleRelease" }.configureEach {
+    dependsOn(requireOpenClForRelease)
+}
+
 val fetchQnnHeaders = tasks.register<Exec>("fetchQnnHeaders") {
     description = "Fetches the pinned QAIRT (QNN) C API headers into src/main/cpp/include/QNN."
     inputs.file(rootProject.file("tools/fetch_qnn_headers.py"))
     outputs.dir(file("src/main/cpp/include/QNN"))
-    // Absolute interpreter: `python` is not on PATH here, and CMake in this same build already
-    // pins Python3_EXECUTABLE to this exact binary for the same reason (the Windows-Store alias
-    // stub resolves first otherwise).
+    // The interpreter is RESOLVED (see python3Executable): `python` is not on PATH on the
+    // Windows box, and CMake in this same build pins Python3_EXECUTABLE to the same value for the
+    // same reason (the Windows-Store alias stub resolves first otherwise).
     commandLine(
-        "C:/Users/bastr/AppData/Local/Programs/Python/Python313/python.exe",
+        python3Executable,
         rootProject.file("tools/fetch_qnn_headers.py").absolutePath,
         qnnHeaderRoot.absolutePath,
     )
