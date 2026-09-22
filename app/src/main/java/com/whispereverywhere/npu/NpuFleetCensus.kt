@@ -160,6 +160,29 @@ object NpuFleetCensus {
             evidence = "AI Hub v0.61.0 HEAD-verified 2026-08-29; Last-Modified 2026-08-25; " +
                 "no device evidence",
         ),
+        // ===================== SPIKE ONLY — DO NOT MERGE AS-IS =====================
+        // The 8 Gen 2 experiment CPU_BY_CENSUS asked for. Its trigger, written there, was "an
+        // 8 Gen 2 device materialising"; what actually unblocked it was AI Hub v0.62.2
+        // publishing a `qcs8550-proxy` package whose metadata.json reads soc_model 43 /
+        // htp_version 73 — the SM8550's OWN soc_model, where the cross-load the census rejected
+        // was compiled for 86. Same HTP major, so the skel below is 7gen4's byte for byte.
+        //
+        // WHAT THIS ROW HAS NOT GOT: a device-group XML entry, a pack variant directory, a
+        // build_asset_packs.py FAMILIES key, or a single pinned test updated. It exists to let a
+        // debug build answer one question on one phone. If the answer is yes, the real row is a
+        // separate piece of work; if no, this branch is deleted and CPU_BY_CENSUS gets a date.
+        NpuSocFamily(
+            id = "qcs8550",
+            packGroup = "soc_qcs8550",
+            htpVersion = 73,
+            socModels = setOf("SM8550", "SM8550-AC"),
+            skelAsset = "libQnnHtpV73Skel.so",
+            skelBytes = 17_909_588L,
+            skelSha256 = "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1",
+            evidence = "SPIKE 2026-09-22: AI Hub v0.62.2 qcs8550-proxy, zip HEAD- and " +
+                "CRC-verified, soc_model 43 / htp_version 73; NO device evidence yet — that is " +
+                "what this row exists to get",
+        ),
     )
 
     /** The row named [id], or null — exact match, the same doctrine as every string in here. */
@@ -270,6 +293,44 @@ object NpuFleetCensus {
             ),
             evidence = MEASURED,
         ),
+        // SPIKE ONLY (see the qcs8550 family row above). Measured 2026-09-22 from
+        // whisper_large_v3_turbo_quantized-precompiled_qnn_onnx-w8a16-qualcomm_qcs8550_proxy.zip:
+        // HEAD said 859,787,787, the download matched exactly, testzip() passed. NOTE the
+        // DELIVERY names — the vendor zip calls both entries `*_qairt_context.bin` and the
+        // delivery repack prefixes turbo's so a turbo import can never overwrite the npu pair.
+        PackArtifact(
+            familyId = "qcs8550",
+            tierId = "npu-turbo",
+            vendorZipBytes = 859_787_787L,
+            encoder = PackEntry(
+                "turbo_encoder_qairt_context.bin", 775_843_840L,
+                "785043fbef7a17f80404f17423f97ae0ef1e2a8f4a5d446d413346445d6b9e6d",
+            ),
+            decoder = PackEntry(
+                "turbo_decoder_qairt_context.bin", 295_854_080L,
+                "ca70b66c3035a35af78ed43b488ff201d30413edde59f5832208925da080a4b2",
+            ),
+            evidence = "SPIKE 2026-09-22; v0.62.2 — NOT the 0.61.0 release the rest of this " +
+                "census was measured against",
+        ),
+        // SPIKE ONLY (see the qcs8550 family row above). Measured 2026-09-22 from
+        // whisper_small_quantized-precompiled_qnn_onnx-w8a16-qualcomm_qcs8550_proxy.zip:
+        // HEAD said 293,600,815, the download matched exactly, and zipfile.testzip() passed.
+        PackArtifact(
+            familyId = "qcs8550",
+            tierId = "npu",
+            vendorZipBytes = 293_600_815L,
+            encoder = PackEntry(
+                "encoder_qairt_context.bin", 132_931_584L,
+                "b9416b7200e69c715f197e7c5169760483ea39fa30bcae89f9ff6045691523bf",
+            ),
+            decoder = PackEntry(
+                "decoder_qairt_context.bin", 225_312_768L,
+                "0349446e32462ca2923fa8244b32c1272167f1cc1d692153b6efa54777d385ec",
+            ),
+            evidence = "SPIKE 2026-09-22; v0.62.2 — NOT the 0.61.0 release the rest of this " +
+                "census was measured against",
+        ),
         PackArtifact(
             familyId = "7gen4",
             tierId = "npu",
@@ -351,10 +412,9 @@ object NpuFleetCensus {
      * is a measurement with a date — maintenance rule 2, in the object KDoc above.
      */
     val CPU_BY_CENSUS: Map<String, String> = mapOf(
-        "SM8550" to "8 Gen 2 — no published w8a16 package as of 2026-08-29 " +
-            "(both release manifests re-fetched)",
-        "SM8550-AC" to "8 Gen 2 for Galaxy bin — no published w8a16 package as of 2026-08-29 " +
-            "(both release manifests re-fetched)",
+        // SM8550 / SM8550-AC moved OUT to the qcs8550 family for the 2026-09-22 spike: the
+        // "no published w8a16 package" the lines here recorded stopped being true at AI Hub
+        // v0.62.2. They come back if the device says INCOMPATIBLE_BINARIES.
         "SM8475" to "8+ Gen 1 — no published w8a16 package as of 2026-08-29 " +
             "(both release manifests re-fetched)",
         "SM8450" to "8 Gen 1 — no published w8a16 package as of 2026-08-29 " +

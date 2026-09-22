@@ -1,0 +1,671 @@
+﻿--------- beginning of main
+09-22 11:49:53.962 I/WE-DIAG ( 8011): probe: frames=1253 p50=656µs p99=7584µs overruns=10
+09-22 11:49:54.408 I/WE-DIAG ( 8011): wall-clock cap -> commit (cap=15000ms) VAD-MISS: no endpoint in this window
+09-22 11:49:54.410 I/WE-DIAG ( 8011): commit: seq=3 pcmBytes=529440 samples=264720
+09-22 11:49:54.410 I/WE-DIAG ( 8011): cap-cut split: seq=3 retainedTailBytes=35744 retainedMs=1117
+09-22 11:49:54.411 I/WE-DIAG ( 8011): endpoint: seq=3 cut=cap speechMs=0 trailMs=0 p=-1.00
+09-22 11:49:54.411 I/WE-DIAG ( 8011): queue: depth=1
+09-22 11:49:54.415 I/WE-DIAG ( 8011): transcribe START seq=3 samples=264720 lang=en effective=en
+09-22 11:49:54.773 I/WE-DIAG ( 8011): stream-timing: seq=3 audio=15008 decodes=56 decodeMs=3965 p50us=53477 p99us=210997 rtf=0.264 partials=41 firstPartialMs=472 padMs=500 shed=0 retract=0
+09-22 11:49:55.070 I/WE-DIAG ( 8011): mel: bins=128 frames=3000 row0=-816.559 rowMid=-831.744 rowLast=-1776.023
+09-22 11:49:55.448 I/WE-DIAG ( 8011): npu-debug: melprobe qRow0=77609891 qCol0=3010851 cell[0]=-0.296254 cell[1500]=-0.004986 cell[193500]=0.438002 scale=4.74610897e-05 zp=31605
+09-22 11:49:55.453 I/WE-DIAG ( 8011): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:49:55.454 I/WE-DIAG ( 8011): npu-debug: inbuf bytes=768000 values=384000 min=18633 max=60773 mean=25831.9 atZero=0 atMax=0 zp=31605
+09-22 11:49:55.454 I/WE-DIAG ( 8011): npu-debug: layout bins=128 frames=3000 sumFirstRow=77609891 sumColStride=3010851 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:49:55.454 I/WE-DIAG ( 8011): npu-debug: dequant i=0 q=25363->-0.296252 | i=1500 q=31500->-0.004983 | i=193500 q=40834->0.438018 (scale=4.74610897e-05 zp=31605)
+09-22 11:49:58.137 I/WE-DIAG ( 8011): encode: graphExecute OK in 2612.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:49:58.463 I/WE-DIAG ( 8011): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=26 max=212 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=44 max=250 mean=128.0 nonzero=1.000]
+09-22 11:49:58.860 I/WE-DIAG ( 8011): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:50:01.069 I/WE-DIAG ( 8011): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:50:01.137 I/WE-DIAG ( 8011): npu-debug: step pos=0 in=50258 inSet=0 raw[min=13061 max=45597 argmax=50259] masked=prefill-skipped
+09-22 11:50:01.831 I/WE-DIAG ( 8011): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:50:01.831 I/WE-DIAG ( 8011): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4160 max=51082 argmax=50360] masked=prefill-skipped
+09-22 11:50:01.842 I/WE-DIAG ( 8011): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:50:01.843 I/WE-DIAG ( 8011): npu-debug: step pos=2 in=50360 inSet=0 raw[min=1482 max=29775 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:50:01.850 I/WE-DIAG ( 8011): npu-debug: step pos=3 in=50365 inSet=1 raw[min=8680 max=33222 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:50:23.981 I/WE-DIAG (31205): endpointer: silero (streaming probe)
+09-22 11:50:25.067 W/WE-DIAG (31205): libQnnSystem.so: absolute path failed (dlopen failed: library "/data/app/~~t3GDyW3i9yz6-8W13SYi3g==/com.whispereverywhere-ORJSMj3SygwQ2CucMf4iCA==/lib/arm64/libQnnSystem.so" not found); loaded by SONAME instead
+09-22 11:50:25.099 W/WE-DIAG (31205): libQnnHtp.so: absolute path failed (dlopen failed: library "/data/app/~~t3GDyW3i9yz6-8W13SYi3g==/com.whispereverywhere-ORJSMj3SygwQ2CucMf4iCA==/lib/arm64/libQnnHtp.so" not found); loaded by SONAME instead
+09-22 11:50:25.108 I/WE-DIAG (31205): QNN providers: 1; provider[0] name=HTP_QTI_AISW backendId=6 api=2.38.0
+09-22 11:50:25.108 I/WE-DIAG (31205): QNN system providers: 1
+09-22 11:50:25.108 I/WE-DIAG (31205): probe OK (libDir=/data/app/~~t3GDyW3i9yz6-8W13SYi3g==/com.whispereverywhere-ORJSMj3SygwQ2CucMf4iCA==/lib/arm64)
+09-22 11:50:25.109 I/WE-DIAG (31205): npu: offer soc=SM8550:pass probe=pass installed=npu,npu-turbo offered=npu,npu-turbo
+09-22 11:50:27.398 I/WE-DIAG (31205): initMelOnly: mel-only context ready (128 bands, no weights)
+09-22 11:50:29.088 I/WE-DIAG (31205): nativeInit spec: melBins=128 decLayers=4 heads=20 vocab=51866 maxPositions=200 -> encoder 1 in / 8 out, 768000 B in / 15360000 B out; decoder 19 in / 9 out, 17398168 B in / 2141492 B out; language band 50259..50358
+09-22 11:50:29.101 I/WE-DIAG (31205): backendCreate OK (13 ms)
+09-22 11:50:29.694 I/WE-DIAG (31205): deviceCreate OK (593 ms)
+09-22 11:50:30.425 I/WE-DIAG (31205): startRecording: sessionContext=MEDIA_PLAYBACK
+09-22 11:50:30.434 I/WE-DIAG (31205): resolveTranscriptionEngine: providerId=null choice=LOCAL_ONLY
+09-22 11:50:30.445 I/WE-DIAG (31205): connect lang resolved=en (modelScope=MULTILINGUAL cloud=false)
+09-22 11:50:30.447 I/WE-DIAG (31205): stream-gate: lang=en pack=1 cloud=0 batch=0 enabled=1 ready=1 warm_now=0 -> preview=1
+09-22 11:50:30.448 I/WE-DIAG (31205): startAudioInput: decision=RequestConsent
+09-22 11:50:30.448 I/WE-DIAG (31205): projection consent: asked=1/2
+09-22 11:50:30.448 I/WE-DIAG (31205): MediaProjectionGate: launching consent trampoline
+09-22 11:50:30.515 I/WE-DIAG (31205): recorder start success=true
+09-22 11:50:30.516 I/WE-DIAG (31205): connect: modelPath=/data/user/0/com.whispereverywhere/files/models/turbo_encoder_qairt_context.bin ctxPtr=0 loaded=null
+09-22 11:50:32.547 I/WE-DIAG (31205): encoder: 775843840 bytes read in 2853 ms
+09-22 11:50:32.549 I/WE-DIAG (31205): encoder: binary info parsed in 1 ms
+09-22 11:50:32.549 I/WE-DIAG (31205): encoder: binary info version 3
+09-22 11:50:32.549 I/WE-DIAG (31205): encoder: socModel=43 contextBlobSize=775839744 numContextTensors=0
+09-22 11:50:32.549 I/WE-DIAG (31205): encoder: produced by QAIRT build v2.45.0.260326154327 (runtime headers are v2.49.0.260730134355), socVersion 
+09-22 11:50:32.549 I/WE-DIAG (31205): encoder: graph info version 3
+09-22 11:50:32.549 I/WE-DIAG (31205): encoder: tensor version in[0]=2 out[0]=2
+09-22 11:50:32.549 I/WE-DIAG (31205): encoder: graph[0] name=whisper_large_v3_turbo_quantized_encoder inputs=1 outputs=8
+09-22 11:50:32.550 I/WE-DIAG (31205):   encoder IN  [ 0] input_features           ufixed16  [1,128,3000]         768000 B
+09-22 11:50:32.550 I/WE-DIAG (31205):   encoder OUT [ 0] k_cache_cross_0          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:50:32.550 I/WE-DIAG (31205):   encoder OUT [ 1] v_cache_cross_0          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:50:32.550 I/WE-DIAG (31205):   encoder OUT [ 2] k_cache_cross_1          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:50:32.550 I/WE-DIAG (31205):   encoder OUT [ 3] v_cache_cross_1          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:50:32.550 I/WE-DIAG (31205):   encoder OUT [ 4] k_cache_cross_2          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:50:32.550 I/WE-DIAG (31205):   encoder OUT [ 5] v_cache_cross_2          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:50:32.550 I/WE-DIAG (31205):   encoder OUT [ 6] k_cache_cross_3          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:50:32.550 I/WE-DIAG (31205):   encoder OUT [ 7] v_cache_cross_3          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:50:32.550 I/WE-DIAG (31205): encoder: IO totals in 768000 B, out 15360000 B
+09-22 11:50:32.673 I/WE-DIAG (31205): stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=5458 canary=pass canaryMs=484 outLen=23 load=ok warm=1
+09-22 11:50:33.895 I/WE-DIAG (31205): flatline: armed source=PLAYBACK
+09-22 11:50:34.518 I/WE-DIAG (31205): PlaybackAudioCapturer: capturing at 16000Hz (decimate=false)
+09-22 11:50:37.214 I/WE-DIAG (31205): encoder: contextCreateFromBinary OK - cold load 4664 ms
+09-22 11:50:37.215 I/WE-DIAG (31205): encoder: graphRetrieve OK
+09-22 11:50:38.319 I/WE-DIAG (31205): decoder: 295854080 bytes read in 1103 ms
+09-22 11:50:38.322 I/WE-DIAG (31205): decoder: binary info parsed in 3 ms
+09-22 11:50:38.322 I/WE-DIAG (31205): decoder: binary info version 3
+09-22 11:50:38.322 I/WE-DIAG (31205): decoder: socModel=43 contextBlobSize=295845888 numContextTensors=0
+09-22 11:50:38.322 I/WE-DIAG (31205): decoder: produced by QAIRT build v2.45.0.260326154327 (runtime headers are v2.49.0.260730134355), socVersion 
+09-22 11:50:38.322 I/WE-DIAG (31205): decoder: graph info version 3
+09-22 11:50:38.322 I/WE-DIAG (31205): decoder: tensor version in[0]=2 out[0]=2
+09-22 11:50:38.323 I/WE-DIAG (31205): decoder: graph[0] name=whisper_large_v3_turbo_quantized_decoder inputs=19 outputs=9
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 0] input_ids                int32     [1,1]                4 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 1] k_cache_cross_0          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 2] k_cache_cross_1          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 3] k_cache_cross_2          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 4] k_cache_cross_3          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 5] k_cache_self_0_in        ufixed8   [20,1,64,199]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 6] k_cache_self_1_in        ufixed8   [20,1,64,199]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 7] k_cache_self_2_in        ufixed8   [20,1,64,199]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 8] k_cache_self_3_in        ufixed8   [20,1,64,199]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [ 9] position_ids             int32     [1]                  4 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [10] v_cache_cross_0          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [11] v_cache_cross_1          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [12] v_cache_cross_2          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [13] v_cache_cross_3          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [14] v_cache_self_0_in        ufixed8   [20,1,199,64]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [15] v_cache_self_1_in        ufixed8   [20,1,199,64]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [16] v_cache_self_2_in        ufixed8   [20,1,199,64]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [17] v_cache_self_3_in        ufixed8   [20,1,199,64]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder IN  [18] attention_mask           ufixed16  [1,1,1,200]          400 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder OUT [ 0] k_cache_self_0_out       ufixed8   [20,1,64,199]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder OUT [ 1] v_cache_self_0_out       ufixed8   [20,1,199,64]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder OUT [ 2] k_cache_self_1_out       ufixed8   [20,1,64,199]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder OUT [ 3] v_cache_self_1_out       ufixed8   [20,1,199,64]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder OUT [ 4] k_cache_self_2_out       ufixed8   [20,1,64,199]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder OUT [ 5] v_cache_self_2_out       ufixed8   [20,1,199,64]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder OUT [ 6] k_cache_self_3_out       ufixed8   [20,1,64,199]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder OUT [ 7] v_cache_self_3_out       ufixed8   [20,1,199,64]        254720 B
+09-22 11:50:38.324 I/WE-DIAG (31205):   decoder OUT [ 8] logits                   ufixed16  [1,51866,1,1]        103732 B
+09-22 11:50:38.324 I/WE-DIAG (31205): decoder: IO totals in 17398168 B, out 2141492 B
+09-22 11:50:38.790 I/WE-DIAG (31205): decoder: contextCreateFromBinary OK - cold load 466 ms
+09-22 11:50:38.791 I/WE-DIAG (31205): decoder: graphRetrieve OK
+09-22 11:50:38.791 I/WE-DIAG (31205): alias guard: 8 cross-KV pairs identical across encoder-out/decoder-in (dtype, rank, every dim, scale, offset)
+09-22 11:50:38.791 I/WE-DIAG (31205): quant: input_features ufixed16 [1,128,3000] scale 4.74610897072e-05 zeroPoint 31605 (QNN offset -31605), 768000 B
+09-22 11:50:38.791 I/WE-DIAG (31205):   bind encoder IN[ 0] input_features              768000 B @ 0xb400007a68af0f40
+09-22 11:50:38.791 I/WE-DIAG (31205):   bind encoder OUT[ 0] k_cache_cross_0            1920000 B @ 0xb400007a68bb1680
+09-22 11:50:38.791 I/WE-DIAG (31205):   bind encoder OUT[ 1] v_cache_cross_0            1920000 B @ 0xb400007a68db2c80
+09-22 11:50:38.791 I/WE-DIAG (31205):   bind encoder OUT[ 2] k_cache_cross_1            1920000 B @ 0xb400007a68fb3680
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind encoder OUT[ 3] v_cache_cross_1            1920000 B @ 0xb400007a691b4180
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind encoder OUT[ 4] k_cache_cross_2            1920000 B @ 0xb400007a693b5540
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind encoder OUT[ 5] v_cache_cross_2            1920000 B @ 0xb400007a695b6b80
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind encoder OUT[ 6] k_cache_cross_3            1920000 B @ 0xb400007a697b7cc0
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind encoder OUT[ 7] v_cache_cross_3            1920000 B @ 0xb400007a699b8e80
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind decoder IN input_ids        int32     [1,1]                4 B @ 0xb400007b43829240
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind decoder IN position_ids     int32     [1]                  4 B @ 0xb400007b43829280
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind decoder IN attention_mask   ufixed16  [1,1,1,200]          400 B @ 0xb400007bc16a1940
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind decoder OUT logits           ufixed16  [1,51866,1,1]        103732 B @ 0xb400007a69bb9d40
+09-22 11:50:38.792 I/WE-DIAG (31205): mask: attention_mask scale 0.00152590218931 offset -65535 -> attend code 65535 = 0.0000, blocked code 0 = -100.0000
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind decoder cross-KV: 8 tensors aliased onto the encoder's output buffers (0 B copied)
+09-22 11:50:38.792 I/WE-DIAG (31205):   bind decoder self-KV: 2 sets x 8 x 254720 B = 4075520 B ping-pong
+09-22 11:50:38.792 I/WE-DIAG (31205): decoder bound: 19 inputs / 9 outputs, all by name; mask 200 positions, vocab 51866, positions 0..198 execute
+09-22 11:50:38.796 I/WE-DIAG (31205): vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling
+09-22 11:50:38.796 I/WE-DIAG (31205): nativeInit OK - encoder graph 'whisper_large_v3_turbo_quantized_encoder' (1 in / 8 out), decoder graph 'whisper_large_v3_turbo_quantized_decoder' (19 in / 9 out)
+09-22 11:50:38.796 I/WE-DIAG (31205): nativeInit: session armed with epoch 1
+09-22 11:50:38.798 I/WE-DIAG (31205): npu-debug: instrumentation ENABLED
+09-22 11:50:38.802 I/WE-DIAG (31205): prewarm: ctx loaded
+09-22 11:50:38.802 I/WE-DIAG (31205): onOpen (ctx loaded)
+09-22 11:50:38.803 I/WE-DIAG (31205): onOpen handler: state=CONNECTING
+09-22 11:50:38.805 I/WE-DIAG (31205): startup ring: drain chunks=107 buffered=3424ms dropped=0ms pace=4
+09-22 11:50:38.807 I/WE-DIAG (31205): showSessionPreview: live=false context=MEDIA_PLAYBACK
+09-22 11:50:38.875 I/WE-DIAG (31205): wall-clock cap -> commit (cap=4000ms) VAD-MISS: no endpoint in this window
+09-22 11:50:38.876 I/WE-DIAG (31205): commit: seq=0 pcmBytes=1024 samples=512
+09-22 11:50:38.876 I/WE-DIAG (31205): commit: seq=0 skipped=no-speech-evidence speechMs=0 pcmMs=32
+09-22 11:50:38.876 I/WE-DIAG (31205): onSegmentResolved: seq=0 outcome=EmptyExpected
+09-22 11:50:38.877 I/WE-DIAG (31205): endpoint: seq=0 cut=cap speechMs=0 trailMs=0 p=-1.00
+09-22 11:50:38.877 I/WE-DIAG (31205): queue: depth=1
+09-22 11:50:38.911 I/WE-DIAG (31205): queue: depth=0
+09-22 11:50:39.811 I/WE-DIAG (31205): wall-clock cap -> commit (cap=4000ms) VAD-MISS: no endpoint in this window
+09-22 11:50:39.811 I/WE-DIAG (31205): commit: seq=1 pcmBytes=56448 samples=28224
+09-22 11:50:39.812 I/WE-DIAG (31205): cap-cut split: seq=1 retainedTailBytes=72576 retainedMs=2268
+09-22 11:50:39.812 I/WE-DIAG (31205): endpoint: seq=1 cut=cap speechMs=0 trailMs=0 p=-1.00
+09-22 11:50:39.812 I/WE-DIAG (31205): queue: depth=1
+09-22 11:50:39.847 I/WE-DIAG (31205): transcribe START seq=1 samples=28224 lang=en effective=en
+09-22 11:50:39.933 I/WE-DIAG (31205): stream-timing: seq=0 audio=32 decodes=1 decodeMs=1054 p50us=1054648 p99us=1054648 rtf=32.938 partials=0 firstPartialMs=-1 padMs=500 shed=1 retract=0
+09-22 11:50:39.966 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-2031.180 rowMid=-1993.973 rowLast=-2140.587
+09-22 11:50:40.454 I/WE-DIAG (31205): npu-debug: melprobe qRow0=52018383 qCol0=2108928 cell[0]=-0.718041 cell[1500]=-0.718041 cell[193500]=-0.718041 scale=4.74610897e-05 zp=31605
+09-22 11:50:40.454 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:50:40.454 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=16476 max=58616 mean=17273.1 atZero=0 atMax=0 zp=31605
+09-22 11:50:40.454 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=52018383 sumColStride=2108928 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:50:40.454 I/WE-DIAG (31205): npu-debug: dequant i=0 q=16476->-0.718039 | i=1500 q=16476->-0.718039 | i=193500 q=16476->-0.718039 (scale=4.74610897e-05 zp=31605)
+09-22 11:50:40.528 I/WE-DIAG (31205): stream-timing: seq=1 audio=4608 decodes=15 decodeMs=578 p50us=35718 p99us=60766 rtf=0.125 partials=1 firstPartialMs=474 padMs=500 shed=0 retract=0
+09-22 11:50:42.452 I/WE-DIAG (31205): encode: graphExecute OK in 1997.7 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:50:42.457 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=27 max=209 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=35 max=247 mean=128.0 nonzero=1.000]
+09-22 11:50:42.462 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:50:42.471 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:50:42.472 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=11753 max=47572 argmax=50360] masked=prefill-skipped
+09-22 11:50:42.483 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:50:42.484 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=5963 max=52468 argmax=50360] masked=prefill-skipped
+09-22 11:50:42.496 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:50:42.496 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=4562 max=30710 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:50:42.505 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=10048 max=31219 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:50:42.544 I/WE-DIAG (31205): decode: 3 tokens in 81.5 ms (27.16 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.76 ent=nan rung=0 steps=6
+09-22 11:50:42.544 I/WE-DIAG (31205): npu-debug: result count=3 first=50365 terminator=eot steps=6 posFirst=0 posLast=5
+09-22 11:50:42.579 I/WE-DIAG (31205): npu: encode=2609 decode=88 tokens=3 lang=en nsp=0.00 lp=-0.76 ent=NaN rung=0 term=eot
+09-22 11:50:42.580 I/WE-DIAG (31205): segment-timing: seq=1 audio=1764 transcribe=2733 rtf=1.55
+09-22 11:50:42.599 I/WE-DIAG (31205): transcribe DONE seq=1 rawLen=5 cleanLen=4
+09-22 11:50:42.601 I/WE-DIAG (31205): speaker-sentences: sentences=1 spans=1
+09-22 11:50:42.601 I/WE-DIAG (31205): onSegmentResolved: seq=1 outcome=Text
+09-22 11:50:42.646 I/WE-DIAG (31205): queue: depth=0
+09-22 11:50:42.647 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=4
+09-22 11:50:42.689 I/WE-DIAG (31205): VAD-standalone: 28224 samples -> 1 segments wallMs=24.3
+09-22 11:50:43.439 I/WE-DIAG (31205): speaker: model loaded from assets in 748 ms, dim=192
+09-22 11:50:43.501 I/WE-DIAG (31205): speaker: seq=1 segs=1 windows=1 embedMs=808 ids=[1] best=[-] dur=[1.8] confirmed=0 load=1 route=vad pick=0
+09-22 11:50:45.436 I/WE-DIAG (31205): probe: frames=315 p50=640µs p99=5920µs overruns=2
+09-22 11:50:54.428 I/WE-DIAG (31205): wall-clock cap -> commit (cap=15000ms) VAD-MISS: no endpoint in this window
+09-22 11:50:54.429 I/WE-DIAG (31205): commit: seq=2 pcmBytes=552832 samples=276416
+09-22 11:50:54.429 I/WE-DIAG (31205): endpoint: seq=2 cut=cap speechMs=0 trailMs=0 p=-1.00
+09-22 11:50:54.429 I/WE-DIAG (31205): queue: depth=1
+09-22 11:50:54.441 I/WE-DIAG (31205): transcribe START seq=2 samples=276416 lang=en effective=en
+09-22 11:50:54.468 I/WE-DIAG (31205): stream-timing: seq=2 audio=13984 decodes=51 decodeMs=3100 p50us=47523 p99us=193434 rtf=0.222 partials=38 firstPartialMs=523 padMs=500 shed=0 retract=0
+09-22 11:50:54.701 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-744.896 rowMid=-564.395 rowLast=-1582.976
+09-22 11:50:54.845 I/WE-DIAG (31205): npu-debug: melprobe qRow0=79120430 qCol0=3261769 cell[0]=0.111896 cell[1500]=-0.097913 cell[193500]=-0.086145 scale=4.74610897e-05 zp=31605
+09-22 11:50:54.867 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:50:54.873 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=19892 max=62032 mean=26993.6 atZero=0 atMax=0 zp=31605
+09-22 11:50:54.873 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=79120430 sumColStride=3261769 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:50:54.873 I/WE-DIAG (31205): npu-debug: dequant i=0 q=33963->0.111913 | i=1500 q=29542->-0.097912 | i=193500 q=29790->-0.086142 (scale=4.74610897e-05 zp=31605)
+09-22 11:50:55.459 I/WE-DIAG (31205): probe: frames=628 p50=640µs p99=4672µs overruns=2
+09-22 11:50:56.919 I/WE-DIAG (31205): encode: graphExecute OK in 2046.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:50:56.926 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=25 max=209 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=36 max=251 mean=128.0 nonzero=1.000]
+09-22 11:50:56.929 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:50:56.947 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:50:56.948 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=14337 max=48340 argmax=50259] masked=prefill-skipped
+09-22 11:50:56.958 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:50:56.958 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4526 max=50997 argmax=50360] masked=prefill-skipped
+09-22 11:50:56.968 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:50:56.969 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=1500 max=29405 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:50:56.977 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=15344 max=41401 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:50:58.069 I/WE-DIAG (31205): decode: 94 tokens in 1140.1 ms (12.13 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.25 ent=2.73 rung=0 steps=97
+09-22 11:50:58.069 I/WE-DIAG (31205): npu-debug: result count=94 first=50365 terminator=eot steps=97 posFirst=0 posLast=96
+09-22 11:50:58.071 I/WE-DIAG (31205): npu: encode=2474 decode=1143 tokens=94 lang=en nsp=0.00 lp=-0.25 ent=2.73 rung=0 term=eot
+09-22 11:50:58.072 I/WE-DIAG (31205): segment-timing: seq=2 audio=17276 transcribe=3630 rtf=0.21
+09-22 11:50:58.073 I/WE-DIAG (31205): transcribe DONE seq=2 rawLen=383 cleanLen=382
+09-22 11:50:58.076 I/WE-DIAG (31205): speaker-sentences: sentences=1 spans=1
+09-22 11:50:58.076 I/WE-DIAG (31205): onSegmentResolved: seq=2 outcome=Text
+09-22 11:50:58.077 I/WE-DIAG (31205): queue: depth=0
+09-22 11:50:58.077 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=382
+09-22 11:50:58.339 I/WE-DIAG (31205): VAD-standalone: 276416 samples -> 3 segments wallMs=254.6
+09-22 11:50:59.148 I/WE-DIAG (31205): speaker: seq=2 segs=3 windows=8 embedMs=801 ids=[1,1,1,1,1,1,1,1] best=[0.51,0.54,0.55,0.60,0.61,0.53,0.66,0.74] dur=[2.0,2.2,2.2,2.2,2.2,2.2,2.2,2.2] confirmed=0 load=0 route=vad pick=1
+09-22 11:51:01.471 I/WE-DIAG (31205): VAD -> commit (rms=69)
+09-22 11:51:01.472 I/WE-DIAG (31205): commit: seq=3 pcmBytes=225280 samples=112640
+09-22 11:51:01.472 I/WE-DIAG (31205): endpoint: seq=3 cut=vad speechMs=6656 trailMs=352 p=0.01
+09-22 11:51:01.473 I/WE-DIAG (31205): queue: depth=1
+09-22 11:51:01.474 I/WE-DIAG (31205): transcribe START seq=3 samples=112640 lang=en effective=en
+09-22 11:51:01.541 I/WE-DIAG (31205): stream-timing: seq=3 audio=7040 decodes=23 decodeMs=1217 p50us=43986 p99us=127960 rtf=0.173 partials=18 firstPartialMs=872 padMs=500 shed=0 retract=0
+09-22 11:51:01.607 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-1558.069 rowMid=-1471.194 rowLast=-1964.699
+09-22 11:51:01.695 I/WE-DIAG (31205): npu-debug: melprobe qRow0=61986698 qCol0=4283552 cell[0]=0.372825 cell[1500]=-0.675989 cell[193500]=-0.675989 scale=4.74610897e-05 zp=31605
+09-22 11:51:01.700 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:51:01.700 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=17362 max=59502 mean=20845.1 atZero=0 atMax=0 zp=31605
+09-22 11:51:01.700 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=61986698 sumColStride=4283552 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:51:01.700 I/WE-DIAG (31205): npu-debug: dequant i=0 q=39460->0.372807 | i=1500 q=17362->-0.675988 | i=193500 q=17362->-0.675988 (scale=4.74610897e-05 zp=31605)
+09-22 11:51:03.886 I/WE-DIAG (31205): encode: graphExecute OK in 2186.0 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:51:03.894 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=25 max=209 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=42 max=246 mean=128.0 nonzero=1.000]
+09-22 11:51:03.895 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:51:03.917 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:51:03.921 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=14140 max=50068 argmax=50259] masked=prefill-skipped
+09-22 11:51:03.936 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:51:03.936 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4412 max=51087 argmax=50360] masked=prefill-skipped
+09-22 11:51:03.946 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:51:03.947 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=3331 max=35700 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:51:03.957 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=11335 max=39332 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:51:04.189 I/WE-DIAG (31205): VAD -> commit (rms=138)
+09-22 11:51:04.190 I/WE-DIAG (31205): commit: seq=4 pcmBytes=87040 samples=43520
+09-22 11:51:04.190 I/WE-DIAG (31205): endpoint: seq=4 cut=vad speechMs=1056 trailMs=352 p=0.01
+09-22 11:51:04.191 I/WE-DIAG (31205): queue: depth=2
+09-22 11:51:04.295 I/WE-DIAG (31205): stream-timing: seq=4 audio=2752 decodes=9 decodeMs=445 p50us=42360 p99us=68944 rtf=0.162 partials=5 firstPartialMs=1085 padMs=500 shed=0 retract=0
+09-22 11:51:04.304 I/WE-DIAG (31205): decode: 29 tokens in 408.6 ms (14.09 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.07 ent=nan rung=0 steps=32
+09-22 11:51:04.305 I/WE-DIAG (31205): npu-debug: result count=29 first=50365 terminator=eot steps=32 posFirst=0 posLast=31
+09-22 11:51:04.310 I/WE-DIAG (31205): npu: encode=2421 decode=411 tokens=29 lang=en nsp=0.00 lp=-0.07 ent=NaN rung=0 term=eot
+09-22 11:51:04.311 I/WE-DIAG (31205): segment-timing: seq=3 audio=7040 transcribe=2837 rtf=0.40
+09-22 11:51:04.312 I/WE-DIAG (31205): transcribe DONE seq=3 rawLen=96 cleanLen=95
+09-22 11:51:04.314 I/WE-DIAG (31205): speaker-sentences: sentences=3 spans=3
+09-22 11:51:04.314 I/WE-DIAG (31205): onSegmentResolved: seq=3 outcome=Text
+09-22 11:51:04.315 I/WE-DIAG (31205): transcribe START seq=4 samples=43520 lang=en effective=en
+09-22 11:51:04.318 I/WE-DIAG (31205): queue: depth=1
+09-22 11:51:04.319 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=95
+09-22 11:51:04.323 I/WE-DIAG (31205): perceived: seq=3 speechEndToVisible=3208ms
+09-22 11:51:04.407 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-2058.848 rowMid=-2062.756 rowLast=-2250.144
+09-22 11:51:04.459 I/WE-DIAG (31205): VAD-standalone: 112640 samples -> 2 segments wallMs=143.2
+09-22 11:51:04.543 I/WE-DIAG (31205): npu-debug: melprobe qRow0=51434554 qCol0=2776806 cell[0]=-0.010678 cell[1500]=-0.757608 cell[193500]=-0.757608 scale=4.74610897e-05 zp=31605
+09-22 11:51:04.543 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:51:04.544 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=15642 max=57782 mean=16923.9 atZero=0 atMax=0 zp=31605
+09-22 11:51:04.544 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=51434554 sumColStride=2776806 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:51:04.544 I/WE-DIAG (31205): npu-debug: dequant i=0 q=31380->-0.010679 | i=1500 q=15642->-0.757621 | i=193500 q=15642->-0.757621 (scale=4.74610897e-05 zp=31605)
+09-22 11:51:04.848 I/WE-DIAG (31205): speaker: seq=3 segs=2 windows=3 embedMs=384 ids=[1,1,1] best=[0.75,0.59,0.67] dur=[2.4,1.6,3.0] confirmed=0 load=0 route=vad pick=2
+09-22 11:51:05.470 I/WE-DIAG (31205): probe: frames=941 p50=656µs p99=4944µs overruns=2
+09-22 11:51:06.736 I/WE-DIAG (31205): encode: graphExecute OK in 2191.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:51:06.743 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=26 max=214 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=39 max=250 mean=128.0 nonzero=1.000]
+09-22 11:51:06.743 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:51:06.756 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:51:06.759 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=12655 max=47843 argmax=50360] masked=prefill-skipped
+09-22 11:51:06.769 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:51:06.772 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4709 max=51552 argmax=50360] masked=prefill-skipped
+09-22 11:51:06.783 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:51:06.783 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=2389 max=30945 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:51:06.793 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=15859 max=43880 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:51:06.890 I/WE-DIAG (31205): decode: 11 tokens in 146.3 ms (13.30 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.13 ent=nan rung=0 steps=14
+09-22 11:51:06.890 I/WE-DIAG (31205): npu-debug: result count=11 first=50365 terminator=eot steps=14 posFirst=0 posLast=13
+09-22 11:51:06.890 I/WE-DIAG (31205): npu: encode=2427 decode=147 tokens=11 lang=en nsp=0.00 lp=-0.13 ent=NaN rung=0 term=eot
+09-22 11:51:06.890 I/WE-DIAG (31205): segment-timing: seq=4 audio=2720 transcribe=2575 rtf=0.95
+09-22 11:51:06.891 I/WE-DIAG (31205): transcribe DONE seq=4 rawLen=31 cleanLen=30
+09-22 11:51:06.891 I/WE-DIAG (31205): speaker-sentences: sentences=1 spans=1
+09-22 11:51:06.891 I/WE-DIAG (31205): onSegmentResolved: seq=4 outcome=Text
+09-22 11:51:06.892 I/WE-DIAG (31205): queue: depth=0
+09-22 11:51:06.892 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=30
+09-22 11:51:06.900 I/WE-DIAG (31205): perceived: seq=4 speechEndToVisible=3065ms
+09-22 11:51:06.942 I/WE-DIAG (31205): VAD-standalone: 43520 samples -> 2 segments wallMs=50.6
+09-22 11:51:06.974 I/WE-DIAG (31205): VAD -> commit (rms=445)
+09-22 11:51:06.975 I/WE-DIAG (31205): commit: seq=5 pcmBytes=89088 samples=44544
+09-22 11:51:06.980 I/WE-DIAG (31205): endpoint: seq=5 cut=vad speechMs=1952 trailMs=354 p=0.10
+09-22 11:51:06.980 I/WE-DIAG (31205): queue: depth=1
+09-22 11:51:06.995 I/WE-DIAG (31205): transcribe START seq=5 samples=44544 lang=en effective=en
+09-22 11:51:07.156 I/WE-DIAG (31205): stream-timing: seq=5 audio=2784 decodes=9 decodeMs=732 p50us=73030 p99us=123054 rtf=0.263 partials=6 firstPartialMs=1116 padMs=500 shed=0 retract=0
+09-22 11:51:07.267 I/WE-DIAG (31205): speaker: seq=4 segs=2 windows=1 embedMs=295 ids=[1] best=[0.60] dur=[2.3] confirmed=0 load=0 route=vad pick=0
+09-22 11:51:07.269 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-2123.470 rowMid=-2137.860 rowLast=-2343.609
+09-22 11:51:07.401 I/WE-DIAG (31205): npu-debug: melprobe qRow0=50074862 qCol0=3315337 cell[0]=0.044740 cell[1500]=-0.790722 cell[193500]=-0.790722 scale=4.74610897e-05 zp=31605
+09-22 11:51:07.401 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:51:07.402 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=14945 max=57084 mean=16506.8 atZero=0 atMax=0 zp=31605
+09-22 11:51:07.402 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=50074862 sumColStride=3315337 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:51:07.402 I/WE-DIAG (31205): npu-debug: dequant i=0 q=32548->0.044756 | i=1500 q=14945->-0.790702 | i=193500 q=14945->-0.790702 (scale=4.74610897e-05 zp=31605)
+09-22 11:51:09.595 I/WE-DIAG (31205): encode: graphExecute OK in 2193.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:51:09.606 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=27 max=212 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=36 max=248 mean=128.0 nonzero=1.000]
+09-22 11:51:09.607 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:51:09.617 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:51:09.618 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=13029 max=48870 argmax=50360] masked=prefill-skipped
+09-22 11:51:09.628 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:51:09.628 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4346 max=51453 argmax=50360] masked=prefill-skipped
+09-22 11:51:09.639 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:51:09.639 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=2115 max=30613 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:51:09.648 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=13863 max=37028 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:51:09.798 I/WE-DIAG (31205): decode: 13 tokens in 191.0 ms (14.69 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.06 ent=nan rung=0 steps=16
+09-22 11:51:09.798 I/WE-DIAG (31205): npu-debug: result count=13 first=50365 terminator=eot steps=16 posFirst=0 posLast=15
+09-22 11:51:09.799 I/WE-DIAG (31205): npu: encode=2610 decode=192 tokens=13 lang=en nsp=0.00 lp=-0.06 ent=NaN rung=0 term=eot
+09-22 11:51:09.799 I/WE-DIAG (31205): segment-timing: seq=5 audio=2784 transcribe=2803 rtf=1.01
+09-22 11:51:09.799 I/WE-DIAG (31205): transcribe DONE seq=5 rawLen=42 cleanLen=41
+09-22 11:51:09.799 I/WE-DIAG (31205): speaker-sentences: sentences=1 spans=1
+09-22 11:51:09.799 I/WE-DIAG (31205): onSegmentResolved: seq=5 outcome=Text
+09-22 11:51:09.825 I/WE-DIAG (31205): queue: depth=0
+09-22 11:51:09.825 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=41
+09-22 11:51:09.827 I/WE-DIAG (31205): perceived: seq=5 speechEndToVisible=3208ms
+09-22 11:51:09.854 I/WE-DIAG (31205): VAD-standalone: 44544 samples -> 1 segments wallMs=54.0
+09-22 11:51:09.990 I/WE-DIAG (31205): speaker: seq=5 segs=1 windows=1 embedMs=134 ids=[1] best=[0.67] dur=[2.3] confirmed=0 load=0 route=vad pick=0
+09-22 11:51:15.488 I/WE-DIAG (31205): probe: frames=1254 p50=752µs p99=6048µs overruns=6
+09-22 11:51:17.278 I/WE-DIAG (31205): VAD -> commit (rms=245)
+09-22 11:51:17.279 I/WE-DIAG (31205): commit: seq=6 pcmBytes=329728 samples=164864
+09-22 11:51:17.280 I/WE-DIAG (31205): endpoint: seq=6 cut=vad speechMs=9726 trailMs=351 p=0.01
+09-22 11:51:17.281 I/WE-DIAG (31205): queue: depth=1
+09-22 11:51:17.283 I/WE-DIAG (31205): transcribe START seq=6 samples=164864 lang=en effective=en
+09-22 11:51:17.383 I/WE-DIAG (31205): stream-timing: seq=6 audio=10272 decodes=33 decodeMs=1976 p50us=57007 p99us=122204 rtf=0.192 partials=30 firstPartialMs=439 padMs=500 shed=0 retract=0
+09-22 11:51:17.440 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-1128.204 rowMid=-1079.279 rowLast=-1762.875
+09-22 11:51:17.540 I/WE-DIAG (31205): npu-debug: melprobe qRow0=71044706 qCol0=4253533 cell[0]=0.180509 cell[1500]=-0.615400 cell[193500]=-0.615400 scale=4.74610897e-05 zp=31605
+09-22 11:51:17.547 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:51:17.548 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=18639 max=60778 mean=23472.4 atZero=0 atMax=0 zp=31605
+09-22 11:51:17.548 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=71044706 sumColStride=4253533 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:51:17.548 I/WE-DIAG (31205): npu-debug: dequant i=0 q=35408->0.180495 | i=1500 q=18639->-0.615380 | i=193500 q=18639->-0.615380 (scale=4.74610897e-05 zp=31605)
+09-22 11:51:19.820 I/WE-DIAG (31205): encode: graphExecute OK in 2272.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:51:19.831 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=27 max=209 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=42 max=246 mean=128.0 nonzero=1.000]
+09-22 11:51:19.832 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:51:19.842 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:51:19.844 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=12800 max=46658 argmax=50259] masked=prefill-skipped
+09-22 11:51:19.854 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:51:19.854 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4708 max=51388 argmax=50360] masked=prefill-skipped
+09-22 11:51:19.864 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:51:19.864 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=2700 max=34078 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:51:19.874 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=16011 max=45038 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:51:20.506 I/WE-DIAG (31205): decode: 49 tokens in 674.5 ms (13.77 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.15 ent=3.15 rung=0 steps=52
+09-22 11:51:20.506 I/WE-DIAG (31205): npu-debug: result count=49 first=50365 terminator=eot steps=52 posFirst=0 posLast=51
+09-22 11:51:20.509 I/WE-DIAG (31205): npu: encode=2547 decode=676 tokens=49 lang=en nsp=0.00 lp=-0.15 ent=3.15 rung=0 term=eot
+09-22 11:51:20.509 I/WE-DIAG (31205): segment-timing: seq=6 audio=10304 transcribe=3226 rtf=0.31
+09-22 11:51:20.510 I/WE-DIAG (31205): transcribe DONE seq=6 rawLen=178 cleanLen=177
+09-22 11:51:20.511 I/WE-DIAG (31205): speaker-sentences: sentences=3 spans=3
+09-22 11:51:20.511 I/WE-DIAG (31205): onSegmentResolved: seq=6 outcome=Text
+09-22 11:51:20.512 I/WE-DIAG (31205): queue: depth=0
+09-22 11:51:20.512 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=177
+09-22 11:51:20.515 I/WE-DIAG (31205): perceived: seq=6 speechEndToVisible=3590ms
+09-22 11:51:20.689 I/WE-DIAG (31205): VAD-standalone: 164864 samples -> 2 segments wallMs=176.3
+09-22 11:51:21.266 I/WE-DIAG (31205): speaker: seq=6 segs=2 windows=4 embedMs=567 ids=[1,1,1,1] best=[0.66,0.73,0.67,0.55] dur=[4.0,2.3,2.3,1.5] confirmed=0 load=0 route=vad pick=0
+09-22 11:51:25.502 I/WE-DIAG (31205): probe: frames=1567 p50=1136µs p99=7552µs overruns=13
+09-22 11:51:32.286 I/WE-DIAG (31205): wall-clock cap -> commit (cap=15000ms) VAD-MISS: no endpoint in this window
+09-22 11:51:32.287 I/WE-DIAG (31205): commit: seq=7 pcmBytes=480256 samples=240128
+09-22 11:51:32.288 I/WE-DIAG (31205): endpoint: seq=7 cut=cap speechMs=0 trailMs=0 p=-1.00
+09-22 11:51:32.288 I/WE-DIAG (31205): queue: depth=1
+09-22 11:51:32.293 I/WE-DIAG (31205): transcribe START seq=7 samples=240128 lang=en effective=en
+09-22 11:51:32.363 I/WE-DIAG (31205): stream-timing: seq=7 audio=15008 decodes=48 decodeMs=2720 p50us=58272 p99us=81141 rtf=0.181 partials=32 firstPartialMs=2016 padMs=500 shed=0 retract=0
+09-22 11:51:32.409 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-873.612 rowMid=-378.139 rowLast=-1534.188
+09-22 11:51:32.538 I/WE-DIAG (31205): npu-debug: melprobe qRow0=76408725 qCol0=3913306 cell[0]=-0.127667 cell[1500]=0.010790 cell[193500]=0.178258 scale=4.74610897e-05 zp=31605
+09-22 11:51:32.543 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:51:32.544 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=20501 max=62640 mean=27623.0 atZero=0 atMax=0 zp=31605
+09-22 11:51:32.544 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=76408725 sumColStride=3913306 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:51:32.544 I/WE-DIAG (31205): npu-debug: dequant i=0 q=28915->-0.127670 | i=1500 q=31832->0.010774 | i=193500 q=35361->0.178264 (scale=4.74610897e-05 zp=31605)
+09-22 11:51:34.840 I/WE-DIAG (31205): encode: graphExecute OK in 2296.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:51:34.845 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=27 max=211 mean=127.9 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=43 max=249 mean=128.0 nonzero=1.000]
+09-22 11:51:34.846 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:51:34.863 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:51:34.864 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=14028 max=48621 argmax=50360] masked=prefill-skipped
+09-22 11:51:34.872 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:51:34.873 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4959 max=50875 argmax=50360] masked=prefill-skipped
+09-22 11:51:34.883 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:51:34.883 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=2341 max=32355 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:51:34.892 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=9504 max=36556 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:51:35.517 I/WE-DIAG (31205): probe: frames=1880 p50=1200µs p99=7392µs overruns=15
+09-22 11:51:35.910 I/WE-DIAG (31205): decode: 82 tokens in 1064.6 ms (12.98 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.25 ent=3.16 rung=0 steps=85
+09-22 11:51:35.911 I/WE-DIAG (31205): npu-debug: result count=82 first=50365 terminator=eot steps=85 posFirst=0 posLast=84
+09-22 11:51:35.913 I/WE-DIAG (31205): npu: encode=2545 decode=1065 tokens=82 lang=en nsp=0.00 lp=-0.25 ent=3.16 rung=0 term=eot
+09-22 11:51:35.913 I/WE-DIAG (31205): segment-timing: seq=7 audio=15008 transcribe=3620 rtf=0.24
+09-22 11:51:35.914 I/WE-DIAG (31205): transcribe DONE seq=7 rawLen=331 cleanLen=330
+09-22 11:51:35.915 I/WE-DIAG (31205): speaker-sentences: sentences=1 spans=1
+09-22 11:51:35.915 I/WE-DIAG (31205): onSegmentResolved: seq=7 outcome=Text
+09-22 11:51:35.915 I/WE-DIAG (31205): queue: depth=0
+09-22 11:51:35.916 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=330
+09-22 11:51:36.115 I/WE-DIAG (31205): VAD-standalone: 240128 samples -> 2 segments wallMs=198.4
+09-22 11:51:36.701 I/WE-DIAG (31205): speaker: seq=7 segs=2 windows=4 embedMs=578 ids=[2,2,2,2] best=[0.08,0.60,0.47,0.65] dur=[3.8,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=0
+09-22 11:51:36.708 I/WE-DIAG (31205): speaker-labels: confirmed=2 runs=11 relabelled=1
+09-22 11:51:39.198 I/WE-DIAG (31205): VAD -> commit (rms=46)
+09-22 11:51:39.200 I/WE-DIAG (31205): commit: seq=8 pcmBytes=221184 samples=110592
+09-22 11:51:39.201 I/WE-DIAG (31205): endpoint: seq=8 cut=vad speechMs=6528 trailMs=352 p=0.00
+09-22 11:51:39.203 I/WE-DIAG (31205): queue: depth=1
+09-22 11:51:39.208 I/WE-DIAG (31205): transcribe START seq=8 samples=110592 lang=en effective=en
+09-22 11:51:39.248 I/WE-DIAG (31205): stream-timing: seq=8 audio=6912 decodes=22 decodeMs=1414 p50us=62782 p99us=95724 rtf=0.205 partials=11 firstPartialMs=1101 padMs=500 shed=0 retract=0
+09-22 11:51:39.291 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-1420.099 rowMid=-1195.990 rowLast=-1711.464
+09-22 11:51:39.397 I/WE-DIAG (31205): npu-debug: melprobe qRow0=64893136 qCol0=4842102 cell[0]=0.463725 cell[1500]=-0.581150 cell[193500]=-0.581150 scale=4.74610897e-05 zp=31605
+09-22 11:51:39.397 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:51:39.398 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=19360 max=61500 mean=22574.6 atZero=0 atMax=0 zp=31605
+09-22 11:51:39.398 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=64893136 sumColStride=4842102 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:51:39.398 I/WE-DIAG (31205): npu-debug: dequant i=0 q=41376->0.463742 | i=1500 q=19360->-0.581161 | i=193500 q=19360->-0.581161 (scale=4.74610897e-05 zp=31605)
+09-22 11:51:41.675 I/WE-DIAG (31205): encode: graphExecute OK in 2276.8 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:51:41.680 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=26 max=211 mean=127.9 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=37 max=249 mean=128.0 nonzero=1.000]
+09-22 11:51:41.681 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:51:41.690 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:51:41.691 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=13779 max=48792 argmax=50360] masked=prefill-skipped
+09-22 11:51:41.700 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:51:41.700 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4305 max=50919 argmax=50360] masked=prefill-skipped
+09-22 11:51:41.708 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:51:41.709 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=1809 max=31933 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:51:41.717 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=10074 max=35251 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:51:42.133 I/WE-DIAG (31205): decode: 33 tokens in 452.0 ms (13.70 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.31 ent=nan rung=0 steps=36
+09-22 11:51:42.133 I/WE-DIAG (31205): npu-debug: result count=33 first=50365 terminator=eot steps=36 posFirst=0 posLast=35
+09-22 11:51:42.134 I/WE-DIAG (31205): npu: encode=2472 decode=452 tokens=33 lang=en nsp=0.00 lp=-0.31 ent=NaN rung=0 term=eot
+09-22 11:51:42.134 I/WE-DIAG (31205): segment-timing: seq=8 audio=6912 transcribe=2926 rtf=0.42
+09-22 11:51:42.137 I/WE-DIAG (31205): transcribe DONE seq=8 rawLen=111 cleanLen=110
+09-22 11:51:42.137 I/WE-DIAG (31205): speaker-sentences: sentences=1 spans=1
+09-22 11:51:42.137 I/WE-DIAG (31205): onSegmentResolved: seq=8 outcome=Text
+09-22 11:51:42.138 I/WE-DIAG (31205): queue: depth=0
+09-22 11:51:42.138 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=110
+09-22 11:51:42.140 I/WE-DIAG (31205): perceived: seq=8 speechEndToVisible=3297ms
+09-22 11:51:42.231 I/WE-DIAG (31205): VAD-standalone: 110592 samples -> 1 segments wallMs=93.0
+09-22 11:51:42.487 I/WE-DIAG (31205): speaker: seq=8 segs=1 windows=2 embedMs=251 ids=[2,2] best=[0.71,0.50] dur=[3.4,3.4] confirmed=1 load=0 route=vad pick=0
+09-22 11:51:45.533 I/WE-DIAG (31205): probe: frames=2193 p50=1296µs p99=7104µs overruns=17
+09-22 11:51:49.086 I/WE-DIAG (31205): VAD -> commit (rms=199)
+09-22 11:51:49.087 I/WE-DIAG (31205): commit: seq=9 pcmBytes=316416 samples=158208
+09-22 11:51:49.088 I/WE-DIAG (31205): endpoint: seq=9 cut=vad speechMs=9056 trailMs=352 p=0.12
+09-22 11:51:49.088 I/WE-DIAG (31205): queue: depth=1
+09-22 11:51:49.100 I/WE-DIAG (31205): transcribe START seq=9 samples=158208 lang=en effective=en
+09-22 11:51:49.159 I/WE-DIAG (31205): stream-timing: seq=9 audio=9888 decodes=32 decodeMs=1832 p50us=56579 p99us=79330 rtf=0.185 partials=27 firstPartialMs=1106 padMs=500 shed=0 retract=0
+09-22 11:51:49.186 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-1245.339 rowMid=-1221.202 rowLast=-1803.458
+09-22 11:51:49.287 I/WE-DIAG (31205): npu-debug: melprobe qRow0=68575471 qCol0=2773121 cell[0]=0.017932 cell[1500]=-0.615182 cell[193500]=-0.615182 scale=4.74610897e-05 zp=31605
+09-22 11:51:49.287 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:51:49.287 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=18643 max=60783 mean=22746.9 atZero=0 atMax=0 zp=31605
+09-22 11:51:49.287 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=68575471 sumColStride=2773121 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:51:49.287 I/WE-DIAG (31205): npu-debug: dequant i=0 q=31983->0.017940 | i=1500 q=18643->-0.615191 | i=193500 q=18643->-0.615191 (scale=4.74610897e-05 zp=31605)
+09-22 11:51:51.575 I/WE-DIAG (31205): encode: graphExecute OK in 2287.7 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:51:51.580 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=27 max=213 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=39 max=247 mean=128.0 nonzero=1.000]
+09-22 11:51:51.581 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:51:51.590 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:51:51.591 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=13604 max=48657 argmax=50259] masked=prefill-skipped
+09-22 11:51:51.600 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:51:51.600 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4908 max=51305 argmax=50360] masked=prefill-skipped
+09-22 11:51:51.609 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:51:51.609 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=2347 max=31115 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:51:51.619 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=10779 max=37211 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:51:52.032 I/WE-DIAG (31205): decode: 40 tokens in 451.1 ms (11.28 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.05 ent=3.02 rung=0 steps=43
+09-22 11:51:52.032 I/WE-DIAG (31205): npu-debug: result count=40 first=50365 terminator=eot steps=43 posFirst=0 posLast=42
+09-22 11:51:52.033 I/WE-DIAG (31205): npu: encode=2479 decode=452 tokens=40 lang=en nsp=0.00 lp=-0.05 ent=3.02 rung=0 term=eot
+09-22 11:51:52.033 I/WE-DIAG (31205): segment-timing: seq=9 audio=9888 transcribe=2932 rtf=0.30
+09-22 11:51:52.034 I/WE-DIAG (31205): transcribe DONE seq=9 rawLen=143 cleanLen=142
+09-22 11:51:52.034 I/WE-DIAG (31205): speaker-sentences: sentences=2 spans=2
+09-22 11:51:52.034 I/WE-DIAG (31205): onSegmentResolved: seq=9 outcome=Text
+09-22 11:51:52.035 I/WE-DIAG (31205): queue: depth=0
+09-22 11:51:52.036 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=142
+09-22 11:51:52.039 I/WE-DIAG (31205): perceived: seq=9 speechEndToVisible=3308ms
+09-22 11:51:52.158 I/WE-DIAG (31205): VAD-standalone: 158208 samples -> 2 segments wallMs=123.1
+09-22 11:51:52.471 I/WE-DIAG (31205): speaker: seq=9 segs=2 windows=4 embedMs=308 ids=[2,1,1,1] best=[0.48,0.62,0.59,0.65] dur=[1.8,2.1,2.8,2.8] confirmed=1 load=0 route=vad pick=2
+09-22 11:51:55.548 I/WE-DIAG (31205): probe: frames=2506 p50=1328µs p99=6592µs overruns=17
+09-22 11:51:59.132 I/WE-DIAG (31205): VAD -> commit (rms=30)
+09-22 11:51:59.133 I/WE-DIAG (31205): commit: seq=10 pcmBytes=321536 samples=160768
+09-22 11:51:59.133 I/WE-DIAG (31205): endpoint: seq=10 cut=vad speechMs=9440 trailMs=352 p=0.01
+09-22 11:51:59.133 I/WE-DIAG (31205): queue: depth=1
+09-22 11:51:59.135 I/WE-DIAG (31205): transcribe START seq=10 samples=160768 lang=en effective=en
+09-22 11:51:59.210 I/WE-DIAG (31205): stream-timing: seq=10 audio=10048 decodes=32 decodeMs=1452 p50us=40174 p99us=70568 rtf=0.145 partials=25 firstPartialMs=783 padMs=500 shed=0 retract=0
+09-22 11:51:59.240 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-1176.975 rowMid=-945.766 rowLast=-1584.698
+09-22 11:51:59.308 I/WE-DIAG (31205): npu-debug: melprobe qRow0=70015983 qCol0=3677867 cell[0]=-0.375189 cell[1500]=-0.544941 cell[193500]=-0.544941 scale=4.74610897e-05 zp=31605
+09-22 11:51:59.308 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:51:59.309 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=20123 max=62263 mean=24436.7 atZero=0 atMax=0 zp=31605
+09-22 11:51:59.309 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=70015983 sumColStride=3677867 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:51:59.309 I/WE-DIAG (31205): npu-debug: dequant i=0 q=23700->-0.375180 | i=1500 q=20123->-0.544948 | i=193500 q=20123->-0.544948 (scale=4.74610897e-05 zp=31605)
+09-22 11:52:01.527 I/WE-DIAG (31205): encode: graphExecute OK in 2218.4 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:52:01.534 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=28 max=208 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=41 max=246 mean=128.0 nonzero=1.000]
+09-22 11:52:01.536 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:52:01.547 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:52:01.547 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=13956 max=48244 argmax=50259] masked=prefill-skipped
+09-22 11:52:01.558 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:52:01.558 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4357 max=51018 argmax=50360] masked=prefill-skipped
+09-22 11:52:01.566 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:52:01.566 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=2248 max=29949 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:52:01.577 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=9302 max=35606 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:52:02.111 I/WE-DIAG (31205): decode: 55 tokens in 575.1 ms (10.46 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.32 ent=3.38 rung=0 steps=58
+09-22 11:52:02.112 I/WE-DIAG (31205): npu-debug: result count=55 first=50365 terminator=eot steps=58 posFirst=0 posLast=57
+09-22 11:52:02.113 I/WE-DIAG (31205): npu: encode=2398 decode=578 tokens=55 lang=en nsp=0.00 lp=-0.32 ent=3.38 rung=0 term=eot
+09-22 11:52:02.113 I/WE-DIAG (31205): segment-timing: seq=10 audio=10048 transcribe=2977 rtf=0.30
+09-22 11:52:02.113 I/WE-DIAG (31205): transcribe DONE seq=10 rawLen=200 cleanLen=199
+09-22 11:52:02.114 I/WE-DIAG (31205): speaker-sentences: sentences=2 spans=2
+09-22 11:52:02.114 I/WE-DIAG (31205): onSegmentResolved: seq=10 outcome=Text
+09-22 11:52:02.115 I/WE-DIAG (31205): queue: depth=0
+09-22 11:52:02.115 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=199
+09-22 11:52:02.119 I/WE-DIAG (31205): perceived: seq=10 speechEndToVisible=3340ms
+09-22 11:52:02.232 I/WE-DIAG (31205): VAD-standalone: 160768 samples -> 1 segments wallMs=116.8
+09-22 11:52:02.620 I/WE-DIAG (31205): VAD -> commit (rms=68)
+09-22 11:52:02.620 I/WE-DIAG (31205): commit: seq=11 pcmBytes=111616 samples=55808
+09-22 11:52:02.620 I/WE-DIAG (31205): endpoint: seq=11 cut=vad speechMs=3106 trailMs=351 p=0.00
+09-22 11:52:02.621 I/WE-DIAG (31205): queue: depth=1
+09-22 11:52:02.621 I/WE-DIAG (31205): transcribe START seq=11 samples=55808 lang=en effective=en
+09-22 11:52:02.636 I/WE-DIAG (31205): speaker: seq=10 segs=1 windows=3 embedMs=395 ids=[2,2,1] best=[0.63,0.60,0.60] dur=[3.5,3.6,2.7] confirmed=1 load=0 route=vad pick=1
+09-22 11:52:02.656 I/WE-DIAG (31205): speaker-recluster: n=31 clusters=2 confirmed=2 changed=3 ms=16
+09-22 11:52:02.694 I/WE-DIAG (31205): stream-timing: seq=11 audio=3488 decodes=12 decodeMs=475 p50us=38101 p99us=50391 rtf=0.136 partials=8 firstPartialMs=1083 padMs=500 shed=0 retract=0
+09-22 11:52:02.724 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-1898.536 rowMid=-1941.191 rowLast=-2124.255
+09-22 11:52:02.790 I/WE-DIAG (31205): npu-debug: melprobe qRow0=54813107 qCol0=3937046 cell[0]=-0.559604 cell[1500]=-0.722738 cell[193500]=-0.722738 scale=4.74610897e-05 zp=31605
+09-22 11:52:02.791 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:52:02.791 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=16377 max=58517 mean=18001.7 atZero=0 atMax=0 zp=31605
+09-22 11:52:02.791 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=54813107 sumColStride=3937046 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:52:02.791 I/WE-DIAG (31205): npu-debug: dequant i=0 q=19814->-0.559614 | i=1500 q=16377->-0.722737 | i=193500 q=16377->-0.722737 (scale=4.74610897e-05 zp=31605)
+09-22 11:52:05.079 I/WE-DIAG (31205): encode: graphExecute OK in 2287.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:52:05.083 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=25 max=215 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=37 max=250 mean=128.0 nonzero=1.000]
+09-22 11:52:05.084 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:52:05.093 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:52:05.094 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=13302 max=49202 argmax=50360] masked=prefill-skipped
+09-22 11:52:05.103 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:52:05.103 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4865 max=51520 argmax=50360] masked=prefill-skipped
+09-22 11:52:05.112 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:52:05.112 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=2513 max=33106 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:52:05.122 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=11533 max=37384 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:52:05.279 I/WE-DIAG (31205): decode: 16 tokens in 195.8 ms (12.24 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.19 ent=nan rung=0 steps=19
+09-22 11:52:05.279 I/WE-DIAG (31205): npu-debug: result count=16 first=50365 terminator=eot steps=19 posFirst=0 posLast=18
+09-22 11:52:05.280 I/WE-DIAG (31205): npu: encode=2462 decode=196 tokens=16 lang=en nsp=0.00 lp=-0.19 ent=NaN rung=0 term=eot
+09-22 11:52:05.280 I/WE-DIAG (31205): segment-timing: seq=11 audio=3488 transcribe=2658 rtf=0.76
+09-22 11:52:05.281 I/WE-DIAG (31205): transcribe DONE seq=11 rawLen=54 cleanLen=53
+09-22 11:52:05.281 I/WE-DIAG (31205): speaker-sentences: sentences=1 spans=1
+09-22 11:52:05.281 I/WE-DIAG (31205): onSegmentResolved: seq=11 outcome=Text
+09-22 11:52:05.281 I/WE-DIAG (31205): queue: depth=0
+09-22 11:52:05.281 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=53
+09-22 11:52:05.282 I/WE-DIAG (31205): perceived: seq=11 speechEndToVisible=3014ms
+09-22 11:52:05.324 I/WE-DIAG (31205): VAD-standalone: 55808 samples -> 1 segments wallMs=42.1
+09-22 11:52:05.424 I/WE-DIAG (31205): speaker: seq=11 segs=1 windows=1 embedMs=98 ids=[1] best=[0.57] dur=[3.3] confirmed=1 load=0 route=vad pick=0
+09-22 11:52:05.564 I/WE-DIAG (31205): probe: frames=2819 p50=1248µs p99=6544µs overruns=18
+09-22 11:52:15.581 I/WE-DIAG (31205): probe: frames=3132 p50=1152µs p99=6512µs overruns=18
+09-22 11:52:16.735 I/WE-DIAG (31205): stopRecording: state=RECORDING
+09-22 11:52:16.754 I/WE-DIAG (31205): PlaybackAudioCapturer: capture thread stopped
+09-22 11:52:17.019 I/WE-DIAG (31205): stopRecording: releasing screen-capture projection
+09-22 11:52:17.027 I/WE-DIAG (31205): commit: seq=12 pcmBytes=451584 samples=225792
+09-22 11:52:17.029 I/WE-DIAG (31205): transcribe START seq=12 samples=225792 lang=en effective=en
+09-22 11:52:17.050 I/WE-DIAG (31205): endpoint: seq=12 cut=stop speechMs=0 trailMs=0 p=-1.00
+09-22 11:52:17.050 I/WE-DIAG (31205): queue: depth=1
+09-22 11:52:17.050 I/WE-DIAG (31205): finalize-timing: commit-dispatch=315ms
+09-22 11:52:17.052 I/WE-DIAG (31205): probe: frames=3168 p50=1136µs p99=6512µs overruns=18
+09-22 11:52:17.158 I/WE-DIAG (31205): stream-timing: seq=12 audio=14112 decodes=45 decodeMs=1675 p50us=35719 p99us=90252 rtf=0.119 partials=37 firstPartialMs=1409 padMs=500 shed=0 retract=0
+09-22 11:52:17.201 I/WE-DIAG (31205): mel: bins=128 frames=3000 row0=-911.368 rowMid=-972.338 rowLast=-1830.269
+09-22 11:52:17.281 I/WE-DIAG (31205): npu-debug: melprobe qRow0=75611892 qCol0=3159336 cell[0]=-0.452930 cell[1500]=-0.636813 cell[193500]=-0.636813 scale=4.74610897e-05 zp=31605
+09-22 11:52:17.285 I/WE-DIAG (31205): npu-debug: quant in=input_features dims=[1,128,3000] dtype=ufixed16 fmt=dense metaScale=4.74610897e-05 metaOffset=-31605 usedScale=4.74610897e-05 usedZp=31605 | k_cache_cross_0 dims=[20,1,64,1500] dtype=ufixed8 fmt=dense scale=0.126098275 offset=-128
+09-22 11:52:17.285 I/WE-DIAG (31205): npu-debug: inbuf bytes=768000 values=384000 min=18187 max=60327 mean=24386.8 atZero=0 atMax=0 zp=31605
+09-22 11:52:17.285 I/WE-DIAG (31205): npu-debug: layout bins=128 frames=3000 sumFirstRow=75611892 sumColStride=3159336 (row = q[0..2999], col = q[0,3000,..])
+09-22 11:52:17.285 I/WE-DIAG (31205): npu-debug: dequant i=0 q=22062->-0.452921 | i=1500 q=18187->-0.636833 | i=193500 q=18187->-0.636833 (scale=4.74610897e-05 zp=31605)
+09-22 11:52:19.381 I/WE-DIAG (31205): encode: graphExecute OK in 2096.0 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-22 11:52:19.385 I/WE-DIAG (31205): npu-debug: crossKV k_cache_cross_0[out=0 bytes=1920000 min=27 max=211 mean=128.0 nonzero=1.000] v_cache_cross_0[out=1 bytes=1920000 min=41 max=249 mean=128.0 nonzero=1.000]
+09-22 11:52:19.386 I/WE-DIAG (31205): npu-debug: prompt ids=[50258,50259,50360] len=3 maxTokens=197 positions=0..198 vocab=51866 mask=200
+09-22 11:52:19.399 I/WE-DIAG (31205): npu-debug: selfkv pos=0 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=0.6 nonzero=0.005 depth=199 stride=1 firstOff=198 lastOff=254719 slot=[198..198]
+09-22 11:52:19.400 I/WE-DIAG (31205): npu-debug: step pos=0 in=50258 inSet=0 raw[min=13880 max=48351 argmax=50259] masked=prefill-skipped
+09-22 11:52:19.407 I/WE-DIAG (31205): npu-debug: selfkv pos=1 inSet=1 outSet=0 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.3 nonzero=0.010 depth=199 stride=1 firstOff=197 lastOff=254719 slot=[197..198]
+09-22 11:52:19.407 I/WE-DIAG (31205): npu-debug: step pos=1 in=50259 inSet=1 raw[min=4582 max=51113 argmax=50360] masked=prefill-skipped
+09-22 11:52:19.416 I/WE-DIAG (31205): npu-debug: selfkv pos=2 inSet=0 outSet=1 tensor=k_cache_self_0_out bytes=254720 min=0 max=224 mean=1.9 nonzero=0.015 depth=199 stride=1 firstOff=196 lastOff=254719 slot=[196..198]
+09-22 11:52:19.416 I/WE-DIAG (31205): npu-debug: step pos=2 in=50360 inSet=0 raw[min=2546 max=29520 argmax=50364] masked=50365 beginSuppress=1
+09-22 11:52:19.426 I/WE-DIAG (31205): npu-debug: step pos=3 in=50365 inSet=1 raw[min=7345 max=33207 argmax=text-token] masked=text-token beginSuppress=0
+09-22 11:52:20.134 I/WE-DIAG (31205): decode: 60 tokens in 748.3 ms (12.47 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.16 ent=3.17 rung=0 steps=63
+09-22 11:52:20.134 I/WE-DIAG (31205): npu-debug: result count=60 first=50365 terminator=eot steps=63 posFirst=0 posLast=62
+09-22 11:52:20.135 I/WE-DIAG (31205): npu: encode=2357 decode=748 tokens=60 lang=en nsp=0.00 lp=-0.16 ent=3.17 rung=0 term=eot
+09-22 11:52:20.136 I/WE-DIAG (31205): segment-timing: seq=12 audio=14112 transcribe=3106 rtf=0.22
+09-22 11:52:20.136 I/WE-DIAG (31205): transcribe DONE seq=12 rawLen=236 cleanLen=235
+09-22 11:52:20.136 I/WE-DIAG (31205): speaker-sentences: sentences=1 spans=1
+09-22 11:52:20.136 I/WE-DIAG (31205): onSegmentResolved: seq=12 outcome=Text
+09-22 11:52:20.137 I/WE-DIAG (31205): finalize-timing: local-drain=3011ms
+09-22 11:52:20.152 I/WE-DIAG (31205): queue: depth=0
+09-22 11:52:20.152 I/WE-DIAG (31205): handleResult: session=MEDIA_PLAYBACK live=MEDIA_PLAYBACK len=235
+09-22 11:52:20.154 I/WE-DIAG (31205): finalize-timing: orderer-flush=0ms
+09-22 11:52:20.278 I/WE-DIAG (31205): VAD-standalone: 225792 samples -> 2 segments wallMs=138.6
+09-22 11:52:20.709 I/WE-DIAG (31205): speaker: seq=12 segs=2 windows=4 embedMs=427 ids=[1,1,1,1] best=[0.63,0.71,0.74,0.75] dur=[3.1,3.5,3.5,3.5] confirmed=1 load=0 route=vad pick=1
+09-22 11:52:20.722 I/WE-DIAG (31205): speaker-recluster: n=36 clusters=2 confirmed=2 changed=0 ms=8
+09-22 11:52:20.723 I/WE-DIAG (31205): finalize-timing: speaker-drain=568ms settled=true
+09-22 11:52:20.793 I/WE-DIAG (31205): finalDelivery: service=true inject=null copy=true len=1813
+09-22 11:52:20.860 I/WE-DIAG (31205): finalize-timing: delivery=137ms
+09-22 11:52:20.862 I/WE-DIAG (31205): finalize: state=FINALIZING producedText=true
+09-22 11:52:20.893 I/WE-DIAG (31205): finalize-timing: total=4158ms
+09-22 11:52:20.987 I/WE-DIAG (31205): copy detected via: copy toast
+09-22 11:52:23.482 I/WE-DIAG (31205): copy detected via: copy toast
+09-22 11:52:29.232 I/WE-DIAG (31205): bubble hide: reason=media-stopped decision=HIDE state=IDLE context=NONE speaking=false
+09-22 11:52:55.150 I/WE-DIAG (12499): endpointer: silero (streaming probe)
+09-22 11:52:55.725 W/WE-DIAG (12499): libQnnSystem.so: absolute path failed (dlopen failed: library "/data/app/~~t3GDyW3i9yz6-8W13SYi3g==/com.whispereverywhere-ORJSMj3SygwQ2CucMf4iCA==/lib/arm64/libQnnSystem.so" not found); loaded by SONAME instead
+09-22 11:52:55.757 W/WE-DIAG (12499): libQnnHtp.so: absolute path failed (dlopen failed: library "/data/app/~~t3GDyW3i9yz6-8W13SYi3g==/com.whispereverywhere-ORJSMj3SygwQ2CucMf4iCA==/lib/arm64/libQnnHtp.so" not found); loaded by SONAME instead
+09-22 11:52:55.761 I/WE-DIAG (12499): QNN providers: 1; provider[0] name=HTP_QTI_AISW backendId=6 api=2.38.0
+09-22 11:52:55.761 I/WE-DIAG (12499): QNN system providers: 1
+09-22 11:52:55.761 I/WE-DIAG (12499): probe OK (libDir=/data/app/~~t3GDyW3i9yz6-8W13SYi3g==/com.whispereverywhere-ORJSMj3SygwQ2CucMf4iCA==/lib/arm64)
+09-22 11:52:55.762 I/WE-DIAG (12499): npu: offer soc=SM8550:pass probe=pass installed=npu,npu-turbo offered=npu,npu-turbo
+09-22 11:52:57.513 I/WE-DIAG (12499): initMelOnly: mel-only context ready (128 bands, no weights)
+09-22 11:52:57.911 I/WE-DIAG (12499): nativeInit spec: melBins=128 decLayers=4 heads=20 vocab=51866 maxPositions=200 -> encoder 1 in / 8 out, 768000 B in / 15360000 B out; decoder 19 in / 9 out, 17398168 B in / 2141492 B out; language band 50259..50358
+09-22 11:52:57.919 I/WE-DIAG (12499): backendCreate OK (8 ms)
+09-22 11:52:58.156 I/WE-DIAG (12499): deviceCreate OK (236 ms)
+09-22 11:52:59.432 I/WE-DIAG (12499): encoder: 775843840 bytes read in 1276 ms
+09-22 11:52:59.433 I/WE-DIAG (12499): encoder: binary info parsed in 1 ms
+09-22 11:52:59.433 I/WE-DIAG (12499): encoder: binary info version 3
+09-22 11:52:59.433 I/WE-DIAG (12499): encoder: socModel=43 contextBlobSize=775839744 numContextTensors=0
+09-22 11:52:59.433 I/WE-DIAG (12499): encoder: produced by QAIRT build v2.45.0.260326154327 (runtime headers are v2.49.0.260730134355), socVersion 
+09-22 11:52:59.433 I/WE-DIAG (12499): encoder: graph info version 3
+09-22 11:52:59.433 I/WE-DIAG (12499): encoder: tensor version in[0]=2 out[0]=2
+09-22 11:52:59.433 I/WE-DIAG (12499): encoder: graph[0] name=whisper_large_v3_turbo_quantized_encoder inputs=1 outputs=8
+09-22 11:52:59.433 I/WE-DIAG (12499):   encoder IN  [ 0] input_features           ufixed16  [1,128,3000]         768000 B
+09-22 11:52:59.433 I/WE-DIAG (12499):   encoder OUT [ 0] k_cache_cross_0          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:52:59.433 I/WE-DIAG (12499):   encoder OUT [ 1] v_cache_cross_0          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:52:59.433 I/WE-DIAG (12499):   encoder OUT [ 2] k_cache_cross_1          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:52:59.433 I/WE-DIAG (12499):   encoder OUT [ 3] v_cache_cross_1          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:52:59.433 I/WE-DIAG (12499):   encoder OUT [ 4] k_cache_cross_2          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:52:59.433 I/WE-DIAG (12499):   encoder OUT [ 5] v_cache_cross_2          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:52:59.433 I/WE-DIAG (12499):   encoder OUT [ 6] k_cache_cross_3          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:52:59.433 I/WE-DIAG (12499):   encoder OUT [ 7] v_cache_cross_3          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:52:59.433 I/WE-DIAG (12499): encoder: IO totals in 768000 B, out 15360000 B
+09-22 11:53:00.748 I/WE-DIAG (12499): stream-open: sherpa=1.13.7 ort=1.27.1 threads=2 provider=cpu loadMs=2955 canary=pass canaryMs=402 outLen=23 load=ok warm=1
+09-22 11:53:02.977 I/WE-DIAG (12499): encoder: contextCreateFromBinary OK - cold load 3544 ms
+09-22 11:53:02.977 I/WE-DIAG (12499): encoder: graphRetrieve OK
+09-22 11:53:03.578 I/WE-DIAG (12499): decoder: 295854080 bytes read in 601 ms
+09-22 11:53:03.581 I/WE-DIAG (12499): decoder: binary info parsed in 2 ms
+09-22 11:53:03.581 I/WE-DIAG (12499): decoder: binary info version 3
+09-22 11:53:03.581 I/WE-DIAG (12499): decoder: socModel=43 contextBlobSize=295845888 numContextTensors=0
+09-22 11:53:03.581 I/WE-DIAG (12499): decoder: produced by QAIRT build v2.45.0.260326154327 (runtime headers are v2.49.0.260730134355), socVersion 
+09-22 11:53:03.581 I/WE-DIAG (12499): decoder: graph info version 3
+09-22 11:53:03.581 I/WE-DIAG (12499): decoder: tensor version in[0]=2 out[0]=2
+09-22 11:53:03.581 I/WE-DIAG (12499): decoder: graph[0] name=whisper_large_v3_turbo_quantized_decoder inputs=19 outputs=9
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 0] input_ids                int32     [1,1]                4 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 1] k_cache_cross_0          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 2] k_cache_cross_1          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 3] k_cache_cross_2          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 4] k_cache_cross_3          ufixed8   [20,1,64,1500]       1920000 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 5] k_cache_self_0_in        ufixed8   [20,1,64,199]        254720 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 6] k_cache_self_1_in        ufixed8   [20,1,64,199]        254720 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 7] k_cache_self_2_in        ufixed8   [20,1,64,199]        254720 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 8] k_cache_self_3_in        ufixed8   [20,1,64,199]        254720 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [ 9] position_ids             int32     [1]                  4 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [10] v_cache_cross_0          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [11] v_cache_cross_1          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [12] v_cache_cross_2          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [13] v_cache_cross_3          ufixed8   [20,1,1500,64]       1920000 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [14] v_cache_self_0_in        ufixed8   [20,1,199,64]        254720 B
+09-22 11:53:03.581 I/WE-DIAG (12499):   decoder IN  [15] v_cache_self_1_in        ufixed8   [20,1,199,64]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder IN  [16] v_cache_self_2_in        ufixed8   [20,1,199,64]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder IN  [17] v_cache_self_3_in        ufixed8   [20,1,199,64]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder IN  [18] attention_mask           ufixed16  [1,1,1,200]          400 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder OUT [ 0] k_cache_self_0_out       ufixed8   [20,1,64,199]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder OUT [ 1] v_cache_self_0_out       ufixed8   [20,1,199,64]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder OUT [ 2] k_cache_self_1_out       ufixed8   [20,1,64,199]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder OUT [ 3] v_cache_self_1_out       ufixed8   [20,1,199,64]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder OUT [ 4] k_cache_self_2_out       ufixed8   [20,1,64,199]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder OUT [ 5] v_cache_self_2_out       ufixed8   [20,1,199,64]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder OUT [ 6] k_cache_self_3_out       ufixed8   [20,1,64,199]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder OUT [ 7] v_cache_self_3_out       ufixed8   [20,1,199,64]        254720 B
+09-22 11:53:03.582 I/WE-DIAG (12499):   decoder OUT [ 8] logits                   ufixed16  [1,51866,1,1]        103732 B
+09-22 11:53:03.582 I/WE-DIAG (12499): decoder: IO totals in 17398168 B, out 2141492 B
+09-22 11:53:03.731 I/WE-DIAG (12499): decoder: contextCreateFromBinary OK - cold load 150 ms
+09-22 11:53:03.731 I/WE-DIAG (12499): decoder: graphRetrieve OK
+09-22 11:53:03.731 I/WE-DIAG (12499): alias guard: 8 cross-KV pairs identical across encoder-out/decoder-in (dtype, rank, every dim, scale, offset)
+09-22 11:53:03.731 I/WE-DIAG (12499): quant: input_features ufixed16 [1,128,3000] scale 4.74610897072e-05 zeroPoint 31605 (QNN offset -31605), 768000 B
+09-22 11:53:03.731 I/WE-DIAG (12499):   bind encoder IN[ 0] input_features              768000 B @ 0xb400007a6a8ad200
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind encoder OUT[ 0] k_cache_cross_0            1920000 B @ 0xb400007a6a96ef00
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind encoder OUT[ 1] v_cache_cross_0            1920000 B @ 0xb400007a6ab6f180
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind encoder OUT[ 2] k_cache_cross_1            1920000 B @ 0xb400007a6ad70180
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind encoder OUT[ 3] v_cache_cross_1            1920000 B @ 0xb400007a6af71980
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind encoder OUT[ 4] k_cache_cross_2            1920000 B @ 0xb400007a6b172680
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind encoder OUT[ 5] v_cache_cross_2            1920000 B @ 0xb400007a6b373600
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind encoder OUT[ 6] k_cache_cross_3            1920000 B @ 0xb400007a6b574740
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind encoder OUT[ 7] v_cache_cross_3            1920000 B @ 0xb400007a6b775980
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind decoder IN input_ids        int32     [1,1]                4 B @ 0xb400007baa086b80
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind decoder IN position_ids     int32     [1]                  4 B @ 0xb400007baa086bc0
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind decoder IN attention_mask   ufixed16  [1,1,1,200]          400 B @ 0xb400007ba9ffc340
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind decoder OUT logits           ufixed16  [1,51866,1,1]        103732 B @ 0xb400007a6b976680
+09-22 11:53:03.732 I/WE-DIAG (12499): mask: attention_mask scale 0.00152590218931 offset -65535 -> attend code 65535 = 0.0000, blocked code 0 = -100.0000
+09-22 11:53:03.732 I/WE-DIAG (12499):   bind decoder cross-KV: 8 tensors aliased onto the encoder's output buffers (0 B copied)
+09-22 11:53:03.733 I/WE-DIAG (12499):   bind decoder self-KV: 2 sets x 8 x 254720 B = 4075520 B ping-pong
+09-22 11:53:03.733 I/WE-DIAG (12499): decoder bound: 19 inputs / 9 outputs, all by name; mask 200 positions, vocab 51866, positions 0..198 execute
+09-22 11:53:03.736 I/WE-DIAG (12499): vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling
+09-22 11:53:03.736 I/WE-DIAG (12499): nativeInit OK - encoder graph 'whisper_large_v3_turbo_quantized_encoder' (1 in / 8 out), decoder graph 'whisper_large_v3_turbo_quantized_decoder' (19 in / 9 out)
+09-22 11:53:03.736 I/WE-DIAG (12499): nativeInit: session armed with epoch 1
+09-22 11:53:03.744 I/WE-DIAG (12499): npu-debug: instrumentation ENABLED
+09-22 11:53:03.747 I/WE-DIAG (12499): prewarm: ctx loaded
