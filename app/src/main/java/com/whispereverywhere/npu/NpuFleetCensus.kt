@@ -149,6 +149,37 @@ object NpuFleetCensus {
             evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
                 "no device evidence",
         ),
+        // THE 8 GEN 2 (SM8550) — the S23, S23+ and S23 Ultra, and every other 8 Gen 2 phone.
+        //
+        // CPU_BY_CENSUS carried this silicon as "no published w8a16 package" from 2026-08-29 and
+        // named its own reopening condition: an 8 Gen 2 device turning up for the experiment. Two
+        // things then changed. The device turned up, and the question improved: AI Hub v0.62.2
+        // publishes a `qcs8550-proxy` package whose metadata reads soc_model 43 / htp_version 73.
+        // 43 is the SM8550's OWN number, where the cross-load that ledger rejected was the
+        // 7 Gen 4's, compiled for 86. So this is not the curiosity being waved through — it is a
+        // different artifact, and the objection does not apply to it.
+        //
+        // DEVICE-EXECUTED before it was written down (docs/measurements/
+        // 2026-09-22-s23-8gen2-qcs8550-spike.md): `npu: offer soc=SM8550:pass probe=pass`, then
+        // encode p50 2,472 ms and decode p50 452 over 12 chunks — 37% of the 8 s commit floor,
+        // 1.40x the Fold6's cost one HTP generation back. Sentence windows, a speaker change
+        // inside a chunk, and live words all worked. It shares 7gen4's V73 skel byte for byte.
+        //
+        // TURBO ONLY, by owner ruling the same day: "we want the Q8 V3 Turbo only. All of the
+        // other models should stay hidden ... no need to use any other lower end model for this
+        // chip." There is deliberately no ("qcs8550", "npu") artifact below, so the 80-bin tier
+        // is not merely hidden on this family — `artifactFor` answers null and it is undeliverable.
+        NpuSocFamily(
+            id = "qcs8550",
+            packGroup = "soc_qcs8550",
+            htpVersion = 73,
+            socModels = setOf("SM8550", "SM8550-AC"),
+            skelAsset = "libQnnHtpV73Skel.so",
+            skelBytes = 17_909_588L,
+            skelSha256 = "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1",
+            evidence = "AI Hub v0.62.2 HEAD-verified 2026-09-22; Last-Modified 2026-09-11; " +
+                "device-executed (S23 Ultra, SM8550) 2026-09-22",
+        ),
         NpuSocFamily(
             id = "7gen4",
             packGroup = "soc_7gen4",
@@ -272,6 +303,21 @@ object NpuFleetCensus {
             ),
             evidence = MEASURED,
         ),
+        // TURBO ONLY for this family — see the qcs8550 family row above for the owner's ruling.
+        PackArtifact(
+            familyId = "qcs8550",
+            tierId = "npu-turbo",
+            vendorZipBytes = 859_787_787L,
+            encoder = PackEntry(
+                "turbo_encoder_qairt_context.bin", 775_843_840L,
+                "785043fbef7a17f80404f17423f97ae0ef1e2a8f4a5d446d413346445d6b9e6d",
+            ),
+            decoder = PackEntry(
+                "turbo_decoder_qairt_context.bin", 295_854_080L,
+                "ca70b66c3035a35af78ed43b488ff201d30413edde59f5832208925da080a4b2",
+            ),
+            evidence = MEASURED,
+        ),
         PackArtifact(
             familyId = "7gen4",
             tierId = "npu",
@@ -353,10 +399,10 @@ object NpuFleetCensus {
      * is a measurement with a date — maintenance rule 2, in the object KDoc above.
      */
     val CPU_BY_CENSUS: Map<String, String> = mapOf(
-        "SM8550" to "8 Gen 2 — no published w8a16 package as of 2026-08-29 " +
-            "(both release manifests re-fetched)",
-        "SM8550-AC" to "8 Gen 2 for Galaxy bin — no published w8a16 package as of 2026-08-29 " +
-            "(both release manifests re-fetched)",
+        // SM8550 / SM8550-AC LEFT THIS LEDGER on 2026-09-22 for the qcs8550 family. Their lines
+        // read "no published w8a16 package as of 2026-08-29", which was true and stopped being
+        // true at AI Hub v0.62.2. An entry moving OUT of here is a measurement with a date —
+        // maintenance rule 2 — and this one is device-executed, not just HEAD-verified.
         "SM8475" to "8+ Gen 1 — no published w8a16 package as of 2026-08-29 " +
             "(both release manifests re-fetched)",
         "SM8450" to "8 Gen 1 — no published w8a16 package as of 2026-08-29 " +

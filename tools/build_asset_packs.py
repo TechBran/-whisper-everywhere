@@ -203,6 +203,7 @@ EXPECTED_ZIP_BYTES = {
     ("npu-turbo", "8elite_galaxy"): 859_689_780,
     ("npu-turbo", "8elite5_galaxy"): 860_709_425,
     ("npu-turbo", "7gen4"): 871_118_305,
+    ("npu-turbo", "qcs8550"): 859_787_787,
 }
 
 # ---------------------------------------------------------------------------- the census
@@ -254,10 +255,14 @@ CENSUS = {
         777_441_280, "841cecfeade064bed27956401c298a2df86eeaac5c33270a284c34d11619c7a2",
         295_911_424, "ceca18cf506f14d8eaf141c69cf7674aca210b825316f0f4c481289cca457430",
     ),
-    # Blank on purpose: the spike hashed these two binaries by hand with sha256sum, which is a
-    # measurement but not one that passed the metadata and graph-IO gates. Let the instrument
-    # measure it, then paste what it prints.
-    ("npu-turbo", "qcs8550"): None,
+    # Measured 2026-09-22 by the instrument, and it REPRODUCED the spike's hand-hashed values
+    # exactly — with the metadata and graph-IO gates passing this time (htp=73,
+    # chipset='qualcomm-qcs8550-proxy', io-census equal to the npu-turbo spec row).
+    ("npu-turbo", "qcs8550"): (
+        859_787_787,
+        775_843_840, "785043fbef7a17f80404f17423f97ae0ef1e2a8f4a5d446d413346445d6b9e6d",
+        295_854_080, "ca70b66c3035a35af78ed43b488ff201d30413edde59f5832208925da080a4b2",
+    ),
     ("npu-turbo", "7gen4"): (
         871_118_305,
         846_360_576, "c482288d5899590a87cfea3faea3e39df30242095b8c93e0e02e7d1f1c79a813",
