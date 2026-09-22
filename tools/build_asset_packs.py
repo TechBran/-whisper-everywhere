@@ -93,7 +93,7 @@ import sys
 import urllib.request
 import zipfile
 
-RELEASE = "0.61.0"
+RELEASE = "0.62.2"
 
 # The hash-stable re-upload event (research doc 2026-08-29-pad-soc-delivery.md section 7).
 # Substring-matched against the RFC 1123 Last-Modified header, so a bucket rewrite on any
@@ -157,13 +157,11 @@ PACK_MODULE_BY_TIER = {"npu": "npu_small", "npu-turbo": "npu_turbo"}
 # Vendor zip Content-Length, asserted at HEAD where a measurement already existed BEFORE this
 # script first ran: the four turbo zips (research section 7) and the 8gen3 small zip. The
 # other three small zips were RECORDED by the first measure run and then promoted into CENSUS.
-EXPECTED_ZIP_BYTES = {
-    ("npu", "8gen3"): 293_598_974,
-    ("npu-turbo", "8gen3"): 859_786_903,
-    ("npu-turbo", "8elite_galaxy"): 859_689_781,
-    ("npu-turbo", "8elite5_galaxy"): 860_709_426,
-    ("npu-turbo", "7gen4"): 871_118_306,
-}
+# RE-MEASUREMENT 2026-09-22: emptied for the 0.62.2 pass. Every length here described
+# 0.61.0 bytes, and Qualcomm rebuilt all eight packs with QAIRT 2.45.0 — so these were not
+# stale by a little, they described different artifacts. head_gate RECORDS a length it has
+# no pin for, which is exactly the mode a re-measurement wants.
+EXPECTED_ZIP_BYTES: dict = {}
 
 # ---------------------------------------------------------------------------- the census
 # (tier, family) -> (zip bytes, encoder bytes, encoder sha256, decoder bytes, decoder sha256)
@@ -174,47 +172,20 @@ EXPECTED_ZIP_BYTES = {
 # NpuFleetCensus.artifacts carries the same sixteen digests; NpuFleetCensusTest pins the two
 # tables together.
 CENSUS = {
-    ("npu", "8gen3"): (
-        293_598_974,
-        132_927_488, "3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec",
-        225_316_864, "fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4",
-    ),
-    ("npu", "8elite_galaxy"): (
-        293_117_989,
-        132_333_568, "3001e590274f3377af7f18d33b3f41ab1d573f3e447045bb7a10b516755b9f99",
-        225_234_944, "57aff15b592f1afc2d29d16fb78e6c7b3e80a861a0ecee3838a00884ef040d43",
-    ),
-    ("npu", "8elite5_galaxy"): (
-        293_798_379,
-        133_554_176, "3c63c40b09374773903855f587bc0530f199a3aa74136fdd4e395c94d258eda5",
-        225_411_072, "a5f6c090a4df6f987e3b47dce04d999fc941f7ef87c5960db8fdf447edc82ab8",
-    ),
-    ("npu", "7gen4"): (
-        295_361_549,
-        147_595_264, "83a678810bad8b06f3dfab369c2bb87a4ae8aef14cb1886ba3b7a58f7acf2c13",
-        225_382_400, "81c0d683753cd13d98a3a744377e60d180e832f0fd128fe1ecaa8c94890e8069",
-    ),
-    ("npu-turbo", "8gen3"): (
-        859_786_903,
-        775_831_552, "f7d11c08a20ea671f59b3ace2f9421da00b06170ac9fe946f29092ee59be6bbe",
-        295_854_080, "c19b067766180843fca6266531605bf037820c5e5ae178bd6dc03785df4c6ae4",
-    ),
-    ("npu-turbo", "8elite_galaxy"): (
-        859_689_781,
-        775_544_832, "4776799f89514e2e96bd2ccb9a2fb9bdca246bdbeba8c7df84d671e2a6ca024c",
-        295_821_312, "04f5fe2b77b3bc12f20944401106ba4f878b5275113cba5fbea3ec60d481efaa",
-    ),
-    ("npu-turbo", "8elite5_galaxy"): (
-        860_709_426,
-        777_441_280, "841cecfeade064bed27956401c298a2df86eeaac5c33270a284c34d11619c7a2",
-        295_911_424, "ceca18cf506f14d8eaf141c69cf7674aca210b825316f0f4c481289cca457430",
-    ),
-    ("npu-turbo", "7gen4"): (
-        871_118_306,
-        846_360_576, "c482288d5899590a87cfea3faea3e39df30242095b8c93e0e02e7d1f1c79a813",
-        295_895_040, "ce8ad981b89999f4eb9dace8dfb9b64129322e976ac89188a719e59842baacc5",
-    ),
+    # RE-MEASUREMENT IN PROGRESS (2026-09-22, v0.62.2). All eight rows blanked on
+    # purpose: the 0.61.0 digests they held are not this release's bytes, and the
+    # honest way to replace them is to let measure() print what it finds rather than
+    # to edit sixty-four hex characters by hand. Fill from the tool's own output.
+    ("npu", "8gen3"): None,
+    ("npu", "8elite_galaxy"): None,
+    ("npu", "8elite5_galaxy"): None,
+    ("npu", "7gen4"): None,
+    ("npu-turbo", "8gen3"): None,
+    ("npu-turbo", "8elite_galaxy"): None,
+    ("npu-turbo", "8elite5_galaxy"): None,
+    ("npu-turbo", "7gen4"): None,
 }
+
 
 
 def fail(msg: str) -> "SystemExit":
