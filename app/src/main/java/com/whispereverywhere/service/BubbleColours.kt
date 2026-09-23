@@ -65,13 +65,12 @@ object BubbleColours {
      * Steps rather than a continuous slider for the same reason the palette is curated: every
      * reachable value is then enumerable, so the invariant is a cross product a test can walk
      * rather than a range it has to sample. The spacing is UNEVEN by design — 10% strides down
-     * where the panel is furniture behind a video, 5% strides from 70 up where the contrast
-     * arithmetic turns over ([OPACITY_GUARANTEED_PERCENT] sits between 80 and 90) and where the
-     * default now lives (75, owner ruling 2026-09-22) — so the Settings slider is driven by INDEX
-     * into this list, never by percent. Sorted ascending; `BubbleColoursTest` holds that, and
-     * that 75, 85 and 90 are on it.
+     * where the panel is furniture behind a video, 5% strides from 80 up where the contrast
+     * arithmetic turns over ([OPACITY_GUARANTEED_PERCENT] sits between 80 and 90) — so the
+     * Settings slider is driven by INDEX into this list, never by percent. Sorted ascending;
+     * `BubbleColoursTest` holds that, and that 80, 85 and 90 are on it.
      */
-    val OPACITY_STEPS: List<Int> = listOf(20, 30, 40, 50, 60, 70, 75, 80, 85, 90, 95, 100)
+    val OPACITY_STEPS: List<Int> = listOf(20, 30, 40, 50, 60, 70, 80, 85, 90, 95, 100)
 
     /**
      * THE FLOOR: as clear as the panel goes. 20% — nearly clear, so a video plays through it.
@@ -126,18 +125,19 @@ object BubbleColours {
     val GUARANTEED_STEPS: List<Int> = OPACITY_STEPS.filter { it >= OPACITY_GUARANTEED_PERCENT }
 
     /**
-     * The shipped default: **75%**, by owner ruling 2026-09-22 (on 108, setting the defaults he
-     * wants a new user to meet: *"with the transparency set to seventy-five"*). Through 4.14 it
-     * was 90, the panel's original `#E6000000`, and that is the look a user who never opened
-     * this setting had until now — so this is a deliberate change of every such user's panel,
-     * not a silent one.
+     * The shipped default: **80%**, by owner ruling 2026-09-22. He first asked for 75 (*"with the
+     * transparency set to seventy-five"*), then, on 109, settled it from the device: *"80% is
+     * what I'm testing at. And that seems like about the best balance."* Through 4.14.0 it was
+     * 90, the panel's original `#E6000000`, and that is the look a user who never opened this
+     * setting had until now — so this is a deliberate change of every such user's panel, not a
+     * silent one. (4.14.1 briefly added a 75 step for the first ask; it is gone again.)
      *
-     * **It is below [OPACITY_GUARANTEED_PERCENT], and that is the owner's trade, stated.** Over
-     * dark content every palette colour reads; over a white page the darkest ones — the live red
-     * among them — fall under [CONTRAST_FLOOR]. The Settings copy says exactly that, and a user
-     * who reads mostly over white apps moves the slider up.
+     * **It is one step below [OPACITY_GUARANTEED_PERCENT], and that is the owner's trade,
+     * stated.** Over dark content every palette colour reads; over a white page the darkest —
+     * the live red, 3.96:1 here — falls under [CONTRAST_FLOOR]. The Settings copy says exactly
+     * that, and a user who reads mostly over white apps moves the slider up one notch.
      */
-    const val OPACITY_DEFAULT_PERCENT: Int = 75
+    const val OPACITY_DEFAULT_PERCENT: Int = 80
 
     /** A palette entry: the colour, and the word a user reads under it. */
     data class Swatch(val name: String, val argb: Int)

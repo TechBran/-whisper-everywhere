@@ -87,18 +87,19 @@ class BubbleColoursTest {
         assertEquals(0xFF69F0AE.toInt(), BubbleColours.COMMITTED_DEFAULT)
         assertEquals("Spring", BubbleColours.PALETTE.single { it.argb == BubbleColours.COMMITTED_DEFAULT }.name)
 
-        // Background: 75% (owner, same session: "with the transparency set to seventy-five").
-        // Through 4.14 it was 90, the shipped #E6000000; 75 is BELOW the legibility guarantee,
-        // and that trade is the owner's, stated on the slider.
-        assertEquals(75, BubbleColours.OPACITY_DEFAULT_PERCENT)
+        // Background: 80% (owner, settled on the device: "80% is what I'm testing at. And that
+        // seems like about the best balance"). Through 4.14.0 it was 90, the shipped #E6000000;
+        // 80 is one step BELOW the legibility guarantee, and that trade is the owner's, stated on
+        // the slider.
+        assertEquals(80, BubbleColours.OPACITY_DEFAULT_PERCENT)
         assertTrue("the default is his call, below the guarantee", BubbleColours.OPACITY_DEFAULT_PERCENT < BubbleColours.OPACITY_GUARANTEED_PERCENT)
-        assertEquals(0xBF, BubbleColours.alphaByte(BubbleColours.OPACITY_DEFAULT_PERCENT))
-        assertEquals(0xBF000000.toInt(), BubbleColours.panelArgb(BubbleColours.OPACITY_DEFAULT_PERCENT))
+        assertEquals(0xCC, BubbleColours.alphaByte(BubbleColours.OPACITY_DEFAULT_PERCENT))
+        assertEquals(0xCC000000.toInt(), BubbleColours.panelArgb(BubbleColours.OPACITY_DEFAULT_PERCENT))
         assertEquals(0xFF000000.toInt(), BubbleColours.panelArgb(100))
         // The default committed green still clears the floor over a white app at the default —
-        // it is the live red, not the committed text, that the 75% trade puts at risk.
+        // it is the live red, not the committed text, that the 80% trade puts at risk.
         assertTrue(
-            BubbleColours.contrastRatio(BubbleColours.COMMITTED_DEFAULT, BubbleColours.compositeOver(75, 0xFFFFFFFF.toInt())) >= BubbleColours.CONTRAST_FLOOR,
+            BubbleColours.contrastRatio(BubbleColours.COMMITTED_DEFAULT, BubbleColours.compositeOver(80, 0xFFFFFFFF.toInt())) >= BubbleColours.CONTRAST_FLOOR,
         )
     }
 
@@ -283,12 +284,13 @@ class BubbleColoursTest {
         assertEquals(BubbleColours.OPACITY_FLOOR_PERCENT, steps.min())
         assertEquals(20, BubbleColours.OPACITY_FLOOR_PERCENT)
         assertEquals(100, steps.max())
-        // 75 joined on 2026-09-22, as the new default's own step (owner: "seventy-five").
-        assertEquals(listOf(20, 30, 40, 50, 60, 70, 75, 80, 85, 90, 95, 100), steps)
+        // (4.14.1 briefly carried a 75 step for the owner's first ask; he settled on 80, which
+        // was already a step, and the ladder is the 4.8.0 one again.)
+        assertEquals(listOf(20, 30, 40, 50, 60, 70, 80, 85, 90, 95, 100), steps)
         assertTrue("85 is on the ladder", 85 in steps)
         assertTrue("90 is on the ladder", 90 in steps)
         assertTrue("the default is on the ladder", BubbleColours.OPACITY_DEFAULT_PERCENT in steps)
-        assertEquals("the default is the owner's 75", 75, BubbleColours.OPACITY_DEFAULT_PERCENT)
+        assertEquals("the default is the owner's 80", 80, BubbleColours.OPACITY_DEFAULT_PERCENT)
         // Every step the 4.5.1 ladder had is still reachable, so an upgrade snaps nobody.
         listOf(85, 90, 95, 100).forEach { assertEquals(it, BubbleColours.opacityPercent(it)) }
         // The guarantee: 85, the old floor, and the band above it is exactly the old ladder.

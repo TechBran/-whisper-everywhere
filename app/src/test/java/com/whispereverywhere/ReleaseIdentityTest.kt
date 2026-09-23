@@ -185,6 +185,11 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 110 = 4.14.2 — the panel defaults to 80%.** The owner, testing 109 on the
+ * device: "80% is what I'm testing at. And that seems like about the best balance." The 75
+ * step 4.14.1 added for his first ask comes back off the ladder. 110 rather than a rebuilt 109,
+ * because 109 may already be on the internal track and Play refuses a spent code.
+ *
  * **versionCode 109 = 4.14.1 — the corner controls get their own little bubbles, and new
  * defaults.** 108 went to the internal track on 2026-09-22. On it the owner ruled: each corner
  * control sits on a small disc and the committed text flows around them to the top (no header
@@ -420,17 +425,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_14_1_at_version_code_109() {
+    fun release_identity_is_4_14_2_at_version_code_110() {
         assertEquals(
-            "versionName must be 4.14.1 for this release (app/build.gradle.kts defaultConfig)",
-            "4.14.1",
+            "versionName must be 4.14.2 for this release (app/build.gradle.kts defaultConfig)",
+            "4.14.2",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 109 for this release (app/build.gradle.kts defaultConfig). " +
-                "108 = 4.14.0 went to the internal track on 2026-09-22, so Play refuses the " +
-                "code; 105 = 4.11.3 is in production",
-            109,
+            "versionCode must be 110 for this release (app/build.gradle.kts defaultConfig). " +
+                "109 = 4.14.1 may already be on the internal track, and a spent code is " +
+                "refused; 105 = 4.11.3 is in production",
+            110,
             BuildConfig.VERSION_CODE,
         )
     }
