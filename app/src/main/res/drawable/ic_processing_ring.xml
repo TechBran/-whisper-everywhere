@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  The processing spinner. Its arc is r = 26 (2026-09-22, was 28) so the outer edge of the 3-unit
+  stroke sits at y = 8.5 of this 72 viewport — 12.5dp into the 80dp bubble stack, half a unit
+  below the seam where the attached tab meets the transcript window, which leaves room for the
+  pixel rounding on each side of it (the ring's centring and the tab's inset). At 28 the stroke's
+  top crossed the seam and the tab's clip shaved it flat on every turn; at 26.5 it still lost a
+  pixel at 420 dpi.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="72dp"
     android:height="72dp"
@@ -9,7 +17,7 @@
         android:strokeColor="#FFFFFF"
         android:strokeWidth="3"
         android:strokeLineCap="round"
-        android:pathData="M36,8 A28,28 0 0,1 64,36"
+        android:pathData="M36,10 A26,26 0 0,1 62,36"
         android:trimPathStart="0"
         android:trimPathEnd="0.3" />
     <path
@@ -17,7 +25,7 @@
         android:strokeColor="#80FFFFFF"
         android:strokeWidth="3"
         android:strokeLineCap="round"
-        android:pathData="M64,36 A28,28 0 0,1 36,64"
+        android:pathData="M62,36 A26,26 0 0,1 36,62"
         android:trimPathStart="0"
         android:trimPathEnd="0.3" />
 </vector>

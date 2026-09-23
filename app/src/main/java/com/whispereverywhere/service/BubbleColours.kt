@@ -65,12 +65,13 @@ object BubbleColours {
      * Steps rather than a continuous slider for the same reason the palette is curated: every
      * reachable value is then enumerable, so the invariant is a cross product a test can walk
      * rather than a range it has to sample. The spacing is UNEVEN by design — 10% strides down
-     * where the panel is furniture behind a video, 5% strides from 80 up where the contrast
-     * arithmetic turns over ([OPACITY_GUARANTEED_PERCENT] sits between 80 and 90) — so the
-     * Settings slider is driven by INDEX into this list, never by percent. Sorted ascending;
-     * `BubbleColoursTest` holds that, and that 85 and 90 are on it.
+     * where the panel is furniture behind a video, 5% strides from 70 up where the contrast
+     * arithmetic turns over ([OPACITY_GUARANTEED_PERCENT] sits between 80 and 90) and where the
+     * default now lives (75, owner ruling 2026-09-22) — so the Settings slider is driven by INDEX
+     * into this list, never by percent. Sorted ascending; `BubbleColoursTest` holds that, and
+     * that 75, 85 and 90 are on it.
      */
-    val OPACITY_STEPS: List<Int> = listOf(20, 30, 40, 50, 60, 70, 80, 85, 90, 95, 100)
+    val OPACITY_STEPS: List<Int> = listOf(20, 30, 40, 50, 60, 70, 75, 80, 85, 90, 95, 100)
 
     /**
      * THE FLOOR: as clear as the panel goes. 20% — nearly clear, so a video plays through it.
@@ -125,12 +126,18 @@ object BubbleColours {
     val GUARANTEED_STEPS: List<Int> = OPACITY_STEPS.filter { it >= OPACITY_GUARANTEED_PERCENT }
 
     /**
-     * The shipped default, and it is the panel users have today: `preview_bubble_background` is
-     * `#E6000000`, and `0xE6` is exactly [alphaByte] of 90. So a user who never opens this
-     * setting sees no change they did not ask for — the same promise [COMMITTED_DEFAULT] keeps
-     * for the committed text.
+     * The shipped default: **75%**, by owner ruling 2026-09-22 (on 108, setting the defaults he
+     * wants a new user to meet: *"with the transparency set to seventy-five"*). Through 4.14 it
+     * was 90, the panel's original `#E6000000`, and that is the look a user who never opened
+     * this setting had until now — so this is a deliberate change of every such user's panel,
+     * not a silent one.
+     *
+     * **It is below [OPACITY_GUARANTEED_PERCENT], and that is the owner's trade, stated.** Over
+     * dark content every palette colour reads; over a white page the darkest ones — the live red
+     * among them — fall under [CONTRAST_FLOOR]. The Settings copy says exactly that, and a user
+     * who reads mostly over white apps moves the slider up.
      */
-    const val OPACITY_DEFAULT_PERCENT: Int = 90
+    const val OPACITY_DEFAULT_PERCENT: Int = 75
 
     /** A palette entry: the colour, and the word a user reads under it. */
     data class Swatch(val name: String, val argb: Int)
@@ -195,10 +202,13 @@ object BubbleColours {
     val LIVE_DEFAULT: Int = 0xFFFF5252.toInt()
 
     /**
-     * The committed words' default: `#FFFFFF`, unchanged from the shipped layout, so today's
-     * users see no difference they did not ask for.
+     * The committed words' default: **Spring, `#69F0AE`** — the owner's *"emerald green, almost
+     * neon green"*, by ruling 2026-09-22 (on 108). Through 4.14 it was the layout's white, so,
+     * like [OPACITY_DEFAULT_PERCENT], this changes the panel of every user who never picked a
+     * colour, deliberately. It is on [PALETTE], so a user who picked Spring and one who never
+     * picked anything see the same green.
      */
-    val COMMITTED_DEFAULT: Int = 0xFFFFFFFF.toInt()
+    val COMMITTED_DEFAULT: Int = 0xFF69F0AE.toInt()
 
     /** The panel's colour. Only its alpha is user-owned — the fill stays black by ruling. */
     private const val PANEL_RGB: Int = 0x000000
@@ -268,6 +278,20 @@ object BubbleColours {
 
     /** The panel's ARGB fill at [percent] — black, at the user's alpha. */
     fun panelArgb(percent: Int): Int = (alphaByte(percent) shl 24) or PANEL_RGB
+
+    /**
+     * The corner controls' discs (owner ruling 2026-09-22: the mute mic and the resize arrow each
+     * "hold their own little bubble") are the panel's black, never clearer than
+     * [CONTROL_DISC_MIN_PERCENT]. A disc sits OVER the transcript — the text flows up behind
+     * the corners once it scrolls — so it has to hide what passes beneath it; at a clear panel
+     * setting a disc as clear as the panel would show the words through the icon. At and above
+     * the minimum it is simply the panel's own fill.
+     */
+    fun controlDiscArgb(percent: Int): Int =
+        panelArgb(maxOf(opacityPercent(percent), CONTROL_DISC_MIN_PERCENT))
+
+    /** See [controlDiscArgb]. */
+    const val CONTROL_DISC_MIN_PERCENT: Int = 90
 
     /**
      * The stored text colour if it is a [PALETTE] entry, else [fallback].

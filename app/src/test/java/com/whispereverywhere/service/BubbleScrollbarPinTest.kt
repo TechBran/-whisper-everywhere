@@ -240,7 +240,9 @@ class BubbleScrollbarPinTest {
         assertTrue("the panel's preview collector is gone or renamed", start >= 0)
         val collector = serviceRaw.substring(start, serviceRaw.indexOf("\n        }\n", start))
         val flat = collector.replace(Regex("\\s+"), " ")
-        val setText = flat.indexOf("transcriptionEditText.text = text")
+        // The text goes in WRAPPED around the corner discs (CornerWrap, 2026-09-22) — still one
+        // assignment, still followed by the posted follow.
+        val setText = flat.indexOf("transcriptionEditText.text = wrapPanel(text)")
         val follow = flat.indexOf("transcriptionEditText.post { followPanelToBottom() }")
         assertTrue("the collector still assigns the panel's text", setText >= 0)
         assertTrue("and follows in a post after it, so the new extent is known", follow > setText)

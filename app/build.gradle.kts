@@ -648,6 +648,8 @@ tasks.withType<Test>().configureEach {
         "src/main/res/drawable/ic_mic_live.xml",
         "src/main/res/drawable/ic_mic_muted.xml",
         "src/main/res/drawable/ic_resize_handle.xml",
+        "src/main/res/drawable/control_disc.xml",
+        "src/main/res/drawable/ic_processing_ring.xml",
         // (4.3.1 B) BubbleHideWiringPinTest reads the controller for speakFromTrigger's Boolean.
         "src/main/java/com/whispereverywhere/tts/TtsController.kt",
         // (4.4.0, Task 2b) The voice manager, by the list's stated rule and overdue: this file has

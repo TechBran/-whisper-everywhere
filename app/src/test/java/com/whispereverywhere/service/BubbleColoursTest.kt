@@ -70,7 +70,7 @@ class BubbleColoursTest {
     // ---------------------------------------------------------------- the defaults
 
     @Test
-    fun theDefaultsAreTHEOWNERSRulingAndTodaysUsersSeeNOTHINGTheyDidNotAskFor() {
+    fun theDefaultsAreTHEOWNERSRuling() {
         // Live words: RED per the ruling, and NOT pure red — the shade is derived below, not
         // chosen by eye.
         assertNotEquals("pure red is ruled out by the floor, not by taste", 0xFFFF0000.toInt(), BubbleColours.LIVE_DEFAULT)
@@ -80,16 +80,39 @@ class BubbleColoursTest {
         assertTrue("the default live colour must READ as red", r > g + 60 && r > b + 60)
         assertEquals("and it is a palette entry", true, BubbleColours.PALETTE.any { it.argb == BubbleColours.LIVE_DEFAULT })
 
-        // Committed words: unchanged white.
-        assertEquals(0xFFFFFFFF.toInt(), BubbleColours.COMMITTED_DEFAULT)
+        // Committed words: Spring, the owner's "emerald green, almost neon green" (2026-09-22,
+        // on 108). Through 4.14 this was white — a deliberate change for every user who never
+        // picked a colour — and it is a palette entry, so "never picked" and "picked Spring" look
+        // the same.
+        assertEquals(0xFF69F0AE.toInt(), BubbleColours.COMMITTED_DEFAULT)
+        assertEquals("Spring", BubbleColours.PALETTE.single { it.argb == BubbleColours.COMMITTED_DEFAULT }.name)
 
-        // Background: the DEFAULT step must composite to the exact byte the shipped drawable
-        // carried (`preview_bubble_background` is #E6000000), so a user who never opens this
-        // setting sees the panel they have today, bit for bit.
-        assertEquals(90, BubbleColours.OPACITY_DEFAULT_PERCENT)
-        assertEquals(0xE6, BubbleColours.alphaByte(BubbleColours.OPACITY_DEFAULT_PERCENT))
-        assertEquals(0xE6000000.toInt(), BubbleColours.panelArgb(BubbleColours.OPACITY_DEFAULT_PERCENT))
+        // Background: 75% (owner, same session: "with the transparency set to seventy-five").
+        // Through 4.14 it was 90, the shipped #E6000000; 75 is BELOW the legibility guarantee,
+        // and that trade is the owner's, stated on the slider.
+        assertEquals(75, BubbleColours.OPACITY_DEFAULT_PERCENT)
+        assertTrue("the default is his call, below the guarantee", BubbleColours.OPACITY_DEFAULT_PERCENT < BubbleColours.OPACITY_GUARANTEED_PERCENT)
+        assertEquals(0xBF, BubbleColours.alphaByte(BubbleColours.OPACITY_DEFAULT_PERCENT))
+        assertEquals(0xBF000000.toInt(), BubbleColours.panelArgb(BubbleColours.OPACITY_DEFAULT_PERCENT))
         assertEquals(0xFF000000.toInt(), BubbleColours.panelArgb(100))
+        // The default committed green still clears the floor over a white app at the default —
+        // it is the live red, not the committed text, that the 75% trade puts at risk.
+        assertTrue(
+            BubbleColours.contrastRatio(BubbleColours.COMMITTED_DEFAULT, BubbleColours.compositeOver(75, 0xFFFFFFFF.toInt())) >= BubbleColours.CONTRAST_FLOOR,
+        )
+    }
+
+    @Test
+    fun theCornerDiscsAreThePanelsBlackNeverClearerThanNinety() {
+        // A disc sits OVER the transcript, so it has to hide what passes beneath it.
+        assertEquals(90, BubbleColours.CONTROL_DISC_MIN_PERCENT)
+        for (percent in BubbleColours.OPACITY_STEPS) {
+            val disc = BubbleColours.controlDiscArgb(percent)
+            assertEquals("black", 0, disc and 0xFFFFFF)
+            assertTrue("never clearer than 90% (at $percent)", (disc ushr 24) >= BubbleColours.alphaByte(90))
+            assertTrue("never clearer than the panel it sits on (at $percent)", (disc ushr 24) >= (BubbleColours.panelArgb(percent) ushr 24))
+        }
+        assertEquals("at and above the minimum it IS the panel's fill", BubbleColours.panelArgb(95), BubbleColours.controlDiscArgb(95))
     }
 
     // ---------------------------------------------------------------- THE INVARIANT
@@ -260,11 +283,12 @@ class BubbleColoursTest {
         assertEquals(BubbleColours.OPACITY_FLOOR_PERCENT, steps.min())
         assertEquals(20, BubbleColours.OPACITY_FLOOR_PERCENT)
         assertEquals(100, steps.max())
-        assertEquals(listOf(20, 30, 40, 50, 60, 70, 80, 85, 90, 95, 100), steps)
+        // 75 joined on 2026-09-22, as the new default's own step (owner: "seventy-five").
+        assertEquals(listOf(20, 30, 40, 50, 60, 70, 75, 80, 85, 90, 95, 100), steps)
         assertTrue("85 is on the ladder", 85 in steps)
         assertTrue("90 is on the ladder", 90 in steps)
         assertTrue("the default is on the ladder", BubbleColours.OPACITY_DEFAULT_PERCENT in steps)
-        assertEquals("the default did not move", 90, BubbleColours.OPACITY_DEFAULT_PERCENT)
+        assertEquals("the default is the owner's 75", 75, BubbleColours.OPACITY_DEFAULT_PERCENT)
         // Every step the 4.5.1 ladder had is still reachable, so an upgrade snaps nobody.
         listOf(85, 90, 95, 100).forEach { assertEquals(it, BubbleColours.opacityPercent(it)) }
         // The guarantee: 85, the old floor, and the band above it is exactly the old ladder.

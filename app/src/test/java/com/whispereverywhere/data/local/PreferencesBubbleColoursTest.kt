@@ -43,11 +43,11 @@ class PreferencesBubbleColoursTest {
         assertEquals(BubbleColours.LIVE_DEFAULT, readLive())
         assertEquals(BubbleColours.COMMITTED_DEFAULT, readCommitted())
         assertEquals(BubbleColours.OPACITY_DEFAULT_PERCENT, readOpacity())
-        // ...and the defaults are today's bubble: white committed text and the 0xE6 panel the
-        // shipped drawable carried. Only the LIVE strip changes, which is the one thing the
-        // owner asked for.
-        assertEquals(0xFFFFFFFF.toInt(), readCommitted())
-        assertEquals(0xE6, BubbleColours.alphaByte(readOpacity()))
+        // ...and the defaults are the owner's 2026-09-22 ones (on 108): Spring, the emerald
+        // "almost neon" green, for the committed words, and a 75% panel (0xBF). Through 4.14 a
+        // fresh install got white text on the 0xE6 panel the shipped drawable carried.
+        assertEquals(0xFF69F0AE.toInt(), readCommitted())
+        assertEquals(0xBF, BubbleColours.alphaByte(readOpacity()))
     }
 
     @Test

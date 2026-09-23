@@ -10,6 +10,7 @@ import android.view.View
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.exp
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -32,12 +33,16 @@ import kotlin.math.sin
  * Owner ruling: *"I want that waveform bubble to be connected to the committed text and preview
  * text window, so it looks like one unified piece"* — chosen as a TAB under the window, keeping
  * this view's living rim. While the window shows, the upper half of the rim is replaced by a flat
- * top along this view's own top edge (y = 0, the window's bottom edge — a butt joint on a whole
- * pixel, because both fills are the user's translucent black and any overlap would composite
- * twice into a darker band), flaring into the sides through concave shoulders across the side
- * headroom. The lower half keeps its full ripple, faded to nothing at the equator by
- * [BlobAttach.taper] so the straight sides meet it without a step; the whole-body bob is off, since
- * a tab cannot bob away from what it is attached to.
+ * top along the BODY's top edge (y = [attachInsetPx]), flaring into the sides through concave
+ * shoulders across the side headroom. The service pulls this view up by exactly that inset, so
+ * the flat top lands on the window's bottom edge — a butt joint on a whole pixel, because both
+ * fills are the user's translucent black and any overlap would composite twice into a darker
+ * band — and the 12dp neck the free blob keeps for its upward ripple is gone (owner, on 108: the
+ * waveform "seems to hang down pretty low. We can shrink some space out of that").
+ *
+ * The lower half keeps its full ripple, faded to nothing at the equator by [BlobAttach.taper] so
+ * the straight sides meet it without a step; the whole-body bob is off, since a tab cannot bob
+ * away from what it is attached to.
  */
 class BlobView @JvmOverloads constructor(
     context: Context,
@@ -106,8 +111,8 @@ class BlobView @JvmOverloads constructor(
     /**
      * True while the transcript window is shown directly above this view: the body draws as a
      * flat-topped TAB joined to it (see the class KDoc). The service sets it wherever it shows or
-     * hides the window, so the tab follows the window and not the bubble state — the bubble on its
-     * own (idle, read-aloud, error) is always the free-standing blob.
+     * hides the window, so the tab follows the window and not the bubble state — the bubble on
+     * its own (idle, read-aloud, error) is always the free-standing blob.
      */
     var attachedTop: Boolean = false
         set(value) {
@@ -115,6 +120,15 @@ class BlobView @JvmOverloads constructor(
             field = value
             invalidate()
         }
+
+    /**
+     * Where the attached tab's flat top sits: the body's top edge, i.e. the upper ripple
+     * headroom, on a WHOLE pixel. The service pulls this view up by exactly this many pixels
+     * while attached, and the tab draws nothing above it, so the seam against the window is a
+     * butt joint with no overlap and no gap.
+     */
+    val attachInsetPx: Int
+        get() = (HEADROOM_DP * resources.displayMetrics.density).roundToInt()
 
     fun setMode(m: Mode) {
         if (mode == m) return
@@ -287,7 +301,11 @@ class BlobView @JvmOverloads constructor(
             // Attached, the upper half keeps none of its motion and the lower half fades in from
             // the equator, so the tab's straight sides meet the rippling caps without a step.
             val taper = if (attachedTop) BlobAttach.taper(ny) else 1f
-            val tilt = if (mode == Mode.RECORDING) 0.55f * sin(t * 0.8f + i * 1.1f) * weight * taper else 0f
+            val tilt = if (mode == Mode.RECORDING) {
+                0.55f * sin(t * 0.8f + i * 1.1f) * weight * taper
+            } else {
+                0f
+            }
             val cosT = cos(tilt)
             val sinT = sin(tilt)
             pny[i] = ny
@@ -297,9 +315,15 @@ class BlobView @JvmOverloads constructor(
 
         path.rewind()
         if (attachedTop) {
-            buildAttachedPath(left = cx - bodyW / 2f, right = cx + bodyW / 2f, cy = cy, headroom = headroom)
+            buildAttachedPath(
+                left = cx - bodyW / 2f,
+                right = cx + bodyW / 2f,
+                cy = cy,
+                headroom = headroom,
+            )
         } else {
-            // Smooth closed curve: quadratic segments through consecutive midpoints (C1-continuous).
+            // Smooth closed curve: quadratic segments through consecutive midpoints
+            // (C1-continuous).
             path.moveTo((px[0] + px[1]) / 2f, (py[0] + py[1]) / 2f)
             for (i in 1..POINTS) {
                 val p = i % POINTS
@@ -318,9 +342,10 @@ class BlobView @JvmOverloads constructor(
     }
 
     /**
-     * The TAB outline ([attachedTop]): a flat top across the whole view width at y = 0, concave
-     * shoulders down into the body's straight sides, then the lower half of the rim — the points
-     * whose resting normal faces down, which in walk order are one contiguous run from the right
+     * The TAB outline ([attachedTop]): a flat top across the whole view width at
+     * y = [attachInsetPx], concave shoulders down into the body's straight sides, then the lower
+     * half of the rim — the points whose resting normal faces down, which in walk order are one
+     * contiguous run from the right
      * equator, along the bottom, to the left equator — and back up the left side. The body's
      * sides sit exactly `headroom` in from the view's edges, so the shoulders span the side
      * headroom and the top reaches both view edges.
@@ -330,10 +355,11 @@ class BlobView @JvmOverloads constructor(
      * rippling caps with a continuous tangent instead of a corner that changes every frame.
      */
     private fun buildAttachedPath(left: Float, right: Float, cy: Float, headroom: Float) {
-        val shoulder = headroom.coerceAtMost(cy)
-        path.moveTo(0f, 0f)
-        path.lineTo(width.toFloat(), 0f)
-        path.quadTo(right, 0f, right, shoulder)
+        val top = attachInsetPx.toFloat().coerceAtMost(cy)
+        val shoulder = top + headroom.coerceAtMost(cy - top)
+        path.moveTo(0f, top)
+        path.lineTo(width.toFloat(), top)
+        path.quadTo(right, top, right, shoulder)
         path.lineTo(right, (shoulder + cy) / 2f)
         var sx = right
         var sy = cy
@@ -346,7 +372,7 @@ class BlobView @JvmOverloads constructor(
         path.quadTo(sx, sy, (sx + left) / 2f, (sy + cy) / 2f)
         path.quadTo(left, cy, left, (cy + shoulder) / 2f)
         path.lineTo(left, shoulder)
-        path.quadTo(left, 0f, 0f, 0f)
+        path.quadTo(left, top, 0f, top)
         path.close()
     }
 }

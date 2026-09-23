@@ -61,6 +61,7 @@ import com.whispereverywhere.transcription.speakers.SpeakerSpike
 import com.whispereverywhere.transcription.speakers.SpeakerSpikeStore
 import com.whispereverywhere.ui.components.BarWaveformView
 import com.whispereverywhere.util.StreamingAudioRecorder
+import com.whispereverywhere.ui.components.CornerWrap
 import com.whispereverywhere.whisper.WhisperNative
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1376,6 +1377,15 @@ class FloatingBubbleService : Service(),
     private var panelFillArgb = 0
 
     /**
+     * The committed panel's text as the sink last handed it, before [wrapPanel] broke its opening
+     * lines around the corner discs — kept so a width change can re-wrap it.
+     */
+    private var panelRawText: CharSequence = ""
+
+    /** Where [panelRawText]'s opening lines are broken on screen now (null: nothing wraps). */
+    private var panelWrapping: CornerWrap.Wrapping? = null
+
+    /**
      * Has this session already said it is dropping audio? The overflow line is emitted ONCE per
      * session rather than once per dropped chunk — at 31.25 Hz the per-chunk version would be a
      * log flood burying the fact it reports. Written by the capture thread at the first drop and
@@ -2171,6 +2181,11 @@ class FloatingBubbleService : Service(),
             if (transcriptionPreviewContainer.visibility == View.VISIBLE) {
                 applyPreviewSize()
             }
+            // The tab's inset is a whole number of pixels AT THIS DENSITY, and the blob redraws
+            // its flat top from the current one every frame — so a density change (display size,
+            // a fold onto the other panel) must re-seat the stack's margin and clip with it, or a
+            // gap opens at the seam. Idempotent when nothing moved.
+            setBubbleAttached(transcriptionPreviewContainer.visibility == View.VISIBLE)
             reclampAfterConfigChange()
         }
     }
@@ -2655,6 +2670,10 @@ class FloatingBubbleService : Service(),
         processingTimeText = bubbleView.findViewById(R.id.processing_time_text)
         transcriptionPreviewContainer = bubbleView.findViewById(R.id.transcription_preview_container)
         transcriptionEditText = bubbleView.findViewById(R.id.transcription_edit_text)
+        // "Listening…" starts clear of the mute disc, like the text's own first lines
+        // (CornerWrap).
+        transcriptionEditText.hint =
+            CornerWrap.hint(transcriptionEditText.hint ?: "", cornerClearPx())
         transcriptionDeltaText = bubbleView.findViewById(R.id.transcription_delta_text)
         transcriptScrubber = bubbleView.findViewById(R.id.transcript_scrubber)
         transcriptScrubber.bind(transcriptionEditText)
@@ -2801,11 +2820,20 @@ class FloatingBubbleService : Service(),
             .coerceAtLeast(ResizeMath.MIN_HEIGHT_DP)
         val widthPx = (widthDp.coerceIn(ResizeMath.MIN_WIDTH_DP, maxW) * dm.density).toInt()
         val heightPx = (heightDp.coerceIn(ResizeMath.MIN_HEIGHT_DP, maxH) * dm.density).toInt()
+        val widthChanged = transcriptionEditText.layoutParams.width != widthPx
         transcriptionEditText.layoutParams = transcriptionEditText.layoutParams.apply {
             width = widthPx
-            // + the header band (the TextView's top padding, where the mute toggle and the resize
-            // arrow sit): the text area stays exactly the height the user chose.
-            height = heightPx + transcriptionEditText.paddingTop
+            height = heightPx
+        }
+        // The opening lines' breaks are a fact about the width, so a resize re-wraps them — but
+        // only when they MOVE. A drag changes the width on every frame and the breaks every few
+        // dozen pixels; re-setting an unchanged text would lay the whole transcript out twice
+        // per frame (once at the old width inside setText, once at the new one in measure).
+        if (widthChanged && panelRawText.isNotEmpty()) {
+            val clear = cornerClearPx()
+            val next =
+                CornerWrap.probe(panelRawText, transcriptionEditText, widthPx, clear, clear, clear)
+            if (next != panelWrapping) transcriptionEditText.text = wrapPanel(panelRawText)
         }
         transcriptionDeltaText.layoutParams = transcriptionDeltaText.layoutParams.apply { width = widthPx }
         // The committed frame keeps the panel's width even when its TextView is GONE (the cold
@@ -2882,7 +2910,33 @@ class FloatingBubbleService : Service(),
             (lobe.background as? android.graphics.drawable.ShapeDrawable)?.paint?.color = panelFillArgb
             lobe.invalidate()
         }
+        // The two corner discs: the panel's black, never clearer than BubbleColours says a disc
+        // may be — each sits over text and must hide what passes beneath it.
+        val disc = BubbleColours.controlDiscArgb(app.preferencesManager.bubbleOpacityPercent)
+        for (control in listOf(muteToggle, resizeHandle)) {
+            ((control.background?.mutate() as? android.graphics.drawable.InsetDrawable)?.drawable
+                as? android.graphics.drawable.GradientDrawable)?.setColor(disc)
+        }
     }
+
+    /**
+     * The committed text as the panel shows it: its opening lines broken around the two corner
+     * discs (CornerWrap). The raw text is kept for a re-wrap on a width change; the display copy
+     * never reaches the transcript file or the delivered text, which are the sink's.
+     */
+    private fun wrapPanel(text: CharSequence): CharSequence {
+        panelRawText = text
+        val clear = cornerClearPx()
+        val wrapping = CornerWrap.probe(
+            text, transcriptionEditText, transcriptionEditText.layoutParams.width,
+            leftPx = clear, rightPx = clear, clearPx = clear,
+        )
+        panelWrapping = wrapping
+        return if (wrapping == null) text else CornerWrap.render(text, wrapping, clear)
+    }
+
+    /** The corner controls' 28dp target plus 2dp of air: how far the wrapped lines stay clear. */
+    private fun cornerClearPx(): Int = (CORNER_CLEAR_DP * resources.displayMetrics.density).toInt()
 
     /**
      * WHICH of the delta strip's two roles is on screen, and therefore which colour it is in.
@@ -2930,8 +2984,8 @@ class FloatingBubbleService : Service(),
      * pill; the live-mode delta strip, when visible, gets its own ~100dp allowance (it is not
      * part of heightDp). A slight OVER-estimate by design: clamping with a too-big window only
      * keeps it further from the screen edge — the safe direction. (2026-09-22: the 8dp bottom
-     * margin is gone — the bubble joins the panel — so the 48dp now over-counts by 8, still the
-     * safe side; the 24dp header band applyPreviewSize adds to the text is counted explicitly.)
+     * margin is gone and the attached tab tucks its 12dp neck up against the panel, so while a
+     * session shows, the 48dp over-counts by about 20 — still the safe side.)
      */
     private fun estimatedWindowSize(widthDp: Float, heightDp: Float): Pair<Int, Int> {
         val density = resources.displayMetrics.density
@@ -2948,7 +3002,7 @@ class FloatingBubbleService : Service(),
             // utterances, which still occupies its height in the layout. Reading that as "no
             // strip" would UNDER-shoot the estimate — the unsafe direction for a clamp.
             if (transcriptionDeltaText.visibility != View.GONE) (100 * density).toInt() else 0
-        val panelH = ((heightDp + 48f + 24f) * density).toInt() + stripAllowance
+        val panelH = ((heightDp + 48f) * density).toInt() + stripAllowance
         return Pair(maxOf(pillEstimate, panelW), pillEstimate + panelH)
     }
 
@@ -3129,6 +3183,41 @@ class FloatingBubbleService : Service(),
         )?.let { logMute(it) }
         applyMuteIndicator()
         vibrateTap()
+    }
+
+    /**
+     * THE BUBBLE AS THE WINDOW'S TAB (owner ruling 2026-09-22), or on its own. The one place the
+     * three facts that make the tab move together:
+     *  - the blob draws its flat-topped tab ([BlobView.attachedTop]);
+     *  - the bubble stack is pulled up by the tab's inset, so the flat top — the body's top
+     *    edge — lands on the window's bottom edge and the 12dp neck the free blob keeps for its
+     *    upward ripple is gone (owner, on 108: the waveform "seems to hang down pretty low");
+     *  - the stack's drawing is clipped at that seam, so nothing in it — the finishing spinner,
+     *    a lock flash — paints over the window it now overlaps. Both are translucent, and an
+     *    overlap would composite twice into a darker band.
+     * The inset is a whole pixel on both sides of the seam, so the joint has no gap and no overlap.
+     */
+    private fun setBubbleAttached(attached: Boolean) {
+        blobView.attachedTop = attached
+        val stack = blobView.parent as View
+        val inset = if (attached) blobView.attachInsetPx else 0
+        (stack.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { lp ->
+            if (lp.topMargin != -inset) {
+                lp.topMargin = -inset
+                stack.layoutParams = lp
+            }
+        }
+        stack.clipBounds =
+            if (attached) android.graphics.Rect(0, inset, CLIP_UNBOUNDED, CLIP_UNBOUNDED) else null
+        // The lock lobe (end|top) flashes on a pin toggle in any state. Attached, its top would
+        // sit over the window: clipped out of sight, but still catching taps there. So it moves
+        // down with the seam — the same place relative to the tab it had before the tab rose.
+        (lockLobe.layoutParams as? android.widget.FrameLayout.LayoutParams)?.let { lp ->
+            if (lp.topMargin != inset) {
+                lp.topMargin = inset
+                lockLobe.layoutParams = lp
+            }
+        }
     }
 
     /**
@@ -4549,6 +4638,8 @@ class FloatingBubbleService : Service(),
         android.util.Log.i("WE-DIAG", "showSessionPreview: live=$live context=$sessionContext")
         transcriptionEditText.visibility = View.VISIBLE
         transcriptionEditText.text = ""
+        panelRawText = ""
+        panelWrapping = null
         // A NEW SESSION RIDES ITS NEWEST LINE. This is the only site that empties the committed
         // panel and the only one that subscribes a new preview flow, so it is the only place the
         // latch is armed. It has to be armed rather than assumed: teardown leaves the previous
@@ -4560,7 +4651,7 @@ class FloatingBubbleService : Service(),
         transcriptionDeltaText.visibility = View.GONE
         transcriptionPreviewContainer.visibility = View.VISIBLE
         // The bubble below becomes the window's tab while the window shows (2026-09-22).
-        blobView.attachedTop = true
+        setBubbleAttached(true)
         applyMuteIndicator()
 
         // The session's sink; the file on disk is the full transcript and the panel shows its
@@ -4594,7 +4685,7 @@ class FloatingBubbleService : Service(),
                 // old 20,000-character ceiling, so a normal session logs nothing, and through
                 // the native export so a Play build still reports it.
                 val panelStartNs = System.nanoTime()
-                transcriptionEditText.text = text
+                transcriptionEditText.text = wrapPanel(text)
                 if (text.length > 20_000) {
                     runCatching {
                         com.whispereverywhere.whisper.WhisperNative.diag(
@@ -4802,7 +4893,7 @@ class FloatingBubbleService : Service(),
             transcriptionDeltaText.scrollTo(0, 0)
             transcriptionDeltaText.visibility = View.VISIBLE
             transcriptionPreviewContainer.visibility = View.VISIBLE
-            blobView.attachedTop = true
+            setBubbleAttached(true)
             applyMuteIndicator()
             // The strip appearing is a geometry change — posted so the measure pass ran first.
             bubbleView.post { reclampNow() }
@@ -5745,12 +5836,16 @@ class FloatingBubbleService : Service(),
         // is closed and before the injection session ends, or the released text has nowhere to go.
         deliverReleasedText(segmentOrderer.flush())
         previewJob?.cancel(); previewJob = null
+        // The session's text goes with the session: a resize or rotation before the next one's
+        // first words must not re-wrap and lay out the last session's transcript.
+        panelRawText = ""
+        panelWrapping = null
         // The preview stays up through FINALIZING (live "still working" signal); EVERY teardown
         // path — normal drain end, error, start-failure, destroy — brings it down here.
         transcriptionDeltaText.visibility = View.GONE
         transcriptionPreviewContainer.visibility = View.GONE
         // With the window gone the bubble stands alone again: the free blob, not the tab.
-        blobView.attachedTop = false
+        setBubbleAttached(false)
         applyMuteIndicator()
         // Geometry change in the other direction (window shrinks back to the pill) — posted so
         // the re-measure has run. Harmless when nothing moved: reclampNow() no-ops on equality.
@@ -6610,6 +6705,12 @@ class FloatingBubbleService : Service(),
     }
 
     companion object {
+        /** The seam clip's right and bottom: far past any bubble, so only its TOP edge clips. */
+        private const val CLIP_UNBOUNDED = 100_000
+
+        /** How far the committed text's opening lines stay clear of each corner disc, in dp. */
+        private const val CORNER_CLEAR_DP = 30f
+
         const val ACTION_STOP = "com.whispereverywhere.STOP_BUBBLE"
 
         /**

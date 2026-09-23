@@ -71,11 +71,34 @@ class MuteTogglePinTest {
         assertEquals("top|end", attr(handle, "layout_gravity"))
         // Mirror means the SAME target: making the mute findable must not make it smaller than
         // the arrow opposite it.
-        for (name in listOf("layout_width", "layout_height", "padding", "alpha")) {
+        for (name in listOf("layout_width", "layout_height", "padding", "alpha", "background")) {
             assertEquals("the toggle's $name is the arrow's", attr(handle, name), attr(toggle, name))
         }
         assertEquals("@drawable/ic_mic_live", attr(toggle, "src"))
         assertEquals("Mute audio", attr(toggle, "contentDescription"))
+    }
+
+    @Test
+    fun eachCornerControlHoldsItsOwnLittleBubble() {
+        // Owner, on 108: they "should just hold their own little bubble ... like say a little
+        // circle, for both". A 24dp disc (2dp inset) inside the unchanged 28dp target.
+        for (id in listOf("mute_toggle", "resize_handle")) {
+            assertEquals("$id sits on its disc", "@drawable/control_disc", attr(element(id), "background"))
+        }
+        val disc = read("src/main/res/drawable/control_disc.xml")
+        assertTrue("an inset", disc.contains("<inset") && disc.contains("android:inset=\"2dp\""))
+        assertTrue("of an oval", disc.contains("android:shape=\"oval\""))
+        // The discs follow the fill, through the colour BubbleColours allows a disc.
+        assertTrue(serviceText.contains("val disc = BubbleColours.controlDiscArgb(app.preferencesManager.bubbleOpacityPercent)"))
+        assertTrue(serviceText.contains("for (control in listOf(muteToggle, resizeHandle))"))
+        // And the text wraps around them: the collector sets the wrapped copy, a width change
+        // re-wraps it, and the hint clears the mute disc too.
+        assertTrue(serviceText.contains("transcriptionEditText.text = wrapPanel(text)"))
+        // A resize re-wraps only when the breaks MOVE (a drag would otherwise lay the whole
+        // transcript out twice per frame), and a session's text dies with the session.
+        assertTrue(serviceText.contains("if (next != panelWrapping) transcriptionEditText.text = wrapPanel(panelRawText)"))
+        assertTrue(body("    private fun teardownRealtime() {").contains("panelRawText = \"\""))
+        assertTrue(serviceText.contains("transcriptionEditText.hint = CornerWrap.hint("))
     }
 
     @Test
@@ -87,8 +110,13 @@ class MuteTogglePinTest {
         val handleAt = layout.indexOf("android:id=\"@+id/resize_handle\"")
         assertTrue("the toggle is inside the committed frame", toggleAt in frameAt..frameEnd)
         assertTrue("with the arrow", handleAt in frameAt..frameEnd)
-        // The header band both corner controls sit in, so neither covers the first words.
-        assertEquals("24dp", attr(element("transcription_edit_text"), "paddingTop"))
+        // NO header band: the text flows behind both corner controls (owner, on 108: "you can
+        // let the text flow behind those items ... real estate is definitely the key here").
+        assertNull(attr(element("transcription_edit_text"), "paddingTop"))
+        assertFalse(
+            "and the height is the user's own, with nothing added for a band",
+            service.contains("height = heightPx + transcriptionEditText.paddingTop"),
+        )
     }
 
     @Test
@@ -213,9 +241,24 @@ class MuteTogglePinTest {
 
     @Test
     fun theBubbleIsTheWindowsTabWhileTheWindowShows() {
-        assertEquals("both window shows attach the tab", 2, serviceText.split("blobView.attachedTop = true").size - 1)
-        assertEquals("the one hide detaches it", 1, serviceText.split("blobView.attachedTop = false").size - 1)
-        assertTrue(body("    private fun teardownRealtime() {").contains("blobView.attachedTop = false"))
+        assertEquals("both window shows attach the tab", 2, serviceText.split("setBubbleAttached(true)").size - 1)
+        assertEquals("the one hide detaches it", 1, serviceText.split("setBubbleAttached(false)").size - 1)
+        assertTrue(body("    private fun teardownRealtime() {").contains("setBubbleAttached(false)"))
+        // The three facts move together, in one place: the tab shape, the stack pulled up by the
+        // tab's own inset (no neck under the window), and the seam clip.
+        val attach = body("    private fun setBubbleAttached(attached: Boolean) {").replace(Regex("\\s+"), " ")
+        assertTrue(attach.contains("blobView.attachedTop = attached"))
+        assertTrue(attach.contains("val inset = if (attached) blobView.attachInsetPx else 0"))
+        assertTrue(attach.contains("lp.topMargin = -inset"))
+        assertTrue(attach.contains("stack.clipBounds = if (attached)"))
+        assertTrue("the lock lobe moves down with the seam", attach.contains("lp.topMargin = inset"))
+        // A density change re-seats the seam (the blob redraws its top from the new density).
+        assertTrue(serviceText.contains("setBubbleAttached(transcriptionPreviewContainer.visibility == View.VISIBLE)"))
+        // And the spinner's arc stays below the seam, so the clip never shaves it.
+        val ring = read("src/main/res/drawable/ic_processing_ring.xml")
+        assertTrue(ring.contains("M36,10 A26,26 0 0,1 62,36"))
+        assertFalse("the old radius crossed the seam", ring.contains("A28,28"))
+        assertEquals("the only writer of the tab flag", 1, serviceText.split("blobView.attachedTop =").size - 1)
     }
 
     @Test
@@ -227,6 +270,7 @@ class MuteTogglePinTest {
             "\"src/main/res/drawable/ic_mic_live.xml\"",
             "\"src/main/res/drawable/ic_mic_muted.xml\"",
             "\"src/main/res/drawable/ic_resize_handle.xml\"",
+            "\"src/main/res/drawable/control_disc.xml\"",
         )) {
             assertTrue("$path is a sourcePinnedInput", gradle.contains(path))
         }

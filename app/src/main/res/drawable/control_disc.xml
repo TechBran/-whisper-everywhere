@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The little bubble behind each of the transcript window's two corner controls, the mute mic
+  top-left and the resize arrow top-right (owner ruling 2026-09-22, on 108: they "should just hold
+  their own little bubble ... like say a little circle, for both, and the text should still just
+  flow around it to the top without the header"). A 24dp disc inside the controls' unchanged 28dp
+  touch target. The fill here is only the pre-first-apply default: applyPanelFill paints
+  BubbleColours.controlDiscArgb, the panel's black never clearer than 90%, because the disc sits
+  over text and has to hide what passes beneath it. Pinned by MuteTogglePinTest.
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:inset="2dp">
+    <shape android:shape="oval">
+        <solid android:color="#E6000000" />
+    </shape>
+</inset>
