@@ -185,6 +185,12 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 109 = 4.14.1 — the corner controls get their own little bubbles, and new
+ * defaults.** 108 went to the internal track on 2026-09-22. On it the owner ruled: each corner
+ * control sits on a small disc and the committed text flows around them to the top (no header
+ * band), the waveform tab hangs 12dp closer, and a new user meets Spring green committed text on
+ * a 75% panel. The patch moves because this refines 4.14.0's own feature.
+ *
  * **versionCode 108 = 4.14.0 — the bubble joins the window, and a mute.** 107 went to the
  * internal track on 2026-09-22, so its code is spent. The waveform bubble is a tab under the
  * transcript window, its black follows the window's opacity setting, and a mic toggle top-left
@@ -414,17 +420,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_14_0_at_version_code_108() {
+    fun release_identity_is_4_14_1_at_version_code_109() {
         assertEquals(
-            "versionName must be 4.14.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.14.0",
+            "versionName must be 4.14.1 for this release (app/build.gradle.kts defaultConfig)",
+            "4.14.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 108 for this release (app/build.gradle.kts defaultConfig). " +
-                "107 = 4.13.0 went to the internal track on 2026-09-22, so Play refuses the " +
+            "versionCode must be 109 for this release (app/build.gradle.kts defaultConfig). " +
+                "108 = 4.14.0 went to the internal track on 2026-09-22, so Play refuses the " +
                 "code; 105 = 4.11.3 is in production",
-            108,
+            109,
             BuildConfig.VERSION_CODE,
         )
     }
