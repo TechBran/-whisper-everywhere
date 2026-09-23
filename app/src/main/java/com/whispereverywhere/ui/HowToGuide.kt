@@ -19,10 +19,12 @@ object HowToGuide {
             "The floating bubble is the heart of the app. Tap it to start dictating and tap " +
                 "again to stop. Drag it anywhere — it remembers your spot. Press and hold to " +
                 "lock it in place (a lock flashes to confirm), and press and hold again to " +
-                "unlock. While you dictate, your words collect in a text window above the " +
-                "bubble — drag the double arrow at its top right corner to make it any size " +
-                "you like, and it stays that size; press and hold the arrow to go back to the " +
-                "standard size. With the accessibility service on, it pops up on its own " +
+                "unlock. While you dictate, your words collect in a text window joined to the " +
+                "top of the bubble — drag the double arrow at its top right corner to make it " +
+                "any size you like, and it stays that size; press and hold the arrow to go back " +
+                "to the standard size. Tap the microphone at its top left corner to mute: it " +
+                "turns red with an X, and nothing it hears goes into your transcript until you " +
+                "tap it again. Every new session starts unmuted. With the accessibility service on, it pops up on its own " +
                 "whenever a text field or keyboard appears and hides when idle; in Settings " +
                 "you can keep it always on screen instead. Without the service the bubble " +
                 "stays on screen.",

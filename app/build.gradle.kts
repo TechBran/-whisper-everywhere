@@ -640,6 +640,14 @@ tasks.withType<Test>().configureEach {
         // changes no .class file, so without this entry the one edit that pin exists to catch is
         // the one that leaves `:app:testDebugUnitTest` UP-TO-DATE.
         "src/main/res/layout/floating_bubble.xml",
+        // (2026-09-22, the mute toggle) The window's corner-control drawables, by the list's
+        // stated rule. MuteTogglePinTest reads both mic vectors' literal fills (faint white for
+        // audio flowing, the live red for muted), and ResizeHandlePinTest has read the arrow's red
+        // since 4.9.1 without an entry here — so an edit to that colour alone would never re-run
+        // the pin that exists to catch it. Resource files change no .class file.
+        "src/main/res/drawable/ic_mic_live.xml",
+        "src/main/res/drawable/ic_mic_muted.xml",
+        "src/main/res/drawable/ic_resize_handle.xml",
         // (4.3.1 B) BubbleHideWiringPinTest reads the controller for speakFromTrigger's Boolean.
         "src/main/java/com/whispereverywhere/tts/TtsController.kt",
         // (4.4.0, Task 2b) The voice manager, by the list's stated rule and overdue: this file has

@@ -1706,7 +1706,8 @@ private fun BubbleOpacityRow(percent: Int, onPick: (Int) -> Unit) {
             style = MaterialTheme.typography.bodyLarge,
         )
         Text(
-            text = "Lower lets whatever is underneath show through — at " +
+            text = "Lower lets whatever is underneath show through the text window and the " +
+                "bubble joined to it — at " +
                 "${BubbleColours.OPACITY_FLOOR_PERCENT}% a video plays through the panel. At " +
                 "${BubbleColours.OPACITY_GUARANTEED_PERCENT}% and above every text colour is " +
                 "readable over any app. Below ${BubbleColours.OPACITY_GUARANTEED_PERCENT}% " +

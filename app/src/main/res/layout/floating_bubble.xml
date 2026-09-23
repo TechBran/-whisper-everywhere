@@ -7,14 +7,20 @@
     android:gravity="center_horizontal"
     android:padding="8dp">
 
-    <!-- Transcription Preview Container -->
+    <!-- Transcription Preview Container.
+
+         ONE PIECE WITH THE BUBBLE BELOW IT (owner ruling 2026-09-22: "I want that waveform bubble
+         to be connected to the committed text and preview text window, so it looks like one
+         unified piece"). No bottom margin: the blob's top edge is this panel's bottom edge, and
+         while the panel shows the blob draws a flat top flush against it (BlobView.attachedTop).
+         No elevation either: both fills are the user's translucent black, so a shadow cast across
+         the seam would show THROUGH the tab, and any overlap would composite twice and read as a
+         darker band. -->
     <LinearLayout
         android:id="@+id/transcription_preview_container"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
         android:background="@drawable/preview_bubble_background"
-        android:elevation="8dp"
         android:orientation="vertical"
         android:paddingStart="16dp"
         android:paddingTop="12dp"
@@ -29,9 +35,17 @@
              scrubber below EXACTLY to the transcript view's height every pass — a plain frame
              re-measures a lone child to its sibling's height never (only two or more
              match_parent children get that), so the scrubber would be laid out 0px tall. -->
+        <!-- LEFT-TO-RIGHT, always: the owner put the mute "in the top left hand corner" and the
+             resize arrow is top right, and the TouchDelegate that widens the mute's target is a
+             fixed rect over the container's physical top-left. In a right-to-left locale the
+             frame's start/end would otherwise swap the two controls and hand taps beside the
+             arrow to the mute. Text is unaffected: the TextView's top|start aligns each paragraph
+             by its own direction. -->
         <com.whispereverywhere.ui.components.TranscriptScrubberFrame
+            android:id="@+id/committed_frame"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content">
+            android:layout_height="wrap_content"
+            android:layoutDirection="ltr">
 
             <!-- Read-only text for finalized transcription chunks. Width + height are
                  RUNTIME-OWNED (applyPreviewSize); 280dp is only the pre-first-apply default and
@@ -45,11 +59,17 @@
                  beside this text, not the framework's: "if we touch the slider, we should be
                  able to slide it up and down". The framework bar is a drawing that takes no
                  touches, so this view's own scrollbars are NONE and the scrubber is the one bar
-                 (same 4dp, same thumb-on-track colours). Pinned by BubbleScrollbarPinTest. -->
+                 (same 4dp, same thumb-on-track colours). Pinned by BubbleScrollbarPinTest.
+
+                 The 24dp top padding is the HEADER BAND the two corner controls sit in (the mute
+                 toggle top-left, the resize arrow top-right), so neither covers "Listening…" or
+                 the first words. applyPreviewSize adds it to the height, so the text area is still
+                 exactly the size the user chose; the scroll maths already count paddingTop. -->
             <TextView
                 android:id="@+id/transcription_edit_text"
                 android:layout_width="280dp"
                 android:layout_height="wrap_content"
+                android:paddingTop="24dp"
                 android:scrollbars="none"
                 android:textColor="#FFFFFF"
                 android:textSize="14sp"
@@ -87,6 +107,23 @@
                 android:alpha="1.0"
                 android:src="@drawable/ic_resize_handle"
                 android:contentDescription="Resize transcript window" />
+
+            <!-- MUTE (owner ruling 2026-09-22): "in the top left hand corner ... just like how we
+                 have our diagonal arrow on the right side, we should have a mic toggle". The exact
+                 mirror of the resize arrow: same 28dp target, same 6dp padding, top|start. The
+                 drawable carries the state (ic_mic_live: faint white, audio flowing; ic_mic_muted:
+                 solid red with an X). It consumes its own tap — a tap that reached the window
+                 would stop the session — and a TouchDelegate on the container widens it over the
+                 corner padding for the same reason. Pinned by MuteTogglePinTest. -->
+            <ImageView
+                android:id="@+id/mute_toggle"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_gravity="top|start"
+                android:padding="6dp"
+                android:alpha="1.0"
+                android:src="@drawable/ic_mic_live"
+                android:contentDescription="Mute audio" />
         </com.whispereverywhere.ui.components.TranscriptScrubberFrame>
 
         <!--
@@ -240,8 +277,9 @@
         </FrameLayout>
 
         <!-- Satellite lobes (user design 2026-07-18): the lock and speaker are their OWN
-             portions of the blob — same fill color, overlapping the body inside its ripple
-             headroom so they fuse into one organism. Lock extends right, speaker bottom-left.
+             portions of the blob — same fill color (since 2026-09-22 the user's translucent panel
+             black, applied in applyBubbleColours; no elevation, whose shadow would show through
+             it), overlapping the body inside its ripple headroom so they fuse into one organism. Lock extends right, speaker bottom-left.
              Both are idle-only; the pill hides them. Drawn last = on top of the body. -->
         <!-- Corner layout (owner 2026-08-01): lock top-right, speaker bottom-left — one corner
              each, every lobe pulled AWAY from the mic so each has a clean hitbox and a mistap
@@ -253,7 +291,6 @@
             android:layout_height="32dp"
             android:layout_gravity="end|top"
             android:background="@drawable/lobe_circle"
-            android:elevation="2dp"
             android:visibility="gone">
 
             <ImageView
@@ -271,7 +308,6 @@
             android:layout_height="32dp"
             android:layout_gravity="start|bottom"
             android:background="@drawable/lobe_circle"
-            android:elevation="2dp"
             android:visibility="gone">
 
             <ImageView

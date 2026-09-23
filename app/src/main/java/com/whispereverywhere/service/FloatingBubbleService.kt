@@ -1212,6 +1212,10 @@ class FloatingBubbleService : Service(),
     // (initialX/initialTouchX/...): the handle consumes its own gesture stream so the two never
     // interleave, but sharing fields would make that invariant load-bearing and invisible.
     private lateinit var resizeHandle: ImageView
+    /** The mute toggle, top-left of the transcript window — the resize handle's mirror. */
+    private lateinit var muteToggle: ImageView
+    /** The committed text's frame; carries the panel width even while its TextView is GONE. */
+    private lateinit var committedFrame: View
     private var resizeStartWidthDp = 0f
     private var resizeStartHeightDp = 0f
     private var resizeStartTouchX = 0f
@@ -1354,6 +1358,22 @@ class FloatingBubbleService : Service(),
      * either, because the ring is the single source of truth for what has not been fed yet.
      */
     @Volatile private var engineReady = false
+
+    /**
+     * THE MUTE (owner ruling 2026-09-22) — one session's worth, read by the capture thread at the
+     * head of [onAudioChunk] and written only by [toggleCaptureMute] and the session boundaries.
+     * Every decision it makes, and why muting is silence rather than a stopped recorder, is in
+     * [CaptureMute].
+     */
+    private val captureMute = CaptureMute()
+
+    /**
+     * The panel's fill — black at the user's opacity — as last computed by [applyBubbleColours],
+     * which is its ONE writer. The blob and its lobes paint with it too (owner ruling 2026-09-22:
+     * the bubble's black background should "mimic" the window's), so every state branch below
+     * reads this rather than a colour of its own.
+     */
+    private var panelFillArgb = 0
 
     /**
      * Has this session already said it is dropping audio? The overflow line is emitted ONCE per
@@ -1564,6 +1584,18 @@ class FloatingBubbleService : Service(),
         serviceScope.launch(Dispatchers.Main) {
             app.preferencesManager.selectedLanguage.drop(1).collect {
                 askPreviewResidency(event = PreviewResidencyEvent.SELECTION_CHANGED)
+            }
+        }
+
+        // THE BUBBLE'S OPACITY, live (2026-09-22). The panel alone could wait for its next show,
+        // because it is GONE between sessions; the bubble is on screen while idle, so since it
+        // took the panel's fill a change in Settings has to reach it now. `drop(1)`: the value in
+        // place was already painted by createBubbleView.
+        serviceScope.launch(Dispatchers.Main) {
+            app.preferencesManager.bubbleOpacityPercentFlow.drop(1).collect {
+                // The FILL only: applyBubbleColours would also put the live strip back into its
+                // status role, repainting a live session's words in the committed colour.
+                if (::blobView.isInitialized) applyPanelFill()
             }
         }
 
@@ -1938,12 +1970,10 @@ class FloatingBubbleService : Service(),
         setBubbleWidth(160)
         waveformView.visibility = View.VISIBLE
         waveformView.start()
-        // (4.5.1 Task 2) ONE definition of the recording pill's black, and it is the resource
-        // that state already had: `@color/bubble_recording` is what `bubble_background_recording`
-        // is drawn from, and it was otherwise unread from code while two sites here carried the
-        // same hex literal. This is the mic BLOB, not the transcript panel — the panel's fill is
-        // the user's, through applyBubbleColours().
-        blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_recording)
+        // The read-aloud pill wears the panel's fill like every other state (owner ruling
+        // 2026-09-22: the bubble's black mimics the window's transparency). One writer computes
+        // it — applyBubbleColours() — and every state reads that one value.
+        blobView.fillColor = panelFillArgb
         blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.RECORDING)
         speechStopIcon.visibility = View.VISIBLE
         ttsScrubber.setProgress(0, 0, 0, false)
@@ -2622,7 +2652,6 @@ class FloatingBubbleService : Service(),
         waveformView = bubbleView.findViewById(R.id.waveform_view)
         blobView = bubbleView.findViewById(R.id.blob_view)
         recordingTimerText = bubbleView.findViewById(R.id.recording_timer_text)
-        blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_background)
         processingTimeText = bubbleView.findViewById(R.id.processing_time_text)
         transcriptionPreviewContainer = bubbleView.findViewById(R.id.transcription_preview_container)
         transcriptionEditText = bubbleView.findViewById(R.id.transcription_edit_text)
@@ -2645,6 +2674,21 @@ class FloatingBubbleService : Service(),
         deltaScrubber.bind(transcriptionDeltaText)
         resizeHandle = bubbleView.findViewById(R.id.resize_handle)
         resizeHandle.setOnTouchListener { _, event -> handleResizeTouch(event) }
+        committedFrame = bubbleView.findViewById(R.id.committed_frame)
+        // MUTE (owner ruling 2026-09-22). A click listener makes the toggle consume its whole
+        // tap, and child-first dispatch hands it the tap before the root's handleTouch — which
+        // would otherwise read it as a tap on the bubble and STOP the session. The delegate
+        // widens the target over the container's corner padding (16dp left, 12dp above) for the
+        // same reason: a hurried reach for mute that lands a few dp short must not end the
+        // session instead. The corner is fixed in the container's own coordinates — the frame
+        // always starts at the container's padding — so the rect needs no layout pass.
+        muteToggle = bubbleView.findViewById(R.id.mute_toggle)
+        muteToggle.setOnClickListener { toggleCaptureMute() }
+        val cornerPx = resources.displayMetrics.density
+        transcriptionPreviewContainer.touchDelegate = android.view.TouchDelegate(
+            android.graphics.Rect(0, 0, (44 * cornerPx).toInt(), (40 * cornerPx).toInt()),
+            muteToggle,
+        )
         pinIcon = bubbleView.findViewById(R.id.pin_icon)
         speechStopIcon = bubbleView.findViewById(R.id.speech_stop_icon)
         speechStopIcon.setOnClickListener { com.whispereverywhere.tts.TtsController.stop() }
@@ -2653,6 +2697,19 @@ class FloatingBubbleService : Service(),
         speakerLobe = bubbleView.findViewById(R.id.speaker_lobe)
         lockLobe.setOnClickListener { togglePin() }
         speakerLobe.setOnClickListener { readClipboardAndSpeak() }
+        // THE BUBBLE STACK COMPOSITES ONCE (2026-09-22). The lobes overlap the blob on purpose —
+        // they fuse into one organism — and while both were opaque black the overlap was
+        // invisible. Now both wear the user's translucent black, and two translucent fills over
+        // each other composite twice into a darker crescent. So the stack renders into ONE layer,
+        // and each lobe's disc is drawn with SRC: inside that layer it REPLACES the blob's pixels
+        // with the same colour instead of stacking on them, and the layer then meets the app
+        // below exactly once. The icons draw over their discs as before.
+        (blobView.parent as View).setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        for (lobe in listOf(lockLobe, speakerLobe)) {
+            lobe.background = android.graphics.drawable.ShapeDrawable(android.graphics.drawable.shapes.OvalShape()).apply {
+                paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
+            }
+        }
         ttsScrubber = bubbleView.findViewById(R.id.tts_scrubber)
         ttsScrubber.onSeek = { fraction ->
             com.whispereverywhere.tts.TtsController.engine(this).seekToFraction(fraction)
@@ -2746,9 +2803,15 @@ class FloatingBubbleService : Service(),
         val heightPx = (heightDp.coerceIn(ResizeMath.MIN_HEIGHT_DP, maxH) * dm.density).toInt()
         transcriptionEditText.layoutParams = transcriptionEditText.layoutParams.apply {
             width = widthPx
-            height = heightPx
+            // + the header band (the TextView's top padding, where the mute toggle and the resize
+            // arrow sit): the text area stays exactly the height the user chose.
+            height = heightPx + transcriptionEditText.paddingTop
         }
         transcriptionDeltaText.layoutParams = transcriptionDeltaText.layoutParams.apply { width = widthPx }
+        // The committed frame keeps the panel's width even when its TextView is GONE (the cold
+        // CONNECTING label shows the strip alone): a wrap_content frame would shrink to the 28dp
+        // corner controls and stack the mute toggle and the resize arrow on the same spot.
+        committedFrame.minimumWidth = widthPx
     }
 
     /**
@@ -2775,8 +2838,14 @@ class FloatingBubbleService : Service(),
      * at start would go stale the moment the user picked a colour. The panel is `GONE` between
      * sessions, so "when it next appears" is indistinguishable from "immediately" for everything
      * except a colour changed *during* a live session, which is not a gesture that exists (the
-     * only way to reach the palette is the Settings screen). No collector, therefore, and no
-     * fourth thing to keep in step.
+     * only way to reach the palette is the Settings screen).
+     *
+     * **Since 2026-09-22 the bubble wears the panel's fill too** (owner ruling: the waveform
+     * bubble's black background should "mimic" the window's transparency, so the two read as one
+     * piece). The bubble is on screen while idle, so for the OPACITY there is a collector after
+     * all — the one in onCreate, which calls [applyPanelFill], the fill half of this. The value
+     * is computed there ONCE into [panelFillArgb] and every bubble state paints with that; the
+     * error red stays its own.
      *
      * The layout's own `#FFFFFF` / `#E6FFFFFF` / `#E6000000` stay as the pre-first-apply
      * defaults — the relationship the layout already documents for the 280dp panel width — and
@@ -2790,10 +2859,29 @@ class FloatingBubbleService : Service(),
         // under the contrast floor. See BubbleColours.HINT_ARGB.
         transcriptionEditText.setHintTextColor(BubbleColours.HINT_ARGB)
         applyStripRole(words = false)
+        applyPanelFill()
+    }
+
+    /**
+     * The panel's fill — black at the user's opacity — onto the panel AND the bubble below it,
+     * which since 2026-09-22 is the same piece (owner ruling: the waveform bubble's black should
+     * "mimic" the window's transparency). Computed ONCE into [panelFillArgb], which every bubble
+     * state then paints with. Its own function because the live opacity collector must repaint
+     * the fill without touching the text colours or the strip's role.
+     */
+    private fun applyPanelFill() {
         // The fill is set on the SHAPE so the drawable's 16dp corners survive, and `mutate()`
         // first because an un-mutated drawable is shared by every view that inflated it.
+        panelFillArgb = BubbleColours.panelArgb(app.preferencesManager.bubbleOpacityPercent)
         (transcriptionPreviewContainer.background?.mutate() as? android.graphics.drawable.GradientDrawable)
-            ?.setColor(BubbleColours.panelArgb(app.preferencesManager.bubbleOpacityPercent))
+            ?.setColor(panelFillArgb)
+        // ...and the bubble: the blob, and the two lobes that fuse into it (their SRC discs, see
+        // createBubbleView). The error red is a message, not a background, so an error keeps it.
+        if (currentState != BubbleState.ERROR) blobView.fillColor = panelFillArgb
+        for (lobe in listOf(lockLobe, speakerLobe)) {
+            (lobe.background as? android.graphics.drawable.ShapeDrawable)?.paint?.color = panelFillArgb
+            lobe.invalidate()
+        }
     }
 
     /**
@@ -2841,7 +2929,9 @@ class FloatingBubbleService : Service(),
      * container padding top/bottom + 8dp bottom margin + 8dp root padding top/bottom) on the
      * pill; the live-mode delta strip, when visible, gets its own ~100dp allowance (it is not
      * part of heightDp). A slight OVER-estimate by design: clamping with a too-big window only
-     * keeps it further from the screen edge — the safe direction.
+     * keeps it further from the screen edge — the safe direction. (2026-09-22: the 8dp bottom
+     * margin is gone — the bubble joins the panel — so the 48dp now over-counts by 8, still the
+     * safe side; the 24dp header band applyPreviewSize adds to the text is counted explicitly.)
      */
     private fun estimatedWindowSize(widthDp: Float, heightDp: Float): Pair<Int, Int> {
         val density = resources.displayMetrics.density
@@ -2858,7 +2948,7 @@ class FloatingBubbleService : Service(),
             // utterances, which still occupies its height in the layout. Reading that as "no
             // strip" would UNDER-shoot the estimate — the unsafe direction for a clamp.
             if (transcriptionDeltaText.visibility != View.GONE) (100 * density).toInt() else 0
-        val panelH = ((heightDp + 48f) * density).toInt() + stripAllowance
+        val panelH = ((heightDp + 48f + 24f) * density).toInt() + stripAllowance
         return Pair(maxOf(pillEstimate, panelW), pillEstimate + panelH)
     }
 
@@ -3024,6 +3114,42 @@ class FloatingBubbleService : Service(),
      * Lock metaphor (user decisions 2026-07-18): closed RED lock = position locked,
      * open white/gray lock = free placement.
      */
+    /**
+     * THE MUTE TOGGLE (owner ruling 2026-09-22). Main thread. Only a session with capture open
+     * can be muted — the same predicate every other "does this session still want a source" gate
+     * uses — so a tap during FINALIZING, where the toggle is hidden anyway, changes nothing.
+     */
+    private fun toggleCaptureMute() {
+        if (!sessionStillWantsASource()) return
+        captureMute.set(
+            on = !captureMute.muted,
+            nowMs = System.currentTimeMillis(),
+            source = activeSource.name,
+            state = currentState.name,
+        )?.let { logMute(it) }
+        applyMuteIndicator()
+        vibrateTap()
+    }
+
+    /**
+     * The toggle shows the mute's state, and its description says what a tap will DO. The two
+     * drawables carry their own colours (faint white while audio flows, solid red with an X while
+     * muted), pinned as resource text by MuteTogglePinTest.
+     */
+    private fun applyMuteIndicator() {
+        val muted = captureMute.muted
+        muteToggle.setImageResource(if (muted) R.drawable.ic_mic_muted else R.drawable.ic_mic_live)
+        muteToggle.contentDescription = if (muted) "Unmute audio" else "Mute audio"
+    }
+
+    /**
+     * The mute's diagnostic lines, through the native export so a Play build shows them in
+     * `adb logcat -s WE-DIAG` (R8 strips android.util.Log in release). They carry no speech.
+     */
+    private fun logMute(line: String) {
+        runCatching { WhisperNative.diag(line) }
+    }
+
     private fun applyPinIndicator() {
         pinIcon.setImageResource(
             if (isOverlayPinned) R.drawable.ic_lock_closed else R.drawable.ic_lock_open,
@@ -3209,6 +3335,12 @@ class FloatingBubbleService : Service(),
         // knowingly. The old source-router (which forced device audio on-device regardless of
         // settings) was retired with this decision — see the 2026-08-01 commit for its rationale.
         val nowMs = System.currentTimeMillis()
+        // THE MUTE, FIRST (owner ruling 2026-09-22): a muted chunk is zeroed in place before
+        // anything below can hold it — the startup ring, the engine, the endpointer and the
+        // visuals all see silence, on either source. See CaptureMute for why silence and not a
+        // dropped chunk. `amp` is shadowed on purpose so every line below reads the gated level.
+        @Suppress("NAME_SHADOWING")
+        val amp = captureMute.gate(chunk, amp)
         val engine = transcriptionEngine
         // ===================== 4.4.0 S2 — THE STARTUP SEAM's three-way head =====================
         // The recorder now opens ABOVE connect() (startRecording), so this callback can be running
@@ -4427,6 +4559,9 @@ class FloatingBubbleService : Service(),
         transcriptionDeltaText.text = ""
         transcriptionDeltaText.visibility = View.GONE
         transcriptionPreviewContainer.visibility = View.VISIBLE
+        // The bubble below becomes the window's tab while the window shows (2026-09-22).
+        blobView.attachedTop = true
+        applyMuteIndicator()
 
         // The session's sink; the file on disk is the full transcript and the panel shows its
         // whole committed text (4.11.3: TranscriptSink.PREVIEW_CAP_CHARS is NO_CAP).
@@ -4490,6 +4625,9 @@ class FloatingBubbleService : Service(),
         engineReady = false
         startupOverflowLogged = false
         startupRing.clear()
+        // And UNMUTED: a mute never carries into the next session (CaptureMute, "Scope"). Here,
+        // above startAudioInput(), for the same reason as the two writes above it.
+        captureMute.beginSession(System.currentTimeMillis())?.let { logMute(it) }
         // Round 1 (B3): and with no handover owed from a previous session's connect window.
         pendingDeviceAudioHandover = false
         // Capture wins instantly over read-aloud (Track F exclusivity rule).
@@ -4664,6 +4802,8 @@ class FloatingBubbleService : Service(),
             transcriptionDeltaText.scrollTo(0, 0)
             transcriptionDeltaText.visibility = View.VISIBLE
             transcriptionPreviewContainer.visibility = View.VISIBLE
+            blobView.attachedTop = true
+            applyMuteIndicator()
             // The strip appearing is a geometry change — posted so the measure pass ran first.
             bubbleView.post { reclampNow() }
         }
@@ -5076,8 +5216,11 @@ class FloatingBubbleService : Service(),
                         audioRecorder.amplitude.collectLatest { amp ->
                             if (currentState != BubbleState.RECORDING) return@collectLatest
                             // Waveform only; the VAD/commit runs per-chunk in the recorder callback.
-                            waveformView.updateAmplitude(amp)
-                            blobView.updateAmplitude(amp)
+                            // This feed skips onAudioChunk, so it takes the mute on its own: a
+                            // muted session's ribbon lies flat, which is the mute's confirmation.
+                            val shown = if (captureMute.muted) 0 else amp
+                            waveformView.updateAmplitude(shown)
+                            blobView.updateAmplitude(shown)
                         }
                     }
                     // 4.4.0 S2, round 1 (B3) — THE HANDOVER THE CONNECT WINDOW SWALLOWED. Media
@@ -5554,7 +5697,12 @@ class FloatingBubbleService : Service(),
             if (currentState == BubbleState.FINALIZING) {
                 // Delivery already happened above, pre-teardown, through FinalDeliveryPolicy.
                 if (!sessionProducedText) {
-                    showToast("No speech detected — try again a bit louder or closer to the mic.")
+                    // A session the user MUTED heard nothing because they asked it to — telling
+                    // them to speak up would blame the microphone for the mute (CaptureMute).
+                    showToast(
+                        if (captureMute.mutedThisSession) "Nothing was transcribed — the audio was muted."
+                        else "No speech detected — try again a bit louder or closer to the mic."
+                    )
                 }
                 vibrateSuccess()
                 updateBubbleState(BubbleState.IDLE)
@@ -5587,6 +5735,9 @@ class FloatingBubbleService : Service(),
         // replay into, and the next session must never open holding the previous one's audio.
         engineReady = false
         startupRing.clear()
+        // The session ends unmuted, and says so if it ended muted — the one case nothing else
+        // would show (CaptureMute.endSession).
+        captureMute.endSession(System.currentTimeMillis())?.let { logMute(it) }
         // Backstop flush: teardown is the LAST thing every session-exit path runs — normal drain
         // end (already flushed above, so this returns empty), recorder start failure, fatal
         // onError, and onDestroy. Held text is uniquely fragile: unlike per-segment injection it
@@ -5598,6 +5749,9 @@ class FloatingBubbleService : Service(),
         // path — normal drain end, error, start-failure, destroy — brings it down here.
         transcriptionDeltaText.visibility = View.GONE
         transcriptionPreviewContainer.visibility = View.GONE
+        // With the window gone the bubble stands alone again: the free blob, not the tab.
+        blobView.attachedTop = false
+        applyMuteIndicator()
         // Geometry change in the other direction (window shrinks back to the pill) — posted so
         // the re-measure has run. Harmless when nothing moved: reclampNow() no-ops on equality.
         bubbleView.post { reclampNow() }
@@ -6158,6 +6312,12 @@ class FloatingBubbleService : Service(),
             stopClipPulse()
             lockLobe.visibility = View.GONE
             speakerLobe.visibility = View.GONE
+            // The mute toggle means something only while capture is open (CONNECTING already
+            // captures into the startup ring). FINALIZING keeps the window up with capture closed,
+            // so the toggle steps out of the way there — INVISIBLE, keeping the header's layout.
+            muteToggle.visibility =
+                if (newState == BubbleState.RECORDING || newState == BubbleState.CONNECTING) View.VISIBLE
+                else View.INVISIBLE
 
             when (newState) {
                 BubbleState.IDLE -> {
@@ -6175,7 +6335,7 @@ class FloatingBubbleService : Service(),
                     waveformView.visibility = View.GONE
                     waveformView.stop()
                     setBubbleWidth(56)
-                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_background)
+                    blobView.fillColor = panelFillArgb
                     blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.IDLE)
                     processingRing.visibility = View.GONE
                     processingRing.clearAnimation()
@@ -6211,7 +6371,7 @@ class FloatingBubbleService : Service(),
                     bubbleIcon.visibility = View.GONE
                     waveformView.visibility = View.GONE
                     processingRing.visibility = View.VISIBLE
-                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_processing)
+                    blobView.fillColor = panelFillArgb
                     blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.PROCESSING)
                     startRotationAnimation()
                 }
@@ -6222,11 +6382,10 @@ class FloatingBubbleService : Service(),
                     setBubbleWidth(160)
                     waveformView.visibility = View.VISIBLE
                     waveformView.start()
-                    // Deep black pill per the design reference — the aurora waves carry all the
-                    // color; the red recording accent lives in the timer dot. (4.5.1 Task 2) The
-                    // second of the two sites that carried this as a hex literal; folded onto
-                    // `@color/bubble_recording`, the one definition of this state's black.
-                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_recording)
+                    // The pill is the panel's black — the user's opacity since 2026-09-22 — and the
+                    // aurora waves carry all the colour; the red recording accent lives in the
+                    // timer dot.
+                    blobView.fillColor = panelFillArgb
                     blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.RECORDING)
                     // Live recording timer: red dot + mm:ss, bottom-left in the pill.
                     recordingTimerText.visibility = View.VISIBLE
@@ -6258,7 +6417,7 @@ class FloatingBubbleService : Service(),
                     waveformView.visibility = View.GONE
                     setBubbleWidth(56)
                     processingRing.visibility = View.VISIBLE
-                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_processing)
+                    blobView.fillColor = panelFillArgb
                     blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.PROCESSING)
                     startRotationAnimation()
                     // 3.6.0 (Workstream E4): the previously-dead elapsed ticker now counts the
@@ -6274,7 +6433,7 @@ class FloatingBubbleService : Service(),
                     bubbleIcon.visibility = View.GONE
                     waveformView.visibility = View.GONE
                     waveformView.stop()
-                    blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.bubble_processing)
+                    blobView.fillColor = panelFillArgb
                     blobView.setMode(com.whispereverywhere.ui.components.BlobView.Mode.PROCESSING)
                     processingRing.visibility = View.VISIBLE
                     processingTimeText.visibility = View.VISIBLE

@@ -67,6 +67,11 @@ class BubbleColoursWiringPinTest {
         body("    private fun applyStripRole(words: Boolean) {", "\n    }\n")
     }
 
+    /** The fill half of applyBubbleColours (2026-09-22), split out for the live opacity collector. */
+    private val panelFill: String by lazy {
+        body("    private fun applyPanelFill() {", "\n    }\n")
+    }
+
     @Test
     fun allTHREEViewsAreHandedTheUsersOwnValueAndNONEOfThemIsALiteral() {
         // The live strip's colour is the ROLE's, because that one view has two jobs — see
@@ -93,16 +98,18 @@ class BubbleColoursWiringPinTest {
         assertFalse("no colour assembled in the service", applyColours.contains("shl 24"))
         assertFalse("no channel mask in the service", applyColours.contains("0x00FFFFFF"))
         assertFalse("no colour assembled in the role either", stripRole.contains("shl 24"))
+        assertFalse("nor in the fill", panelFill.contains("shl 24"))
         // The panel behind both of them: black at the user's alpha, through the one function that
-        // knows the ladder.
+        // knows the ladder — painted by the fill half, which applyBubbleColours always runs.
+        assertTrue(applyColours.contains("applyPanelFill()"))
         assertTrue(
-            applyColours.contains("BubbleColours.panelArgb(app.preferencesManager.bubbleOpacityPercent)"),
+            panelFill.contains("BubbleColours.panelArgb(app.preferencesManager.bubbleOpacityPercent)"),
         )
         // ...and the panel's fill is set on the SHAPE, so the 16dp corners the drawable defines
         // survive. `mutate()` first: a shared drawable would otherwise repaint every view that
         // ever inflated it.
-        assertTrue(applyColours.contains("mutate()"))
-        assertTrue(applyColours.contains("GradientDrawable"))
+        assertTrue(panelFill.contains("mutate()"))
+        assertTrue(panelFill.contains("GradientDrawable"))
     }
 
     @Test
@@ -180,17 +187,46 @@ class BubbleColoursWiringPinTest {
     }
 
     @Test
-    fun theTWOBlackBLOBLiteralsAreFoldedToONEFact() {
-        // The brief's *"two sites for one fact: fold them"*. Both were
-        // `Color.parseColor("#000000")` for the recording pill; `@color/bubble_recording` is the
-        // resource that state already has (the recording drawable is drawn from it) and it was
-        // otherwise unread from code. One definition now, in colors.xml.
-        assertEquals("no hardcoded blob black left", 0, count(text, "parseColor(\"#000000\")"))
-        assertEquals(
-            "both recording sites read the one resource",
-            2,
-            count(text, "R.color.bubble_recording"),
+    fun theBlobsFillISThePanelsFill() {
+        // Owner ruling 2026-09-22: the waveform bubble's black background should "mimic" the
+        // window's transparency, so the two read as one piece. That makes it the SAME fact as the
+        // panel's fill, not a second one: computed once, in applyBubbleColours, into one field,
+        // and every bubble state paints with the field. (Through 4.12 the blob's black was the
+        // opaque `@color/bubble_recording` / `bubble_background` / `bubble_processing`, and
+        // before 4.5.1 two hex literals; this test used to count those.)
+        assertTrue(
+            "the one computation, in the one body",
+            panelFill.contains("panelFillArgb = BubbleColours.panelArgb(app.preferencesManager.bubbleOpacityPercent)"),
         )
+        assertTrue("the panel", panelFill.contains("?.setColor(panelFillArgb)"))
+        assertTrue(
+            "the blob — unless an error is showing, whose red is a message, not a background",
+            panelFill.contains("if (currentState != BubbleState.ERROR) blobView.fillColor = panelFillArgb"),
+        )
+        assertTrue(
+            "the lobes that fuse into it, as their SRC discs",
+            panelFill.contains("(lobe.background as? android.graphics.drawable.ShapeDrawable)?.paint?.color = panelFillArgb"),
+        )
+        // Two translucent fills stacked composite twice into a darker crescent; the stack renders
+        // into one layer and the lobes' discs REPLACE the blob's pixels there instead.
+        assertTrue(text.contains("(blobView.parent as View).setLayerType(View.LAYER_TYPE_HARDWARE, null)"))
+        assertTrue(text.contains("paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)"))
+        // Every state branch and the read-aloud pill read the field: IDLE, CONNECTING, RECORDING,
+        // FINALIZING, PROCESSING, read-aloud — plus the fill itself.
+        assertEquals(7, count(text, "blobView.fillColor = panelFillArgb"))
+        for (retired in listOf("R.color.bubble_recording", "R.color.bubble_background", "R.color.bubble_processing")) {
+            assertEquals("no blob paints the opaque $retired any more", 0, count(text, retired))
+        }
+        assertTrue(
+            "the error red stays its own",
+            text.contains("blobView.fillColor = androidx.core.content.ContextCompat.getColor(this@FloatingBubbleService, R.color.error)"),
+        )
+        // The bubble is on screen while idle, so the opacity reaches it LIVE, not at next show —
+        // and the collector repaints the FILL only: the whole applyBubbleColours would put the
+        // live strip back into its status role mid-session.
+        assertTrue(text.contains("if (::blobView.isInitialized) applyPanelFill()"))
+        assertTrue(text.contains("app.preferencesManager.bubbleOpacityPercentFlow.drop(1).collect {"))
+        assertEquals("no hardcoded blob black left", 0, count(text, "parseColor(\"#000000\")"))
         assertFalse("and no hex literal anywhere in the bubble's colours", text.contains("parseColor(\"#"))
     }
 
@@ -212,6 +248,6 @@ class BubbleColoursWiringPinTest {
         assertEquals(0x99FFFFFF.toInt(), BubbleColours.HINT_ARGB)
         // And the fallback is silent rather than a crash: a background that is not a
         // GradientDrawable leaves the drawable's own #E6000000 in place.
-        assertTrue(applyColours.contains("as? android.graphics.drawable.GradientDrawable"))
+        assertTrue(panelFill.contains("as? android.graphics.drawable.GradientDrawable"))
     }
 }

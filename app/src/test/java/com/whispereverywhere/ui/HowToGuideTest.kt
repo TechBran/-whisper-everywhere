@@ -41,6 +41,14 @@ class HowToGuideTest {
         assertTrue(text.contains("double arrow"))
     }
 
+    @Test fun the_mute_toggle_is_explained() {
+        // 2026-09-22: the microphone top left of the window mutes capture for the session.
+        val text = HowToGuide.plainText().lowercase()
+        assertTrue(text.contains("tap the microphone at its top left corner to mute"))
+        assertTrue(text.contains("turns red with an x"))
+        assertTrue(text.contains("every new session starts unmuted"))
+    }
+
     @Test fun the_spoken_guide_carries_every_section() {
         val text = HowToGuide.plainText()
         HowToGuide.sections.forEach { s ->

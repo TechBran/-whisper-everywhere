@@ -435,8 +435,14 @@ class StartupRingWiringPinTest {
         // LIVE lines only, whole file: the declaration plus the single call, for each cue. Both
         // names are also quoted in load-bearing comments at the two sites, and those are prose —
         // fix the test, never the comments (EndpointerLifecyclePinTest states the rule).
+        // vibrateTap has ONE more caller since 2026-09-22: the mute toggle, which acknowledges its
+        // own tap the same short way (a mute is often reached for without looking). It is not a
+        // listening cue, so vibrateStart's count does not move.
         assertEquals(2, liveLines(text, "vibrateStart()").size)
-        assertEquals(2, liveLines(text, "vibrateTap()").size)
+        assertEquals(3, liveLines(text, "vibrateTap()").size)
+        val toggleAt = indexOfOrFail("    private fun toggleCaptureMute() {")
+        val toggle = text.substring(toggleAt, text.indexOf("\n    }\n", toggleAt))
+        assertEquals("the third is the mute toggle's", 1, liveLines(toggle, "vibrateTap()").size)
     }
 
     @Test

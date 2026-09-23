@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The transcript window's mute toggle, MUTED (owner ruling 2026-09-22: "the microphone should be
+  solid red with the X going through it to show that ... the capture is muted"). Solid red at full
+  alpha: the literal is BubbleColours.LIVE_DEFAULT, the one red the panel's furniture uses (the
+  resize arrow opposite is the same red), already the contrast guard's binding worst case.
+
+  The X is drawn twice: first a wide near-black border, then the red stroke on top. The border is
+  CLIPPED to the mic's own shape, so it only ever cuts the X out of red and never darkens the
+  panel: the panel is the user's translucent black, and an unclipped border would draw a dark X
+  halo over whatever shows through it. Pinned by MuteTogglePinTest.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF5252"
+        android:pathData="M12,14c1.66,0 3,-1.34 3,-3V5c0,-1.66 -1.34,-3 -3,-3S9,3.34 9,5v6C9,12.66 10.34,14 12,14zM17.3,11c0,3 -2.54,5.1 -5.3,5.1S6.7,14 6.7,11H5c0,3.42 2.72,6.24 6,6.72V21h2v-3.28c3.28,-0.48 6,-3.3 6,-6.72H17.3z" />
+    <group>
+        <clip-path
+            android:pathData="M12,14c1.66,0 3,-1.34 3,-3V5c0,-1.66 -1.34,-3 -3,-3S9,3.34 9,5v6C9,12.66 10.34,14 12,14zM17.3,11c0,3 -2.54,5.1 -5.3,5.1S6.7,14 6.7,11H5c0,3.42 2.72,6.24 6,6.72V21h2v-3.28c3.28,-0.48 6,-3.3 6,-6.72H17.3z" />
+        <path
+            android:strokeColor="#E6000000"
+            android:strokeWidth="4.6"
+            android:strokeLineCap="round"
+            android:pathData="M5,4L19,18M19,4L5,18" />
+    </group>
+    <path
+        android:strokeColor="#FF5252"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M5,4L19,18M19,4L5,18" />
+</vector>

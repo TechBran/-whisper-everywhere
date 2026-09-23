@@ -403,13 +403,15 @@ class DeviceAudioLatchPinTest {
             )
         }
 
-        // ONE predicate, a COUNTED set of askers: the declaration plus five call sites (three in
-        // the grant, one in the deny, one in the silent-stream watchdog). A sixth is a new gate of
-        // this family and should have to say so here.
+        // ONE predicate, a COUNTED set of askers: the declaration plus six call sites (three in
+        // the grant, one in the deny, one in the silent-stream watchdog, and — since the
+        // 2026-09-22 mute toggle — toggleCaptureMute, because only a session whose capture is
+        // still open can be muted; FINALIZING keeps the window up with capture closed). A seventh
+        // is a new gate of this family and should have to say so here.
         assertEquals(
-            "the declaration plus exactly five askers — found: " +
+            "the declaration plus exactly six askers — found: " +
                 liveLines(service, "sessionStillWantsASource()"),
-            6,
+            7,
             liveLines(service, "sessionStillWantsASource()").size,
         )
     }

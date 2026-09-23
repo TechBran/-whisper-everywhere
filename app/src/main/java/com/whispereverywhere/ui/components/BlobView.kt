@@ -26,6 +26,18 @@ import kotlin.math.sin
  * widened recording bubble stays pill-shaped rather than collapsing into a pointed ellipse.
  * Sample points are distributed uniformly along the perimeter and displaced along their outward
  * normals, then smoothed with quadratic midpoint curves. Redraws only while animated.
+ *
+ * ### Attached to the transcript window ([attachedTop], 2026-09-22)
+ *
+ * Owner ruling: *"I want that waveform bubble to be connected to the committed text and preview
+ * text window, so it looks like one unified piece"* — chosen as a TAB under the window, keeping
+ * this view's living rim. While the window shows, the upper half of the rim is replaced by a flat
+ * top along this view's own top edge (y = 0, the window's bottom edge — a butt joint on a whole
+ * pixel, because both fills are the user's translucent black and any overlap would composite
+ * twice into a darker band), flaring into the sides through concave shoulders across the side
+ * headroom. The lower half keeps its full ripple, faded to nothing at the equator by
+ * [BlobAttach.taper] so the straight sides meet it without a step; the whole-body bob is off, since
+ * a tab cannot bob away from what it is attached to.
  */
 class BlobView @JvmOverloads constructor(
     context: Context,
@@ -61,6 +73,8 @@ class BlobView @JvmOverloads constructor(
     private val speeds = FloatArray(POINTS) { 5.5f + (it % 4) * 1.7f }
     private val px = FloatArray(POINTS)
     private val py = FloatArray(POINTS)
+    /** Each point's outward-normal y on the resting stadium — which half of the rim it is on. */
+    private val pny = FloatArray(POINTS)
 
     @Volatile private var envelope = 0f  // smoothed audio energy 0..1
     private var envSmooth = 0f           // frame-lerped envelope (drives swirl/amp without jumps)
@@ -86,6 +100,19 @@ class BlobView @JvmOverloads constructor(
         get() = paint.color
         set(value) {
             paint.color = value
+            invalidate()
+        }
+
+    /**
+     * True while the transcript window is shown directly above this view: the body draws as a
+     * flat-topped TAB joined to it (see the class KDoc). The service sets it wherever it shows or
+     * hides the window, so the tab follows the window and not the bubble state — the bubble on its
+     * own (idle, read-aloud, error) is always the free-standing blob.
+     */
+    var attachedTop: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
             invalidate()
         }
 
@@ -167,7 +194,7 @@ class BlobView @JvmOverloads constructor(
 
         // Gentle whole-body bob while recording: bounded by baseSwell so the rim never dips
         // below the resting stadium that contains the waveform ribbon.
-        val bob = if (mode == Mode.RECORDING) baseSwell * sin(t * 0.9f) else 0f
+        val bob = if (mode == Mode.RECORDING && !attachedTop) baseSwell * sin(t * 0.9f) else 0f
 
         val rightCapX = cx + straight / 2f
         val leftCapX = cx - straight / 2f
@@ -257,22 +284,30 @@ class BlobView @JvmOverloads constructor(
 
             // Direction variety: the push wanders off the pure normal by up to ~20 deg on a slow
             // cycle — the middle heaves straight north-south sometimes, diagonally other times.
-            val tilt = if (mode == Mode.RECORDING) 0.55f * sin(t * 0.8f + i * 1.1f) * weight else 0f
+            // Attached, the upper half keeps none of its motion and the lower half fades in from
+            // the equator, so the tab's straight sides meet the rippling caps without a step.
+            val taper = if (attachedTop) BlobAttach.taper(ny) else 1f
+            val tilt = if (mode == Mode.RECORDING) 0.55f * sin(t * 0.8f + i * 1.1f) * weight * taper else 0f
             val cosT = cos(tilt)
             val sinT = sin(tilt)
-            px[i] = bx + (nx * cosT - ny * sinT) * wobble
-            py[i] = by + (nx * sinT + ny * cosT) * wobble + bob
+            pny[i] = ny
+            px[i] = bx + (nx * cosT - ny * sinT) * wobble * taper
+            py[i] = by + (nx * sinT + ny * cosT) * wobble * taper + bob
         }
 
-        // Smooth closed curve: quadratic segments through consecutive midpoints (C1-continuous).
         path.rewind()
-        path.moveTo((px[0] + px[1]) / 2f, (py[0] + py[1]) / 2f)
-        for (i in 1..POINTS) {
-            val p = i % POINTS
-            val n = (i + 1) % POINTS
-            path.quadTo(px[p], py[p], (px[p] + px[n]) / 2f, (py[p] + py[n]) / 2f)
+        if (attachedTop) {
+            buildAttachedPath(left = cx - bodyW / 2f, right = cx + bodyW / 2f, cy = cy, headroom = headroom)
+        } else {
+            // Smooth closed curve: quadratic segments through consecutive midpoints (C1-continuous).
+            path.moveTo((px[0] + px[1]) / 2f, (py[0] + py[1]) / 2f)
+            for (i in 1..POINTS) {
+                val p = i % POINTS
+                val n = (i + 1) % POINTS
+                path.quadTo(px[p], py[p], (px[p] + px[n]) / 2f, (py[p] + py[n]) / 2f)
+            }
+            path.close()
         }
-        path.close()
         canvas.drawPath(path, paint)
 
         when (mode) {
@@ -280,5 +315,56 @@ class BlobView @JvmOverloads constructor(
             Mode.IDLE -> postInvalidateDelayed(50)  // ~20 fps is plenty for slow breathing
             Mode.ERROR -> Unit
         }
+    }
+
+    /**
+     * The TAB outline ([attachedTop]): a flat top across the whole view width at y = 0, concave
+     * shoulders down into the body's straight sides, then the lower half of the rim — the points
+     * whose resting normal faces down, which in walk order are one contiguous run from the right
+     * equator, along the bottom, to the left equator — and back up the left side. The body's
+     * sides sit exactly `headroom` in from the view's edges, so the shoulders span the side
+     * headroom and the top reaches both view edges.
+     *
+     * Smooth everywhere, as the free blob is: the two equator anchors join the midpoint-quad
+     * sequence as CONTROL points rather than vertices, so the vertical sides hand over to the
+     * rippling caps with a continuous tangent instead of a corner that changes every frame.
+     */
+    private fun buildAttachedPath(left: Float, right: Float, cy: Float, headroom: Float) {
+        val shoulder = headroom.coerceAtMost(cy)
+        path.moveTo(0f, 0f)
+        path.lineTo(width.toFloat(), 0f)
+        path.quadTo(right, 0f, right, shoulder)
+        path.lineTo(right, (shoulder + cy) / 2f)
+        var sx = right
+        var sy = cy
+        for (i in 0 until POINTS) {
+            if (pny[i] <= 0f) continue
+            path.quadTo(sx, sy, (sx + px[i]) / 2f, (sy + py[i]) / 2f)
+            sx = px[i]
+            sy = py[i]
+        }
+        path.quadTo(sx, sy, (sx + left) / 2f, (sy + cy) / 2f)
+        path.quadTo(left, cy, left, (cy + shoulder) / 2f)
+        path.lineTo(left, shoulder)
+        path.quadTo(left, 0f, 0f, 0f)
+        path.close()
+    }
+}
+
+/**
+ * The attached tab's one pure decision, kept outside [BlobView] so a JVM test can call it without
+ * loading an Android view class.
+ */
+internal object BlobAttach {
+    /**
+     * How much of its ripple a rim point keeps while [BlobView.attachedTop]: none on the upper
+     * half (`ny <= 0`, the part the flat top replaces), all of it at the very bottom (`ny = 1`),
+     * and a smoothstep between — so the ripple is exactly zero at the equator, where the tab's
+     * straight sides hand over to the rippling lower caps, and the join has no step.
+     */
+    fun taper(ny: Float): Float {
+        if (ny <= 0f) return 0f
+        val t = ny.coerceAtMost(1f)
+        return t * t * (3f - 2f * t)
     }
 }

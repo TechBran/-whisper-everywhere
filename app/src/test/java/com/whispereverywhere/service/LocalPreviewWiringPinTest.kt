@@ -409,11 +409,12 @@ class LocalPreviewWiringPinTest {
         val replay = text.indexOf("                .drop(1)\n", dedupe)
         assertTrue("and the value already in place is dropped, after the de-duplication", replay > dedupe)
         assertEquals(
-            "FIVE drops in the service now — the selection, the live-words SWITCH, the batch " +
-                "job's falling edge (fix round 1, review r1's B1 and B2), the model switch, and " +
-                "this one: every collector whose trigger is a CHANGE rather than a state, because " +
-                "the state that was already there is the boot prewarm's",
-            5, count(text, ".drop(1)"),
+            "SIX drops in the service now — the selection, the live-words SWITCH, the batch " +
+                "job's falling edge (fix round 1, review r1's B1 and B2), the model switch, this " +
+                "one, and the bubble opacity (2026-09-22: the bubble took the panel's fill and is " +
+                "on screen while idle): every collector whose trigger is a CHANGE rather than a " +
+                "state, because the state that was already there has already been painted or warmed",
+            6, count(text, ".drop(1)"),
         )
         // THE SERVICE DECIDES NOTHING: one call to the pure gate, and the warm is its answer.
         val decision = indexOfOrFail(text, "                    val pack = warmOnPackInstalled(\n")
