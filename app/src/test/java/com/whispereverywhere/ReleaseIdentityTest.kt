@@ -185,6 +185,12 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 108 = 4.14.0 — the bubble joins the window, and a mute.** 107 went to the
+ * internal track on 2026-09-22, so its code is spent. The waveform bubble is a tab under the
+ * transcript window, its black follows the window's opacity setting, and a mic toggle top-left
+ * of the window silences everything going into the app for the rest of the session (CaptureMute).
+ * The minor moves because mute is a new capability.
+ *
  * **versionCode 107 = 4.13.0 — the Galaxy S25 and S26 generations get the AI chip.** 106 went to
  * the internal track on 2026-09-22, so its code is spent. Both census rows for these chips named
  * `SM8750-AC` / `SM8850-AD` — AI Hub chipset aliases — and no device reports a suffix: the
@@ -408,17 +414,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_13_0_at_version_code_107() {
+    fun release_identity_is_4_14_0_at_version_code_108() {
         assertEquals(
-            "versionName must be 4.13.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.13.0",
+            "versionName must be 4.14.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.14.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 107 for this release (app/build.gradle.kts defaultConfig). " +
-                "106 = 4.12.0 went to the internal track on 2026-09-22, so Play refuses the " +
+            "versionCode must be 108 for this release (app/build.gradle.kts defaultConfig). " +
+                "107 = 4.13.0 went to the internal track on 2026-09-22, so Play refuses the " +
                 "code; 105 = 4.11.3 is in production",
-            107,
+            108,
             BuildConfig.VERSION_CODE,
         )
     }
