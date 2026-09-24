@@ -27,7 +27,10 @@ chipset key, and holds every zip to the same gates:
 
 The 8gen3 rows must reproduce the four digests the catalog already pins -- the run's
 self-check: if the instrument cannot re-measure the two pairs a device has executed, none of
-its other rows deserve belief.
+its other rows deserve belief. (At a vendor REBUILD that check cannot hold by construction --
+v0.63.0 replaced every digest -- so the catalog moves with the census from one measurement, and
+the self-check becomes the second run: every row re-measured from the gated zips and matched to
+the literals just pasted in. The pair a device executed is then a device check still owed.)
 
 CENSUS below embeds every row's two digests as literals. ``NpuFleetCensusTest`` reads this file
 and asserts every ``NpuFleetCensus.artifacts`` digest appears here -- the ``pack_npu_zip.py``
@@ -192,7 +195,21 @@ PACK_MODULE_BY_TIER = {"npu": "npu_small", "npu-turbo": "npu_turbo"}
 # are all SMALLER than their old pins, by 8.0 to 9.7 MB (small) and 36.0 to 43.1 MB (turbo).
 # head_gate RECORDS a length it has no pin for, which is exactly the mode a re-measurement wants;
 # the measured lengths return here.
-EXPECTED_ZIP_BYTES: dict = {}
+# Every one of the twelve is measured now (2026-09-24), so every one is pinned.
+EXPECTED_ZIP_BYTES = {
+    ("npu", "8gen3"): 285_197_039,
+    ("npu", "8elite_galaxy"): 285_116_926,
+    ("npu", "8elite5_galaxy"): 285_450_230,
+    ("npu", "7gen4"): 285_697_544,
+    ("npu", "qcs8550"): 285_198_646,
+    ("npu", "8gen1"): 284_581_383,
+    ("npu-turbo", "8gen3"): 823_721_812,
+    ("npu-turbo", "8elite_galaxy"): 823_685_860,
+    ("npu-turbo", "8elite5_galaxy"): 824_020_866,
+    ("npu-turbo", "7gen4"): 828_034_458,
+    ("npu-turbo", "qcs8550"): 823_697_212,
+    ("npu-turbo", "8gen1"): 821_903_663,
+}
 
 # ---------------------------------------------------------------------------- the census
 # (tier, family) -> (zip bytes, encoder bytes, encoder sha256, decoder bytes, decoder sha256)
@@ -203,25 +220,75 @@ EXPECTED_ZIP_BYTES: dict = {}
 # NpuFleetCensus.artifacts carries the same digests, row for row; NpuFleetCensusTest pins the two
 # tables together.
 CENSUS = {
-    # RE-MEASUREMENT IN PROGRESS (2026-09-24, v0.63.0). Every row blanked on purpose: the
-    # 0.62.2 digests they held are not this release's bytes (QAIRT 2.45.0 then, 2.50.0 now),
-    # and the honest way to replace them is to let measure() print what it finds rather than
-    # to edit sixty-four hex characters by hand. Fill from the tool's own output.
-    ("npu", "8gen3"): None,
-    ("npu", "8elite_galaxy"): None,
-    ("npu", "8elite5_galaxy"): None,
-    ("npu", "qcs8550"): None,
-    ("npu", "7gen4"): None,
-    ("npu-turbo", "8gen3"): None,
-    ("npu-turbo", "8elite_galaxy"): None,
-    ("npu-turbo", "8elite5_galaxy"): None,
-    ("npu-turbo", "qcs8550"): None,
-    ("npu-turbo", "7gen4"): None,
-    # The sixth family, blank for the same reason and on the same run: both tiers, as for every
-    # family (4.3's one-tier rule hides the small tier from the chooser and touches the pack
-    # machinery not at all).
-    ("npu", "8gen1"): None,
-    ("npu-turbo", "8gen1"): None,
+    # Measured 2026-09-24 against manifest v0.63.0 (Last-Modified 23 Sep 2026), every row by
+    # the instrument and pasted from its own printed line. THE FINDING: nothing reproduces.
+    # v0.63.0 is a QAIRT 2.50 REBUILD, not a re-release: none of the twenty 0.62.2 digests
+    # appears below, every ENCODER shrank (small 14.5-22.1%, turbo 11.6-16.8%; 7gen4 the most)
+    # while every decoder moved by under 0.06%, and the graph IO census is EQUAL to
+    # NpuModelSpec on all twelve packs, 8gen1 included. Same graphs, same shapes, same tensor
+    # byte totals; different compiled code inside the context binaries.
+    ("npu", "8gen3"): (
+        285_197_039,
+        113_123_776, "813d0e847bf1ba21b991a421a2f57f56884252d1ca6e780a02a55582c519bac0",
+        225_298_736, "bd853be4710bb0aa01dd2a5ce78c03f3e9f722cab47fad3ac24555995f21a929",
+    ),
+    ("npu", "8elite_galaxy"): (
+        285_116_926,
+        113_091_008, "e4b24b7b6b5ba333926660f213836fe199160eb0e6d4e9a0d0153c6d0f0c9abf",
+        225_151_280, "076cd7b4a5dc0c3b9958dd839d104d02e247e1ae36b7aaa7f53cf1adae891b10",
+    ),
+    ("npu", "8elite5_galaxy"): (
+        285_450_230,
+        113_770_944, "8ee815ece1b4a3a72b67c6bb8753efe7076568e364ef2cb4bafd6764f5267757",
+        225_290_544, "c117a5cf414986b7bb3b725c676020203430757437dd885b749958be4146fa6c",
+    ),
+    ("npu", "7gen4"): (
+        285_697_544,
+        115_028_408, "32e1715cb6abd92d6f3f2a770d56ea246b2ca61b073da964268ed0d4bd5a43d7",
+        225_397_032, "4ff5870ef2317d00935eea05ef3b86f0008c816e175ab8bff9dabd034b91efd7",
+    ),
+    ("npu", "qcs8550"): (
+        285_198_646,
+        113_127_872, "1ff1c6aa917aa3865ed101635cd1c37222c8d480244c051572e6e07ab7b00bb2",
+        225_298_736, "856707dc6e78da42480d45c61432c35fae8c47184873ca40ac45b4bd4b95f7c2",
+    ),
+    # The sixth family, HTP v69: metadata htp 69, chipset 'qualcomm-snapdragon-8gen1', and
+    # the io-census equal to the spec row for BOTH tiers — the gate it had to pass to join.
+    ("npu", "8gen1"): (
+        284_581_383,
+        111_915_456, "fb60f44b26b9fd918fbde33b3c4cee30ca79e06e959e496fb63eda8d805709ec",
+        223_562_032, "810557e909a44a1f7ea3889421fbd8c1385a29110f49b962b29b50a48070169f",
+    ),
+    ("npu-turbo", "8gen3"): (
+        823_721_812,
+        686_112_520, "c9403eaa9c4b4313419d650e316be7cc1c9020cd8cd716ed909ddb0b61f0886a",
+        295_856_032, "a5597486dd53a0847fa042588279d6ab58f736078ea133c513b15e5d8c39d241",
+    ),
+    ("npu-turbo", "8elite_galaxy"): (
+        823_685_860,
+        685_997_832, "a72593f052fa9a4fb589bdc3dfe520860ea5684369afde6444198385f0e60ef5",
+        295_765_920, "2f9aafff7a15d779aef799fd5a25ac02a17b6455b7a4d293964cbed7e25fe7c8",
+    ),
+    ("npu-turbo", "8elite5_galaxy"): (
+        824_020_866,
+        687_283_976, "5f5ff7cf77932ddb56654f2c1083e03cdb88c2b3fa0bd8d0910caceaec775235",
+        295_847_840, "b6be63f758903403105efc764be5cf807c36f4d0f81e31b4f3a50c71fc249138",
+    ),
+    ("npu-turbo", "7gen4"): (
+        828_034_458,
+        703_946_504, "6489b59b08c9a62c796ecec371def7850e1207b0a54299d81f0344021afba87f",
+        295_917_472, "26abee5f364552a0431beabd1f8c2104bfc71a8b7cfcce63189df5efae5d56be",
+    ),
+    ("npu-turbo", "qcs8550"): (
+        823_697_212,
+        686_108_424, "16eeb01fcedf147fc55ad2c4cde6b7c7b98c87f1d70ad63d3c11e0245ea567b7",
+        295_847_840, "ec6889bdca25b27c1758136c70292cd3274825c6798896507279cd9b37bfbdfe",
+    ),
+    ("npu-turbo", "8gen1"): (
+        821_903_663,
+        681_574_152, "2005e39cd6d94c7b66f63832b9d0ba182b0b322876d3f579a826e8edcc74168e",
+        294_692_768, "c5bb0775b19afb1f7b115c231aaaf78d003479228b3e905181fe0436c87b5fc2",
+    ),
 }
 
 

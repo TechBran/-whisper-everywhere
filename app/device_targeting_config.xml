@@ -47,6 +47,14 @@
       <config:system-on-chip manufacturer="Qualcomm" model="SM8550-AC"/>
     </config:device-selector>
   </config:device-group>
+  <config:device-group name="soc_8gen1">
+    <config:device-selector>
+      <config:system-on-chip manufacturer="QTI" model="SM8450"/>
+    </config:device-selector>
+    <config:device-selector>
+      <config:system-on-chip manufacturer="Qualcomm" model="SM8450"/>
+    </config:device-selector>
+  </config:device-group>
   <!-- everything else → default group "other" → the EMPTY variant. Groups are pairwise
        disjoint by exact string, so XML order carries no priority weight here. -->
 </config:device-targeting-config>
