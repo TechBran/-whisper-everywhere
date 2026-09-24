@@ -374,8 +374,24 @@ class WhisperEverywhereApp : Application() {
             setSound(null, null)
         }
 
+        // (4.15) THE MODEL-UPDATES CHANNEL — a second channel, not the service's, because the two
+        // say different kinds of thing. The service channel is LOW on purpose: it carries the
+        // bubble's standing foreground notice, which must never make a sound. The refresh notice
+        // (BootReceiver, NpuRefreshNotice) is the one this app posts because something the user
+        // relies on stopped working — their bubble did not come back after the update — so it is
+        // DEFAULT, visible in the shade and the status bar, and the user can silence it on its own
+        // without muting the service notice or the other way round.
+        val modelUpdates = NotificationChannel(
+            MODEL_UPDATES_CHANNEL_ID,
+            getString(R.string.model_updates_channel_name),
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = getString(R.string.model_updates_channel_description)
+        }
+
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.createNotificationChannel(channel)
+        notificationManager.createNotificationChannel(modelUpdates)
     }
 
     companion object {
@@ -383,6 +399,9 @@ class WhisperEverywhereApp : Application() {
 
         const val NOTIFICATION_CHANNEL_ID = "whisper_everywhere_service"
         const val NOTIFICATION_ID = 1001
+
+        /** The refresh notice's channel (4.15) — see [createNotificationChannel]. */
+        const val MODEL_UPDATES_CHANNEL_ID = "model_updates"
 
         @Volatile
         private var instance: WhisperEverywhereApp? = null

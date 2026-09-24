@@ -337,6 +337,29 @@ object NpuDiag {
             "census=${removed.censusEncoderBytes}/${removed.censusDecoderBytes}" +
             (if (removed.left.isEmpty()) "" else " left=${removed.left.joinToString(",")}")
 
+    /**
+     * `npu: refresh notice trigger=update post` / `npu: refresh notice trigger=boot
+     * skip=no-permission` — `BootReceiver`'s one line per refresh-notice decision (4.15), emitted
+     * only on the path where the bubble's own eligibility passed and the selected model is missing.
+     *
+     * Through `WhisperNative.diag`, for [stalePairRemoved]'s reason: the phone that needs this
+     * line takes the update from the Play track, where R8 has stripped every `android.util.Log`.
+     * A notice that never appeared has six different causes and one symptom (nothing in the
+     * shade), and the `skip=` token — one of `NpuRefreshNotice`'s `SKIP_` words — is what tells
+     * them apart. Never content: a trigger word and a verdict word.
+     */
+    fun refreshNotice(trigger: NpuRefreshNotice.Trigger, decision: NpuRefreshNotice.Decision): String {
+        val on = when (trigger) {
+            NpuRefreshNotice.Trigger.PACKAGE_REPLACED -> "update"
+            NpuRefreshNotice.Trigger.BOOT_COMPLETED -> "boot"
+        }
+        val verdict = when (decision) {
+            is NpuRefreshNotice.Decision.Post -> "post"
+            is NpuRefreshNotice.Decision.Skip -> "skip=${decision.reason}"
+        }
+        return "npu: refresh notice trigger=$on $verdict"
+    }
+
     // ------------------------------------------------------------------ the pack lifecycle (4.2 F5)
 
     /**

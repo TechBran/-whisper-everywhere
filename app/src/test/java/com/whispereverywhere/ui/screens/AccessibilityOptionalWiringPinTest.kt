@@ -512,7 +512,11 @@ class AccessibilityOptionalWiringPinTest {
 
     @Test
     fun theBootRestartNeverGatesOnTheAccessibilityService() {
-        val eligible = memberBody(bootReceiver, "    private fun eligible(context: Context): Boolean {")
+        // RE-ANCHORED AT 4.15, claim unchanged: the check answers a three-state `Eligibility`
+        // instead of a Boolean, because its model-missing arm now routes to the refresh notice
+        // rather than returning silently. The four checks and the zero accessibility reads below
+        // are exactly what they were.
+        val eligible = memberBody(bootReceiver, "    private fun eligible(context: Context): Eligibility {")
         assertTrue(
             "the eligibility check is still the four it was written for",
             eligible.contains("isBubbleEnabled()") && eligible.contains("canDrawOverlays(context)") &&

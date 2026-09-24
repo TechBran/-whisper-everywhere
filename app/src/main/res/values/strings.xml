@@ -67,6 +67,9 @@
     <string name="notification_channel_description">Shows when the floating bubble is active</string>
     <string name="notification_title">Whisper Everywhere Active</string>
     <string name="notification_text">Tap the bubble to start voice input</string>
+    <!-- (4.15) The refresh notice's channel: DEFAULT importance, separate from the silent service channel. -->
+    <string name="model_updates_channel_name">Model updates</string>
+    <string name="model_updates_channel_description">Tells you when a speech model on this phone has a new version to download</string>
 
     <!-- Errors -->
     <string name="error_no_api_key">Please set your OpenAI API key in Settings</string>

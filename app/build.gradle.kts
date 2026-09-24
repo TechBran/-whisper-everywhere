@@ -581,6 +581,17 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/npu/NpuStalePairSweep.kt",
         "src/main/res/xml/backup_rules.xml",
         "src/main/res/xml/data_extraction_rules.xml",
+        // (4.15) The refresh notice's three files, by the same rule. `NpuRefreshNoticeTest` reads
+        // BootReceiver.kt as text (it is a BroadcastReceiver no JVM test can deliver a broadcast
+        // to): the model-missing arm posts instead of returning, the channel, the distinct id and
+        // request code, no EXTRA_START_BUBBLE on the tap, the notified key written after the
+        // notify, and ZERO copy literals in the receiver — the last a zero-count a comment could
+        // break. It reads NpuRefreshNotice.kt for the zero-literal rule on the size (the number
+        // is derived from the census), and strings.xml for the channel's name. AccessibilityOptional-
+        // WiringPinTest has read BootReceiver.kt since 4.3.3 without this entry; it is overdue.
+        "src/main/java/com/whispereverywhere/receiver/BootReceiver.kt",
+        "src/main/java/com/whispereverywhere/npu/NpuRefreshNotice.kt",
+        "src/main/res/values/strings.xml",
         // (4.1 L8) NpuBackendSelector.kt — the plan's own found-while-writing hole, the same one
         // Q7a MEASURED and I3 named, on the one file that carries the routing decision:
         // NpuBackendWiringTest source-pins this file (the routesToNpu signature, the zero-literal
