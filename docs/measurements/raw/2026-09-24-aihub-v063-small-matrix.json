@@ -1,0 +1,166 @@
+{
+ "models": {
+  "npu/8elite_galaxy/encoder": {
+   "id": "mmxj6z02q",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/8elite_galaxy/decoder": {
+   "id": "mng20d45m",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/8elite5_galaxy/encoder": {
+   "id": "mm5v3wzkn",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/8elite5_galaxy/decoder": {
+   "id": "mqy5gwy5n",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/7gen4/encoder": {
+   "id": "mq26vz8jn",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/7gen4/decoder": {
+   "id": "mmrgv2y6q",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/qcs8550/encoder": {
+   "id": "mmd018vvn",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/qcs8550/decoder": {
+   "id": "mn4o3d57q",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/8gen3/encoder": {
+   "id": "mqkprxd7m",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/8gen3/decoder": {
+   "id": "mmxj6zy2q",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/8gen1/encoder": {
+   "id": "mnlz9gdeq",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu/8gen1/decoder": {
+   "id": "mm6j34ydq",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  }
+ },
+ "jobs": {
+  "npu/8elite_galaxy/encoder@Samsung Galaxy S25": {
+   "id": "j5m00jjwg",
+   "status": "SUCCESS",
+   "inference_ms": 33.9,
+   "first_load_ms": 180.0,
+   "warm_load_ms": 184.8,
+   "peak_mem_mb": 165.5
+  },
+  "npu/8elite_galaxy/decoder@Samsung Galaxy S25": {
+   "id": "jgnzzjjrg",
+   "status": "SUCCESS",
+   "inference_ms": 4.7,
+   "first_load_ms": 163.5,
+   "warm_load_ms": 166.6,
+   "peak_mem_mb": 204.5
+  },
+  "npu/8elite5_galaxy/encoder@Samsung Galaxy S26": {
+   "id": "jprllzz9p",
+   "status": "SUCCESS",
+   "inference_ms": 27.2,
+   "first_load_ms": 203.7,
+   "warm_load_ms": 197.0,
+   "peak_mem_mb": 174.0
+  },
+  "npu/8elite5_galaxy/decoder@Samsung Galaxy S26": {
+   "id": "jp2rr224g",
+   "status": "SUCCESS",
+   "inference_ms": 3.9,
+   "first_load_ms": 178.7,
+   "warm_load_ms": 181.5,
+   "peak_mem_mb": 205.9
+  },
+  "npu/7gen4/encoder@Snapdragon 7 Gen 4 QRD": {
+   "id": "jp0mmnn6g",
+   "status": "SUCCESS",
+   "inference_ms": 95.4,
+   "first_load_ms": 239.5,
+   "warm_load_ms": 206.0,
+   "peak_mem_mb": 179.0
+  },
+  "npu/7gen4/decoder@Snapdragon 7 Gen 4 QRD": {
+   "id": "jp8eellxp",
+   "status": "SUCCESS",
+   "inference_ms": 10.3,
+   "first_load_ms": 210.2,
+   "warm_load_ms": 185.6,
+   "peak_mem_mb": 217.3
+  },
+  "npu/qcs8550/encoder@Samsung Galaxy S23": {
+   "id": "jgk22jj2g",
+   "status": "SUCCESS",
+   "inference_ms": 59.8,
+   "first_load_ms": 332.2,
+   "warm_load_ms": 298.5,
+   "peak_mem_mb": 133.7
+  },
+  "npu/qcs8550/decoder@Samsung Galaxy S23": {
+   "id": "jglyyjj85",
+   "status": "SUCCESS",
+   "inference_ms": 8.0,
+   "first_load_ms": 417.1,
+   "warm_load_ms": 278.5,
+   "peak_mem_mb": 160.6
+  },
+  "npu/8gen3/encoder@Samsung Galaxy S24": {
+   "id": "j5688kk0g",
+   "status": "SUCCESS",
+   "inference_ms": 43.6,
+   "first_load_ms": 351.7,
+   "warm_load_ms": 237.7,
+   "peak_mem_mb": 130.7
+  },
+  "npu/8gen3/decoder@Samsung Galaxy S24": {
+   "id": "jp3zzyyl5",
+   "status": "SUCCESS",
+   "inference_ms": 6.2,
+   "first_load_ms": 376.0,
+   "warm_load_ms": 244.5,
+   "peak_mem_mb": 170.2
+  },
+  "npu/8gen1/encoder@Samsung Galaxy S22 (Family)": {
+   "id": "jgolljjxg",
+   "status": "SUCCESS",
+   "inference_ms": 80.0,
+   "first_load_ms": 387.3,
+   "warm_load_ms": 284.0,
+   "peak_mem_mb": 122.0
+  },
+  "npu/8gen1/encoder@Samsung Galaxy Tab S8": {
+   "id": "jpvlljjj5",
+   "status": "SUCCESS",
+   "inference_ms": 78.0,
+   "first_load_ms": 345.2,
+   "warm_load_ms": 333.9,
+   "peak_mem_mb": 103.5
+  },
+  "npu/8gen1/decoder@Samsung Galaxy S22 (Family)": {
+   "id": "jgjrrjjxp",
+   "status": "SUCCESS",
+   "inference_ms": 9.4,
+   "first_load_ms": 396.4,
+   "warm_load_ms": 412.7,
+   "peak_mem_mb": 141.7
+  },
+  "npu/8gen1/decoder@Samsung Galaxy Tab S8": {
+   "id": "jpe77jj15",
+   "status": "SUCCESS",
+   "inference_ms": 9.4,
+   "first_load_ms": 356.3,
+   "warm_load_ms": 253.6,
+   "peak_mem_mb": 139.9
+  }
+ }
+}
