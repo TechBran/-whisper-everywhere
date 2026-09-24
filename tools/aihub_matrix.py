@@ -5,8 +5,9 @@ every plain 8 Elite / 8 Elite Gen 5 phone, the 7 Gen 4). AI Hub hosts real devic
 those chips, including the PLAIN-bin reference phones ("Snapdragon 8 Elite QRD", "Snapdragon 8
 Elite Gen 5 QRD") that stand in for every non-Samsung phone. A profile job on the exact bytes Play
 delivers answers "does this family's context binary load and execute on that silicon, and how
-fast" without a phone in hand. First run: 2026-09-22, all 14 jobs PASS
-(docs/measurements/2026-09-22-aihub-hosted-device-matrix.md).
+fast" without a phone in hand. First run: 2026-09-22, all 14 jobs PASS on the v0.62.2 binaries
+(docs/measurements/2026-09-22-aihub-hosted-device-matrix.md). Re-planned 2026-09-24 for the
+v0.63.0 refresh and the 8gen1 family: not yet run.
 
 What it does NOT test: the app. Play delivery, onboarding, capture, mel, the decode loop and the
 speaker pipeline only run in the real app on a real phone.
@@ -37,17 +38,30 @@ CENSUS = os.path.join(REPO, "app", "src", "main", "java", "com", "whispereverywh
                       "NpuFleetCensus.kt")
 MODULE_BY_TIER = {"npu-turbo": "npu_turbo", "npu": "npu_small"}
 
-# family -> hosted devices. The Galaxy phone is the pack's own target; the QRD is the PLAIN bin
-# every non-Samsung phone of that chip carries. The two controls run families that are already
-# device-executed in the app (Fold6, S23 Ultra), which is what lets their numbers calibrate the rest.
+# family -> hosted devices. The Galaxy phone is the pack's own target. The two controls run
+# families that were device-executed in the app on their PREVIOUS binaries (Fold6, S23 Ultra),
+# which is what lets their numbers calibrate the rest.
+#
+# 2026-09-24: the plain-bin QRDs ("Snapdragon 8 Elite QRD", "Snapdragon 8 Elite Gen 5 QRD") are
+# out of the plan, by the head's brief, which records both as deprecated on AI Hub; each family
+# keeps its Galaxy phone. (qai-hub 0.55.0's get_devices() still listed both that day with no
+# deprecation attribute, so the removal rests on the brief, not on a refused job.) Their
+# 2026-09-22 PASS on the v0.62.2 binaries is the plain-bin evidence the 8 Elite rows cite; it is
+# not repeated for v0.63.0 here. The 7 Gen 4 QRD stays: it is that family's only hosted device.
+# 8gen1 is new, on the two hosted SM8450 devices (both hexagon:v69 / soc-model:36 in AI Hub's
+# own attributes): the pack's reference phone and the tablet the owner has in hand.
 PLAN = {
-    "8elite_galaxy": ["Samsung Galaxy S25", "Snapdragon 8 Elite QRD"],
-    "8elite5_galaxy": ["Samsung Galaxy S26", "Snapdragon 8 Elite Gen 5 QRD"],
+    "8elite_galaxy": ["Samsung Galaxy S25"],
+    "8elite5_galaxy": ["Samsung Galaxy S26"],
     "7gen4": ["Snapdragon 7 Gen 4 QRD"],
     "qcs8550": ["Samsung Galaxy S23"],
     "8gen3": ["Samsung Galaxy S24"],
+    "8gen1": ["Samsung Galaxy S22 (Family)", "Samsung Galaxy Tab S8"],
 }
-OPTIONS = "--max_profiler_iterations 10"
+# --qairt_version 2.50: the v0.63.0 context binaries are QAIRT 2.50.0.260828221209 builds, and a
+# profile job defaults to an older QAIRT (2.45 when this was written) that would refuse to load a
+# newer context. 2.50 is also the runtime the app ships since 4.15.
+OPTIONS = "--max_profiler_iterations 10 --qairt_version 2.50"
 
 
 def census_rows():
