@@ -80,27 +80,49 @@ MediaTek family simply has no `npu` artifact row, so the small tier is not offer
 
 Why: LiteRT's MediaTek dispatch loads the Neuron driver by trying names in order — in v2.1.1
 `libneuronusdk_adapter.mtk.so`, then `libneuronusdk_adapter.9.mtk.so` (only if a "magic number" read from
-`libneuron_sys_util.mtk.so` says the ROM is v9-class), then `libneuron_adapter_mgvi.so` — first success wins in
-v2.1.1, **last** success wins on newer LiteRT (a known bug, #9364). The bytecode we ship was produced by
-NeuroPilot 8.2.30 and the dispatch restores it only on a Neuron runtime of the same major. On the Tab S10+ the
-first name loads and reports 8.2.26. Elsewhere it could be absent (a ROM that never whitelisted it) or a
-different major.
+`libneuron_sys_util.mtk.so` says the ROM is v9-class), then `libneuron_adapter_mgvi.so`, then a
+`libneuron_adapter.so` — and its loop has no `break` (`neuron_adapter_api.cc` v2.1.1 lines 109-116, read
+2026-09-24): every name that loads overwrites the previous, so **the last loadable adapter wins**, in v2.1.1 as
+much as on main (#9364). The bytecode we ship was produced by NeuroPilot 8.2.30 and the dispatch restores it only
+on a Neuron runtime of the same major. On the Tab S10+ only the first name loads and it reports 8.2.26. Elsewhere
+it could be absent (a ROM that never whitelisted it), a different major, or shadowed by a later candidate.
+
+Our manifest declares exactly one adapter name (§2.3, last paragraph), so in the app's linker namespace only
+that name can load and the loop's outcome is deterministic. The check below still walks the same list, so it
+answers what LiteRT would bind rather than what we hope it binds.
 
 What: `nativeProbe(libDir)` in the new engine, run by `npuCapableDevice` before any model file is opened:
 
-1. `dlopen("libneuronusdk_adapter.mtk.so")`; on failure → `refuse(adapter-missing)`.
-2. `dlsym("Neuron_getVersion")` → `NeuronRuntimeVersion{major, minor, patch}`; `major != family.runtime.neuronMajor`
-   → `refuse(driver-major-<got>-want-<want>)`.
+1. Walk LiteRT's candidate list in LiteRT's order (`libneuronusdk_adapter.mtk.so`, `libneuronusdk_adapter.9.mtk.so`,
+   `libneuron_adapter_mgvi.so`, `libneuron_adapter.so`), `dlopen` each, and keep the LAST that loads — the one
+   LiteRT will bind. None loads → `refuse(adapter-missing)`. The winner is not `libneuronusdk_adapter.mtk.so` →
+   `refuse(adapter-<name>)`: a different driver than the one the tier was measured on is not admitted by
+   inference.
+2. `dlsym("Neuron_getVersion")` (`NeuronAdapter.h:888`, `int Neuron_getVersion(NeuronRuntimeVersion*)`) →
+   `{major, minor, patch}`; `major != family.runtime.neuronMajor` → `refuse(driver-major-<got>-want-<want>)`.
 3. Read the bytecode's stamp from our own pack metadata (`compiler = "adapter 8.2.30"`, written at build time
    from the file) and assert its major equals the driver's. Two sources, one fact.
 4. Report the line `apu: driver=usdk.mtk <major.minor.patch> want=<major> pass` (or the refusal) through the
    same diag channel the QNN probe uses, so the tier-status card and the log readers see it.
 
 The manifest declares `<uses-native-library android:name="libneuronusdk_adapter.mtk.so" android:required="false"/>`
-and **does not** declare `libneuron_sys_util.mtk.so`: without it the magic-number lookup fails immediately instead
-of waiting 5 s on a binder service the Samsung ROM does not register, and the `.9` candidate is never tried —
-which is correct for v8 bytecode. This is also the removal lever for the 5 s in the measured cold start; task
-P0 measures it. A refusal is the existing loud CPU fallback (`fallBackToCpuTier`), never a silent one.
+and nothing else from the MediaTek set: not `libneuron_sys_util.mtk.so` (so the `.9` candidate is never
+considered, which is right for v8 bytecode), not `libneuron_adapter_mgvi.so`. A refusal is the existing loud CPU
+fallback (`fallBackToCpuTier`), never a silent one.
+
+**The 5 s cold-start wait is NOT the magic-number read (P0, measured 2026-09-24, run `t7_p0_nosysutil_enc_aot_npu`):**
+with `libneuron_sys_util.mtk.so` undeclared, `create` was still 8,457 ms with exactly one
+`Waiting for service 'vendor.mediatek.hardware.neuropilot.neuronservice.INeuronService/default'` line, and the
+timestamps place the wait INSIDE `dlopen("libneuronusdk_adapter.mtk.so")` — after the dispatch library loads and
+before LiteRT logs which adapter it bound. The adapter's own initialisation tries the (unregistered) Neuron
+service for 5 s, logs `Faild to get neuron serivce`, and falls back to the `apuware` AIDL path that then works.
+So the wait is MediaTek's, paid once per process on the first adapter instantiation (the second model paid 0.9 s
+in t6). The design's answer is to pay it where nobody waits: the engine's `warmUp()` — `dlopen` of the adapter
+through a trivial `LiteRtCreateEnvironment` + dispatch initialisation — runs on the service's boot prewarm
+thread outside `NativeComputeGate`, so by the time a user arms the tier the 5 s is already spent. A cold tap
+before prewarm finishes still pays it inside the StartupRing's 6 s budget (5.0 + 1.3 s restore + 0.9 s = 7.2 s
+worst case, over budget by 1.2 s): the ring copy covers that once ("the AI chip is waking up"), and the sheet
+records how often it happens in a 30-minute session.
 
 ### 2.4 The engine seam
 
@@ -157,7 +179,8 @@ the same loop rather than two copies of it. `NpuNativeContractTest`'s pins on th
 
 ### 2.6 Runtime packaging
 
-- `libLiteRt.so` (2.1.1, 5,104,832 B) ships in `lib/arm64-v8a/` of the base module. It is extracted from the
+- `libLiteRt.so` (2.1.1, 5,104,832 B, sha256 `6ddc1b3df38f3f0e039558c023f3bd9ec2f7bec55b67cfd6be4131130481a5d5`,
+  from `com.google.ai.edge.litert:litert:2.1.1` on Google Maven, AAR 7,569,479 B) ships in `lib/arm64-v8a/` of the base module. It is extracted from the
   `com.google.ai.edge.litert:litert:2.1.1` AAR by a `litertRuntime` Gradle configuration with a sha256 pin, the
   way `qnnSkelSource` extracts the QNN skels — the app never takes the AAR's Kotlin API or its transitive
   dependencies (coroutines-guava, lifecycle, guava, play-ai-delivery), which is why the C API is the seam.
@@ -223,7 +246,7 @@ commit; the first in-app session measures the sustained value.
 | Pack pair incomplete or digest mismatch | pack fetch / SAF import | tier not installed; existing copy |
 | NPU-only compile refused at runtime (accelerator missing) | `init` | loud CPU fallback |
 | OOM while both models resident | `init`/`encode` error path | loud CPU fallback; trim re-arm as today |
-| The 5 s binder wait still present | P0 measurement | second lever: warm the engine in the boot prewarm, outside `NativeComputeGate` |
+| The 5 s adapter-init wait (P0: present, and MediaTek's, not LiteRT's) | `warmUp()` on the boot prewarm thread | nothing, unless the user arms within ~7 s of the process starting: then the ring's "waking up" copy once |
 
 ## 5. Testing and acceptance
 
@@ -243,9 +266,11 @@ commit; the first in-app session measures the sustained value.
 
 ## 6. Phases
 
-- **P0 — two probe runs on the tablet (½ day, no app code):** (a) rebuild the probe without
-  `libneuron_sys_util.mtk.so` declared and re-run t2 — does `create` drop from 8.3 s to ~3 s? (b) run the pair
-  with MediaTek performance mode high vs default. Both numbers go into the measurement sheet and fix §2.3/§2.5.
+- **P0 — probe runs on the tablet:** (a) DONE 2026-09-24: without `libneuron_sys_util.mtk.so` declared,
+  `create` stayed at 8,457 ms with the one 5 s wait — the wait is inside the adapter's own init (§2.3), so the
+  lever is the boot-prewarm `warmUp()`, not the manifest. (b) MediaTek performance mode high vs default: not
+  reachable from the probe's Kotlin API (2.1.1 exposes no MediaTek options class); measured in P1 through the
+  C API, on the first engine build.
 - **P1 — engine (3–4 days):** `asr_decode_loop.h` extraction + `liblitertasr.so` + `LiteRtAsrNative` +
   `NpuAsrEngine` + `NpuWhisperBackend` on the seam; pins re-specced; JVM suite green; the native loop's host test.
 - **P2 — census, gate, packs (2 days):** §2.1–2.3, §2.6–2.7; `build_asset_packs.py` LOCAL source; the tail module;

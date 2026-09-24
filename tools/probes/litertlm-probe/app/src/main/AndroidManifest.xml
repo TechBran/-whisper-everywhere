@@ -17,7 +17,11 @@
         <!-- MediaTek NeuroPilot, the SYSTEM-partition public list (/system/etc/public.libraries-mtk.txt,
              read on the tablet 2026-09-09, E0): the USDK adapter the LiteRT MediaTek dispatch dlopens,
              the sys_util it reads the NeuroPilot magic number from, and the AIDL client libs. -->
-        <uses-native-library android:name="libneuron_sys_util.mtk.so" android:required="false" />
+        <!-- P0 (2026-09-24): libneuron_sys_util.mtk.so is deliberately NOT declared. LiteRT v2.1.1 reads the
+             NeuroPilot magic number from it before choosing an adapter, and on this ROM that read waits 5 s on
+             an unregistered binder service (INeuronService) - once per adapter instantiation. Undeclared, the
+             dlopen fails at once and the loader goes straight to libneuronusdk_adapter.mtk.so. -->
+        <!-- <uses-native-library android:name="libneuron_sys_util.mtk.so" android:required="false" /> -->
         <uses-native-library android:name="libneuronusdk_adapter.mtk.so" android:required="false" />
         <uses-native-library android:name="libneuronusdk_adapter.9.mtk.so" android:required="false" />
         <uses-native-library android:name="libneuronservice_adapter.mtk.so" android:required="false" />

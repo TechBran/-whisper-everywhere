@@ -102,6 +102,22 @@ with the concat+slice cache update — no DynamicUpdateSlice, which MediaTek lac
   (n=50, sd 2.9, min 19.3, max 31.5; run-only 23.3), cold 23.4, create 5,608.5 ms (the same single 5 s wait + a
   0.6 s restore), RSS 1.1 GB. Hexagon's shipped turbo decoder is 10.08 ms/token (Fold6).
 
+## 4b. P0: the 5 s wait is the adapter's own, not the magic-number read
+
+`t7_p0_nosysutil_enc_aot_npu` (probe rebuilt with `libneuron_sys_util.mtk.so` NOT declared; nativeloader's
+`system_exposed_libraries` line confirms it absent): the AOT encoder, `create` **8,456.8 ms**, exactly one
+`Waiting for service '…neuronservice.INeuronService/default'` line, warm 1,727 ms (n=5) — unchanged. The
+timestamps: `litert_dispatch.cc: Loading shared library: …libLiteRtDispatch_MediaTek.so` at 16:43:49.879, the
+wait at 16:43:49.885 → 16:43:54.900 (`didn't start. Returning NULL`), `Faild to get neuron serivce` (a MediaTek
+library logging under the app's tag), `apuware_hidl: can't get getUtilsHidl service`, `ApuWare: open library
+libapuwareutils_v2.mtk.so`, and only then `neuron_adapter_api.cc:113 Loading MediaTek NeuronAdapter .so from:
+libneuronusdk_adapter.mtk.so` at 16:43:55.227 — which v2.1.1 logs AFTER a successful `dlopen`. So the 5 s is
+spent inside the adapter's constructor connecting to a service this ROM never registers, before it falls back
+to the `apuware` path that works. It is not removable from the app side; it is paid once per process (the
+second model's `create` was 911 ms in t6), so the tier pays it on the boot prewarm thread (design §2.3).
+The same source read settles the loader's rule for v2.1.1: the candidate loop has no `break`, so the LAST
+loadable adapter wins — the driver check walks the same list.
+
 ## 5. END-TO-END: real speech through the pair, both on the APU — CORRECT
 
 `t6_turbo_e2eqc_npu_npu_1`, probe `mode=e2eqc` (encoder `encode` → 8 cross-KV tensors → greedy KV-cached decode
