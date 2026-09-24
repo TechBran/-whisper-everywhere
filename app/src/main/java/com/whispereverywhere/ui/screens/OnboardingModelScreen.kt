@@ -513,13 +513,13 @@ private fun NpuImportPanel(
                         "The multilingual model can run on this device's AI chip, which is " +
                             "much faster than the CPU. If Google Play can't deliver the files, " +
                             "get the model pair zip from the release page and import it here. " +
-                            "It needs about 358 MB once installed, and roughly twice that free " +
+                            "It needs about 338 MB once installed, and roughly twice that free " +
                             "while importing."
                     else ->
                         "The multilingual model can run on this device's AI chip, which is much " +
                             "faster than the CPU. Its files are not downloaded in the app: get the " +
                             "model pair zip from the release page, then import it here. It needs " +
-                            "about 358 MB once installed, and roughly twice that free while importing."
+                            "about 338 MB once installed, and roughly twice that free while importing."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

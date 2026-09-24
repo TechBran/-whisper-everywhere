@@ -168,9 +168,9 @@ data class WhisperModel(
      * single-file tier is untouched and the two are the same number.
      *
      * It exists because `WhisperModelManager.isInstalled` size-gates `models/<fileName>` at ±5%,
-     * and npu's [approxBytes] is the PAIR (358,244,352) while its [fileName] is the encoder alone
-     * (132,927,488). Gating the encoder against the sum is 63% out — `isInstalled(npu)` would have
-     * been false forever, whatever the owner imported.
+     * and npu's [approxBytes] is the PAIR (338,422,512 since the v0.63.0 refresh) while its
+     * [fileName] is the encoder alone (113,123,776). Gating the encoder against the sum is 67% out
+     * — `isInstalled(npu)` would have been false forever, whatever the owner imported.
      */
     val primaryBytes: Long = approxBytes,
     /** The second file this tier needs on disk, or null for the ordinary single-file tiers. */
@@ -226,33 +226,39 @@ object WhisperCatalog {
     private const val SHA256_ULTRA_Q8 = "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"
     private const val SHA256_LARGE_V3 = "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1"
 
-    // The 4.0 npu tier's two context binaries. MEASURED sha256s of the EXTRACTED files (the spike
-    // staged and hashed both), not of the zip that carries them — nothing here is a placeholder.
-    private const val SHA256_NPU_ENCODER = "3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec"
-    private const val SHA256_NPU_DECODER = "fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4"
+    // The npu tier's two context binaries. MEASURED sha256s of the EXTRACTED files, not of the zip
+    // that carries them — nothing here is a placeholder. 4.0 took them from the spike's staged
+    // copies; since 4.15 (2026-09-24) they are the v0.63.0 8gen3 pair, re-measured by
+    // `tools/build_asset_packs.py measure` under every gate. The QAIRT 2.50 rebuild changed both
+    // files (the encoder 14.9% smaller), so the 4.0 digests (3e92ac26…, fda23d73…) are retired.
+    private const val SHA256_NPU_ENCODER = "813d0e847bf1ba21b991a421a2f57f56884252d1ca6e780a02a55582c519bac0"
+    private const val SHA256_NPU_DECODER = "bd853be4710bb0aa01dd2a5ce78c03f3e9f722cab47fad3ac24555995f21a929"
 
-    // The 4.1 npu-turbo tier's two context binaries — the same discipline: MEASURED sha256s,
-    // streamed out of the local vendor zip at plan time (asset block, 2026-08-29). The digests are
-    // of the EXTRACTED entries, which is what lands on disk under the repacked names below.
-    private const val SHA256_NPU_TURBO_ENCODER = "f7d11c08a20ea671f59b3ace2f9421da00b06170ac9fe946f29092ee59be6bbe"
-    private const val SHA256_NPU_TURBO_DECODER = "c19b067766180843fca6266531605bf037820c5e5ae178bd6dc03785df4c6ae4"
+    // The npu-turbo tier's two context binaries — the same discipline: MEASURED sha256s of the
+    // EXTRACTED entries, which is what lands on disk under the repacked names below. 4.1 streamed
+    // them out of the local vendor zip at plan time (asset block, 2026-08-29); since 4.15 they are
+    // the v0.63.0 8gen3 pair (encoder 11.6% smaller), and the 4.1 digests (f7d11c08…, c19b0677…)
+    // are retired with the binaries they described.
+    private const val SHA256_NPU_TURBO_ENCODER = "c9403eaa9c4b4313419d650e316be7cc1c9020cd8cd716ed909ddb0b61f0886a"
+    private const val SHA256_NPU_TURBO_DECODER = "a5597486dd53a0847fa042588279d6ab58f736078ea133c513b15e5d8c39d241"
 
     /**
      * Provenance of the npu pair: Qualcomm AI Hub's public precompiled QNN-ONNX release for
-     * whisper_small_quantized on Snapdragon 8 Gen 3, the zip the spike measured. BOTH context
+     * whisper_small_quantized on Snapdragon 8 Gen 3 — the zip the spike measured at v0.61.0, and
+     * since 4.15 the v0.63.0 zip the digests above were measured out of. BOTH context
      * binaries live inside this ONE archive, which is why both entries carry the same URL and why
      * neither is a DownloadManager source — Q8 imports the extracted files through SAF, and the
      * gate keeps the tier out of every download path (see [pickable]).
      */
     private const val NPU_ASSET_ZIP_URL =
         "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/" +
-            "whisper_small_quantized/releases/v0.61.0/" +
+            "whisper_small_quantized/releases/v0.63.0/" +
             "whisper_small_quantized-precompiled_qnn_onnx-w8a16-qualcomm_snapdragon_8gen3.zip"
 
     /**
      * Provenance of the npu-turbo pair (4.1): Qualcomm AI Hub's public precompiled QNN-ONNX
      * release for whisper_large_v3_turbo_quantized on Snapdragon 8 Gen 3 — the zip the plan's
-     * asset work downloaded, CRC-verified and hashed. Same shape as [NPU_ASSET_ZIP_URL]: both
+     * asset work downloaded, CRC-verified and hashed (v0.61.0), and since 4.15 the v0.63.0 zip. Same shape as [NPU_ASSET_ZIP_URL]: both
      * context binaries live inside this ONE archive, so both entries carry the same URL and
      * neither is a DownloadManager source. Note the vendor zip is NOT the delivery zip — its
      * entries sit under a directory prefix and carry the SAME bare names as the 4.0 npu tier's
@@ -262,7 +268,7 @@ object WhisperCatalog {
      */
     private const val NPU_TURBO_ASSET_ZIP_URL =
         "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/" +
-            "whisper_large_v3_turbo_quantized/releases/v0.61.0/" +
+            "whisper_large_v3_turbo_quantized/releases/v0.63.0/" +
             "whisper_large_v3_turbo_quantized-precompiled_qnn_onnx-w8a16-qualcomm_snapdragon_8gen3.zip"
 
     private fun urlFor(fileName: String): String = BASE_URL + fileName
@@ -634,9 +640,10 @@ object WhisperCatalog {
             // of the same zip and both must be on disk before the tier is installed.
             fileName = "encoder_qairt_context.bin",
             url = NPU_ASSET_ZIP_URL,
-            // The PAIR — 132,927,488 + 225,316,864. This is the number the size badge states,
-            // because it is what the owner downloads and what the storage costs.
-            approxBytes = 358_244_352L,
+            // The PAIR — 113,123,776 + 225,298,736 (v0.63.0; 358,244,352 before 4.15). This is the
+            // number the size badge states, because it is what the owner downloads and what the
+            // storage costs.
+            approxBytes = 338_422_512L,
             sha256 = SHA256_NPU_ENCODER,
             // Same whisper-small weights as `multi`, quantised for the Hexagon: 90+ languages,
             // not an English-only tier.
@@ -649,12 +656,12 @@ object WhisperCatalog {
             // "high-end devices only" note on devices that had already passed the real test.
             minRamBytes = 0L,
             gated = true,
-            primaryBytes = 132_927_488L,
+            primaryBytes = 113_123_776L,
             pairedArtifact = PairedArtifact(
                 fileName = "decoder_qairt_context.bin",
                 url = NPU_ASSET_ZIP_URL,
                 sha256 = SHA256_NPU_DECODER,
-                approxBytes = 225_316_864L,
+                approxBytes = 225_298_736L,
             ),
         ),
         WhisperModel(
@@ -669,8 +676,9 @@ object WhisperCatalog {
             // so the delivery zip renames turbo's entries and npu keeps its 4.0 names untouched.
             fileName = "turbo_encoder_qairt_context.bin",
             url = NPU_TURBO_ASSET_ZIP_URL,
-            // The PAIR — 775,831,552 + 295,854,080. What the badge states, what the user stores.
-            approxBytes = 1_071_685_632L,
+            // The PAIR — 686,112,520 + 295,856,032 (v0.63.0; 1,071,685,632 before 4.15). What the
+            // badge states, what the user stores.
+            approxBytes = 981_968_552L,
             sha256 = SHA256_NPU_TURBO_ENCODER,
             // large-v3-turbo: 100 languages, the same multilingual promise as `multi` and `npu`.
             scope = ModelScope.MULTILINGUAL,
@@ -683,12 +691,12 @@ object WhisperCatalog {
             minRamBytes = 0L,
             gated = true,
             // The encoder alone — what isInstalled gates models/<fileName> against.
-            primaryBytes = 775_831_552L,
+            primaryBytes = 686_112_520L,
             pairedArtifact = PairedArtifact(
                 fileName = "turbo_decoder_qairt_context.bin",
                 url = NPU_TURBO_ASSET_ZIP_URL,
                 sha256 = SHA256_NPU_TURBO_DECODER,
-                approxBytes = 295_854_080L,
+                approxBytes = 295_856_032L,
             ),
         ),
     )

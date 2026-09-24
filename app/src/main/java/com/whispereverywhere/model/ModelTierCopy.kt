@@ -317,9 +317,10 @@ object ModelTierCopy {
         // "real-time"), which the app-wide no-speed-claims rule forbids everywhere.
         "npu" to TierCopy(
             headline = "Fastest multilingual",
-            // 358 MB = the PAIR (encoder 132,927,488 + decoder 225,316,864). The badge states what
-            // the user downloads and stores, not the one file WhisperModel.fileName names.
-            badges = listOf("90+ languages", "358 MB"),
+            // 338 MB = the PAIR (encoder 113,123,776 + decoder 225,298,736 — the v0.63.0 pair; it
+            // was 358 MB before 4.15's refresh). The badge states what the user downloads and
+            // stores, not the one file WhisperModel.fileName names.
+            badges = listOf("90+ languages", "338 MB"),
             // THE EVIDENCE (was the body until 4.9.1; moved here verbatim, nothing lost):
             //   Runs on your phone's AI chip. Same model as Multilingual, much faster on this
             //   device.
@@ -408,9 +409,10 @@ object ModelTierCopy {
         // fails the moment a second one does, which is precisely how this defect arrived.
         "npu-turbo" to TierCopy(
             headline = "Best AI-chip accuracy, fastest",
-            // 1072 MB = the PAIR (encoder 775,831,552 + decoder 295,854,080), same rule as npu's
-            // badge: what the user installs, not the one file WhisperModel.fileName names.
-            badges = listOf("90+ languages", "1072 MB"),
+            // 981 MB = the PAIR (encoder 686,112,520 + decoder 295,856,032 — the v0.63.0 pair; it
+            // was 1072 MB before 4.15's refresh), same rule as npu's badge: what the user
+            // installs, not the one file WhisperModel.fileName names.
+            badges = listOf("90+ languages", "981 MB"),
             // THE EVIDENCE (was the body until 4.9.1; moved here verbatim, nothing lost):
             //   Large-v3's own encoder, on your phone's AI chip. The most accurate model that
             //   runs there, and the fastest on this device — ahead of the 190 MB Multilingual

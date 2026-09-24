@@ -51,29 +51,32 @@ VENDOR_DECODER = "decoder_qairt_context.bin"
 
 # tier id -> vendor bare name -> (delivery filename, exact bytes, sha256 of the file).
 # Values are the catalog's; see the module docstring for why they are restated as literals.
+# MOVED 2026-09-24 with the catalog to the v0.63.0 8gen3 pair (QAIRT 2.50 rebuilds): feed this
+# script the v0.63.0 vendor zips. A 0.61.0/0.62.2 zip now fails the self-verification by name,
+# which is right — the app would refuse its bytes on import.
 TIERS = {
     "npu": {
         VENDOR_ENCODER: (
             "encoder_qairt_context.bin",
-            132_927_488,
-            "3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec",
+            113_123_776,
+            "813d0e847bf1ba21b991a421a2f57f56884252d1ca6e780a02a55582c519bac0",
         ),
         VENDOR_DECODER: (
             "decoder_qairt_context.bin",
-            225_316_864,
-            "fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4",
+            225_298_736,
+            "bd853be4710bb0aa01dd2a5ce78c03f3e9f722cab47fad3ac24555995f21a929",
         ),
     },
     "npu-turbo": {
         VENDOR_ENCODER: (
             "turbo_encoder_qairt_context.bin",
-            775_831_552,
-            "f7d11c08a20ea671f59b3ace2f9421da00b06170ac9fe946f29092ee59be6bbe",
+            686_112_520,
+            "c9403eaa9c4b4313419d650e316be7cc1c9020cd8cd716ed909ddb0b61f0886a",
         ),
         VENDOR_DECODER: (
             "turbo_decoder_qairt_context.bin",
-            295_854_080,
-            "c19b067766180843fca6266531605bf037820c5e5ae178bd6dc03785df4c6ae4",
+            295_856_032,
+            "a5597486dd53a0847fa042588279d6ab58f736078ea133c513b15e5d8c39d241",
         ),
     },
 }
