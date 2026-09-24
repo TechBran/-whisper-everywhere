@@ -194,3 +194,23 @@ the acceptance reference for the tier: text equality plus paired, monotonic time
 This closes K0 (fp16 Whisper correctness on the MDLA, never checked before today), K1 (single-partition
 encoder), K2/K3 (encode under the S23 bar at 1500 positions, RSS under 4 GB), and the decoder question (an
 APU decoder exists and is 2.3× Hexagon's per token, with no CPU decoder needed).
+
+### 5c. P1b's host differential test (MS-02, no tablet) — the float loop agrees up to near-ties
+
+`tools/mtk-apu/host_decode_diff.py` re-runs the app-mode loop `liblitertasr.so` implements (3-token prompt, the 89-id
+always-on mask and `[220, EOT]` begin mask as −inf on float logits, greedy, timestamps emitted, the 199-slot
+right-aligned window, caches fed back) over the UNCOMPILED f32 pair in the LiteRT 2.2.0 interpreter, and compares it
+step by step with t8b's per-step top-8 (fp16 on the APU):
+
+| clip | compared steps | argmax equal | top-8 overlap | max \|Δlogit\| on shared ids | ids | first divergence |
+|---|---|---|---|---|---|---|
+| jfk | 30 (t=0..29) | 29 | 5–8 of 8 (29 of 30 steps ≥ 6; t=10 is 5) | 2.08 (t=14) | text identical; closing stamp `<\|10.40\|>` on the host vs `<\|11.00\|>` | t=29, timestamp vs timestamp: host margin 0.58, tablet margin 1.39 |
+| canary | (no trace) | — | — | — | host ` 1, 2, 3, 4, 5.` vs tablet ` One, two, three, four, five.`, stamps identical (`<\|0.00\|>` … `<\|2.56\|>`) | t=3, the first word: host `" 1"` 10.7571 vs `" One"` 10.7432 — margin **0.014** |
+
+Every text step of jfk agrees. The two divergences are both near-ties on the host's own logits (under 1 logit, the
+script's `--fp16-tolerance`), i.e. precision decides them; the canary's `" 1"`/`" One"` tie is the same choice t6's
+raw argmax made the other way on the tablet (§5). `--fp16-io` (every boundary tensor — cross-KV, self-KV, logits —
+rounded to fp16) moves the logits by ≤ 0.03 and changes neither divergence, so the 1–2 logit gaps are the APU's fp16
+COMPUTE inside the graphs (32 encoder layers relaxed to fp16), not storage. Host stats: jfk nsp 0.0000, lp −0.087,
+rung 0, 31 steps; canary nsp 0.0000, lp −0.163, 15 steps. The acceptance stays device-vs-device (P1's gate against
+t8, fp16 against fp16); this run shows the loop logic — prompt, masks, cache shift, window — is the tablet's.
