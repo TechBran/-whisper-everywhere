@@ -23,7 +23,10 @@ import java.security.MessageDigest
  *  - the dispatch loads from `files/litert_dispatch/` (staged here from this APK's own copy when absent; the
  *    directory must hold exactly that one file), no compiler plugin is configured, and the merged manifest
  *    declares only `libneuronusdk_adapter.mtk.so` among the MediaTek libraries;
- *  - every buffer is requirement-typed (that is the library's only way to make one);
+ *  - every buffer is typed and sized by the compiled models' requirements and made unstrided (the library's only
+ *    way to make one): AHWB/DMA-BUF for the 27 a DISPATCH_OP touches, host memory for input_ids and position_ids;
+ *  - the encoder is created on the NPU alone, the decoder on NPU | CPU, and init times the decoder's first step
+ *    (the library's APU check: over 250 ms is "init: decoder ran without the APU (step N ms)");
  *  - the prompt, the masks, the ladder and the guard constants come from the app's own `NpuDecodePolicy` over
  *    `WhisperTokens.LARGE_V3` - the call `NpuWhisperBackend.transcribe` makes, argument for argument.
  *
@@ -32,13 +35,21 @@ import java.security.MessageDigest
  * again, one encode + decode, release - the re-arm after a trim, which must NOT pay the 5 s again).
  *
  * Logged per utterance: encode ms, detect ms, decode ms, steps, ms per step, the ids (timestamps included),
- * whether they equal the t8 reference, the timestamp pairing, the six stats, PSS. The per-step times one by
- * one are native's `npu-debug: steptime` lines on WE-DIAG (diag=true), and the driver line is native's
- * `apu:` line there too; drive.py's filter keeps both.
+ * whether they equal the t8 reference, the timestamp pairing, the six stats, PSS. Native's `npu-debug: steptime`
+ * lines on WE-DIAG (diag=true) time each segment's first four steps and its last; the driver line and the APU
+ * check are native's `apu:` lines there too; drive.py's filter keeps them all.
  *
- * The ONE-set arm of "per-step time with one and with two self-KV sets" is `mode=e2eqc` on the same pair
- * (one set, a Kotlin copy per step, t8's 21.0 ms + 9.3 ms); this mode is the two-set, zero-copy arm. The
- * library deliberately has no single-set switch - its JNI surface is exactly the product's.
+ * "Per-step time with one and with two self-KV sets" is `kvstrategy` (nativeInit's selfKvStrategy), run twice:
+ *  - `kvstrategy=0` (default): two sets swapping roles by RE-BINDING. No byte moves, and it is NOT free - the
+ *    v2.1.1 dispatch re-registers each re-bound buffer (16 per step) at the next run, inside the run's time.
+ *    Nothing in Kotlin can separate that cost, so it is reported as what it is, never as a 0.0 copy.
+ *  - `kvstrategy=1`: one input set and a native copy of the step's 8 cache tensors (~8 MB) back into it; no
+ *    binding ever changes. The copy's own time is native's decode line (`kv copy N`).
+ * `step_ms_mean` (decode wall time / steps) includes the run, the io and either advance, so it is the number to
+ * compare between the two runs. `mode=e2eqc` on the same pair is the Kotlin-API arm (a Kotlin copy per step).
+ *
+ * `perfmode` is passed through and INERT on LiteRT 2.1.1 with AOT files (the dispatch hard-codes
+ * PREFER_SUSTAINED_SPEED), so a run per value measures nothing new.
  */
 class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
     companion object {
@@ -78,6 +89,8 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
             res.put("sha256_$lib", sha)
         }
         res.put("perfmode", args.perfMode)
+        res.put("perfmode_note", "inert on LiteRT 2.1.1 AOT - the dispatch never reads it")
+        res.put("kvstrategy", args.kvStrategy)
         res.put("socstamp", args.socStamp)
         res.put("wantmajor", args.wantMajor)
 
@@ -156,10 +169,11 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         val init = LiteRtAsrNative.nativeInit(
             encPath, decPath, dispatchDir, nld,
             MEL_BINS, DEC_LAYERS, HEADS, family.vocab, family.maxPositions,
-            args.socStamp, args.wantMajor, args.perfMode,
+            args.socStamp, args.wantMajor, args.perfMode, args.kvStrategy,
         )
         val initMs = ms(t0)
-        ProbeLog.i("litertasr|init_ms=${f1(initMs)}|result=${init.ifEmpty { "OK" }}|epoch=${LiteRtAsrNative.nativeEpoch()}")
+        ProbeLog.i("litertasr|init_ms=${f1(initMs)}|result=${init.ifEmpty { "OK" }}|epoch=${LiteRtAsrNative.nativeEpoch()}|" +
+            "kvstrategy=${args.kvStrategy}|perfmode=${args.perfMode}(inert)")
         check(init.isEmpty()) { "nativeInit refused: $init" }
         return initMs
     }
@@ -225,7 +239,16 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         uo.put("decode_ms", decMs)
         uo.put("steps", steps)
         uo.put("step_ms_mean", stepMs)
-        uo.put("cache_copy_ms_mean", 0.0)   // two self-KV sets swap by re-binding: nothing is copied
+        // Not a number Kotlin can measure for either strategy, so not a number here: step_ms_mean includes the
+        // advance of both kinds, and the breakdown is native's decode line (`run`, `io`, `kv ...`).
+        uo.put("cache_copy_ms_mean", JSONObject.NULL)
+        uo.put(
+            "self_kv_advance",
+            if (args.kvStrategy == 1) "copy: 8 cache tensors (~8 MB) copied back natively per step; its time is the " +
+                "WE-DIAG decode line's `kv copy`, and it is inside step_ms_mean"
+            else "re-bind: no bytes move, but the dispatch re-registers every re-bound buffer (16) at the next run; " +
+                "that cost is inside the run, and so inside step_ms_mean",
+        )
         uo.put("timestamps", JSONArray(stamps.map { (it - family.timestampBegin) * 0.02 }))
         uo.put("timestamps_paired", paired)
         uo.put("timestamps_monotonic", monotonic)
@@ -240,6 +263,7 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         uo.put("mem", Metrics.snapshot(ctx, "utt_$index"))
         ProbeLog.i("litertasr|utt=$index|mel=$name|encode_ms=${f1(encMs)}|detect=${uo.optInt("detected", -1)}|" +
             "decode_ms=${f1(decMs)}|tokens=$written|steps=$steps|step_ms=${"%.2f".format(stepMs)}|" +
+            "kvstrategy=${args.kvStrategy}|" +
             "nsp=${"%.3f".format(st.getDouble("nsp"))}|lp=${"%.3f".format(st.getDouble("avg_logprob"))}|" +
             "rung=${st.getInt("rung")}|term=${st.getString("terminator")}|stamps_paired=$paired|" +
             "stamps_monotonic=$monotonic|matches_reference=${matches ?: "n/a"}")

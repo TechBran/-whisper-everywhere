@@ -15,10 +15,19 @@
 //     and a non-finite logit is a failed step rather than a code that happens to be low. qnn_asr.cpp's
 //     loop is ufixed16 through and through and is NOT templated here (design §2.5): it runs on every
 //     shipping Qualcomm family, and the two converge only after both are device-proven.
-//   * EVERY BUFFER COMES FROM THE COMPILED MODELS' OWN REQUIREMENTS. The v2.1.1 MediaTek dispatch
-//     accepts only AHardwareBuffer / DMA-BUF tensor buffers; a host-memory buffer is "Unsupported
-//     buffer type". So nothing is allocated by hand: requirements -> managed buffer, shared buffers
-//     from the JOIN of both sides' requirements, host access only under Lock/Unlock.
+//   * EVERY BUFFER IS TYPED AND SIZED BY THE COMPILED MODELS' OWN REQUIREMENTS - AND MADE WITHOUT
+//     THEIR STRIDES. The v2.1.1 MediaTek dispatch registers only AHardwareBuffer / DMA-BUF tensor
+//     buffers (host memory is "Unsupported buffer type") and refuses every buffer whose layout
+//     carries strides ("Tensor strides are not supported"), while the requirements it reports always
+//     carry them. So the requirements choose the memory and the size, never the layout: the 27
+//     buffers (on turbo) a DISPATCH_OP reads or writes are AHWB, else DMA-BUF, and the two no
+//     DISPATCH_OP sees - input_ids and position_ids, read only by the decoder's CPU-side embedding
+//     lookups - are host memory. Shared buffers come from the JOIN of both sides' requirements; host
+//     access only under Lock/Unlock.
+//   * TWO ACCELERATOR SETS, AND A MEASURED CHECK. The encoder is created on the NPU alone (a refusal
+//     is an error); the decoder on NPU | CPU, because its embedding lookups stay on the CPU and
+//     LiteRT 2.1.1 refuses a partly delegated model without CPU in the set. Init then times the
+//     decoder's first step on zeroed caches and refuses one no APU step comes near.
 //   * THE DRIVER IS CHECKED BEFORE ANY MODEL IS OPENED (the owner's ruling, design §2.3), and the
 //     chip is checked against the file's own LiteRtStamp before LiteRT sees the file.
 //
@@ -39,6 +48,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cinttypes>
@@ -110,7 +120,10 @@ std::string dlErr() {
 // libLiteRt.so 2.1.1 (sha256 6ddc1b3d...) at VERS_1.0 before it went on this list.
 //
 // NOT on it, deliberately: LiteRtDestroyEnvironment. The environment is process state (design
-// §2.6); a symbol that is never resolved is a call that cannot be written by accident.
+// §2.6); a symbol that is never resolved is a call that cannot be written by accident. Nor
+// LiteRtCreateManagedTensorBufferFromRequirements, for the same reason and a worse failure: in 2.1.1
+// it gives the buffer the requirements' strides, which the MediaTek dispatch refuses to register
+// (createBufferLocked says how, and what is called instead).
 #define LITERT_SYMBOLS(X)                                   \
     X(LiteRtGetStatusString)                                \
     X(LiteRtCreateEnvironment)                              \
@@ -146,7 +159,7 @@ std::string dlErr() {
     X(LiteRtGetTensorBufferRequirementsStrides)             \
     X(LiteRtGetNumTensorBufferRequirementsSupportedBufferTypes) \
     X(LiteRtGetTensorBufferRequirementsSupportedTensorBufferType) \
-    X(LiteRtCreateManagedTensorBufferFromRequirements)      \
+    X(LiteRtCreateManagedTensorBuffer)                      \
     X(LiteRtDestroyTensorBuffer)                            \
     X(LiteRtGetTensorBufferType)                            \
     X(LiteRtGetTensorBufferPackedSize)                      \
@@ -268,10 +281,18 @@ constexpr int kNeuronNoError = 0;
 /// directory. The one the tier was measured on - and the only one the product's manifest declares,
 /// so under targetSdk >= 31 the only one the app's namespace can open at all - is the first.
 ///
-/// One difference from LiteRT, stated: v2.1.1 tries `.9` only when libneuron_sys_util.mtk.so's magic
-/// number says the ROM is v9-class; this walk tries it unconditionally. The effect can only be a
-/// REFUSAL LiteRT would not have made (a loadable `.9` wins here and is refused below), never a pass
-/// it would not have - and the product does not declare `.9`, so it cannot load in the first place.
+/// Two differences from LiteRT, stated:
+///   * v2.1.1 tries `.9` only when libneuron_sys_util.mtk.so's magic number says the ROM is v9-class;
+///     this walk tries it unconditionally. The effect can only be a REFUSAL LiteRT would not have made
+///     (a loadable `.9` wins here and is refused below), never a pass it would not have - and the
+///     product does not declare `.9`, so it cannot load in the first place.
+///   * THE FLAGS ARE NOT LITERT'S. LiteRT opens each candidate with SharedLibrary::Load(path,
+///     RtldFlags::Default()), which is RTLD_LAZY | RTLD_LOCAL (| RTLD_DEEPBIND where that exists -
+///     bionic defines none; cc/internal/litert_shared_library.h); this walk uses RTLD_NOW |
+///     RTLD_NODELETE. On bionic the VERDICT is identical - a candidate loads here exactly when it
+///     loads there: RTLD_LAZY is "Not supported on Android; Android always uses RTLD_NOW" (the NDK's
+///     dlfcn.h), RTLD_LOCAL is 0 and the default, and RTLD_NODELETE changes only what an unload would
+///     do. That is what it is for: the handle, and the adapter's 5 s constructor, never go away.
 constexpr const char *kAdapterCandidates[] = {
     "libneuronusdk_adapter.mtk.so",
     "libneuronusdk_adapter.9.mtk.so",
@@ -315,6 +336,7 @@ void walkAdapterCandidatesLocked(const std::string &dispatchDir) {
     std::vector<std::string> names(std::begin(kAdapterCandidates), std::end(kAdapterCandidates));
     names.push_back(dispatchDir + "/" + kDispatchDirAdapter);
     for (const std::string &name : names) {
+        // Not LiteRT's RTLD_LAZY | RTLD_LOCAL, and on bionic the same answer (see kAdapterCandidates).
         void *h = dlopen(name.c_str(), RTLD_NOW | RTLD_NODELETE);
         if (!adapter.candidates.empty()) adapter.candidates += ",";
         if (h) {
@@ -453,6 +475,66 @@ constexpr const char *kInputIds = "input_ids";
 constexpr const char *kPositionIds = "position_ids";
 constexpr const char *kAttentionMask = "attention_mask";
 
+/// THE ACCELERATOR SETS - one per model, and different on purpose (P1b review, finding 1).
+///
+/// LiteRT 2.1.1's LiteRtCreateCompiledModel refuses a model with any op left outside every delegate
+/// unless kLiteRtHwAcceleratorCpu is in the set: kLiteRtStatusErrorCompilation, "Some ops are not
+/// accelerated. Add kLiteRtHwAcceleratorCpu ..." (runtime/compiled_model.cc).
+///   * THE ENCODER compiled to one DISPATCH_OP with no op left for the CPU, so the NPU alone creates
+///     it - and a refusal there is the error the design wants: none of it may run anywhere else.
+///   * THE DECODER keeps its two embedding lookups and their bounds guards on the CPU in front of its
+///     DISPATCH_OP (24 small ops by the sheet's census, §4). On the NPU alone, init would fail at the
+///     decoder after the encoder's ~8 s create; it needs NPU | CPU.
+/// Every tablet run so far went through the Kotlin API, which does this silently: CompiledModel's
+/// create widens a lone Accelerator.NPU to {NPU, CPU} "to support partially compiled models", for
+/// both models. So the encoder on the NPU ALONE is new on the tablet, and the device gate is its
+/// first run.
+///
+/// What CPU in the decoder's set can do is run those two dozen ops, and nothing else. The four layers
+/// and the logits projection exist in the file ONLY as the DISPATCH_OP's DLA bytecode; a DISPATCH_OP
+/// no dispatch claimed keeps LiteRT's stub kernel, whose eval fails the run ("Stub operation
+/// invoked", runtime/compiled_model.cc) - a loud error, never a quiet CPU decode - and a file with no
+/// DISPATCH_OP at all (the uncompiled export) has no LiteRtStamp and is refused before LiteRT opens
+/// it. The APU check at init (kApuStepCeilingMs) is the third line, and the one that is measured
+/// rather than argued.
+constexpr LiteRtHwAcceleratorSet kEncoderAccelerators = kLiteRtHwAcceleratorNpu;
+constexpr LiteRtHwAcceleratorSet kDecoderAccelerators = kLiteRtHwAcceleratorNpu | kLiteRtHwAcceleratorCpu;
+
+/// THE APU CHECK'S CEILING, ms, for one decoder step (LiteRtRunCompiledModel alone). Init runs the
+/// decoder's first step and refuses one slower than this: "decoder ran without the APU (step N ms)",
+/// and the backend's loud CPU fallback takes the session. The numbers it sits between, all measured
+/// on the Tab S10+:
+///   * an APU step, 19-24 ms: t5 (synthetic inputs) mean 24.3, min 19.3, max 31.5, and 23.4 for the
+///     cold first run after create; t6/t8 (real speech) 18.3-23.8 per utterance (sheet 2026-09-24,
+///     §4 and §5);
+///   * a CPU step, 119 ms: the Mali sheet's CPU arm (2026-09-10-tab-turbo-e2e-gpu.md §3.2, int8, four
+///     threads) - the only whisper decoder ever timed on this tablet's CPU, and NOT this graph: that
+///     one had no KV cache and computed all 128 positions every step.
+/// 250 ms is over ten APU steps, so a working APU - cold, or thermally stepped down - never trips
+/// it, and over twice that CPU step. What it cannot promise is to catch EVERY CPU run: a KV-cached
+/// step computes one token and has never been timed on this CPU, and may well come in under it.
+/// That run is ruled out structurally (kDecoderAccelerators says how); this catches the gross case.
+constexpr double kApuStepCeilingMs = 250.0;
+
+/// THE SELF-KV STRATEGIES, nativeInit's selfKvStrategy (P1b review, finding 4). Both stay until the
+/// device gate has timed them; the faster becomes the default in a later commit.
+///   0 = TWO SETS RE-BOUND PER STEP. Each step reads one set and writes the other, and the sets swap
+///       roles by re-binding the run arrays' handles. No byte moves - but it is not free: at the next
+///       run the v2.1.1 dispatch kernel finds each of the 2 x 2L self-KV tensors bound to a different
+///       buffer than last time, and for every one it detaches the old handle, REGISTERS the new
+///       buffer with the dispatch and unregisters the old one (runtime/dispatch/
+///       dispatch_delegate_kernel.cc) - sixteen re-registrations a step on turbo, inside the run.
+///   1 = ONE SET AND A DEVICE-SIDE COPY. Set 0 is always the input and set 1 always the output, so no
+///       binding ever changes and the dispatch registers each buffer once; after every step the 2L
+///       cache tensors the decoder wrote are copied back into set 0 under lock (~8 MB on turbo).
+constexpr int kSelfKvRebind = 0;
+constexpr int kSelfKvCopy = 1;
+
+/// THE STEPTIME BOUND: `npu-debug: steptime` is logged for the first kStepTimeLines positions of a
+/// segment's first rung and once more for the segment's last step - qnn_asr.cpp's
+/// four-lines-per-segment rule, so a long segment cannot flood WE-DIAG.
+constexpr uint32_t kStepTimeLines = 4;
+
 /// The additive mask's two values. -1e4, not -inf: the APU computes in fp16, where -1e4 is
 /// representable and a softmax over it underflows to exactly 0, and it is the value the pair was
 /// exported with (export_decoder_mtk.py) and every tablet run used.
@@ -501,6 +583,8 @@ struct Slot {
     LiteRtModel model = nullptr;
     LiteRtOptions options = nullptr;
     LiteRtCompiledModel compiled = nullptr;
+    /// The set its options asked for (kEncoderAccelerators / kDecoderAccelerators), for the lines.
+    LiteRtHwAcceleratorSet accelerators = kLiteRtHwAcceleratorNone;
     LiteRtParamIndex sig = 0;
     std::vector<std::string> inNames;
     std::vector<std::string> outNames;
@@ -529,11 +613,15 @@ struct AsrState {
     uint32_t maskLen = 0;
     int32_t langTokenFirst = 0;
     int32_t langTokenLast = 0;
+    /// Passed through to LiteRT's MediaTek options and INERT on 2.1.1 (buildOptionsLocked says why).
     int performanceMode = -1;
+    /// kSelfKvRebind or kSelfKvCopy: how the self-KV cache advances a step.
+    int selfKvStrategy = kSelfKvRebind;
 
-    // ---- the buffers. EVERY one is a managed buffer created from requirements and listed in
-    // `owned`, which is the only thing releaseLocked walks; `joined` holds the requirement joins this
-    // session created (the models' own requirements belong to the compiled models).
+    // ---- the buffers. EVERY one is a managed buffer typed and sized by requirements and made
+    // unstrided (createBufferLocked), and listed in `owned`, which is the only thing releaseLocked
+    // walks; `joined` holds the requirement joins this session created (the models' own
+    // requirements belong to the compiled models).
     std::vector<LiteRtTensorBuffer> owned;
     std::vector<LiteRtTensorBufferRequirements> joined;
     LiteRtTensorBuffer mel = nullptr;
@@ -546,10 +634,11 @@ struct AsrState {
     /// one buffer each, created from the join of both sides' requirements. Nothing is copied between
     /// the passes.
     std::vector<LiteRtTensorBuffer> cross;
-    /// THE PING-PONG: two sets of the 2*layers self-KV buffers (k0,v0,k1,v1,...), each created from
+    /// THE SELF-KV BUFFERS: two sets of the 2*layers tensors (k0,v0,k1,v1,...), each buffer made from
     /// the join of its `_in` input and `_out` output requirements so either set can play either role.
-    /// Each step binds one set as the inputs and the other as the outputs, then swaps - re-binding
-    /// the run arrays' handles, moving not one byte (qnn_asr.cpp's bindSelfKvLocked, mirrored).
+    /// How a step advances the cache is selfKvStrategy's: the two sets swap roles by re-binding - no
+    /// byte moves, and the dispatch re-registers every re-bound buffer (0) - or set 0 stays the input
+    /// and the step's output in set 1 is copied back into it (1).
     std::vector<LiteRtTensorBuffer> selfKv[2];
     std::vector<size_t> selfKvBytes;
     int selfInSet = 0;
@@ -570,9 +659,11 @@ struct AsrState {
     std::vector<float> maskHost;
 
     /// The per-segment timing the decode line reports: run is LiteRtRunCompiledModel, io is the
-    /// three input writes plus the logits read.
+    /// three input writes plus the logits read, kv is strategy 1's copies. Strategy 0's re-binds cost
+    /// nothing on the host; their price is the dispatch's re-registration, which is inside run.
     double runMs = 0.0;
     double ioMs = 0.0;
+    double kvMs = 0.0;
 
     /// The encode-validity flag, qnn_asr.cpp's: set only by a successful encode, cleared on entry to
     /// every encode, by release and by a fresh init, and NOT consumed by a decode or a detect.
@@ -850,17 +941,36 @@ std::string checkIoLocked(const Slot &slot, const std::vector<TensorExpect> &ins
     return "";
 }
 
-/// Options: NPU ONLY - a refusal to delegate is an error, never a quiet CPU run of a 1.3 GB graph -
-/// plus the MediaTek performance mode when one is asked for (-1 leaves LiteRT's default, which is
-/// the arm the tablet numbers so far were taken on).
-std::string buildOptionsLocked(Slot &slot, int performanceMode) {
+/// An accelerator set as the lines print it: "NPU", "NPU|CPU".
+std::string accelName(LiteRtHwAcceleratorSet a) {
+    std::string s;
+    if (a & kLiteRtHwAcceleratorNpu) s += "NPU";
+    if (a & kLiteRtHwAcceleratorGpu) s += s.empty() ? "GPU" : "|GPU";
+    if (a & kLiteRtHwAcceleratorCpu) s += s.empty() ? "CPU" : "|CPU";
+    return s.empty() ? "none" : s;
+}
+
+/// Options: [accelerators] - the model's own set, kEncoderAccelerators or kDecoderAccelerators above -
+/// plus the MediaTek performance mode when one is asked for (-1 leaves LiteRT's default).
+///
+/// THE PERFORMANCE MODE IS INERT ON LITERT 2.1.1 WITH AOT FILES (P1b review, finding 3). It is handed
+/// to LiteRT's MediaTek options and validated by LiteRT's own setter, and then nothing reads it: the
+/// v2.1.1 dispatch passes its options to the adapter loader, which reads only the Neuron SDK version
+/// type (dispatch_api.cc, neuron_adapter_api.cc), and the DLA load path hard-codes
+/// NEURON_PRIORITY_HIGH and NEURON_PREFER_SUSTAINED_SPEED on the compilation and a boost hint of 100
+/// on every execution (litert_dispatch_invocation_context.cc, LoadFromDlaBytecode and Create). So every
+/// run on this runtime is in that mode whatever is passed here, no line may report the value as the
+/// mode the APU ran in, and "PreferSustainedSpeed vs default" is not a comparison this runtime can
+/// make. It is kept, validated and passed through so P2 can pin a value for a runtime that reads it.
+std::string buildOptionsLocked(Slot &slot, LiteRtHwAcceleratorSet accelerators, int performanceMode) {
     LiteRtStatus s = rt.api.LiteRtCreateOptions(&slot.options);
     if (s != kLiteRtStatusOk || !slot.options) {
         slot.options = nullptr;
         return std::string(slot.label) + " LiteRtCreateOptions: " + st(s);
     }
-    s = rt.api.LiteRtSetOptionsHardwareAccelerators(slot.options, kLiteRtHwAcceleratorNpu);
-    if (s != kLiteRtStatusOk) return std::string(slot.label) + " accelerators=NPU: " + st(s);
+    s = rt.api.LiteRtSetOptionsHardwareAccelerators(slot.options, accelerators);
+    if (s != kLiteRtStatusOk) return std::string(slot.label) + " accelerators=" + accelName(accelerators) + ": " + st(s);
+    slot.accelerators = accelerators;
     if (performanceMode < 0) return "";
     LiteRtOpaqueOptions mtk = nullptr;
     s = rt.api.LiteRtMediatekOptionsCreate(&mtk);
@@ -889,12 +999,14 @@ std::string compileLocked(Slot &slot, double *ms) {
     *ms = msSince(t0);
     if (s != kLiteRtStatusOk || !slot.compiled) {
         slot.compiled = nullptr;
-        return std::string(slot.label) + " LiteRtCreateCompiledModel (the bytecode restore): " + st(s) +
-               " after " + std::to_string(static_cast<long long>(*ms)) + " ms";
+        return std::string(slot.label) + " LiteRtCreateCompiledModel (the bytecode restore, accelerators " +
+               accelName(slot.accelerators) + "): " + st(s) + " after " +
+               std::to_string(static_cast<long long>(*ms)) + " ms";
     }
     bool full = false;
     const bool known = rt.api.LiteRtCompiledModelIsFullyAccelerated(slot.compiled, &full) == kLiteRtStatusOk;
-    LOGI("%s: compiled for the NPU in %.0f ms (fully accelerated: %s)", slot.label, *ms,
+    LOGI("%s: compiled with accelerators %s in %.0f ms (fully accelerated: %s)", slot.label,
+         accelName(slot.accelerators).c_str(), *ms,
          known ? (full ? "yes" : "no - the leftover ops run on LiteRT's CPU kernels") : "?");
     return "";
 }
@@ -921,29 +1033,120 @@ std::string reqDesc(LiteRtTensorBufferRequirements r) {
     return s;
 }
 
-/// One managed buffer from [req], typed [type], owned by the session. Its packed size must be the
-/// tensor's exact bytes: that is what every Lock below reads or writes, nothing more.
+/// Who reads or writes a buffer - which decides the memory it may live in.
+enum class Consumer {
+    /// A DISPATCH_OP: the mel, the eight cross-KV, the sixteen self-KV, the mask and the logits, 27 on
+    /// turbo. The v2.1.1 MediaTek dispatch registers AHardwareBuffer and DMA-BUF and nothing else.
+    Dispatch,
+    /// Only the CPU ops in front of the decoder's DISPATCH_OP: input_ids and position_ids, the two
+    /// embedding lookups' indices. Host memory is what those ops were built for, and what every run
+    /// so far gave them (LiteRT locks a CPU op's buffer whatever its type).
+    Cpu,
+};
+
+/// The memory type for a buffer [consumer] touches, chosen among the types [req] supports: AHWB,
+/// else DMA-BUF, for a DISPATCH_OP - and a refusal when the requirements offer neither, which the
+/// first run would otherwise report later and less clearly ("Unsupported buffer type"); host memory,
+/// else the first type offered, for the CPU's two.
+std::string pickBufferType(LiteRtTensorBufferRequirements req, Consumer consumer, const std::string &what,
+                           LiteRtTensorBufferType *out) {
+    int n = 0;
+    if (rt.api.LiteRtGetNumTensorBufferRequirementsSupportedBufferTypes(req, &n) != kLiteRtStatusOk || n <= 0) {
+        return "buffer " + what + ": the requirements offer no buffer type (" + reqDesc(req) + ")";
+    }
+    bool ahwb = false, dmaBuf = false, host = false;
+    LiteRtTensorBufferType first = kLiteRtTensorBufferTypeUnknown;
+    for (int i = 0; i < n; ++i) {
+        LiteRtTensorBufferType t = kLiteRtTensorBufferTypeUnknown;
+        if (rt.api.LiteRtGetTensorBufferRequirementsSupportedTensorBufferType(req, i, &t) != kLiteRtStatusOk) continue;
+        if (first == kLiteRtTensorBufferTypeUnknown) first = t;
+        ahwb = ahwb || t == kLiteRtTensorBufferTypeAhwb;
+        dmaBuf = dmaBuf || t == kLiteRtTensorBufferTypeDmaBuf;
+        host = host || t == kLiteRtTensorBufferTypeHostMemory;
+    }
+    if (consumer == Consumer::Dispatch) {
+        if (ahwb) *out = kLiteRtTensorBufferTypeAhwb;
+        else if (dmaBuf) *out = kLiteRtTensorBufferTypeDmaBuf;
+        else return "buffer " + what + ": the requirements offer neither AHardwareBuffer (2) nor DMA-BUF (4) (" +
+                    reqDesc(req) + "), the only two the v2.1.1 MediaTek dispatch registers";
+        return "";
+    }
+    if (host) *out = kLiteRtTensorBufferTypeHostMemory;
+    else if (first != kLiteRtTensorBufferTypeUnknown) *out = first;
+    else return "buffer " + what + ": no requirement type is readable (" + reqDesc(req) + ")";
+    return "";
+}
+
+/// ONE BUFFER, owned by the session: of the type pickBufferType chooses from [req], of [req]'s size
+/// (the join's, for a shared buffer: the larger side's), with [type]'s element type and dims - AND NO
+/// STRIDES (P1b review, finding 2).
+///
+/// Not LiteRtCreateManagedTensorBufferFromRequirements: in 2.1.1 it copies the requirements' strides
+/// into the buffer's layout (has_strides = true) whenever the requirements carry any
+/// (c/litert_tensor_buffer.cc), the MediaTek dispatch's requirements always do (computed from its
+/// padded dimensions), and the same dispatch refuses every strided buffer when it registers it
+/// ("Tensor strides are not supported", litert_dispatch_device_context.cc) - all 27 dispatch-facing
+/// buffers would have been refused at the first LiteRtRunCompiledModel. This is what the Kotlin API
+/// made on every tablet run instead (CompiledModel::CreateBufferImpl: a type the requirements list,
+/// their size, and the tensor's own unstrided type through LiteRtCreateManagedTensorBuffer): the
+/// requirements choose the memory and the size, never the layout. They are only read here; who owns
+/// them does not change.
+///
+/// The packed size must be the tensor's exact bytes: that is what every Lock below reads or writes.
 std::string createBufferLocked(LiteRtTensorBufferRequirements req, const LiteRtRankedTensorType &type,
-                               const std::string &what, LiteRtTensorBuffer *out) {
+                               Consumer consumer, const std::string &what, LiteRtTensorBuffer *out) {
+    const size_t packedBytes = tensorBytes(type);
+    size_t size = 0;
+    if (rt.api.LiteRtGetTensorBufferRequirementsBufferSize(req, &size) != kLiteRtStatusOk) {
+        return "buffer " + what + ": the requirements' size is unreadable";
+    }
+    if (packedBytes == 0 || size < packedBytes) {
+        return "buffer " + what + ": the requirements ask for " + std::to_string(size) + " B, the tensor is " +
+               std::to_string(packedBytes) + " B";
+    }
+    LiteRtTensorBufferType bufferType = kLiteRtTensorBufferTypeUnknown;
+    const std::string err = pickBufferType(req, consumer, what, &bufferType);
+    if (!err.empty()) return err;
+    LiteRtRankedTensorType unstrided = type;
+    unstrided.layout.has_strides = false;
+    memset(unstrided.layout.strides, 0, sizeof(unstrided.layout.strides));
     LiteRtTensorBuffer b = nullptr;
-    const LiteRtStatus s = rt.api.LiteRtCreateManagedTensorBufferFromRequirements(rt.env, &type, req, &b);
+    const LiteRtStatus s = rt.api.LiteRtCreateManagedTensorBuffer(rt.env, bufferType, &unstrided, size, &b);
     if (s != kLiteRtStatusOk || !b) {
-        return "buffer " + what + ": LiteRtCreateManagedTensorBufferFromRequirements " + st(s) + " (" + reqDesc(req) + ")";
+        return "buffer " + what + ": LiteRtCreateManagedTensorBuffer(type " +
+               std::to_string(static_cast<int>(bufferType)) + ", " + std::to_string(size) + " B) " + st(s) + " (" +
+               reqDesc(req) + ")";
     }
     g.owned.push_back(b);
     size_t packed = 0;
-    if (rt.api.LiteRtGetTensorBufferPackedSize(b, &packed) != kLiteRtStatusOk || packed != tensorBytes(type)) {
+    if (rt.api.LiteRtGetTensorBufferPackedSize(b, &packed) != kLiteRtStatusOk || packed != packedBytes) {
         return "buffer " + what + ": packed size " + std::to_string(packed) + " B, the tensor is " +
-               std::to_string(tensorBytes(type)) + " B";
+               std::to_string(packedBytes) + " B";
     }
     *out = b;
     return "";
 }
 
+/// A made buffer beside the requirements it was made from, for the `buffers:` line: the
+/// requirements' offer (whose `strides=` count is what was NOT applied), then the type made.
+std::string madeDesc(LiteRtTensorBuffer b, LiteRtTensorBufferRequirements r) {
+    LiteRtTensorBufferType t = kLiteRtTensorBufferTypeUnknown;
+    size_t packed = 0;
+    if (b) {
+        rt.api.LiteRtGetTensorBufferType(b, &t);
+        rt.api.LiteRtGetTensorBufferPackedSize(b, &packed);
+    }
+    return "{" + (r ? reqDesc(r) : std::string("requirements ?")) + " -> type " +
+           std::to_string(static_cast<int>(t)) + ", " + std::to_string(packed) + " B packed}";
+}
+
 /// THE SHARED-BUFFER GUARD, the LiteRT twin of qnn_asr.cpp's C7 alias guard: two tensors that are
 /// to be ONE buffer must be the same tensor in every respect this API can state - element type and
-/// dims, requirement size, strides - and their requirements must join. A failed join is a refusal,
-/// never a fallback to two buffers and a copy.
+/// dims, and the strides each side's requirements report, which are the layout each compilation reads
+/// the bytes in (one buffer holds one layout; the strides are compared here and never applied, see
+/// createBufferLocked) - and their requirements must join. The SIZES may differ, by trailing padding:
+/// the buffer takes the larger, which is the join's own rule (runtime/tensor_buffer_requirements.cc:
+/// the max of the two). A failed join is a refusal, never a fallback to two buffers and a copy.
 std::string joinLocked(LiteRtTensorBufferRequirements a, const LiteRtRankedTensorType &ta,
                        LiteRtTensorBufferRequirements b, const LiteRtRankedTensorType &tb,
                        const std::string &what, LiteRtTensorBufferRequirements *out) {
@@ -959,7 +1162,6 @@ std::string joinLocked(LiteRtTensorBufferRequirements a, const LiteRtRankedTenso
         rt.api.LiteRtGetTensorBufferRequirementsStrides(b, &nb, &pb) != kLiteRtStatusOk) {
         return "join " + what + ": requirements unreadable";
     }
-    if (sa != sb) return "join " + what + ": sizes " + std::to_string(sa) + " and " + std::to_string(sb);
     if (na != nb || (na > 0 && (!pa || !pb || memcmp(pa, pb, sizeof(uint32_t) * static_cast<size_t>(na)) != 0))) {
         return "join " + what + ": the two sides' strides differ";
     }
@@ -971,8 +1173,9 @@ std::string joinLocked(LiteRtTensorBufferRequirements a, const LiteRtRankedTenso
     }
     g.joined.push_back(j);
     size_t sj = 0;
-    if (rt.api.LiteRtGetTensorBufferRequirementsBufferSize(j, &sj) != kLiteRtStatusOk || sj != sa) {
-        return "join " + what + ": the joined size " + std::to_string(sj) + " is not the sides' " + std::to_string(sa);
+    if (rt.api.LiteRtGetTensorBufferRequirementsBufferSize(j, &sj) != kLiteRtStatusOk || sj < std::max(sa, sb)) {
+        return "join " + what + ": the joined size " + std::to_string(sj) + " does not cover the larger side (" +
+               std::to_string(sa) + " / " + std::to_string(sb) + ")";
     }
     *out = j;
     return "";
@@ -996,7 +1199,7 @@ std::string outReq(const Slot &slot, size_t idx, LiteRtTensorBufferRequirements 
 
 /// Allocates every buffer and fills the four run arrays. After this the encoder writes the eight
 /// cross-KV buffers that ARE the decoder's cross-KV inputs, and each decode step only rewrites
-/// three small inputs and swaps which self-KV set is which.
+/// three small inputs and advances the self-KV cache (advanceSelfKvLocked).
 std::string allocateLocked() {
     const size_t L = g.layers;
     g.encIn.assign(g.enc.inNames.size(), nullptr);
@@ -1008,7 +1211,7 @@ std::string allocateLocked() {
     const size_t melIdx = g.enc.inIndex.at(kInputFeatures);
     LiteRtTensorBufferRequirements r = nullptr;
     std::string err = inReq(g.enc, melIdx, &r);
-    if (err.empty()) err = createBufferLocked(r, g.enc.inTypes[melIdx], kInputFeatures, &g.mel);
+    if (err.empty()) err = createBufferLocked(r, g.enc.inTypes[melIdx], Consumer::Dispatch, kInputFeatures, &g.mel);
     if (!err.empty()) return err;
     g.melBytes = tensorBytes(g.enc.inTypes[melIdx]);
     g.encIn[melIdx] = g.mel;
@@ -1022,13 +1225,14 @@ std::string allocateLocked() {
         err = outReq(g.enc, j, &er);
         if (err.empty()) err = inReq(g.dec, di, &dr);
         if (err.empty()) err = joinLocked(er, g.enc.outTypes[j], dr, g.dec.inTypes[di], name, &jr);
-        if (err.empty()) err = createBufferLocked(jr, g.enc.outTypes[j], name, &g.cross[j]);
+        if (err.empty()) err = createBufferLocked(jr, g.enc.outTypes[j], Consumer::Dispatch, name, &g.cross[j]);
         if (!err.empty()) return err;
         g.encOut[j] = g.cross[j];
         g.decIn[di] = g.cross[j];
     }
 
-    // The self-KV ping-pong: input k/v_cache_self_i_in with output 1+2i / 2+2i, two buffers each.
+    // The self-KV sets: input k/v_cache_self_i_in with output 1+2i / 2+2i, two buffers each - both
+    // strategies make the same sixteen; they differ only in how a step advances them.
     g.selfInIdx.assign(2 * L, 0);
     g.selfOutIdx.assign(2 * L, 0);
     g.selfKvBytes.assign(2 * L, 0);
@@ -1043,7 +1247,8 @@ std::string allocateLocked() {
         if (err.empty()) err = outReq(g.dec, dout, &orq);
         if (err.empty()) err = joinLocked(ir, g.dec.inTypes[di], orq, g.dec.outTypes[dout], name + "_in/_out", &jr);
         for (int set = 0; set < 2 && err.empty(); ++set) {
-            err = createBufferLocked(jr, g.dec.inTypes[di], name + " set " + std::to_string(set), &g.selfKv[set][j]);
+            err = createBufferLocked(jr, g.dec.inTypes[di], Consumer::Dispatch, name + " set " + std::to_string(set),
+                                     &g.selfKv[set][j]);
         }
         if (!err.empty()) return err;
         g.selfInIdx[j] = di;
@@ -1051,21 +1256,22 @@ std::string allocateLocked() {
         g.selfKvBytes[j] = tensorBytes(g.dec.inTypes[di]);
     }
 
-    // The three step inputs and the logits.
-    struct One { const char *name; LiteRtTensorBuffer *buf; size_t *idx; };
-    const One ones[] = {{kInputIds, &g.inputIds, &g.decInputIdsIdx},
-                        {kPositionIds, &g.positionIds, &g.decPositionIdsIdx},
-                        {kAttentionMask, &g.mask, &g.decMaskIdx}};
+    // The three step inputs and the logits. input_ids and position_ids are the two buffers no
+    // DISPATCH_OP touches - only the CPU-side embedding lookups read them.
+    struct One { const char *name; LiteRtTensorBuffer *buf; size_t *idx; Consumer consumer; };
+    const One ones[] = {{kInputIds, &g.inputIds, &g.decInputIdsIdx, Consumer::Cpu},
+                        {kPositionIds, &g.positionIds, &g.decPositionIdsIdx, Consumer::Cpu},
+                        {kAttentionMask, &g.mask, &g.decMaskIdx, Consumer::Dispatch}};
     for (const One &o : ones) {
         const size_t di = g.dec.inIndex.at(o.name);
         err = inReq(g.dec, di, &r);
-        if (err.empty()) err = createBufferLocked(r, g.dec.inTypes[di], o.name, o.buf);
+        if (err.empty()) err = createBufferLocked(r, g.dec.inTypes[di], o.consumer, o.name, o.buf);
         if (!err.empty()) return err;
         *o.idx = di;
         g.decIn[di] = *o.buf;
     }
     err = outReq(g.dec, 0, &r);
-    if (err.empty()) err = createBufferLocked(r, g.dec.outTypes[0], "logits", &g.logitsBuf);
+    if (err.empty()) err = createBufferLocked(r, g.dec.outTypes[0], Consumer::Dispatch, "logits", &g.logitsBuf);
     if (!err.empty()) return err;
     g.decOut[0] = g.logitsBuf;
     g.logits.assign(g.vocab, 0.0f);
@@ -1087,16 +1293,24 @@ std::string allocateLocked() {
         if (!g.decOut[i]) return "decoder output " + std::to_string(i) + " was never bound";
     }
 
-    // What the compiled models asked for, once per session: the buffer TYPES are the evidence that
-    // the requirements path, not a host allocation, produced them (2 = AHardwareBuffer, 4 = DMA-BUF).
-    LiteRtTensorBufferRequirements melReq = nullptr, logitsReq = nullptr;
+    // What the compiled models asked for and what was made, once per session, one of each kind. The
+    // made type is 2 (AHardwareBuffer) or 4 (DMA-BUF) for every buffer a DISPATCH_OP touches and 1
+    // (host memory) for input_ids and position_ids; each requirement's `strides=` count is what was
+    // NOT applied, and its size against the packed bytes shows any padding the dispatch asked for.
+    LiteRtTensorBufferRequirements melReq = nullptr, maskReq = nullptr, logitsReq = nullptr;
+    LiteRtTensorBufferRequirements idsReq = nullptr, posReq = nullptr;
     inReq(g.enc, melIdx, &melReq);
+    inReq(g.dec, g.decMaskIdx, &maskReq);
     outReq(g.dec, 0, &logitsReq);
-    LOGI("buffers: %zu managed, %zu joins; mel {%s}; cross-KV 0 {%s}; self-KV 0 {%s}; logits {%s}",
-         g.owned.size(), g.joined.size(), melReq ? reqDesc(melReq).c_str() : "?",
-         g.joined.empty() ? "?" : reqDesc(g.joined.front()).c_str(),
-         g.joined.size() > 2 * L ? reqDesc(g.joined[2 * L]).c_str() : "?",
-         logitsReq ? reqDesc(logitsReq).c_str() : "?");
+    inReq(g.dec, g.decInputIdsIdx, &idsReq);
+    inReq(g.dec, g.decPositionIdsIdx, &posReq);
+    const bool joins = g.joined.size() > 2 * L;
+    LOGI("buffers: %zu made, %zu joins; mel %s; cross-KV 0 %s; self-KV 0 %s; attention_mask %s; logits %s; "
+         "input_ids %s; position_ids %s", g.owned.size(), g.joined.size(), madeDesc(g.mel, melReq).c_str(),
+         madeDesc(g.cross.front(), joins ? g.joined.front() : nullptr).c_str(),
+         madeDesc(g.selfKv[0].front(), joins ? g.joined[2 * L] : nullptr).c_str(),
+         madeDesc(g.mask, maskReq).c_str(), madeDesc(g.logitsBuf, logitsReq).c_str(),
+         madeDesc(g.inputIds, idsReq).c_str(), madeDesc(g.positionIds, posReq).c_str());
     return "";
 }
 
@@ -1122,8 +1336,13 @@ std::string readLocked(LiteRtTensorBuffer b, void *dst, size_t n, const char *wh
     return "";
 }
 
-/// Binds set [inSet] as the decoder's self-KV INPUTS and the other set as its OUTPUTS - 2 x 2L
-/// handle stores into the run arrays, and not one byte moved.
+/// Binds set [inSet] as the decoder's self-KV INPUTS and the other set as its OUTPUTS: 2 x 2L handle
+/// stores into the run arrays. No byte moves - but this is not the free pointer store it looks like
+/// when the binding CHANGES: at the next LiteRtRunCompiledModel the v2.1.1 dispatch kernel finds each
+/// re-bound tensor holding a different buffer than on the previous run, and for every one it
+/// detaches the old handle, registers the new buffer with the dispatch and unregisters the old one
+/// (runtime/dispatch/dispatch_delegate_kernel.cc). Strategy 0 changes all 2 x 2L on every step (16 on
+/// turbo), a cost that lands inside the run's time; strategy 1 binds set 0 once and never changes it.
 void bindSelfKvLocked(int inSet) {
     const int outSet = 1 - inSet;
     for (size_t j = 0; j < g.selfInIdx.size(); ++j) {
@@ -1133,9 +1352,43 @@ void bindSelfKvLocked(int inSet) {
     g.selfInSet = inSet;
 }
 
-/// Zeroes BOTH sets and binds set 0 as the input side. The window is a right-aligned shift register
-/// and the never-written columns are exactly the ones the mask blocks, so this is determinism, not
-/// correctness: a previous segment's cache must not reach this one through any slot.
+/// STRATEGY 1's advance: the step wrote the advanced cache into set 1 (the outputs); each of the 2L
+/// tensors is copied back into set 0 (the inputs) with the source locked for read and the target for
+/// write, so the next step reads it through a binding that never changed. ~8 MB a step on turbo; the
+/// time lands in g.kvMs. The packed bytes, as every other host access here moves.
+std::string copySelfKvLocked() {
+    const auto t0 = Clock::now();
+    for (size_t j = 0; j < g.selfKvBytes.size(); ++j) {
+        void *src = nullptr;
+        void *dst = nullptr;
+        LiteRtStatus s = rt.api.LiteRtLockTensorBuffer(g.selfKv[1][j], &src, kLiteRtTensorBufferLockModeRead);
+        if (s != kLiteRtStatusOk || !src) return "lock self-KV output " + std::to_string(j) + ": " + st(s);
+        s = rt.api.LiteRtLockTensorBuffer(g.selfKv[0][j], &dst, kLiteRtTensorBufferLockModeWrite);
+        if (s != kLiteRtStatusOk || !dst) {
+            rt.api.LiteRtUnlockTensorBuffer(g.selfKv[1][j]);
+            return "lock self-KV input " + std::to_string(j) + ": " + st(s);
+        }
+        memcpy(dst, src, g.selfKvBytes[j]);
+        const LiteRtStatus unlockIn = rt.api.LiteRtUnlockTensorBuffer(g.selfKv[0][j]);
+        const LiteRtStatus unlockOut = rt.api.LiteRtUnlockTensorBuffer(g.selfKv[1][j]);
+        if (unlockIn != kLiteRtStatusOk) return "unlock self-KV input " + std::to_string(j) + ": " + st(unlockIn);
+        if (unlockOut != kLiteRtStatusOk) return "unlock self-KV output " + std::to_string(j) + ": " + st(unlockOut);
+    }
+    g.kvMs += msSince(t0);
+    return "";
+}
+
+/// THE SELF-KV ADVANCE, after every step that has a next one: selfKvStrategy's switch, in one place.
+std::string advanceSelfKvLocked() {
+    if (g.selfKvStrategy == kSelfKvCopy) return copySelfKvLocked();
+    bindSelfKvLocked(1 - g.selfInSet);
+    return "";
+}
+
+/// Zeroes BOTH sets and binds set 0 as the input side (for strategy 1, the binding it always has).
+/// The window is a right-aligned shift register and the never-written columns are exactly the ones
+/// the mask blocks, so this is determinism, not correctness: a previous segment's cache must not
+/// reach this one through any slot.
 std::string zeroSelfKvLocked() {
     for (int s = 0; s < 2; ++s) {
         for (size_t j = 0; j < g.selfKv[s].size(); ++j) {
@@ -1149,8 +1402,9 @@ std::string zeroSelfKvLocked() {
 
 // ---------------------------------------------------------------- one step
 
-/// One decoder run at [position] with [tokenId]; the step's logits land in g.logits. The caller owns
-/// the masks, the argmax and the swap.
+/// One decoder run at [position] with [tokenId]; the step's logits land in g.logits and, when
+/// [runMsOut] is given, the run's own time (LiteRtRunCompiledModel alone) in it. The caller owns the
+/// masks, the argmax and the self-KV advance.
 ///
 /// THE MASK: 200 columns = 199 cache slots + the current token, and the cache is a RIGHT-ALIGNED
 /// shift register (qnn_asr.cpp's decodeStepLocked says how each link was established; the MediaTek
@@ -1158,7 +1412,7 @@ std::string zeroSelfKvLocked() {
 /// check in export_decoder_mtk.py closed it against HF's own decoder at steps 0 and 1). So at
 /// position p the LAST p+1 columns attend and the rest are blocked:
 ///   p = 0 -> column 199 only;  p = 3 -> 196..199;  p = 198 -> 1..199.
-std::string decodeStepLocked(int32_t tokenId, uint32_t position) {
+std::string decodeStepLocked(int32_t tokenId, uint32_t position, double *runMsOut = nullptr) {
     const auto t0 = Clock::now();
     const int32_t pos = static_cast<int32_t>(position);
     std::string err = writeLocked(g.inputIds, &tokenId, sizeof(tokenId), kInputIds);
@@ -1173,9 +1427,36 @@ std::string decodeStepLocked(int32_t tokenId, uint32_t position) {
     const auto t2 = Clock::now();
     if (s != kLiteRtStatusOk) return "LiteRtRunCompiledModel at position " + std::to_string(position) + ": " + st(s);
     err = readLocked(g.logitsBuf, g.logits.data(), g.vocab * sizeof(float), "logits");
-    g.runMs += std::chrono::duration<double, std::milli>(t2 - t1).count();
+    const double runMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    if (runMsOut) *runMsOut = runMs;
+    g.runMs += runMs;
     g.ioMs += std::chrono::duration<double, std::milli>(t1 - t0).count() + msSince(t2);
     return err;
+}
+
+/// THE APU CHECK, init's last stage (P1b review, finding 1): the decoder's first execution - one
+/// step at position 0 with SOT over zeroed caches, the shape of every segment's first step - timed
+/// against kApuStepCeilingMs; then both self-KV sets are zeroed again so the first segment starts
+/// from an empty cache (and `encoded` is still false, so nothing decodes the zeroed cross-KV).
+/// Because it is the first execution, every buffer's first registration with the dispatch, and any
+/// refusal of one, happens here too - at arm time, loudly, before the tier has taken a word, instead
+/// of inside the first segment.
+std::string apuCheckLocked(double *runMs) {
+    for (size_t j = 0; j < g.cross.size(); ++j) {
+        const std::string err = writeLocked(g.cross[j], nullptr, tensorBytes(g.enc.outTypes[j]), "cross-KV (zero)");
+        if (!err.empty()) return "the APU check: " + err;
+    }
+    std::string err = zeroSelfKvLocked();
+    if (err.empty()) err = decodeStepLocked(kSotToken, 0, runMs);
+    if (err.empty()) err = zeroSelfKvLocked();
+    if (!err.empty()) return "the APU check: " + err;
+    if (*runMs > kApuStepCeilingMs) {
+        char why[80];
+        snprintf(why, sizeof(why), "decoder ran without the APU (step %.0f ms)", *runMs);
+        return why;
+    }
+    LOGI("apu: decoder step %.1f ms on zeroed caches (ceiling %.0f ms) pass", *runMs, kApuStepCeilingMs);
+    return "";
 }
 
 /// THE PER-STEP NON-FINITE CHECK. A NaN or an infinity in the raw logits is an fp16 overflow or a
@@ -1358,17 +1639,6 @@ std::string checkTokenIdsLocked(const std::vector<int32_t> &ids, const char *wha
     return "";
 }
 
-const char *perfModeName(int m) {
-    switch (m) {
-        case -1: return "default";
-        case kLiteRtMediatekNeuronAdapterPerformanceModeNeuronPreferLowPower: return "PreferLowPower";
-        case kLiteRtMediatekNeuronAdapterPerformanceModeNeuronPreferFastSingleAnswer: return "PreferFastSingleAnswer";
-        case kLiteRtMediatekNeuronAdapterPerformanceModeNeuronPreferSustainedSpeed: return "PreferSustainedSpeed";
-        case kLiteRtMediatekNeuronAdapterPerformanceModeNeuronPreferTurboBoost: return "PreferTurboBoost";
-        default: return "?";
-    }
-}
-
 // ---------------------------------------------------------------- teardown
 
 /// Frees THE SESSION - every tensor buffer, the requirement joins, both compiled models, their
@@ -1414,6 +1684,7 @@ void releaseLocked() {
     g.melBins = g.layers = g.heads = g.vocab = g.maskLen = 0;
     g.langTokenFirst = g.langTokenLast = 0;
     g.performanceMode = -1;
+    g.selfKvStrategy = kSelfKvRebind;
     g.encoded = false;
     g.initialised = false;
     g.epoch = 0;
@@ -1448,17 +1719,20 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeProbe(
     return env->NewStringUTF("");
 }
 
-/// Arms the session: the driver verdict (walking the adapter if no probe has), the runtime, the
-/// environment (once per process), both files' LiteRtStamp against [socStamp], both models, the IO
-/// census, NPU-only options with the MediaTek [performanceMode], both compiled models (the bytecode
-/// restores), and every buffer from the compiled models' requirements. Idempotent by releasing
-/// first - after the scalars are refused, never before.
+/// Arms the session. First what needs no file - the spec scalars, then the process's state: the
+/// driver verdict (walking the adapter if no probe has), the runtime and the environment (once per
+/// process) - all judged BEFORE a live session is released. Then both files' LiteRtStamp against
+/// [socStamp], both models, the IO census, the options (the encoder on the NPU alone, the decoder on
+/// NPU | CPU, the MediaTek [performanceMode] passed through and inert on 2.1.1), both compiled models
+/// (the bytecode restores), every buffer typed and sized by the compiled models' requirements, and
+/// the APU check. [selfKvStrategy] picks how the decode loop advances the self-KV cache. Idempotent
+/// by releasing first - after everything that can be refused without the new files, never before.
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(
         JNIEnv *env, jobject /* this */,
         jstring jEncoderPath, jstring jDecoderPath, jstring jDispatchDir, jstring jLibDir,
         jint melBins, jint decLayers, jint heads, jint vocab, jint maxPositions,
-        jstring jSocStamp, jint wantMajor, jint performanceMode) {
+        jstring jSocStamp, jint wantMajor, jint performanceMode, jint selfKvStrategy) {
     const std::string encoderPath = jstr(env, jEncoderPath);
     const std::string decoderPath = jstr(env, jDecoderPath);
     const std::string dispatchDir = jstr(env, jDispatchDir);
@@ -1475,10 +1749,34 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(
         err = "spec: performanceMode is " + std::to_string(performanceMode) + "; expected -1 (LiteRT's default) or " +
               "0..3 (LiteRtMediatekNeuronAdapterPerformanceMode)";
     }
+    if (err.empty() && selfKvStrategy != kSelfKvRebind && selfKvStrategy != kSelfKvCopy) {
+        err = "spec: selfKvStrategy is " + std::to_string(selfKvStrategy) + "; expected 0 (two self-KV sets " +
+              "re-bound per step) or 1 (one set, copied back per step)";
+    }
     if (err.empty() && socStamp.empty()) err = "spec: socStamp is empty; the family names the chip its bytecode is for";
     if (err.empty() && (wantMajor < 1 || wantMajor > 255)) {
         err = "spec: wantMajor is " + std::to_string(wantMajor) + "; a Neuron major is 1..255";
     }
+    if (!err.empty()) return env->NewStringUTF(failure("init: " + err).c_str());
+    LOGI("nativeInit spec: melBins=%d decLayers=%d heads=%d vocab=%d maxPositions=%d socStamp=%s wantMajor=%d "
+         "selfKvStrategy=%d perfmode=%d (inert on LiteRT 2.1.1 AOT); language band %d..%d", melBins, decLayers,
+         heads, vocab, maxPositions, socStamp.c_str(), wantMajor, selfKvStrategy, performanceMode,
+         census.langTokenFirst, census.langTokenLast);
+
+    // THE PROCESS'S STATE, judged BEFORE a live session is released too (P1b review, nit c). The
+    // adapter walk, the driver verdict, libLiteRt.so and the environment belong to the process, not
+    // to the session, and none of them depends on the new files - so a caller naming the wrong
+    // dispatch directory, or a driver this family refuses, costs an error string and never the
+    // working session. A probe normally ran at process start; if none did, this walk is the 5 s.
+    if (adapter.walked && adapter.dispatchDir != dispatchDir) {
+        err = "probe: the adapter was walked against " + adapter.dispatchDir + ", not " + dispatchDir;
+    }
+    if (err.empty()) {
+        const std::string reason = probeLocked(dispatchDir, wantMajor);
+        if (!reason.empty()) err = "probe: " + reason;
+    }
+    if (err.empty()) err = loadRuntimeLocked(libDir);
+    if (err.empty()) err = ensureEnvironmentLocked(dispatchDir);
     if (!err.empty()) return env->NewStringUTF(failure("init: " + err).c_str());
 
     if (g.initialised) {
@@ -1495,28 +1793,14 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(
     g.langTokenFirst = census.langTokenFirst;
     g.langTokenLast = census.langTokenLast;
     g.performanceMode = performanceMode;
-    LOGI("nativeInit spec: melBins=%d decLayers=%d heads=%d vocab=%d maxPositions=%d socStamp=%s wantMajor=%d "
-         "performanceMode=%s; language band %d..%d", melBins, decLayers, heads, vocab, maxPositions,
-         socStamp.c_str(), wantMajor, perfModeName(performanceMode), g.langTokenFirst, g.langTokenLast);
+    g.selfKvStrategy = selfKvStrategy;
 
     auto refuse = [&](const std::string &why) {
         releaseLocked();
         return env->NewStringUTF(failure("init: " + why).c_str());
     };
 
-    // 1. The driver. A probe normally ran at process start; if none did, this walk is the 5 s.
-    if (adapter.walked && adapter.dispatchDir != dispatchDir) {
-        return refuse("probe: the adapter was walked against " + adapter.dispatchDir + ", not " + dispatchDir);
-    }
-    const std::string reason = probeLocked(dispatchDir, wantMajor);
-    if (!reason.empty()) return refuse("probe: " + reason);
-
-    // 2. The runtime and the environment.
-    err = loadRuntimeLocked(libDir);
-    if (err.empty()) err = ensureEnvironmentLocked(dispatchDir);
-    if (!err.empty()) return refuse(err);
-
-    // 3. THE CHIP: both files' own stamp, before LiteRT opens either of them.
+    // 1. THE CHIP: both files' own stamp, before LiteRT opens either of them.
     for (const std::string *path : {&encoderPath, &decoderPath}) {
         std::string vendor, soc;
         err = readLiteRtStamp(*path, &vendor, &soc);
@@ -1528,35 +1812,43 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(
         LOGI("apu: stamp=%s %s matches the family", vendor.c_str(), soc.c_str());
     }
 
-    // 4. The models, their signatures, and the census.
+    // 2. The models, their signatures, and the census.
     err = openModelLocked(g.enc, encoderPath, kEncodeSignature);
     if (err.empty()) err = openModelLocked(g.dec, decoderPath, kDecodeSignature);
     if (err.empty()) err = checkIoLocked(g.enc, census.encIn, census.encOut);
     if (err.empty()) err = checkIoLocked(g.dec, census.decIn, census.decOut);
     if (!err.empty()) return refuse(err);
 
-    // 5. Options and the two restores. The first restore in a process is where LiteRT's dispatch
-    //    reaches the adapter - after a probe, only a refcount.
+    // 3. Options - each model's own accelerator set - and the two restores. The first restore in a
+    //    process is where LiteRT's dispatch reaches the adapter - after a probe, only a refcount.
     double encMs = 0.0, decMs = 0.0;
-    err = buildOptionsLocked(g.enc, performanceMode);
-    if (err.empty()) err = buildOptionsLocked(g.dec, performanceMode);
+    err = buildOptionsLocked(g.enc, kEncoderAccelerators, performanceMode);
+    if (err.empty()) err = buildOptionsLocked(g.dec, kDecoderAccelerators, performanceMode);
     if (err.empty()) err = compileLocked(g.enc, &encMs);
     if (err.empty()) err = compileLocked(g.dec, &decMs);
     if (!err.empty()) return refuse(err);
 
-    // 6. Every buffer, from requirements.
+    // 4. Every buffer, typed and sized by the requirements and made unstrided.
     err = allocateLocked();
-    if (err.empty()) err = zeroSelfKvLocked();
+    if (!err.empty()) return refuse(err);
+
+    // 5. THE APU CHECK: the decoder's first step, timed, over zeroed caches (which it leaves zeroed).
+    double apuMs = 0.0;
+    err = apuCheckLocked(&apuMs);
     if (!err.empty()) return refuse(err);
 
     g.initialised = true;
     g.epoch = nextEpoch++;
     g.encoded = false;
     g.lastError.clear();
-    LOGI("nativeInit OK - encoder '%s' (%zu in / %zu out, restore %.0f ms), decoder '%s' (%zu in / %zu out, "
-         "restore %.0f ms), %zu buffers, performance mode %s", kEncodeSignature, g.enc.inNames.size(),
-         g.enc.outNames.size(), encMs, kDecodeSignature, g.dec.inNames.size(), g.dec.outNames.size(), decMs,
-         g.owned.size(), perfModeName(performanceMode));
+    LOGI("nativeInit OK - encoder '%s' (%zu in / %zu out, accelerators %s, restore %.0f ms), decoder '%s' "
+         "(%zu in / %zu out, accelerators %s, restore %.0f ms), %zu buffers, APU check %.1f ms, "
+         "selfKvStrategy=%d (%s), perfmode=%d (inert on LiteRT 2.1.1 AOT)", kEncodeSignature,
+         g.enc.inNames.size(), g.enc.outNames.size(), accelName(g.enc.accelerators).c_str(), encMs,
+         kDecodeSignature, g.dec.inNames.size(), g.dec.outNames.size(), accelName(g.dec.accelerators).c_str(),
+         decMs, g.owned.size(), apuMs, g.selfKvStrategy,
+         g.selfKvStrategy == kSelfKvCopy ? "one set, copied back per step" : "two sets, re-bound per step",
+         performanceMode);
     LOGDIAG("nativeInit: session armed with epoch %llu", (unsigned long long) g.epoch);
     return env->NewStringUTF("");
 }
@@ -1591,8 +1883,7 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeEncode(
                                                          g.encOut.size(), g.encOut.data());
     const double ms = msSince(t1);
     if (s != kLiteRtStatusOk) return env->NewStringUTF(failure("encode: LiteRtRunCompiledModel " + st(s)).c_str());
-    LOGI("encode: run OK in %.1f ms (mel copy-in %.1f ms, performance mode %s)", ms, copyMs,
-         perfModeName(g.performanceMode));
+    LOGI("encode: run OK in %.1f ms (mel copy-in %.1f ms)", ms, copyMs);
     g.encoded = true;
     g.lastError.clear();
     return env->NewStringUTF("");
@@ -1608,6 +1899,9 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeEncode(
 ///   * timestamps are emitted; they stay out of the text-only entropy window and out of
 ///     avg_logprob, exactly as qnn_asr.cpp keeps them out (4.11 Task 3 and its fix round 2);
 ///   * the temperature ladder re-decodes against the same encode with both self-KV sets zeroed;
+///   * after every step that has a next one the self-KV cache advances by nativeInit's
+///     selfKvStrategy (advanceSelfKvLocked): the two sets swap roles by re-binding, or set 1's output
+///     is copied back into set 0;
 ///   * p(nospeech) at the SOT step and avg_logprob are computed in float with the floor at -inf and
 ///     the scale at 1.0 - never 0, so the no-speech gate is always live on this tier;
 ///   * positions 0..maskLen-2 execute (0..198) - the 199-slot window - and maskLen-1 never runs;
@@ -1712,6 +2006,7 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
     const auto t0 = Clock::now();
     g.runMs = 0.0;
     g.ioMs = 0.0;
+    g.kvMs = 0.0;
     if (g.diag) {
         LOGDIAG("npu-debug: prompt ids=%s len=%u maxTokens=%d positions=0..%u vocab=%u mask=%u",
                 diagIdList(prompt, 8).c_str(), promptLen, maxTokens, lastPosition, g.vocab, g.maskLen);
@@ -1729,6 +2024,8 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
     bool entropyMeasured = false;
     size_t rungUsed = 0;
     float terminator = kTermEot;
+    // The segment's last step, for the one steptime line after the ladder (kStepTimeLines).
+    struct { uint32_t position = 0; int inSet = 0; double ms = 0.0; double runMs = 0.0; } lastStep;
     for (size_t rung = 0; rung < temperatures.size(); ++rung) {
         const float temperature = temperatures[rung];
         std::mt19937 rng(0x5EEDu ^ static_cast<uint32_t>(rung));   // qnn_asr.cpp's seeding, per rung
@@ -1756,11 +2053,16 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
             const int32_t tokenIn = (position < promptLen) ? prompt[position] : next;
             const int inSetForStep = g.selfInSet;
             const auto s0 = Clock::now();
-            err = decodeStepLocked(tokenIn, position);
+            double stepRunMs = 0.0;
+            err = decodeStepLocked(tokenIn, position, &stepRunMs);
             if (!err.empty()) {
                 failure("decode: " + err);
                 return -2;
             }
+            lastStep.position = position;
+            lastStep.inSet = inSetForStep;
+            lastStep.ms = msSince(s0);
+            lastStep.runMs = stepRunMs;
             lastPositionRun = position;
             ++stepsRun;
             err = checkFiniteLocked(position);
@@ -1768,8 +2070,11 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
                 failure("decode: " + err);
                 return -4;
             }
-            if (g.diag) {
-                LOGDIAG("npu-debug: steptime pos=%u inSet=%d ms=%.2f", position, inSetForStep, msSince(s0));
+            // Bounded: the first rung's first kStepTimeLines positions here, the segment's last after
+            // the ladder - at most five lines a segment, whatever its length.
+            if (g.diag && rung == 0 && position < kStepTimeLines) {
+                LOGDIAG("npu-debug: steptime pos=%u inSet=%d ms=%.2f run=%.2f", position, inSetForStep, lastStep.ms,
+                        stepRunMs);
             }
 
             // p(<|nospeech|>): once, at the SOT step of the first rung, from the RAW logits.
@@ -1797,7 +2102,11 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
                             "masked=prefill-skipped", position, diagToken(tokenIn, inName, sizeof(inName)),
                             inSetForStep, rawLo, rawHi, diagToken(rawArgmax, rawName, sizeof(rawName)));
                 }
-                bindSelfKvLocked(1 - g.selfInSet);
+                err = advanceSelfKvLocked();
+                if (!err.empty()) {
+                    failure("decode: " + err);
+                    return -2;
+                }
                 continue;
             }
 
@@ -1842,7 +2151,11 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
             }
             if (count >= maxTokens) break;
             next = tok;
-            bindSelfKvLocked(1 - g.selfInSet);
+            err = advanceSelfKvLocked();
+            if (!err.empty()) {
+                failure("decode: " + err);
+                return -2;
+            }
         }
 
         scored = scoredIds;
@@ -1877,14 +2190,27 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
 
     const double ms = msSince(t0);
     const char *termName = terminator == kTermCut ? "cut" : (hitEot ? "eot" : (count >= maxTokens ? "count" : "cap"));
-    LOGI("decode: %d tokens in %.1f ms (%.2f ms/token), terminated by %s (apu: %s) nsp=%.2f lp=%.2f ent=%.2f "
-         "rung=%zu steps=%u step=%.2f ms (run %.2f, io %.2f)",
+    // The self-KV advance's share: strategy 1's copy is timed on the host; strategy 0's re-bind costs
+    // nothing there, and its price - the dispatch re-registering every re-bound buffer - is inside
+    // run, so it is named rather than printed as a zero it is not.
+    char kv[48];
+    if (g.selfKvStrategy == kSelfKvCopy) {
+        snprintf(kv, sizeof(kv), "kv copy %.2f", stepsRun ? g.kvMs / stepsRun : 0.0);
+    } else {
+        snprintf(kv, sizeof(kv), "kv re-bind, re-registered inside run");
+    }
+    LOGI("decode: %d tokens in %.1f ms (%.2f ms/token), terminated by %s nsp=%.2f lp=%.2f ent=%.2f "
+         "rung=%zu steps=%u step=%.2f ms (run %.2f, io %.2f, %s)",
          count, ms, count > 0 ? ms / count : 0.0,
          terminator == kTermCut ? "the repetition cut" :
          (hitEot ? "EOT" : (count >= maxTokens ? "the token budget" : "the position cap")),
-         perfModeName(g.performanceMode), stats[kStatNoSpeechProb], stats[kStatAvgLogprob], stats[kStatEntropy],
+         stats[kStatNoSpeechProb], stats[kStatAvgLogprob], stats[kStatEntropy],
          rungUsed, stepsRun, stepsRun ? ms / stepsRun : 0.0, stepsRun ? g.runMs / stepsRun : 0.0,
-         stepsRun ? g.ioMs / stepsRun : 0.0);
+         stepsRun ? g.ioMs / stepsRun : 0.0, kv);
+    if (g.diag && stepsRun > 0 && (rungUsed > 0 || lastStep.position >= kStepTimeLines)) {
+        LOGDIAG("npu-debug: steptime pos=%u inSet=%d ms=%.2f run=%.2f (the segment's last, rung %zu)",
+                lastStep.position, lastStep.inSet, lastStep.ms, lastStep.runMs, rungUsed);
+    }
     if (g.diag) {
         char firstName[24];
         LOGDIAG("npu-debug: result count=%d first=%s terminator=%s steps=%u posFirst=0 posLast=%u",

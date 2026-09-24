@@ -221,7 +221,9 @@ class LiteRtNativeContractTest {
 
     /**
      * **The Neuron adapter is walked in LiteRT v2.1.1's order, with `RTLD_NOW | RTLD_NODELETE`, every
-     * loaded handle is kept, and the LAST one that loads is the winner** (design §2.3).
+     * loaded handle is kept, and the LAST one that loads is the winner** (design §2.3). The flags are
+     * not LiteRT's (`RTLD_LAZY | RTLD_LOCAL`), and on bionic they admit the same candidates: `RTLD_LAZY`
+     * is unsupported there and `RTLD_LOCAL` is the default; `RTLD_NODELETE` is what keeps the handle.
      *
      * v2.1.1's candidate loop has no `break`, so the adapter LiteRT ends up using is the last loadable
      * name; a driver check that stopped at the first hit would judge a different library from the one
@@ -334,16 +336,22 @@ class LiteRtNativeContractTest {
     }
 
     /**
-     * **The shared buffers come from JOINED requirements, and the self-KV sets swap by re-binding.**
+     * **The shared buffers come from JOINED requirements, and the self-KV cache advances by the
+     * strategy `nativeInit` names** (P1b review, finding 4).
      *
-     * The v2.1.1 MediaTek dispatch takes only AHardwareBuffer / DMA-BUF buffers, so every buffer is a
-     * managed one from the compiled models' requirements; a cross-KV buffer is ONE buffer for the
-     * encoder's output and the decoder's input only if both sides' requirements join, and each self-KV
-     * set plays both roles only through the join of its `_in` / `_out` requirements. The swap is the
-     * zero-copy ping-pong qnn_asr.cpp does - the run arrays' handles move, the bytes never do.
+     * A cross-KV buffer is ONE buffer for the encoder's output and the decoder's input only if both
+     * sides' requirements join with equal strides (the layout each compilation reads the bytes in); the
+     * sizes may differ and the buffer takes the larger, the join's own rule. Each self-KV set plays both
+     * roles only through the join of its `_in` / `_out` requirements.
+     *
+     * The advance is one switch with two arms, both kept until the device gate has timed them:
+     * `kSelfKvRebind` swaps the two sets' roles - no byte moves, but it is NOT the free pointer swap the
+     * code once claimed, because the v2.1.1 dispatch kernel re-registers every re-bound buffer at the
+     * next run - and `kSelfKvCopy` keeps set 0 the input for good and copies the step's output back into
+     * it under lock. The loop reaches either only through `advanceSelfKvLocked`, so the two cannot mix.
      */
     @Test
-    fun theSharedBuffersAreJoinedAndTheSelfKvSetsSwapByRebinding() {
+    fun theSharedBuffersAreJoinedAndTheSelfKvCacheAdvancesByTheStrategyInitNames() {
         val alloc = functionBody("std::string allocateLocked() {")
         assertTrue(
             "the cross-KV buffer is created from the join of the encoder output and decoder input",
@@ -356,18 +364,14 @@ class LiteRtNativeContractTest {
             liveLines(alloc, "joinLocked(ir, g.dec.inTypes[di], orq, g.dec.outTypes[dout], name + \"_in/_out\", &jr);")
                 .size == 1 && liveLines(alloc, "for (int set = 0; set < 2 && err.empty(); ++set) {").size == 1
         )
-        assertTrue(
-            "no buffer is made any other way than from requirements",
-            liveLines(cpp, "LiteRtCreateManagedTensorBufferFromRequirements(rt.env, &type, req, &b)").size == 1 &&
-                liveLines(cpp, "LiteRtCreateTensorBufferFromHostMemory").isEmpty() &&
-                liveLines(cpp, "LiteRtCreateManagedTensorBuffer(").isEmpty()
-        )
         val join = functionBody("std::string joinLocked(")
         assertTrue(
-            "a failed join, a size mismatch or a stride mismatch refuses",
+            "a failed join or a stride mismatch refuses; the sizes may differ, and the joined size must cover " +
+                "the larger side (the old equal-size refusal is gone)",
             liveLines(join, "LiteRtJoinTensorBufferRequirements(a, b, &j)").size == 1 &&
-                liveLines(join, "if (sa != sb)").size == 1 &&
-                liveLines(join, "strides differ").size == 1
+                liveLines(join, "strides differ").size == 1 &&
+                liveLines(join, "sj < std::max(sa, sb)").size == 1 &&
+                liveLines(join, "if (sa != sb)").isEmpty()
         )
         val bind = collapsed(functionBody("void bindSelfKvLocked(int inSet) {"))
         assertTrue(
@@ -375,19 +379,135 @@ class LiteRtNativeContractTest {
             bind.contains("g.decIn[g.selfInIdx[j]] = g.selfKv[inSet][j];") &&
                 bind.contains("g.decOut[g.selfOutIdx[j]] = g.selfKv[outSet][j];")
         )
-        val loop = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(")
-        assertEquals(
-            "the loop swaps after the prompt steps and after every generated token",
-            2,
-            liveLines(loop, "bindSelfKvLocked(1 - g.selfInSet);").size
+        assertTrue(
+            "the two strategies are the two literals nativeInit accepts",
+            liveLines(cpp, "constexpr int kSelfKvRebind = 0;").size == 1 &&
+                liveLines(cpp, "constexpr int kSelfKvCopy = 1;").size == 1
         )
         assertTrue(
-            "and never copies a self-KV set: no live line reads one back to the host",
+            "the advance is the one switch: strategy 1 copies, strategy 0 re-binds",
+            collapsed(functionBody("std::string advanceSelfKvLocked() {")).contains(
+                "if (g.selfKvStrategy == kSelfKvCopy) return copySelfKvLocked(); bindSelfKvLocked(1 - g.selfInSet); " +
+                    "return \"\";"
+            )
+        )
+        val loop = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(")
+        assertEquals(
+            "the loop advances the cache after the prompt steps and after every generated token",
+            2,
+            liveLines(loop, "err = advanceSelfKvLocked();").size
+        )
+        assertTrue(
+            "and only through the advance: the loop neither re-binds nor copies by itself",
+            liveLines(loop, "bindSelfKvLocked(").isEmpty() && liveLines(loop, "copySelfKvLocked(").isEmpty()
+        )
+        assertEquals(
+            "the swap is written exactly once, inside the advance",
+            1,
+            liveLines(cpp, "bindSelfKvLocked(1 - g.selfInSet);").size
+        )
+        assertEquals(
+            "the copy is defined once and called once - from the advance",
+            2,
+            liveLines(cpp, "copySelfKvLocked(").size
+        )
+        val copy = functionBody("std::string copySelfKvLocked() {")
+        assertTrue(
+            "strategy 1's copy reads set 1 (the outputs) and writes set 0 (the inputs), both under lock, the " +
+                "packed bytes",
+            liveLines(copy, "rt.api.LiteRtLockTensorBuffer(g.selfKv[1][j], &src, kLiteRtTensorBufferLockModeRead);")
+                .size == 1 &&
+                liveLines(copy, "rt.api.LiteRtLockTensorBuffer(g.selfKv[0][j], &dst, kLiteRtTensorBufferLockModeWrite);")
+                    .size == 1 &&
+                liveLines(copy, "memcpy(dst, src, g.selfKvBytes[j]);").size == 1
+        )
+        assertTrue(
+            "no live line reads a self-KV set back to the host any other way",
             liveLines(cpp, "readLocked(g.selfKv").isEmpty()
         )
         assertTrue(
             "both sets are zeroed at every rung's start",
             liveLines(loop, "err = zeroSelfKvLocked();").size == 1
+        )
+        val init = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(")
+        assertTrue(
+            "the strategy is validated with the other scalars and stored on the session",
+            liveLines(init, "if (err.empty() && selfKvStrategy != kSelfKvRebind && selfKvStrategy != kSelfKvCopy) {")
+                .size == 1 && liveLines(init, "g.selfKvStrategy = selfKvStrategy;").size == 1
+        )
+        assertTrue(
+            "and the Kotlin half declares it",
+            liveLines(seam, "selfKvStrategy: Int,").size == 1
+        )
+    }
+
+    /**
+     * **Every buffer is made UNSTRIDED, of a type and size its requirements offer - never from the
+     * requirements whole** (P1b review, finding 2).
+     *
+     * In 2.1.1 `LiteRtCreateManagedTensorBufferFromRequirements` copies the requirements' strides into
+     * the buffer's layout whenever there are any; the MediaTek dispatch's requirements always carry them,
+     * and the same dispatch refuses a strided buffer when it registers it ("Tensor strides are not
+     * supported") - every one of the 27 dispatch-facing buffers would have been refused at the first run.
+     * So that call is not even resolved, and the one maker switches strides off before
+     * `LiteRtCreateManagedTensorBuffer`, the call the Kotlin API made on every tablet run. The dispatch's
+     * buffers are AHWB before DMA-BUF; `input_ids` and `position_ids`, which only the CPU-side embedding
+     * lookups read, are host memory - and the `buffers:` line prints what was made for them too.
+     */
+    @Test
+    fun everyBufferIsMadeUnstridedFromItsRequirementsTypeAndSizeNeverFromTheRequirementsWhole() {
+        assertTrue(
+            "no live line may name LiteRtCreateManagedTensorBufferFromRequirements - not a call, not a symbol. " +
+                "Found: " + liveLines(cpp, "LiteRtCreateManagedTensorBufferFromRequirements"),
+            liveLines(cpp, "LiteRtCreateManagedTensorBufferFromRequirements").isEmpty()
+        )
+        val create = functionBody("std::string createBufferLocked(")
+        assertTrue(
+            "LiteRtCreateManagedTensorBuffer is resolved, and called exactly once - in createBufferLocked",
+            liveLines(cpp, "X(LiteRtCreateManagedTensorBuffer)").size == 1 &&
+                liveLines(cpp, "rt.api.LiteRtCreateManagedTensorBuffer(").size == 1 &&
+                liveLines(create, "rt.api.LiteRtCreateManagedTensorBuffer(rt.env, bufferType, &unstrided, size, &b);")
+                    .size == 1
+        )
+        assertTrue(
+            "and no buffer wraps host memory by hand",
+            liveLines(cpp, "LiteRtCreateTensorBufferFromHostMemory").isEmpty()
+        )
+        val noStrides = liveOffsets(create, "unstrided.layout.has_strides = false;")
+        val call = liveOffsets(create, "rt.api.LiteRtCreateManagedTensorBuffer(")
+        assertTrue(
+            "the tensor type loses its strides BEFORE the create (no strides at $noStrides, create at $call)",
+            noStrides.size == 1 && call.size == 1 && noStrides[0] < call[0]
+        )
+        assertTrue(
+            "the size is the requirements' own - for a shared buffer, the join's",
+            liveLines(create, "rt.api.LiteRtGetTensorBufferRequirementsBufferSize(req, &size)").size == 1
+        )
+        val pick = functionBody("std::string pickBufferType(")
+        val ahwb = liveOffsets(pick, "if (ahwb) *out = kLiteRtTensorBufferTypeAhwb;")
+        val dmaBuf = liveOffsets(pick, "else if (dmaBuf) *out = kLiteRtTensorBufferTypeDmaBuf;")
+        assertTrue(
+            "a DISPATCH_OP's buffer is AHWB before DMA-BUF, and nothing else",
+            ahwb.size == 1 && dmaBuf.size == 1 && ahwb[0] < dmaBuf[0] &&
+                liveLines(pick, "the only two the v2.1.1 MediaTek dispatch registers").size == 1
+        )
+        assertTrue(
+            "the CPU's two take host memory when it is offered",
+            liveLines(pick, "if (host) *out = kLiteRtTensorBufferTypeHostMemory;").size == 1
+        )
+        val alloc = functionBody("std::string allocateLocked() {")
+        val flatAlloc = collapsed(alloc)
+        assertTrue(
+            "input_ids and position_ids - and only they - are the CPU's; the mask is the dispatch's",
+            liveLines(alloc, "Consumer::Cpu").size == 2 &&
+                flatAlloc.contains("{kInputIds, &g.inputIds, &g.decInputIdsIdx, Consumer::Cpu}") &&
+                flatAlloc.contains("{kPositionIds, &g.positionIds, &g.decPositionIdsIdx, Consumer::Cpu}") &&
+                flatAlloc.contains("{kAttentionMask, &g.mask, &g.decMaskIdx, Consumer::Dispatch}")
+        )
+        assertTrue(
+            "the buffers: line prints what was made for input_ids and position_ids too",
+            liveLines(alloc, "\"input_ids %s; position_ids %s\"").size == 1 &&
+                flatAlloc.contains("madeDesc(g.inputIds, idsReq).c_str(), madeDesc(g.positionIds, posReq).c_str()")
         )
     }
 
@@ -419,7 +539,7 @@ class LiteRtNativeContractTest {
             mask.size == 2 && scan.size == 1 && mask.max() < scan.first()
         )
         val loop = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(")
-        val step = liveOffsets(loop, "err = decodeStepLocked(tokenIn, position);")
+        val step = liveOffsets(loop, "err = decodeStepLocked(tokenIn, position, &stepRunMs);")
         val finite = liveOffsets(loop, "err = checkFiniteLocked(position);")
         val nsp = liveOffsets(loop, "noSpeechProb = noSpeechProbabilityF(logits, g.vocab, noSpeechToken);")
         assertTrue(
@@ -451,6 +571,173 @@ class LiteRtNativeContractTest {
             "the logits are read under lock",
             liveLines(stepFn, "err = readLocked(g.logitsBuf, g.logits.data(), g.vocab * sizeof(float), \"logits\");")
                 .size == 1
+        )
+    }
+
+    /**
+     * **The encoder is created on the NPU alone, the decoder on NPU | CPU, and init times the decoder's
+     * first step** (P1b review, finding 1).
+     *
+     * LiteRT 2.1.1 refuses a model with any op outside every delegate unless CPU is in the set, and
+     * the compiled decoder keeps its two embedding lookups and their guards on the CPU - with the NPU
+     * alone for both, init would fail at the decoder after the encoder's ~8 s create (the Kotlin API
+     * had added CPU to a lone NPU silently on every tablet run). The encoder is one DISPATCH_OP, so it
+     * keeps the NPU alone and a refusal there stays an error. The APU check is the measured line: the
+     * decoder's first step at position 0 on zeroed caches, refused over 250 ms with the text the
+     * backend's loud fallback logs, after the buffers exist and before the session is armed.
+     */
+    @Test
+    fun theEncoderIsOnTheNpuAloneTheDecoderOnNpuPlusCpuAndInitTimesTheDecodersFirstStep() {
+        assertTrue(
+            "the two accelerator sets",
+            liveLines(cpp, "constexpr LiteRtHwAcceleratorSet kEncoderAccelerators = kLiteRtHwAcceleratorNpu;").size == 1 &&
+                liveLines(
+                    cpp,
+                    "constexpr LiteRtHwAcceleratorSet kDecoderAccelerators = kLiteRtHwAcceleratorNpu | kLiteRtHwAcceleratorCpu;"
+                ).size == 1
+        )
+        val init = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(")
+        assertTrue(
+            "the encoder's options take kEncoderAccelerators and the decoder's kDecoderAccelerators",
+            liveLines(init, "err = buildOptionsLocked(g.enc, kEncoderAccelerators, performanceMode);").size == 1 &&
+                liveLines(init, "if (err.empty()) err = buildOptionsLocked(g.dec, kDecoderAccelerators, performanceMode);")
+                    .size == 1
+        )
+        val options = functionBody("std::string buildOptionsLocked(")
+        assertTrue(
+            "the set handed to LiteRT is the argument - no accelerator literal inside the builder",
+            liveLines(options, "s = rt.api.LiteRtSetOptionsHardwareAccelerators(slot.options, accelerators);").size == 1 &&
+                liveLines(options, "kLiteRtHwAccelerator").isEmpty()
+        )
+        assertTrue(
+            "the init line names both sets",
+            collapsed(init).contains("accelName(g.enc.accelerators).c_str()") &&
+                collapsed(init).contains("accelName(g.dec.accelerators).c_str()")
+        )
+        assertTrue("the ceiling is 250 ms", liveLines(cpp, "constexpr double kApuStepCeilingMs = 250.0;").size == 1)
+        val check = functionBody("std::string apuCheckLocked(")
+        val zeroFirst = liveOffsets(check, "std::string err = zeroSelfKvLocked();")
+        val stepAt = liveOffsets(check, "if (err.empty()) err = decodeStepLocked(kSotToken, 0, runMs);")
+        val zeroAfter = liveOffsets(check, "if (err.empty()) err = zeroSelfKvLocked();")
+        assertTrue(
+            "the check zeroes the caches, runs one step at position 0, and zeroes the self-KV again",
+            zeroFirst.size == 1 && stepAt.size == 1 && zeroAfter.size == 1 && zeroFirst[0] < stepAt[0] &&
+                stepAt[0] < zeroAfter[0] &&
+                liveLines(check, "writeLocked(g.cross[j], nullptr, tensorBytes(g.enc.outTypes[j]), \"cross-KV (zero)\")")
+                    .size == 1
+        )
+        assertTrue(
+            "a step over the ceiling is refused with the text the backend's fallback logs",
+            liveLines(check, "if (*runMs > kApuStepCeilingMs) {").size == 1 &&
+                liveLines(check, "\"decoder ran without the APU (step %.0f ms)\"").size == 1
+        )
+        val alloc = init.indexOf("err = allocateLocked();")
+        val apu = init.indexOf("err = apuCheckLocked(&apuMs);")
+        val armed = init.indexOf("g.initialised = true;")
+        assertTrue(
+            "the check runs after the buffers exist and before the session is armed (buffers at $alloc, " +
+                "check at $apu, armed at $armed), and refuses through the releasing path",
+            alloc in 0 until apu && apu < armed &&
+                collapsed(init).contains("err = apuCheckLocked(&apuMs); if (!err.empty()) return refuse(err);")
+        )
+    }
+
+    /**
+     * **The performance mode is passed through and SAID TO BE INERT; no run line claims it** (P1b
+     * review, finding 3).
+     *
+     * On the v2.1.1 runtime with AOT files the MediaTek dispatch never reads the mode - the adapter
+     * loader reads only the SDK version type, and the bytecode load hard-codes NEURON_PRIORITY_HIGH,
+     * NEURON_PREFER_SUSTAINED_SPEED and a boost hint of 100. The argument stays (P2 may pin a value for
+     * a runtime that reads it), still through LiteRT's own setter, but both init lines mark it inert and
+     * neither the encode nor the decode line may print it as the mode the APU ran in.
+     */
+    @Test
+    fun thePerformanceModeIsPassedThroughAndMarkedInertAndNoRunLineClaimsIt() {
+        val init = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(")
+        assertEquals(
+            "both init lines print perfmode=N (inert on LiteRT 2.1.1 AOT)",
+            2,
+            liveLines(init, "perfmode=%d (inert on LiteRT 2.1.1 AOT)").size
+        )
+        listOf(
+            "Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeEncode(",
+            "Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(",
+        ).forEach { anchor ->
+            val body = functionBody(anchor)
+            listOf("performanceMode", "perfMode", "performance mode", "perfmode").forEach {
+                assertTrue(
+                    "$anchor must not print a performance mode - the dispatch never ran in one: `$it` on " +
+                        liveLines(body, it),
+                    liveLines(body, it).isEmpty()
+                )
+            }
+        }
+        assertTrue(
+            "the value still goes through LiteRT's own setter, so a runtime that reads it gets it",
+            liveLines(functionBody("std::string buildOptionsLocked("), "rt.api.LiteRtMediatekOptionsSetPerformanceMode(")
+                .size == 1
+        )
+        assertTrue(
+            "the Kotlin KDoc says it is inert, on the object and on the parameter",
+            seam.contains("**The performance mode — INERT on LiteRT 2.1.1.**") &&
+                seam.contains("never read by the dispatch")
+        )
+    }
+
+    /**
+     * **The adapter directory, the driver and the environment directory are judged BEFORE a live
+     * session is released** (P1b review, nit c).
+     *
+     * They are the process's state and need none of the new files, so a caller naming the wrong
+     * dispatch directory, or a driver the family refuses, must cost an error string - never the
+     * working session. Before the release nothing may call the releasing `refuse`.
+     */
+    @Test
+    fun theAdapterDirTheDriverAndTheEnvironmentDirAreJudgedBeforeALiveSessionIsReleased() {
+        val init = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(")
+        val release = init.indexOf("if (g.initialised) {")
+        assertTrue("nativeInit releases a live session behind `if (g.initialised) {`", release > 0)
+        listOf(
+            "if (adapter.walked && adapter.dispatchDir != dispatchDir) {",
+            "const std::string reason = probeLocked(dispatchDir, wantMajor);",
+            "if (err.empty()) err = loadRuntimeLocked(libDir);",
+            "if (err.empty()) err = ensureEnvironmentLocked(dispatchDir);",
+        ).forEach {
+            val at = init.indexOf(it)
+            assertTrue("`$it` must come before the release (at $release); found at $at", at in 0 until release)
+        }
+        assertTrue(
+            "and a refusal there releases nothing: no live `refuse(` before the release",
+            liveLines(init.substring(0, release), "refuse(").isEmpty()
+        )
+    }
+
+    /**
+     * **The `steptime` line is bounded: the first four steps of a segment and its last** (P1b review,
+     * nit d) - qnn_asr.cpp's four-lines-per-segment rule, so a 124-token segment writes five lines,
+     * not 124.
+     */
+    @Test
+    fun theSteptimeLineIsBoundedToTheFirstFourStepsOfASegmentAndItsLast() {
+        assertTrue(
+            "constexpr uint32_t kStepTimeLines = 4;",
+            liveLines(cpp, "constexpr uint32_t kStepTimeLines = 4;").size == 1
+        )
+        val loop = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(")
+        assertTrue(
+            "the in-loop line is gated on the first rung's first kStepTimeLines positions",
+            liveLines(loop, "if (g.diag && rung == 0 && position < kStepTimeLines) {").size == 1
+        )
+        assertTrue(
+            "the segment's last step gets the one line after the ladder, unless the loop already logged it",
+            liveLines(loop, "if (g.diag && stepsRun > 0 && (rungUsed > 0 || lastStep.position >= kStepTimeLines)) {")
+                .size == 1
+        )
+        assertEquals(
+            "two steptime lines in all: the bounded one in the loop, the segment's last after it",
+            2,
+            liveLines(loop, "npu-debug: steptime").size
         )
     }
 

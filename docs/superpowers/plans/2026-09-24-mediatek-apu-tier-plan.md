@@ -50,21 +50,26 @@ with P1a.
 2. **The runtime portal.** `litert_asr.cpp`: `dlopen("libLiteRt.so")` from `nativeLibraryDir`, `dlsym` of the
    entry points spec §2.5 lists; a missing symbol is a probe failure, never a crash. `LiteRtEnvironment` created
    once per process with `kLiteRtEnvOptionTagDispatchLibraryDir` = the staged directory, never destroyed.
-3. **The driver probe (`nativeProbe(dispatchDir)`).** Walk LiteRT v2.1.1's candidate list in order with the same
-   flags, keep the last that loads (`RTLD_NODELETE`, handle retained), `Neuron_getVersion`,
+3. **The driver probe (`nativeProbe(dispatchDir)`).** Walk LiteRT v2.1.1's candidate list in order (with
+   `RTLD_NOW | RTLD_NODELETE`, not LiteRT's `RTLD_LAZY | RTLD_LOCAL` — the same verdict on bionic), keep the last
+   that loads (`RTLD_NODELETE`, handle retained), `Neuron_getVersion`,
    `Neuron_getDeviceCount` / `NeuronDevice_getName`; return the `apu:` line or the refusal (spec §2.3 rules).
    Test: a host unit of the rule table (which winner/major → which verdict) over a fake loader.
 4. **Models and buffers.** `nativeInit(encoderPath, decoderPath, spec scalars, socStamp)`: `LiteRtCreateModelFromFile`
-   ×2; check the file's `LiteRtStamp` soc against `socStamp`; options NPU-only + MediaTek performance mode
-   (measured: default vs `PreferSustainedSpeed`); `LiteRtCreateCompiledModel` ×2; buffers from requirements
-   with joins for the eight cross-KV pairs and the self-KV `_in`/`_out` pairs (two sets); refuse on any failed
-   join or on an output-name/order mismatch (`LiteRtGetSignatureOutputName` against the pack metadata's order).
+   ×2; check the file's `LiteRtStamp` soc against `socStamp`; options: the encoder NPU-only, the decoder NPU + CPU
+   (its embedding lookups stay on the CPU), + the MediaTek performance mode (inert on 2.1.1 AOT — not measurable,
+   spec §2.5); `LiteRtCreateCompiledModel` ×2; buffers typed and sized by the requirements and made unstrided
+   (`LiteRtCreateManagedTensorBuffer`, never `…FromRequirements`), with joins for the eight cross-KV pairs and the
+   self-KV `_in`/`_out` pairs (two sets); refuse on any failed join or on an output-name/order mismatch
+   (`LiteRtGetSignatureOutputName` against the pack metadata's order); then time the decoder's first step (the
+   APU check).
 5. **Encode.** `nativeEncode(melF32)`: lock the mel buffer, copy in, unlock, run, done — the cross-KV stays in
    the shared buffers.
 6. **The float decode loop.** `nativeDecodeSegment` with the QNN contract: prompt fed through the same step path,
    the always-on and begin masks, greedy with the temperature ladder, timestamps emitted, `avg_logprob` and
    `p(nospeech)` in float (floor −inf, scale 1.0), a per-step non-finite check → refusal, the 199-slot window,
-   alternating self-KV sets (swap = re-binding the two sets' roles, zero at segment start). `band_scan.h` gets a
+   the self-KV advance by `selfKvStrategy` (0: re-binding the two sets' roles, which the dispatch re-registers;
+   1: one set and a native copy back; zero at segment start). `band_scan.h` gets a
    float instantiation for `nativeDetectLanguage`.
 7. **Host differential test.** `tools/mtk-apu/host_decode_diff.py`: the same loop logic in Python over the f32
    decoder `.tflite` in the LiteRT interpreter, fed jfk's cross-KV (from the f32 encoder on the host), against

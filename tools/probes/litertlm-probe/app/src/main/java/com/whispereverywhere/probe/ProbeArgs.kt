@@ -41,10 +41,16 @@ import android.content.Intent
  *   --ei load      sherpa: busy-loop threads spun for the whole run, the stand-in for whisper multi's 4 (default 0)
  *   --es provider  sherpa: cpu | nnapi | nospin (= cpu:<cfg> with ORT thread spinning off; forwarded on >= 1.13.5 only)
  *   --ei perfmode  litertasr: MediaTek performance mode, -1 = LiteRT's default (default), 0 PreferLowPower,
- *                  1 PreferFastSingleAnswer, 2 PreferSustainedSpeed, 3 PreferTurboBoost
+ *                  1 PreferFastSingleAnswer, 2 PreferSustainedSpeed, 3 PreferTurboBoost. INERT on LiteRT 2.1.1 with
+ *                  the AOT pair: the dispatch never reads it (its bytecode load hard-codes PREFER_SUSTAINED_SPEED),
+ *                  so no comparison between values is measurable on this runtime
+ *   --ei kvstrategy litertasr: nativeInit's selfKvStrategy - 0 = two self-KV sets re-bound per step (the dispatch
+ *                  re-registers each re-bound buffer), 1 = one set and a native copy of the 8 cache tensors per
+ *                  step (default 0). The device gate runs both
  *   --ei wantmajor litertasr: the Neuron major the family expects (default 8)
  *   --es socstamp  litertasr: the chip the files' LiteRtStamp must name (default mt6989)
- *   --ez diag      litertasr: nativeSetDiag - the npu-debug lines incl. per-step `steptime` (default true)
+ *   --ez diag      litertasr: nativeSetDiag - the npu-debug lines incl. `steptime` for each segment's first four
+ *                  steps and its last (default true)
  *   --ez rearm     litertasr: after the rounds, release and re-init once to time a re-arm (default true)
  *   --ez detect    litertasr: run nativeDetectLanguage after each encode, as the app does in auto (default true)
  *   --es lang      litertasr: prompt language code, or `auto` to prompt with the detected one (default en)
@@ -98,6 +104,7 @@ data class ProbeArgs(
     val topk: Int,
     /** `mode=litertasr`: liblitertasr.so's init knobs and the gate's run shape (see the KDoc above). */
     val perfMode: Int,
+    val kvStrategy: Int,
     val wantMajor: Int,
     val socStamp: String,
     val diag: Boolean,
@@ -147,6 +154,7 @@ data class ProbeArgs(
             beginSuppress = intent?.getStringExtra("beginsuppress"),
             topk = intent?.getIntExtra("topk", 0) ?: 0,
             perfMode = intent?.getIntExtra("perfmode", -1) ?: -1,
+            kvStrategy = intent?.getIntExtra("kvstrategy", 0) ?: 0,
             wantMajor = intent?.getIntExtra("wantmajor", 8) ?: 8,
             socStamp = intent?.getStringExtra("socstamp") ?: "mt6989",
             diag = intent?.getBooleanExtra("diag", true) ?: true,

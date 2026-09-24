@@ -21,10 +21,24 @@ package com.whispereverywhere.npu
  *    `neuronMajor`) and [nativeInit] takes `socStamp` (the family's `socStamp`, `"mt6989"`) and
  *    `wantMajor` again: the Neuron driver's major is judged before any file is opened, and each model
  *    file's own `LiteRtStamp` must name this chip before LiteRT opens it.
- *  - **The performance mode.** [nativeInit] takes `performanceMode`: `-1` for LiteRT's default, or a
- *    `LiteRtMediatekNeuronAdapterPerformanceMode` value (0 `PreferLowPower`, 1
- *    `PreferFastSingleAnswer`, 2 `PreferSustainedSpeed`, 3 `PreferTurboBoost`). Which one ships is
- *    measured in P1's device gate.
+ *  - **The performance mode — INERT on LiteRT 2.1.1.** [nativeInit] takes `performanceMode`: `-1`
+ *    for LiteRT's default, or a `LiteRtMediatekNeuronAdapterPerformanceMode` value (0
+ *    `PreferLowPower`, 1 `PreferFastSingleAnswer`, 2 `PreferSustainedSpeed`, 3 `PreferTurboBoost`).
+ *    It is validated and handed to LiteRT's MediaTek options, and with AOT files the v2.1.1 dispatch
+ *    never reads it: its bytecode load hard-codes `NEURON_PRIORITY_HIGH`,
+ *    `NEURON_PREFER_SUSTAINED_SPEED` and an execution boost hint of 100, so every run is in that mode
+ *    whatever is passed, and "PreferSustainedSpeed vs default" cannot be measured on this runtime.
+ *    Kept so P2 can pin a value for a runtime that reads it; the init line says `(inert on LiteRT
+ *    2.1.1 AOT)` beside it, and no encode or decode line reports it.
+ *  - **The self-KV strategy.** [nativeInit] takes `selfKvStrategy`, how the decode loop advances the
+ *    cache after each step: `0` swaps two buffer sets by re-binding (no byte moves, but the dispatch
+ *    re-registers every re-bound buffer on the next run — 16 per step on turbo), `1` keeps one input
+ *    set and copies the step's output back into it (~8 MB per step, no binding ever changes). Both
+ *    exist so P1's device gate can time them; the faster one becomes the default.
+ *  - **Two accelerator sets.** The encoder is created on the NPU alone; the decoder on NPU + CPU,
+ *    because its two embedding lookups stay on the CPU and LiteRT 2.1.1 refuses a partly delegated
+ *    model without CPU in the set. (Kotlin's `CompiledModel` adds CPU to a lone NPU silently, which
+ *    is how every tablet run so far had it for both.) Init then times the decoder's first step.
  *  - **No quantisation anywhere.** The decode loop is its own float loop: the mask's `-infinity` is
  *    the real one, the logits' scale is 1.0 and never 0 (so p(nospeech), avg_logprob and the ladder
  *    are always live), and a non-finite logit fails the step (`-4`).
@@ -60,7 +74,9 @@ object LiteRtAsrNative {
      *
      * Walks LiteRT v2.1.1's Neuron adapter candidates in LiteRT's own order —
      * `libneuronusdk_adapter.mtk.so`, `libneuronusdk_adapter.9.mtk.so`, `libneuron_adapter_mgvi.so`,
-     * `<dispatchDir>/libneuron_adapter.so` — with `RTLD_NOW | RTLD_NODELETE`, keeps every handle that
+     * `<dispatchDir>/libneuron_adapter.so` — with `RTLD_NOW | RTLD_NODELETE` (NOT LiteRT's flags,
+     * which are `RTLD_LAZY | RTLD_LOCAL`; on bionic the two admit exactly the same candidates, since
+     * `RTLD_LAZY` is unsupported there and `RTLD_LOCAL` is the default), keeps every handle that
      * loads, and takes the LAST one as the winner, because that is the one LiteRT's loop uses. Reads
      * its `Neuron_getVersion` (and the device names for the diag line), judges it, and on a pass
      * loads `libLiteRt.so` from [libDir] and resolves every entry point the engine calls.
@@ -86,13 +102,16 @@ object LiteRtAsrNative {
     /**
      * Arms the session, in this order, each stage refusing with `"init: <stage>: <detail>"`:
      *
-     *  1. the five spec scalars, [performanceMode], [socStamp] and [wantMajor] are validated —
-     *     BEFORE any live session is released, so a mistyped argument costs an error string, not a
-     *     working tier (QnnAsrNative's rule);
-     *  2. the driver verdict ([nativeProbe]'s, walking the adapter now if no probe has run);
-     *  3. `libLiteRt.so` and the LiteRT environment — created on the first init of the process with
+     *  1. the five spec scalars, [performanceMode], [selfKvStrategy], [socStamp] and [wantMajor] are
+     *     validated — BEFORE any live session is released, so a mistyped argument costs an error
+     *     string, not a working tier (QnnAsrNative's rule);
+     *  2. the driver verdict ([nativeProbe]'s, walking the adapter now if no probe has run), then
+     *     `libLiteRt.so` and the LiteRT environment — created on the first init of the process with
      *     `kLiteRtEnvOptionTagDispatchLibraryDir = dispatchDir`, and never destroyed; a later init
-     *     naming a different [dispatchDir] is refused;
+     *     naming a different [dispatchDir] is refused. These are the PROCESS's state and need no file,
+     *     so they too are judged before a live session is released: a wrong directory or a refused
+     *     driver costs an error string, never the working session;
+     *  3. (a live session is released here, and everything below refuses by releasing what it built)
      *  4. **the chip**: each file's `LiteRtStamp` metadata (vendor, then SoC, two NUL-padded
      *     125-byte fields) is read from the flatbuffer by native code before LiteRT opens the file,
      *     and must be `MediaTek` / [socStamp];
@@ -100,13 +119,23 @@ object LiteRtAsrNative {
      *     and every output at its position (its semantic name or `output_<i>`), each with the exact
      *     element type and dims [melBins] … [maxPositions] imply — the encoder's eight cross-KV
      *     outputs reach the decoder's inputs by export order alone, so that order is asserted here;
-     *  6. NPU-only options (a refusal to delegate is an error) plus the MediaTek performance mode,
-     *     and both compiled models — the bytecode restores, ~1.3 s and ~0.9 s on the Tab S10+;
-     *  7. every buffer from the compiled models' own requirements (the v2.1.1 dispatch takes only
-     *     AHardwareBuffer / DMA-BUF): the eight cross-KV buffers from the JOIN of the encoder's output
-     *     and the decoder's input requirements, bound to both; two self-KV sets from the join of each
-     *     `_in` / `_out` pair; the mel, `input_ids`, `attention_mask`, `position_ids` and the logits.
-     *     Any failed join, size or stride mismatch refuses the session.
+     *  6. the options — the encoder on the NPU ALONE (it compiled to one `DISPATCH_OP`, so a refusal
+     *     to delegate is an error), the decoder on NPU + CPU (its two embedding lookups and their
+     *     bounds guards stay on the CPU; LiteRT 2.1.1 refuses a partly delegated model without CPU in
+     *     the set) — plus [performanceMode], inert; and both compiled models — the bytecode restores,
+     *     ~1.3 s and ~0.9 s on the Tab S10+;
+     *  7. every buffer, typed and sized by the compiled models' own requirements but made WITHOUT
+     *     their strides — the v2.1.1 dispatch refuses a strided buffer, and its requirements always
+     *     carry strides. The 27 buffers a `DISPATCH_OP` reads or writes (the mel, the eight cross-KV,
+     *     the sixteen self-KV, `attention_mask`, the logits) are AHardwareBuffer, else DMA-BUF — the
+     *     only memory the dispatch registers; the two no `DISPATCH_OP` sees, **`input_ids` and
+     *     `position_ids`** (read only by the CPU-side lookups), are host memory. The eight cross-KV
+     *     buffers come from the JOIN of the encoder's output and the decoder's input requirements,
+     *     bound to both; two self-KV sets from the join of each `_in` / `_out` pair. A failed join or
+     *     a stride mismatch between the two sides refuses the session;
+     *  8. **the APU check**: the decoder's first step, at position 0 over zeroed caches, timed — a
+     *     step over 250 ms (an APU step is 19–24 ms) refuses with `"init: decoder ran without the APU
+     *     (step N ms)"`, and any failure of the decoder's first run surfaces here, at arm time.
      *
      * The scalars are [QnnAsrNative.nativeInit]'s five, with the same bounds; `headDim = 64`,
      * `audioCtx = 1500` and `melFrames = 3000` stay native literals, pinned against [NpuModelSpec].
@@ -119,7 +148,11 @@ object LiteRtAsrNative {
      * @param libDir as for [nativeProbe].
      * @param socStamp the family's `socStamp` — `"mt6989"`.
      * @param wantMajor the family's `neuronMajor` — 8.
-     * @param performanceMode `-1` (LiteRT's default) or `0..3`, see the object KDoc.
+     * @param performanceMode `-1` (LiteRT's default) or `0..3`, see the object KDoc. **INERT on LiteRT
+     *        2.1.1 with AOT files**: validated and passed through, never read by the dispatch, whose
+     *        bytecode load hard-codes `NEURON_PREFER_SUSTAINED_SPEED`.
+     * @param selfKvStrategy `0` (two self-KV sets re-bound per step) or `1` (one set, the step's
+     *        output copied back into it), see the object KDoc.
      * @return `""` on success, else `"init: <stage>: <detail>"`.
      */
     external fun nativeInit(
@@ -135,6 +168,7 @@ object LiteRtAsrNative {
         socStamp: String,
         wantMajor: Int,
         performanceMode: Int,
+        selfKvStrategy: Int,
     ): String
 
     /**
@@ -163,8 +197,10 @@ object LiteRtAsrNative {
      * float loop: the prompt fed through the step path, the always-on and begin masks written as
      * `-infinity` before the argmax, timestamps emitted (and kept out of the text-only entropy window
      * and out of avg_logprob), the temperature ladder re-decoding against the same encode, positions
-     * `0..maxPositions-2` executing (the 199-slot window), the two self-KV sets swapping roles every
-     * step by re-binding, never by copying, both zeroed at every rung's start.
+     * `0..maxPositions-2` executing (the 199-slot window), the self-KV cache advanced after every step
+     * by [nativeInit]'s `selfKvStrategy` — the two sets swapping roles by re-binding (`0`), or set 0
+     * staying the input and the step's output copied back into it (`1`) — both sets zeroed at every
+     * rung's start.
      *
      * What differs from the QNN engine is below the contract: p(nospeech) and avg_logprob are always
      * computed (scale 1.0, never "unreadable"), so `NO_SPEECH_PROB` is never `-1` on this engine; and
@@ -203,8 +239,9 @@ object LiteRtAsrNative {
     /**
      * Turns the native `npu-debug:` instrumentation on or off; off until this says otherwise. The
      * lines it gates are content-safe by construction (every id below EOT prints as `text-token`),
-     * and on this engine they include a per-step `steptime` line for the device gate. Call it with
-     * `BuildConfig.DEBUG`.
+     * and on this engine they include a `steptime` line for the device gate — for the first four
+     * steps of each segment and its last, never more (qnn_asr.cpp's four-lines-per-segment rule).
+     * Call it with `BuildConfig.DEBUG`.
      */
     external fun nativeSetDiag(enabled: Boolean)
 

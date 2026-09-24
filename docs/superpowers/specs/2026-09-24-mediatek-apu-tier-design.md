@@ -114,8 +114,10 @@ What, therefore:
 
 1. **The probe is the warm-up, and it runs off every UI path.** `LiteRtAsrNative.nativeProbe(dispatchDir)`
    is started once from `Application.onCreate` on a background thread on MediaTek families (and by the
-   service's boot prewarm if it has not run yet). It walks LiteRT's candidate list in LiteRT's order and with
-   the same flags, keeps the LAST candidate that loads (`RTLD_NODELETE`; the handle is never closed, so
+   service's boot prewarm if it has not run yet). It walks LiteRT's candidate list in LiteRT's order — with
+   `RTLD_NOW | RTLD_NODELETE` where LiteRT uses `RTLD_LAZY | RTLD_LOCAL`, which on bionic admit exactly the same
+   candidates (`RTLD_LAZY` is unsupported there, `RTLD_LOCAL` is the default) — keeps the LAST candidate that
+   loads (`RTLD_NODELETE`; the handle is never closed, so
    LiteRT's later dlopen only raises a refcount — t6's 911 ms second create shows a loaded adapter is reused),
    and reads `Neuron_getVersion(NeuronRuntimeVersion*)` (`NeuronAdapter.h:888`) plus
    `Neuron_getDeviceCount` / `NeuronDevice_getName` for the diag line.
@@ -187,26 +189,44 @@ judge: `LiteRtCreateEnvironment`, `LiteRtCreateModelFromFile`, `LiteRtCreateOpti
 `LiteRtMediatekOptionsCreate`, `LiteRtMediatekOptionsSetPerformanceMode`, plus the buffer-requirements and
 managed-buffer family).
 
-**Buffers — corrected.** The v2.1.1 MediaTek dispatch accepts only AHardwareBuffer and DMA-BUF tensor buffers
-(it imports `LiteRtGetTensorBufferAhwb` / `LiteRtGetTensorBufferDmaBufBuffer` and binds only
-`NeuronMemory_createFromAHardwareBuffer` / `createFromFd`; host memory is "Unsupported buffer type"). So every
-buffer is created from the compiled models' requirements: `LiteRtGetCompiledModel{Input,Output}BufferRequirements`
-+ `LiteRtCreateManagedTensorBufferFromRequirements`; each shared cross-KV buffer from
-`LiteRtJoinTensorBufferRequirements(encoder output, decoder input)`; each self-KV set from the join of its
-`_in` and `_out` requirements; mel, ids, mask and logits reached through `LiteRtLockTensorBuffer` / `Unlock`.
-This is what the probe measured (its Kotlin buffers were runtime-typed). Two self-KV sets alternate per step;
-whether two registered sets swap without a copy is **measured in P1's device gate before any per-token
-number is quoted** — the probe's 22.8 ms included one Kotlin copy per step, and the QNN engine's zero-copy
-ping-pong (`bindSelfKvLocked`, `qnn_asr.cpp:1883-1890`) is the mechanism being mirrored, not a guarantee.
-Options: NPU only (a refusal is an error), MediaTek performance mode from the real enum
-(`LiteRtMediatekNeuronAdapterPerformanceMode`: `PreferLowPower`, `PreferFastSingleAnswer`,
-`PreferSustainedSpeed`, `PreferTurboBoost`) — `PreferSustainedSpeed` vs default measured in P1.
+**Buffers — corrected twice.** The v2.1.1 MediaTek dispatch accepts only AHardwareBuffer and DMA-BUF tensor
+buffers (it imports `LiteRtGetTensorBufferAhwb` / `LiteRtGetTensorBufferDmaBufBuffer` and binds only
+`NeuronMemory_createFromAHardwareBuffer` / `createFromFd`; host memory is "Unsupported buffer type"), and it
+refuses any buffer whose layout carries strides ("Tensor strides are not supported") — while the requirements it
+reports always carry strides (computed from its padded dimensions). `LiteRtCreateManagedTensorBufferFromRequirements`
+copies those strides into the buffer (2.1.1, `c/litert_tensor_buffer.cc`), so it is NOT used (P1b review): every
+buffer's type and size are read from `LiteRtGetCompiledModel{Input,Output}BufferRequirements` and the buffer is
+made with `LiteRtCreateManagedTensorBuffer` from the tensor's own unstrided type — exactly what the Kotlin API did
+on every tablet run (`CompiledModel::CreateBufferImpl`). The 27 buffers a `DISPATCH_OP` reads or writes are AHWB,
+else DMA-BUF; `input_ids` and `position_ids`, read only by the decoder's CPU-side embedding lookups, are host
+memory. Each shared cross-KV buffer's type and size come from `LiteRtJoinTensorBufferRequirements(encoder output,
+decoder input)`, each self-KV set's from the join of its `_in` and `_out` requirements (the join takes the larger
+size and refuses unequal strides); mel, ids, mask and logits are reached through `LiteRtLockTensorBuffer` /
+`Unlock`. **The self-KV advance is measured in P1's device gate before any per-token number is quoted**, and
+both ways are built (`nativeInit`'s `selfKvStrategy`): `0`, two sets swapping roles by re-binding — no byte
+moves, but the v2.1.1 dispatch kernel re-registers every re-bound buffer at the next run
+(`dispatch_delegate_kernel.cc`), 16 per step, so it is not the free pointer swap of the QNN engine's ping-pong
+(`bindSelfKvLocked`, `qnn_asr.cpp:1883-1890`); and `1`, one input set with the step's 8 cache tensors (~8 MB)
+copied back into it natively and no binding ever changed. The probe's 22.8 ms included one Kotlin copy per step;
+the faster strategy becomes the default.
+Options: the encoder on the NPU alone (it is one `DISPATCH_OP`; a refusal is an error); the decoder on NPU + CPU,
+because its two embedding lookups and their guards stay on the CPU and 2.1.1's `LiteRtCreateCompiledModel`
+refuses a partly delegated model without CPU in the set ("Some ops are not accelerated") — the Kotlin API had
+added CPU to a lone NPU silently on every tablet run. CPU in the decoder's set can run only those ops: the layers
+exist only as the `DISPATCH_OP`'s bytecode, and an unclaimed `DISPATCH_OP` fails the run (LiteRT's stub kernel).
+`init` then times the decoder's first step on zeroed caches and refuses one over 250 ms (an APU step is 19–24 ms).
+The MediaTek performance mode is passed through from the real enum (`LiteRtMediatekNeuronAdapterPerformanceMode`:
+`PreferLowPower`, `PreferFastSingleAnswer`, `PreferSustainedSpeed`, `PreferTurboBoost`) but is **inert on 2.1.1
+with AOT files**: the dispatch never reads it, and its bytecode load hard-codes `NEURON_PRIORITY_HIGH`,
+`NEURON_PREFER_SUSTAINED_SPEED` and an execution boost hint of 100 — so `PreferSustainedSpeed` vs default is not
+measurable on this runtime (every run is already the former). Kept for a runtime that reads it.
 
 **Output identity.** The exported outputs are positional (`output_0..N`); the encoder's eight cross-KV tensors
 are matched to the decoder's inputs by export order only. The export names them (`k_cache_cross_i`, `logits`,
 `k/v_cache_self_i_out`) where litert-torch allows, and either way the order is pinned in the pack metadata and
 asserted at `init` with `LiteRtGetSignatureOutputName`; every shared pair's requirement join must succeed
-with equal size and strides or `init` refuses (the LiteRT twin of the QNN C7 alias guard).
+with equal strides (the buffer takes the larger size) or `init` refuses (the LiteRT twin of the QNN C7 alias
+guard).
 
 **The decode loop.** Not a template over `qnn_asr.cpp`. That loop is ufixed16 through and through
 (`logitsScaleLocked` returns 0 for non-UFIXED16 tensors and "0 ⇒ no probability gates this segment",
@@ -350,8 +370,10 @@ this tier on `feat/mediatek-apu-tier` (112+), each with its `ReleaseIdentityTest
 loop, Play internal app sharing (no versionCode spent) is checked as an alternative to burning codes.
 
 - **P0 — probe runs on the tablet (no app code) — DONE 2026-09-24:** (a) the 5 s wait is the adapter's own
-  (§2.3, run t7). (b) `PreferSustainedSpeed` vs default — not reachable from the probe's Kotlin API; measured
-  in P1b. (c) the product's loading shape passes: dispatch from `files/litert_dispatch/`, no plugin, one
+  (§2.3, run t7). (b) `PreferSustainedSpeed` vs default — not reachable from the probe's Kotlin API, and **not
+  measurable on LiteRT 2.1.1 at all** (P1b review): with AOT files the dispatch never reads the mode and
+  hard-codes `NEURON_PREFER_SUSTAINED_SPEED`, so every run so far was already in it; P1b passes the value
+  through, inert. (c) the product's loading shape passes: dispatch from `files/litert_dispatch/`, no plugin, one
   declaration; encoder 1,725 ms; the pair's ids identical to the reference (runs t10/t11, sheet §4c). (d) the
   app-mode reference: word-perfect with paired, monotonic timestamps, 21 ms per step (t8, sheet §5b), and the
   per-step top-k trace for the host test (t8b, `t8b_appmode_topk_e2eqc.steps.jsonl`, 31 steps, archived on

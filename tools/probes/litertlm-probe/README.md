@@ -71,9 +71,12 @@ declarations: the `stageAppSeam` task compiles `LiteRtAsrNative.kt` and the four
 (`WhisperTokens`, `WhisperTokenFamily`, `NpuDecodePolicy`, `NpuDecodeStats`) into this APK verbatim, so the JNI
 names, the prompt, the masks, the ladder and the guard constants are the ones `NpuWhisperBackend` uses. The shape:
 dispatch from `files/litert_dispatch/` (staged there from this APK's own copy when absent; exactly one file), no
-compiler plugin configured, requirement-typed buffers only, and a merged manifest whose only MediaTek declaration
-is `libneuronusdk_adapter.mtk.so` (`stripAarMediatekDeclarations` removes the three the litert AAR re-adds, and
-fails the build if one survives — this applies to every mode of this APK).
+compiler plugin configured, buffers typed and sized by the compiled models' requirements and made WITHOUT their
+strides (the v2.1.1 dispatch refuses a strided buffer; `LiteRtCreateManagedTensorBufferFromRequirements` would
+have given every buffer the requirements' strides), the encoder on the NPU alone and the decoder on NPU + CPU (its
+embedding lookups stay on the CPU), and a merged manifest whose only MediaTek declaration is
+`libneuronusdk_adapter.mtk.so` (`stripAarMediatekDeclarations` removes the three the litert AAR re-adds, and fails
+the build if one survives — this applies to every mode of this APK).
 
 ```
 # in the repo root: BUILD the app (never install it), then stage its .so into this probe
@@ -91,25 +94,41 @@ Run it with the AOT pair and the two mels already in `files/` (push recipe above
 
 ```
 F=/data/user/0/com.whispereverywhere.probe/files
-python drive.py --serial R52XC00LL9K --pid --tag p1b_litertasr_default mode=litertasr \
+python drive.py --serial R52XC00LL9K --pid --tag p1b_litertasr_rebind mode=litertasr \
     model=$F/turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite \
     dec=$F/turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite mels=jfk_mel128.bin,canary_mel128.bin utts=3
-python drive.py ... --tag p1b_litertasr_sustained ... perfmode=2      # PreferSustainedSpeed vs the default (-1)
+python drive.py ... --tag p1b_litertasr_copy ... kvstrategy=1      # the one-set arm: a native copy per step
 ```
 
+The two self-KV strategies are the plan's "per-step time with one and with two self-KV sets", and both runs are
+the gate: `kvstrategy=0` (default) swaps two sets by RE-BINDING — no byte moves, but the v2.1.1 dispatch
+re-registers each of the 16 re-bound buffers at the next run, a cost inside the run's time (so the JSON's
+`cache_copy_ms_mean` is `null`, not a 0.0 it never was); `kvstrategy=1` keeps one input set and copies the step's
+8 cache tensors (~8 MB) back into it natively, with no binding ever changed. Compare `step_ms_mean`, which includes
+either advance; the faster one becomes the default in a later commit.
+
+**`perfmode` is not a comparison this runtime can make.** On LiteRT 2.1.1 with the AOT pair the MediaTek dispatch
+never reads the performance mode: it hands its options to the adapter loader (which reads only the SDK version
+type), and its bytecode load hard-codes `NEURON_PRIORITY_HIGH`, `NEURON_PREFER_SUSTAINED_SPEED` and an execution
+boost hint of 100. Every run is already in `PreferSustainedSpeed`; the extra is passed through (the init line
+says `perfmode=N (inert on LiteRT 2.1.1 AOT)`) and a run per value measures nothing.
+
 Sequence: `nativeProbe` (the adapter walk — the 5 s — timed on its own) → `nativeInit` (runtime, environment,
-both files' `LiteRtStamp`, the IO census, both restores, the buffers) → per round and mel: `nativeEncode` →
-`nativeDetectLanguage` (`detect=false` skips it) → `nativeDecodeSegment` with the app's arguments → `nativeRelease`
-→ with `rearm=true` (default) a second `nativeInit` + one window + release: the re-arm after a trim, which must pay
-the restores and NOT the 5 s. Extras: `perfmode` (-1 default | 0..3), `wantmajor` (8), `socstamp` (mt6989),
-`diag` (true: native per-step `npu-debug: steptime` lines), `lang` (en | auto).
+both files' `LiteRtStamp`, the IO census, both restores, the buffers, and the APU check: the decoder's first step
+on zeroed caches, refused over 250 ms) → per round and mel: `nativeEncode` → `nativeDetectLanguage`
+(`detect=false` skips it) → `nativeDecodeSegment` with the app's arguments → `nativeRelease` → with `rearm=true`
+(default) a second `nativeInit` + one window + release: the re-arm after a trim, which must pay the restores and NOT
+the 5 s. Extras: `kvstrategy` (0 | 1), `perfmode` (-1 default | 0..3, inert), `wantmajor` (8), `socstamp`
+(mt6989), `diag` (true: native `npu-debug: steptime` lines for each segment's first four steps and its last),
+`lang` (en | auto).
 
 Read back: `PROBE litertasr|…` lines (probe/init ms, per-utterance encode/detect/decode ms, steps, ms per step,
 nsp/lp/rung/terminator, timestamp pairing, `matches_reference` against t8's ids) and on `WE-DIAG` the native
-`apu:` driver line, the `stamp=` lines, both restore times, the requirement types of the buffers (2 = AHWB,
-4 = DMA-BUF), `decode: … step=… ms (run …, io …)` and, with diag, every step's time. The result JSON keeps
-`detok.py`'s `utterances[].ids` shape. The one-self-KV-set arm of the plan's comparison is `mode=e2eqc` on the
-same pair (a Kotlin copy per step); this mode is the two-set, zero-copy arm.
+`apu:` driver line, the `stamp=` lines, both restores with their accelerator sets, the `apu: decoder step … pass`
+line, the `buffers:` line (each kind's requirements and the type made: 2 = AHWB, 4 = DMA-BUF for everything a
+DISPATCH_OP touches, 1 = host memory for `input_ids` and `position_ids`), `decode: … step=… ms (run …, io …, kv …)`
+and, with diag, the bounded step times. The result JSON keeps `detok.py`'s `utterances[].ids` shape.
+`mode=e2eqc` on the same pair is the Kotlin-API arm (a Kotlin copy per step).
 
 ## Utilization sampling (which unit actually ran — measurements §3.1, §3.2)
 
