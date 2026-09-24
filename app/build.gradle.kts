@@ -94,7 +94,8 @@ android {
             // `<project>/app/C:/Users/bastr/.androidbuild/...` rather than failing. The root
             // build.gradle.kts guards its own relocation on `localBuildRoot.isDirectory` for the
             // same reason; this is that guard, applied to the half that was missing it.
-            val oneDriveEscape = File("C:/Users/bastr/.androidbuild/WhisperEverywhere/cxx-staging")
+            // Follows the same `-PlocalBuildRoot` a worktree passes to the root script (2026-09-24).
+            val oneDriveEscape = File((providers.gradleProperty("localBuildRoot").orNull ?: "C:/Users/bastr/.androidbuild/WhisperEverywhere") + "/cxx-staging")
             if (oneDriveEscape.parentFile?.isDirectory == true) {
                 buildStagingDirectory = oneDriveEscape
             }
