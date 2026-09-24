@@ -3,6 +3,7 @@ package com.whispereverywhere.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import com.whispereverywhere.model.ModelInstallSignal
+import com.whispereverywhere.npu.NpuRedownload
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.BubbleColours
 import com.whispereverywhere.service.ResizeMath
@@ -343,6 +344,76 @@ class PreferencesManager(private val context: Context) {
         _modelInstalled.tryEmit(Unit)
         ModelInstallSignal.bump()
     }
+
+    // ============================================ 4.15 — THE AI-CHIP RE-DOWNLOAD RECORD
+
+    /**
+     * DEVICE-LOCAL STATE: facts about THIS phone's disk, in a store of their own (4.15).
+     *
+     * `whisper_everywhere_prefs` is on the backup allowlist (`backup_rules.xml`,
+     * `data_extraction_rules.xml`), so it travels to a new phone by Auto Backup and by
+     * device-to-device transfer. The re-download record must not: it says "the pair THIS phone
+     * held was removed", and restored onto a phone that never held one it would tell a fresh
+     * install that its AI-chip model "has a faster version — download it again", about a model it
+     * never had, possibly on silicon with no AI-chip tier at all. Both rule files are allowlists,
+     * so a file they do not name is excluded by omission — which is how `whisper_usage_prefs`,
+     * `whisper_cost_prefs` and `gpu_policy` already stay home. Nothing may add this file to them.
+     */
+    private val deviceLocal: SharedPreferences = context.getSharedPreferences(
+        DEVICE_LOCAL_PREFS,
+        Context.MODE_PRIVATE
+    )
+
+    private val _npuRedownload =
+        MutableStateFlow(readNpuRedownload { key, default -> deviceLocal.getString(key, default) })
+
+    /**
+     * "The selected AI-chip tier needs a re-download" (4.15, owner ruling 2026-09-24) — written by
+     * the launch stale-pair sweep when it removed the SELECTED tier's pair for failing this build's
+     * census, cleared by the shared finalise when a pair for that tier lands. A StateFlow, the
+     * [selectedModelIdFlow] one-mirror pattern, so the onboarding flow's sentence disappears the
+     * moment the fetch completes without anyone re-reading the store.
+     */
+    val npuRedownloadFlow: StateFlow<NpuRedownload?> = _npuRedownload.asStateFlow()
+
+    val npuRedownload: NpuRedownload?
+        get() = _npuRedownload.value
+
+    /** Record a stale event — see [npuRedownloadFlow]. One edit, so the two halves land together. */
+    fun recordNpuRedownload(record: NpuRedownload) {
+        deviceLocal.edit()
+            .putString(KEY_NPU_REDOWNLOAD_TIER, record.tierId)
+            .putString(KEY_NPU_REDOWNLOAD_CENSUS, record.censusKey)
+            .apply()
+        _npuRedownload.value = record
+    }
+
+    /**
+     * A pair for [landedTierId] landed (the shared finalise's committed branch): the record for
+     * that tier is resolved, and so is the note that the update notice already went out for it.
+     * A landing for any other tier leaves the record alone — [NpuRedownload.clearedBy] is the rule.
+     */
+    fun clearNpuRedownload(landedTierId: String) {
+        if (!NpuRedownload.clearedBy(_npuRedownload.value, landedTierId)) return
+        deviceLocal.edit()
+            .remove(KEY_NPU_REDOWNLOAD_TIER)
+            .remove(KEY_NPU_REDOWNLOAD_CENSUS)
+            .remove(KEY_NPU_REFRESH_NOTIFIED_CENSUS)
+            .apply()
+        _npuRedownload.value = null
+    }
+
+    /**
+     * The census key the app-update notice was last posted for — what makes that notice fire ONCE
+     * per stale event on `MY_PACKAGE_REPLACED` (`NpuRefreshNotice.decide`). Device-local with the
+     * record, and cleared with it.
+     */
+    var npuRefreshNotifiedCensusKey: String?
+        get() = deviceLocal.getString(KEY_NPU_REFRESH_NOTIFIED_CENSUS, null)
+        set(value) {
+            if (value == null) deviceLocal.edit().remove(KEY_NPU_REFRESH_NOTIFIED_CENSUS).apply()
+            else deviceLocal.edit().putString(KEY_NPU_REFRESH_NOTIFIED_CENSUS, value).apply()
+        }
 
     /**
      * Developer toggle: allow the canary-validated GPU path for MULTILINGUAL whisper models
@@ -881,6 +952,28 @@ class PreferencesManager(private val context: Context) {
          */
         internal fun readCloudDisclosureAccepted(getBoolean: (String, Boolean) -> Boolean): Boolean =
             getBoolean(CLOUD_DISCLOSURE_KEY, false)
+
+        /**
+         * The device-local store's file (4.15) — see `deviceLocal`. Deliberately NOT
+         * `whisper_everywhere_prefs`, and deliberately absent from both backup allowlists.
+         */
+        internal const val DEVICE_LOCAL_PREFS = "whisper_device_local"
+        internal const val KEY_NPU_REDOWNLOAD_TIER = "npu_redownload_tier"
+        internal const val KEY_NPU_REDOWNLOAD_CENSUS = "npu_redownload_census"
+        internal const val KEY_NPU_REFRESH_NOTIFIED_CENSUS = "npu_refresh_notified_census"
+
+        /**
+         * The one production read of the re-download record, as a pure function of a
+         * `getString(key, default)` accessor so a map can stand in for the store — the
+         * [readCloudDisclosureAccepted] seam, for the same reason. A record is BOTH halves or
+         * nothing: a tier with no census key (or the reverse) is a torn write, and a torn write
+         * must read as "no event" rather than as an event nobody can name.
+         */
+        internal fun readNpuRedownload(getString: (String, String?) -> String?): NpuRedownload? {
+            val tier = getString(KEY_NPU_REDOWNLOAD_TIER, null) ?: return null
+            val census = getString(KEY_NPU_REDOWNLOAD_CENSUS, null) ?: return null
+            return NpuRedownload(tier, census)
+        }
         private const val KEY_STT_PROVIDER = "stt_provider_id"
         private const val KEY_STT_LIVE_MODE = "stt_live_mode"
         /** Gemini's own live flag (4.3.4, default on); the shared key above never applies to Gemini. */

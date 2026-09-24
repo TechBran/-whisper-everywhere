@@ -311,6 +311,32 @@ object NpuDiag {
         return "npu: offer soc=$soc probe=$probe installed=$installed offered=$offered"
     }
 
+    /**
+     * `npu: stale pair removed tier=npu-turbo encoder=775831552 decoder=295854080
+     * census=686112520/295856032` — the launch sweep's one line per removed tier (4.15), emitted
+     * by `WhisperModelManager.reconcileNpuStagingDebris` when [NpuStalePairSweep.sweep] removed a
+     * paired tier's files for failing the installed gate against this build's census. It goes out
+     * through `WhisperNative.diag` (native logging, under this same `WE-DIAG` tag), not
+     * `android.util.Log`: R8 strips Log from release, and the phone this line is about takes the
+     * refresh from the Play track.
+     *
+     * **It is the only evidence the removal leaves.** The files are gone by the time anyone looks,
+     * and "the NPU tier is not installed after the update" has two readings a report cannot tell
+     * apart without it: the refresh arriving (this line, with the old encoder's size beside the
+     * census's), or a pair that never landed at all (no line). `encoder=`/`decoder=` are what WAS
+     * on disk — `none` for a half that was absent — and `census=` is the family row's
+     * encoder/decoder bytes it was judged against, so the +13 % reads straight off the line.
+     * ` left=` is appended only when a file refused to be deleted (the `blank=` field's rule:
+     * its presence is the grep), naming the survivors; the next launch tries again.
+     *
+     * Never content: a tier id, byte counts and bare catalog filenames.
+     */
+    fun stalePairRemoved(removed: NpuStalePairSweep.Removed): String =
+        "npu: stale pair removed tier=${removed.tierId} encoder=${removed.encoderBytes ?: "none"} " +
+            "decoder=${removed.decoderBytes ?: "none"} " +
+            "census=${removed.censusEncoderBytes}/${removed.censusDecoderBytes}" +
+            (if (removed.left.isEmpty()) "" else " left=${removed.left.joinToString(",")}")
+
     // ------------------------------------------------------------------ the pack lifecycle (4.2 F5)
 
     /**

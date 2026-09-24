@@ -17,7 +17,9 @@ import com.whispereverywhere.npu.NpuModelSpec
 import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.npu.NpuPackMetadata
 import com.whispereverywhere.npu.NpuSocFamily
+import com.whispereverywhere.npu.NpuStalePairSweep
 import com.whispereverywhere.transcription.ModelPathProvider
+import com.whispereverywhere.whisper.WhisperNative
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -69,16 +71,24 @@ class WhisperModelManager(
      * tier `approxBytes` is the sum of both files, and comparing the encoder alone against the
      * pair's total is 67% out for npu at v0.63.0 (63% before) — the tier would read as "not
      * installed" forever no matter what the owner imported.
+     *
+     * **The per-file clauses live in [NpuAssetImport.passesInstalledGate] since 4.15**, unchanged
+     * in body and order, because the launch stale-pair sweep ([reconcileNpuStagingDebris]) became
+     * their second reader: it deletes a paired tier's files exactly when this predicate is false
+     * for files that are there, and it must never be able to answer differently from this
+     * function. This one resolves the gate and reads the two lengths; the rule is executed there.
      */
     fun isInstalled(model: WhisperModel): Boolean {
         val artifact = (context.applicationContext as? WhisperEverywhereApp)?.npuSocFamily
             ?.let { family -> NpuFleetCensus.artifactFor(family.id, model.id) }
         val gate = NpuAssetImport.installedGateBytes(model, artifact)
         val f = fileFor(model)
-        if (!f.exists() || !WhisperCatalog.sizeWithinTolerance(f.length(), gate.primaryBytes)) return false
-        val paired = gate.paired ?: return true
-        val pf = File(modelsDir(), paired.fileName)
-        return pf.exists() && WhisperCatalog.sizeWithinTolerance(pf.length(), paired.bytes)
+        val pf = gate.paired?.let { File(modelsDir(), it.fileName) }
+        return NpuAssetImport.passesInstalledGate(
+            gate,
+            primaryLength = if (f.exists()) f.length() else null,
+            pairedLength = pf?.let { if (it.exists()) it.length() else null },
+        )
     }
 
     /** The selected model, if it is actually installed on disk. */
@@ -897,6 +907,13 @@ class WhisperModelManager(
         }
         // Committed. The parked copies are now genuinely superseded.
         parked.values.forEach { if (it.exists()) it.delete() }
+        // (4.15) A pair for THIS tier is on disk and verified, so a re-download the launch sweep
+        // recorded for it is done: the boot notice stops and the onboarding sentence goes. Here,
+        // in the committed branch of the ONE transaction both arrival routes share, so the Play
+        // pack and a fresh SAF import clear it through the same line — and never on a refusal or
+        // a rollback, which leave the tier exactly as absent as it was. Before the announce, so
+        // anything that re-reads on the install signal already sees the record gone.
+        prefs.clearNpuRedownload(model.id)
         // LAST, and only now. See the KDoc: the chooser's producers key on this.
         prefs.notifyModelInstalled()
         return NpuAssetImport.ImportState.Installed
@@ -1198,17 +1215,52 @@ class WhisperModelManager(
      * Cost on a healthy launch: a handful of `File` stats (no parked files, nothing to do).
      * Renames or deletes happen only after a mid-finalise death, which is the launch that needs
      * them.
+     *
+     * **4.15 — AND THE STALE PAIR GOES ON THE SAME PASS.** After a tier's debris is settled, a pair
+     * whose files are present but fail THIS build's census is removed ([NpuStalePairSweep] — the
+     * owner-ruled one-time re-download of the v0.63.0 refresh, minus the ~1 GB of dead weight the
+     * old pair used to occupy until the new one landed, which the finalise's by-existence parking
+     * and its one-copy free-space budget disagreed about). It needs the family's census row, so
+     * unlike the debris half it runs only when the family resolves: an off-census device keeps
+     * whatever it holds. When the removed tier is the SELECTED one, [PreferencesManager]'s
+     * re-download record is written — what the boot/update notice and the onboarding sentence
+     * read — and every removal is one `npu: stale pair removed` line. Healthy-launch cost: the two
+     * `File` stats per tier it already takes to find nothing.
      */
     fun reconcileNpuStagingDebris() {
         val dir = modelsDir()
+        // The F2 memo, read once for the pass — the one family resolution, never re-derived.
+        // Null on every off-census device, and then the stale half below does nothing at all.
+        val family = (context.applicationContext as? WhisperEverywhereApp)?.npuSocFamily
         NpuAssetImport.PAIRED_TIER_IDS.forEach { tierId ->
+            val model = WhisperCatalog.byId(tierId)
             // NAMES, not the verifying map (4.2 F3): sweeping parked `.prev`/`.part` debris
             // settles paths and needs no digests, so it must not depend on the family
             // resolution the map now requires — debris is swept even on a device whose family
             // answer is null or changed between launches.
-            val names = NpuAssetImport.pairedFileNames(WhisperCatalog.byId(tierId))
+            val names = NpuAssetImport.pairedFileNames(model)
             if (names.isNotEmpty()) reconcileStagingDebris(dir, names)
+            // AFTER the debris is settled, so the stale question is asked of a settled directory.
+            if (model != null && family != null) removeStalePair(dir, model, family)
         }
+    }
+
+    /**
+     * The stale half of [reconcileNpuStagingDebris] for one tier (4.15): the pure sweep decides and
+     * deletes, this shell logs the removal and writes the record. The record is written only for
+     * the SELECTED tier ([NpuStalePairSweep.recordFor]) — a stale pair of a tier the user is not
+     * on is dead weight, removed and logged, and nobody is asked to fetch it.
+     */
+    private fun removeStalePair(dir: File, model: WhisperModel, family: NpuSocFamily) {
+        val removed = NpuStalePairSweep.sweep(dir, model, NpuFleetCensus.artifactFor(family.id, model.id))
+            ?: return
+        // Through the NATIVE export, not android.util.Log: R8 strips every Log call from the
+        // release build, and the one device check this line exists for — a phone taking 4.15 from
+        // the internal track over a 0.62.2 pair (sheet §8) — can only run a release build. It
+        // costs the whisper JNI load one launch early, once per stale event. Wrapped, so a
+        // native-load surprise can cost neither the record below nor the launch.
+        runCatching { WhisperNative.diag(NpuDiag.stalePairRemoved(removed)) }
+        NpuStalePairSweep.recordFor(removed, prefs.selectedModelId)?.let { prefs.recordNpuRedownload(it) }
     }
 
     /** Lowercase hex of a digest's raw bytes — the import's one rendering of a hash. */

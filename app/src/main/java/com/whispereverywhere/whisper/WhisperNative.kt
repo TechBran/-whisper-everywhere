@@ -391,8 +391,10 @@ object WhisperNative {
      * real device comes out here. Every other `WE-DIAG` line in Kotlin is development-time only
      * and correctly disappears from the store build; this is not a licence to move them here.
      *
-     * The one caller is the speaker spike's per-chunk line (`SpeakerDiag`, emitted from
-     * `FloatingBubbleService`). NOTHING is filtered, truncated or inspected on the way through —
+     * The first caller was the speaker spike's per-chunk line (`SpeakerDiag`, emitted from
+     * `FloatingBubbleService`); since 4.15 `WhisperModelManager`'s launch sweep also sends its one
+     * `npu: stale pair removed` line here, because the phone that line is about can only run the
+     * refresh from the Play track. NOTHING is filtered, truncated or inspected on the way through —
      * the rule that transcript content never reaches a log stays at the call site, whose input is
      * a `SpeakerAssignment`, a type that carries no text at all. Do not hand this a string built
      * from user speech.

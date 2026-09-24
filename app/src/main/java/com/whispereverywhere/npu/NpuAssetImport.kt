@@ -204,6 +204,32 @@ object NpuAssetImport {
         )
     }
 
+    /**
+     * THE INSTALLED PREDICATE ITSELF, over what is on disk (4.15): each file's own length — null
+     * when the file is absent — against its own reference in [gate], at ±5 %.
+     *
+     * It moved here from `WhisperModelManager.isInstalled` because 4.15 gave it a SECOND reader
+     * that must never disagree with the first. The launch stale-pair sweep
+     * ([NpuStalePairSweep.sweep]) deletes a paired tier's files exactly when this answers false
+     * for files that are there, and a second copy of the rule in the sweep could delete a pair
+     * `isInstalled` accepts — a working install gone at launch, with nothing on screen to say
+     * why. One rule, two readers: `isInstalled` is this over `File.length()`, and the sweep is
+     * its negation over the same lengths. The same move, for the same reason, as
+     * `WhisperCatalog.isCpuFallbackEligible` at 4.3.
+     *
+     * The clauses are the manager's, unchanged, in their order: the primary is gated FIRST
+     * against `primaryBytes` (never `approxBytes`, which for a paired tier is the SUM of both
+     * files), and only then does a gate with no paired half answer on the primary alone — the
+     * other order returns true for every single-file tier with nothing on disk. A paired half
+     * that is absent is not an install: an encoder without its decoder arms halfway and fails
+     * inside `nativeInit`.
+     */
+    fun passesInstalledGate(gate: InstalledGate, primaryLength: Long?, pairedLength: Long?): Boolean {
+        if (primaryLength == null || !WhisperCatalog.sizeWithinTolerance(primaryLength, gate.primaryBytes)) return false
+        val paired = gate.paired ?: return true
+        return pairedLength != null && WhisperCatalog.sizeWithinTolerance(pairedLength, paired.bytes)
+    }
+
     /** What one zip entry may do. */
     sealed interface EntryVerdict {
         /**

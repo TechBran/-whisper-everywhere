@@ -87,6 +87,16 @@ class UnsupportedTierGatePinTest {
         read("src/main/java/com/whispereverywhere/model/WhisperModel.kt")
     }
 
+    /**
+     * The pure import decisions (4.15): the installed predicate's per-file clauses moved into
+     * `NpuAssetImport.passesInstalledGate` when the launch stale-pair sweep became their second
+     * reader. The clause pins below moved with them, unedited in claim — a pin follows the code
+     * it is about, the same move the mel-donor pins made to the catalog at 4.3.
+     */
+    private val importDecisions: String by lazy {
+        read("src/main/java/com/whispereverywhere/npu/NpuAssetImport.kt")
+    }
+
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
 
     /** A multi-line needle, written as its own source lines so indentation is part of the match. */
@@ -215,10 +225,24 @@ class UnsupportedTierGatePinTest {
         // NpuAssetImport.installedGateBytes — the family's census bytes when the family can
         // answer, the catalog record when it cannot — and the CLAIM below is unchanged: each
         // file is gated against ITS OWN reference, never against the pair's sum.
+        //
+        // RE-SPECIFIED AT 4.15, and the claims did not move — the CODE did. The per-file clauses
+        // left this method for `NpuAssetImport.passesInstalledGate`, because the launch stale-pair
+        // sweep became their second reader: it deletes a paired tier's files exactly when this
+        // predicate is false for files that are there, so the two must be one rule, not two
+        // copies. Each clause pin below now reads that function — and the function is PURE, so
+        // `NpuStalePairSweepTest` also EXECUTES every clause, the hoisted early return included,
+        // which is stronger than a needle ever was. What stays pinned here is the wiring: this
+        // method resolves the gate and the two real lengths and hands them to that one rule.
         val predicate = body(
             manager,
             "WhisperModelManager.kt",
             "    fun isInstalled(model: WhisperModel): Boolean {",
+        )
+        val rule = body(
+            importDecisions,
+            "NpuAssetImport.kt",
+            "    fun passesInstalledGate(gate: InstalledGate, primaryLength: Long?, pairedLength: Long?): Boolean {",
         )
         assertEquals(
             "the reference selection is the PURE gate — the executed walk lives in " +
@@ -233,42 +257,66 @@ class UnsupportedTierGatePinTest {
             count(predicate, "NpuFleetCensus.artifactFor(family.id, model.id)"),
         )
         assertEquals(
+            "the per-file verdict is the ONE pure rule the stale-pair sweep also reads — a second " +
+                "copy here could accept a pair the sweep deletes at launch",
+            1,
+            liveLineCount(predicate, "NpuAssetImport.passesInstalledGate("),
+        )
+        assertEquals(
+            "and it is handed the primary's REAL length, null when the file is absent — a missing " +
+                "encoder is not a 0-byte one to be compared",
+            1,
+            count(predicate, "primaryLength = if (f.exists()) f.length() else null"),
+        )
+        assertEquals(
+            "and the paired file's, resolved by the gate's own paired name",
+            1,
+            count(predicate, "pairedLength = pf?.let { if (it.exists()) it.length() else null }"),
+        )
+        assertEquals(
+            "the paired file is the one the GATE names — the catalog's delivery name, never a " +
+                "second spelling",
+            1,
+            count(predicate, "val pf = gate.paired?.let { File(modelsDir(), it.fileName) }"),
+        )
+        assertEquals(
             "the primary file is size-gated against the gate's primary reference, which is the " +
                 "file it names",
             1,
-            count(predicate, "WhisperCatalog.sizeWithinTolerance(f.length(), gate.primaryBytes)"),
+            count(rule, "WhisperCatalog.sizeWithinTolerance(primaryLength, gate.primaryBytes)"),
         )
         assertEquals(
             "isInstalled never gates a file against approxBytes: for a paired tier that is the SUM " +
                 "of two files, and no single file on disk can ever match it",
             0,
-            count(predicate, "f.length(), model.approxBytes"),
+            count(predicate, "f.length(), model.approxBytes") + count(rule, "approxBytes"),
         )
         assertEquals(
             "the paired artefact is required too, at ITS own reference — half an npu install is " +
                 "not an install, and arming the tier on a missing decoder is a native-side failure",
             1,
-            count(predicate, "WhisperCatalog.sizeWithinTolerance(pf.length(), paired.bytes)"),
+            count(rule, "pairedLength != null && WhisperCatalog.sizeWithinTolerance(pairedLength, paired.bytes)"),
         )
         assertEquals(
             "a tier with no paired gate still answers on its primary alone, so the six ggml " +
                 "tiers keep the predicate they have always had",
             1,
-            count(predicate, "val paired = gate.paired ?: return true"),
+            count(rule, "val paired = gate.paired ?: return true"),
         )
         // ORDER, not merely presence — the same rule this branch has now hit four times. Hoisting
         // the early return above the primary gate satisfies every count above and is a different
         // function: `isInstalled` would return TRUE for all six ggml tiers with nothing on disk,
         // because the only file check left runs after a return that always fires for them. The
-        // early return is a shortcut past work already done, so it must come second.
+        // early return is a shortcut past work already done, so it must come second. (Since 4.15
+        // `NpuStalePairSweepTest` also executes exactly that mutation's input and holds `false`.)
         assertTrue(
             "the primary file's size gate runs BEFORE the no-paired-gate early return: hoisting " +
                 "that return makes isInstalled() true for every single-file tier with no file on disk",
             indexOfOrFail(
-                predicate,
-                "isInstalled",
-                "WhisperCatalog.sizeWithinTolerance(f.length(), gate.primaryBytes)",
-            ) < indexOfOrFail(predicate, "isInstalled", "val paired = gate.paired ?: return true"),
+                rule,
+                "passesInstalledGate",
+                "WhisperCatalog.sizeWithinTolerance(primaryLength, gate.primaryBytes)",
+            ) < indexOfOrFail(rule, "passesInstalledGate", "val paired = gate.paired ?: return true"),
         )
     }
 

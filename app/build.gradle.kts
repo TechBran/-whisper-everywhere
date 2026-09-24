@@ -569,6 +569,18 @@ tasks.withType<Test>().configureEach {
         // live-line-scoped today, so this entry is not yet load-bearing — and the next assertion
         // added there is not required to remember the distinction.
         "src/main/java/com/whispereverywhere/npu/NpuAssetImport.kt",
+        // (4.15) The launch stale-pair sweep, and the two backup rule files its record must stay
+        // out of, by this list's stated rule. `NpuStalePairSweepTest` executes the sweep and ALSO
+        // reads it as text — its verdict must be the one `passesInstalledGate` call and it must
+        // never name `PART_SUFFIX`, a live-line claim and a zero-count, both comment-proof but
+        // not rule-proof — and it reads both rule XMLs to hold that neither names the
+        // device-local store. An XML edit changes no .class file at all, so without these
+        // entries the one edit that pin exists to catch (the record's file added to the
+        // allowlist, where it would travel to a phone that never held the pair) is the one that
+        // leaves `:app:testDebugUnitTest` UP-TO-DATE.
+        "src/main/java/com/whispereverywhere/npu/NpuStalePairSweep.kt",
+        "src/main/res/xml/backup_rules.xml",
+        "src/main/res/xml/data_extraction_rules.xml",
         // (4.1 L8) NpuBackendSelector.kt — the plan's own found-while-writing hole, the same one
         // Q7a MEASURED and I3 named, on the one file that carries the routing decision:
         // NpuBackendWiringTest source-pins this file (the routesToNpu signature, the zero-literal

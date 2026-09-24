@@ -1156,11 +1156,29 @@ class NpuAssetImportTest {
             0,
             liveLineCount(manager, "requiredEntriesFor(model)"),
         )
+        // RE-SPELLED AT 4.15, claim unchanged: the launch pass now resolves the catalog entry once
+        // (`val model = WhisperCatalog.byId(tierId)`) because its new stale half needs the entry
+        // too, so the names are derived from that entry rather than from an inline lookup. The
+        // claim is the same two facts — names from the CATALOG alone, and the debris sweep behind
+        // no family question — and the second is now asserted outright, because the pass reads
+        // the family for its stale half and the debris half must never be moved behind it.
+        val pass = body(manager, "WhisperModelManager.kt", "    fun reconcileNpuStagingDebris() {")
         assertEquals(
             "the launch debris sweep derives NAMES, not digests -- sweeping parked files must " +
                 "not depend on the family resolution the verifying map now requires",
             1,
-            liveLineCount(manager, "NpuAssetImport.pairedFileNames(WhisperCatalog.byId(tierId))"),
+            liveLineCount(pass, "val names = NpuAssetImport.pairedFileNames(model)"),
+        )
+        assertEquals(
+            "from the catalog entry for the tier, and nothing else",
+            1,
+            liveLineCount(pass, "val model = WhisperCatalog.byId(tierId)"),
+        )
+        assertEquals(
+            "and the debris half is gated on the names ALONE -- a device whose family is null " +
+                "still has its parked .prev/.part debris settled",
+            1,
+            liveLineCount(pass, "if (names.isNotEmpty()) reconcileStagingDebris(dir, names)"),
         )
     }
 
