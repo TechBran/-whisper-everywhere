@@ -185,6 +185,27 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 111 = 4.15.0 — the AI chip's first rebuild, and the 8 Gen 1 gets it.** 111
+ * because 110 is 4.14.2, the bubble branch, merged to main on 2026-09-24 by owner ruling and on
+ * the internal track, so 111 is the next code. The name takes a MINOR because a whole silicon
+ * generation gains the best tier, as it did at 4.12.0 and 4.13.0.
+ *
+ * Three owner rulings of 2026-09-24 ride in it. The QNN runtime moves 2.49.0 -> 2.50.0 with its
+ * headers pinned to the same QAIRT build (v2.50.0.260828221209) — the build the new packs were
+ * compiled with, so runtime, headers and blobs agree for the first time since 4.0 (R7, the
+ * 2.45-blob-under-2.49 pairing, is retired rather than re-proven). Every family's packs move to AI
+ * Hub v0.63.0, a REBUILD: no 0.62.2 digest reproduces, every encoder is 11.6-22.1% smaller, the
+ * graph IO census is unchanged, and AI Hub's own profiles show the turbo encoder 4-7x faster (the
+ * vendor's numbers; no device here has run a v0.63.0 pair yet). And `8gen1` joins as the sixth
+ * census family — SM8450, the Galaxy S22s, the Tab S8s and the S23 FE's Snapdragon build, on
+ * Qualcomm's own v69 / soc_model 36 packs, first published at v0.63.0.
+ *
+ * **What a user with a pair installed sees:** the NPU tier reads as NOT installed after the
+ * update — the 0.62.2 turbo encoder is 13% over the new size gate — until the v0.63.0 pack is
+ * fetched. **The bundle is ~7.5 GB** (estimated from the vendor zip lengths; 106 was 6.63 GB),
+ * and whether Play accepts it is unverified. Every bump still re-arms GpuPolicy's canary latches
+ * (below).
+ *
  * **versionCode 110 = 4.14.2 — the panel defaults to 80%.** The owner, testing 109 on the
  * device: "80% is what I'm testing at. And that seems like about the best balance." The 75
  * step 4.14.1 added for his first ask comes back off the ladder. 110 rather than a rebuilt 109,
@@ -425,17 +446,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_14_2_at_version_code_110() {
+    fun release_identity_is_4_15_0_at_version_code_111() {
         assertEquals(
-            "versionName must be 4.14.2 for this release (app/build.gradle.kts defaultConfig)",
-            "4.14.2",
+            "versionName must be 4.15.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.15.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 110 for this release (app/build.gradle.kts defaultConfig). " +
-                "109 = 4.14.1 may already be on the internal track, and a spent code is " +
-                "refused; 105 = 4.11.3 is in production",
-            110,
+            "versionCode must be 111 for this release (app/build.gradle.kts defaultConfig). " +
+                "110 = 4.14.2 (the bubble branch, merged to main 2026-09-24) is on the internal " +
+                "track, and a spent code is refused; 105 = 4.11.3 is in production",
+            111,
             BuildConfig.VERSION_CODE,
         )
     }
