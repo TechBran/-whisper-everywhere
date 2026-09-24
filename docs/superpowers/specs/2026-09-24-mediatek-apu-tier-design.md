@@ -140,11 +140,14 @@ A refusal is visible in logcat and on the offer line (`probe=fail:<reason>`); th
 offered — there is no card to say why (`NpuTierStatus` is fed only by a backend that exists), which is the
 QNN behaviour today, stated rather than promised otherwise.
 
-The manifest declares `libneuronusdk_adapter.mtk.so` and, **if P0(c) shows the adapter cannot load its own
-`apuware` dependencies without them, the `libapuware*.mtk.so` set it needs** — and nothing else: not
-`libneuron_sys_util.mtk.so`, not `libneuronusdk_adapter.9.mtk.so`, not `libneuron_adapter_mgvi.so`. A pin reads
-the MERGED release manifest (not the source one), because the litert AAR's own manifest declares the three we
-exclude and a merge would change which adapter wins.
+The manifest declares `libneuronusdk_adapter.mtk.so` and nothing else from the MediaTek set — P0(c) (runs
+t10/t11, sheet §4c) showed the adapter loads its own `apuware` dependencies from the system namespace with
+only that one declaration, the dispatch loads from `filesDir/litert_dispatch/`, no plugin is needed, and the
+pair's output is identical to the reference. Not `libneuron_sys_util.mtk.so`, not
+`libneuronusdk_adapter.9.mtk.so`, not `libneuron_adapter_mgvi.so`. A pin reads the MERGED release manifest
+(not the source one): P0(c) also showed the litert 2.1.1 AAR's own manifest re-adding `libneuron_sys_util`
+through the merger. The product takes `libLiteRt.so` out of that AAR without depending on it (§2.6), so no
+foreign manifest is merged — and the pin is what proves it stays that way.
 
 ### 2.4 The engine seam (narrow, and landed first as a Qualcomm-only refactor)
 
@@ -346,11 +349,13 @@ Order of the tree: `feat/bubble-tab-mute` (110) merges to main → workstream A 
 this tier on `feat/mediatek-apu-tier` (112+), each with its `ReleaseIdentityTest` paragraph. For the Tab test
 loop, Play internal app sharing (no versionCode spent) is checked as an alternative to burning codes.
 
-- **P0 — probe runs on the tablet (no app code):** (a) DONE: the 5 s wait is the adapter's own (§2.3).
-  (b) `PreferSustainedSpeed` vs default — not reachable from the probe's Kotlin API; measured in P1.
-  (c) the product's loading shape: dispatch from `files/litert_dispatch/`, no plugin, the minimal manifest —
-  does the adapter still load its `apuware` dependencies, and does create/encode change? (d) the app-mode
-  reference run with the top-k export (§5).
+- **P0 — probe runs on the tablet (no app code) — DONE 2026-09-24:** (a) the 5 s wait is the adapter's own
+  (§2.3, run t7). (b) `PreferSustainedSpeed` vs default — not reachable from the probe's Kotlin API; measured
+  in P1b. (c) the product's loading shape passes: dispatch from `files/litert_dispatch/`, no plugin, one
+  declaration; encoder 1,725 ms; the pair's ids identical to the reference (runs t10/t11, sheet §4c). (d) the
+  app-mode reference: word-perfect with paired, monotonic timestamps, 21 ms per step (t8, sheet §5b), and the
+  per-step top-k trace for the host test (t8b, `t8b_appmode_topk_e2eqc.steps.jsonl`, 31 steps, archived on
+  the PC under `~/.androidbuild/probe-logs/tab-apu-2026-09-24/`).
 - **P1a — the Kotlin seam, Qualcomm-only (2 days, after A merges):** `NpuAsrEngine`, `QnnAsrEngine`,
   `Refusal`/`NpuStage`, the backend on the seam, every pin re-pointed, `qnn_asr.cpp` untouched; the Qualcomm
   regression gate.
@@ -370,4 +375,4 @@ loop, Play internal app sharing (no versionCode spent) is checked as an alternat
    only what a device reports.
 2. Whether Google publishes a MediaTek dispatch for a newer LiteRT (licence talks, #9482).
 3. The owner's wording for the speed claim on MediaTek families (§2.8).
-4. Whether the `apuware` dependency libraries must be declared for the adapter to work (P0(c) answers it).
+4. ~~Whether the `apuware` dependency libraries must be declared~~ — answered by P0(c): they need not be.

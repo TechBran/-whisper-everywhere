@@ -118,6 +118,30 @@ second model's `create` was 911 ms in t6), so the tier pays it on the boot prewa
 The same source read settles the loader's rule for v2.1.1: the candidate loop has no `break`, so the LAST
 loadable adapter wins — the driver check walks the same list.
 
+## 4c. P0(c): the product's loading shape works — dispatch from app storage, no plugin, one declaration
+
+The probe that produced every number above loaded the dispatch from `nativeLibraryDir` with the compiler
+plugin beside it and nine MediaTek libraries declared. The product will stage the dispatch into
+`filesDir/litert_dispatch/`, ship no plugin, and declare one library. Runs `t10_p0c_product_shape_enc` and
+`t11_p0c_product_shape_e2eqc` (17:31) used a probe build whose source manifest declares only
+`libneuronusdk_adapter.mtk.so`, with `libLiteRtDispatch_MediaTek.so` (sha256 `f47bd9c0…` as extracted from
+the APK — the same bytes the September build pinned) pushed into `files/litert_dispatch/` and
+`dispatchdir=` pointing there:
+
+| run | what | create ms | encode / step | result |
+|---|---|---|---|---|
+| t10 | AOT encoder, `mode=litert` | 7,531.3 (one 5.2 s wait) | warm 1,725.1 ms (n=5) | `Loading shared library: …/files/litert_dispatch/libLiteRtDispatch_MediaTek.so`; no plugin applied; `FastAPU is available`; fingerprint as t2 |
+| t11 | the pair, app decode mode | encoder 7,610.9, decoder 619.9 | — | ids **identical to t8** for jfk and canary (timestamps included) |
+
+So: LiteRT finds the dispatch by absolute path in an app-storage directory; the compiled models need no plugin;
+the adapter dlopens its own `apuware` dependencies from the system namespace without the app declaring them
+(`nativeloader: Extending system_exposed_libraries: libneuronusdk_adapter.mtk.so:libneuron_sys_util.mtk.so`
+was the whole exposed set). One thing to note for the product: `libneuron_sys_util.mtk.so` appears in that
+exposed set although the source manifest no longer declares it — the litert 2.1.1 **AAR's own manifest**
+declares it (and `.9` and `mgvi`) and the merger added it back. The product ships no AAR (it extracts
+`libLiteRt.so` only), so its merged manifest carries exactly what it declares; the design pins the merged
+manifest for that reason. The 5 s adapter wait is present in every configuration.
+
 ## 5. END-TO-END: real speech through the pair, both on the APU — CORRECT
 
 `t6_turbo_e2eqc_npu_npu_1`, probe `mode=e2eqc` (encoder `encode` → 8 cross-KV tensors → greedy KV-cached decode
