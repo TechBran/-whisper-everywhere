@@ -17,11 +17,12 @@ chipset key, and holds every zip to the same gates:
      the 4.1 turbo zip and workspace re-runs cost nothing), then ``zipfile.testzip()``: every
      entry CRC-clean.
   3. The vendor ``metadata.json``: ``chipset_attributes.htp_version`` must equal the census
-     family's HTP version, the chipset must self-describe as the key we asked for, and the
-     encoder/decoder IO census (input count, output count, input bytes, output bytes -- shape
-     product times dtype width) must equal ``NpuModelSpec``'s row for the tier. This is the
-     executed form of "per-SoC packs carry the SAME model": same graphs, same shapes, same
-     byte totals, only the Hexagon target differs.
+     family's HTP version, ``chipset_attributes.soc_model`` the family's QNN soc_model (the
+     FAMILIES column added 2026-09-24), the chipset must self-describe as the key we asked
+     for, and the encoder/decoder IO census (input count, output count, input bytes, output
+     bytes -- shape product times dtype width) must equal ``NpuModelSpec``'s row for the tier.
+     This is the executed form of "per-SoC packs carry the SAME model": same graphs, same
+     shapes, same byte totals, only the Hexagon target differs.
   4. Stream-extract the two context binaries (sha256 during the copy, never a second read) and
      print one census row.
 
@@ -153,30 +154,44 @@ MODELS = {
     },
 }
 
-# census family id -> (the vendor manifest's chipset key, HTP version, Play device group).
+# census family id -> (the vendor manifest's chipset key, HTP version, Play device group, QNN
+# soc_model).
 # THE CHIPSET MAPPING LIVES HERE, deliberately not in NpuFleetCensus: the app never talks to
 # the vendor bucket, and a runtime field nothing at runtime reads would be one more string to
 # keep true (F1 handoff). The pack group IS a census field (NpuSocFamily.packGroup) restated
 # for the build side -- NpuPackLayoutTest pins each htp/packGroup pairing here equal to the
 # census, so the payload dirs cannot drift from the device-group XML.
+#
+# THE SOC_MODEL COLUMN (added 2026-09-24, after the v0.63.0 measure runs) is what metadata_gate
+# holds chipset_attributes.soc_model to. A context binary is compiled for a soc_model, not just
+# an HTP version: the 7 Gen 4 and the 8 Gen 2 are both v73 and differ here (86 and 43), and that
+# difference is why qcs8550 is a family and 7gen4's binaries are not a cross-load for it. The
+# htp check alone would pass a same-architecture, wrong-die package. Where each value was read,
+# always out of the vendor's own metadata.json: 57, 69, 87 and 86 from the v0.61.0 zips still in
+# the Windows workspace (read 2026-09-24; 0.62.2 re-released those same bytes); 43 from the
+# v0.62.2 qcs8550 pack (docs/measurements/2026-09-22-s23-8gen2-qcs8550-spike.md); 36 by hand
+# from the v0.63.0 8gen1 pack (2026-09-24). No measure run has asserted this column against the
+# v0.63.0 zips yet. The next run is its first, and a mismatch fails naming both numbers.
 FAMILIES = {
-    "8gen3": ("qualcomm-snapdragon-8gen3", 75, "soc_8gen3"),
-    "8elite_galaxy": ("qualcomm-snapdragon-8-elite-for-galaxy", 79, "soc_8elite_galaxy"),
-    "8elite5_galaxy": ("qualcomm-snapdragon-8-elite-gen5-for-galaxy", 81, "soc_8elite5_galaxy"),
-    "7gen4": ("qualcomm-snapdragon-7gen4", 73, "soc_7gen4"),
+    "8gen3": ("qualcomm-snapdragon-8gen3", 75, "soc_8gen3", 57),
+    "8elite_galaxy": ("qualcomm-snapdragon-8-elite-for-galaxy",
+                      79, "soc_8elite_galaxy", 69),
+    "8elite5_galaxy": ("qualcomm-snapdragon-8-elite-gen5-for-galaxy",
+                       81, "soc_8elite5_galaxy", 87),
+    "7gen4": ("qualcomm-snapdragon-7gen4", 73, "soc_7gen4", 86),
     # 8 Gen 2 (SM8550). Added 2026-09-22 after the qcs8550-proxy pack was DEVICE-EXECUTED on an
     # S23 Ultra: soc_model 43 / htp_version 73, encode p50 2,472 ms, 37% of the 8 s commit floor.
     # The vendor key says "proxy" because AI Hub benchmarks the embedded QCS8550; the binary is
     # compiled for soc_model 43, which is the SM8550's own number — that is why this is a family
     # and not the cross-load CPU_BY_CENSUS rejected (7 Gen 4's, compiled for soc_model 86).
-    "qcs8550": ("qualcomm-qcs8550-proxy", 73, "soc_qcs8550"),
+    "qcs8550": ("qualcomm-qcs8550-proxy", 73, "soc_qcs8550", 43),
     # 8 Gen 1 (SM8450) — the Galaxy S22, S22+ and S22 Ultra (Snapdragon), the Galaxy Tab S8,
     # S8+ and S8 Ultra, and the S23 FE's Snapdragon build. Added 2026-09-24 at v0.63.0, the first
     # release to publish this key; it was CPU_BY_CENSUS as "no published w8a16 package" before.
     # HTP v69, the oldest architecture in the census and the only one no other family shares.
     # The 8+ Gen 1 (SM8475) is NOT this family: a different die with its own soc_model, and no
     # package for it exists under any key.
-    "8gen1": ("qualcomm-snapdragon-8gen1", 69, "soc_8gen1"),
+    "8gen1": ("qualcomm-snapdragon-8gen1", 69, "soc_8gen1", 36),
 }
 
 
@@ -318,7 +333,7 @@ def fetch_manifest(tier: str) -> dict:
 
 
 def resolve_zip_url(tier: str, manifest: dict, family: str) -> str:
-    chipset_key, _, _ = FAMILIES[family]
+    chipset_key, _, _, _ = FAMILIES[family]
     try:
         assets = manifest["precisions"]["w8a16"]["chipset_assets"]
     except KeyError as e:
@@ -424,11 +439,12 @@ def graph_census(graph: dict) -> tuple:
 
 
 def metadata_gate(tier: str, family: str, zf: zipfile.ZipFile) -> None:
-    """The 'same model' proof: census HTP + the spec row's IO census, out of the vendor's own
-    metadata. A pack that disagrees is not a variant of our model -- it is another model."""
+    """The 'same model' proof: census HTP, the family's soc_model + the spec row's IO census,
+    out of the vendor's own metadata. A pack that disagrees is not a variant of our model -- it
+    is another model, or our model compiled for another die."""
     import json
 
-    chipset_key, htp, _ = FAMILIES[family]
+    chipset_key, htp, _, soc_model = FAMILIES[family]
     info = find_entry(zf, VENDOR_METADATA)
     with zf.open(info) as f:
         md = json.load(f)
@@ -438,6 +454,13 @@ def metadata_gate(tier: str, family: str, zf: zipfile.ZipFile) -> None:
         raise fail(
             f"{tier}/{family}: vendor metadata says htp_version {got_htp}, census says {htp}. "
             f"A context binary on the wrong Hexagon fails to deserialise, or worse, does not."
+        )
+    got_soc = attrs.get("soc_model")
+    if got_soc != soc_model:
+        raise fail(
+            f"{tier}/{family}: vendor metadata says soc_model {got_soc}, FAMILIES says "
+            f"{soc_model}. Same HTP, different die: the binary was compiled for a part this "
+            f"family's devices are not, which is the cross-load CPU_BY_CENSUS refuses."
         )
     got_name = attrs.get("name")
     if got_name != chipset_key:
@@ -457,8 +480,8 @@ def metadata_gate(tier: str, family: str, zf: zipfile.ZipFile) -> None:
             f"decoder {dec} vs spec {want_dec}. This package does not carry the SAME model "
             f"as the reference family's, and no digest can make it importable."
         )
-    print(f"  metadata: htp={got_htp} chipset='{got_name}' io-census EQUAL to the "
-          f"{tier} spec row (encoder {enc}, decoder {dec})")
+    print(f"  metadata: htp={got_htp} soc_model={got_soc} chipset='{got_name}' io-census "
+          f"EQUAL to the {tier} spec row (encoder {enc}, decoder {dec})")
 
 
 def extract_and_hash(tier: str, family: str, zf: zipfile.ZipFile, workspace: str) -> dict:
@@ -569,7 +592,7 @@ def expected_metadata(tier: str, family: str) -> dict:
     NpuPackMetadata.parse reads strictly (version 1; entries encoder then decoder) and
     crossCheckRefusal answers null for. One builder for the writer AND the verifier, so the
     two cannot disagree about what a variant's metadata says."""
-    _, htp, pack_group = FAMILIES[family]
+    _, htp, pack_group, _ = FAMILIES[family]
     _, enc_bytes, enc_sha, dec_bytes, dec_sha = CENSUS[(tier, family)]
     return {
         "version": 1,
@@ -674,7 +697,7 @@ def build_packs(workspace: str) -> None:
     for tier in MODELS:
         module = PACK_MODULE_BY_TIER[tier]
         for family in FAMILIES:
-            _, _, pack_group = FAMILIES[family]
+            _, _, pack_group, _ = FAMILIES[family]
             out_dir = os.path.join(root, module, "src", "main", "assets",
                                    f"{module}#group_{pack_group}")
             print(f"BUILD tier={tier} family={family} -> "

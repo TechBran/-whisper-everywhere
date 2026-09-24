@@ -462,11 +462,18 @@ class NpuPackLayoutTest {
     @Test
     fun theBuildAndDeliveryModesWriteMetadataFirstWithDeclaredSizesAndReverifyTheirOutput() {
         // The script's family table pairs each HTP version with its Play group, so the pack
-        // variants land under the census's own group dirs:
+        // variants land under the census's own group dirs. Since 2026-09-24 each tuple carries
+        // a fourth column after the group, the QNN soc_model metadata_gate holds the vendor's
+        // chipset_attributes to. The census has no soc_model field to compare it with, so what
+        // is pinned here is the pairing plus the column's SHAPE: one integer, on the pairing's
+        // own line, closing the tuple.
         for (family in families) {
             assertEquals(
-                "build_asset_packs.py pairs ${family.id}'s HTP with its packGroup",
-                1, count(script, "${family.htpVersion}, \"${family.packGroup}\"),")
+                "build_asset_packs.py pairs ${family.id}'s HTP with its packGroup, then its " +
+                    "soc_model integer",
+                1,
+                Regex("""\b${family.htpVersion}, "${family.packGroup}", \d+\),""")
+                    .findAll(script).count()
             )
         }
         // The tier-to-module mapping, once each:
