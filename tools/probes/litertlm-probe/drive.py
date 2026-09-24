@@ -27,13 +27,14 @@ import time
 
 PKG = "com.whispereverywhere.probe"
 ACT = PKG + "/.MainActivity"
-INT_KEYS = {"threads", "warm", "maxtokens", "prefill", "utts", "eot", "pad", "decbench", "padms", "loops", "duration", "load", "topk"}
-BOOL_KEYS = {"nofallback", "bench", "freshbufs", "rewriteall", "dumpstates"}
+INT_KEYS = {"threads", "warm", "maxtokens", "prefill", "utts", "eot", "pad", "decbench", "padms", "loops", "duration", "load", "topk",
+            "perfmode", "wantmajor"}
+BOOL_KEYS = {"nofallback", "bench", "freshbufs", "rewriteall", "dumpstates", "diag", "rearm", "detect"}
 FILTER = re.compile(
     r"PROBE|LiteRt|litert|LITERT|tflite|TfLite|TFLite|neuron|Neuron|NEURON|apusys|APUSYS|apuware|mtk|MTK|"
     r"MediaTek|Mediatek|dispatch|Dispatch|xnnpack|XNNPACK|OpenCL|opencl|clGl|Mali|mali|linker|AndroidRuntime|"
     r"DEBUG|libc|SIGSEGV|SIGABRT|Fatal|FATAL|probe|npu|NPU|JIT|restoreFrom|CompilerPlugin|nnapi|NNAPI|"
-    r"sherpa|onnxruntime|onnx"
+    r"sherpa|onnxruntime|onnx|WE-DIAG|apu:"
 )
 HILITE = re.compile(
     r"PROBE|litert|LiteRt|LITERT|tflite|neuron|Neuron|NEURON|apusys|Dispatch_|dispatch_|JIT|restoreFrom|"

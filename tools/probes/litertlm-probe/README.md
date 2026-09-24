@@ -64,6 +64,53 @@ first partial whose k-th `WerMath` word equals the final's k-th word, minus the 
 1's definition). `provider=nospin` writes an ORT session-config file (`SessionConfig.session.intra_op.allow_spinning=0`)
 and passes `cpu:<path>` — forwarded on >= 1.13.5 only. Never `reset`: each clip is its own stream, released.
 
+## `mode=litertasr` (P1b device gate — the app's `liblitertasr.so` in the product's shape)
+
+The MediaTek tier's native engine (`app/src/main/cpp/litert_asr.cpp`) driven through the app's OWN Kotlin
+declarations: the `stageAppSeam` task compiles `LiteRtAsrNative.kt` and the four decode-policy files
+(`WhisperTokens`, `WhisperTokenFamily`, `NpuDecodePolicy`, `NpuDecodeStats`) into this APK verbatim, so the JNI
+names, the prompt, the masks, the ladder and the guard constants are the ones `NpuWhisperBackend` uses. The shape:
+dispatch from `files/litert_dispatch/` (staged there from this APK's own copy when absent; exactly one file), no
+compiler plugin configured, requirement-typed buffers only, and a merged manifest whose only MediaTek declaration
+is `libneuronusdk_adapter.mtk.so` (`stripAarMediatekDeclarations` removes the three the litert AAR re-adds, and
+fails the build if one survives — this applies to every mode of this APK).
+
+```
+# in the repo root: BUILD the app (never install it), then stage its .so into this probe
+gradlew.bat :app:assembleDebug -PlocalBuildRoot=C:/Users/bastr/.androidbuild/WhisperEverywhere-spike
+python tools/mtk-apu/stage_litertasr_into_probe.py --build-root C:/Users/bastr/.androidbuild/WhisperEverywhere-spike
+# here (fetch_mediatek_runtime.py first if jniLibs has no libLiteRtDispatch_MediaTek.so)
+gradlew.bat :app:assembleDebug
+```
+
+The staging script copies `liblitertasr.so` and `libc++_shared.so` out of the app's built APK (the app builds with
+`ANDROID_STL=c++_shared`) and `libLiteRt.so` 2.1.1 out of the litert AAR, refusing any `libLiteRt.so` whose sha256
+is not the pinned `6ddc1b3d…`.
+
+Run it with the AOT pair and the two mels already in `files/` (push recipe above):
+
+```
+F=/data/user/0/com.whispereverywhere.probe/files
+python drive.py --serial R52XC00LL9K --pid --tag p1b_litertasr_default mode=litertasr \
+    model=$F/turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite \
+    dec=$F/turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite mels=jfk_mel128.bin,canary_mel128.bin utts=3
+python drive.py ... --tag p1b_litertasr_sustained ... perfmode=2      # PreferSustainedSpeed vs the default (-1)
+```
+
+Sequence: `nativeProbe` (the adapter walk — the 5 s — timed on its own) → `nativeInit` (runtime, environment,
+both files' `LiteRtStamp`, the IO census, both restores, the buffers) → per round and mel: `nativeEncode` →
+`nativeDetectLanguage` (`detect=false` skips it) → `nativeDecodeSegment` with the app's arguments → `nativeRelease`
+→ with `rearm=true` (default) a second `nativeInit` + one window + release: the re-arm after a trim, which must pay
+the restores and NOT the 5 s. Extras: `perfmode` (-1 default | 0..3), `wantmajor` (8), `socstamp` (mt6989),
+`diag` (true: native per-step `npu-debug: steptime` lines), `lang` (en | auto).
+
+Read back: `PROBE litertasr|…` lines (probe/init ms, per-utterance encode/detect/decode ms, steps, ms per step,
+nsp/lp/rung/terminator, timestamp pairing, `matches_reference` against t8's ids) and on `WE-DIAG` the native
+`apu:` driver line, the `stamp=` lines, both restore times, the requirement types of the buffers (2 = AHWB,
+4 = DMA-BUF), `decode: … step=… ms (run …, io …)` and, with diag, every step's time. The result JSON keeps
+`detok.py`'s `utterances[].ids` shape. The one-self-KV-set arm of the plan's comparison is `mode=e2eqc` on the
+same pair (a Kotlin copy per step); this mode is the two-set, zero-copy arm.
+
 ## Utilization sampling (which unit actually ran — measurements §3.1, §3.2)
 
 Start a sampler in a second shell just before `drive.py`, so its window brackets the warm phase:

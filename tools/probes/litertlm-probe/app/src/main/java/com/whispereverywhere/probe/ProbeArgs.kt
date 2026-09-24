@@ -40,6 +40,14 @@ import android.content.Intent
  *   --ei duration  sherpa: loop the clip list for this many seconds instead of `loops` (the 10-minute thermal run)
  *   --ei load      sherpa: busy-loop threads spun for the whole run, the stand-in for whisper multi's 4 (default 0)
  *   --es provider  sherpa: cpu | nnapi | nospin (= cpu:<cfg> with ORT thread spinning off; forwarded on >= 1.13.5 only)
+ *   --ei perfmode  litertasr: MediaTek performance mode, -1 = LiteRT's default (default), 0 PreferLowPower,
+ *                  1 PreferFastSingleAnswer, 2 PreferSustainedSpeed, 3 PreferTurboBoost
+ *   --ei wantmajor litertasr: the Neuron major the family expects (default 8)
+ *   --es socstamp  litertasr: the chip the files' LiteRtStamp must name (default mt6989)
+ *   --ez diag      litertasr: nativeSetDiag - the npu-debug lines incl. per-step `steptime` (default true)
+ *   --ez rearm     litertasr: after the rounds, release and re-init once to time a re-arm (default true)
+ *   --ez detect    litertasr: run nativeDetectLanguage after each encode, as the app does in auto (default true)
+ *   --es lang      litertasr: prompt language code, or `auto` to prompt with the detected one (default en)
  */
 data class ProbeArgs(
     val mode: String?,
@@ -88,6 +96,14 @@ data class ProbeArgs(
     val suppress: String?,
     val beginSuppress: String?,
     val topk: Int,
+    /** `mode=litertasr`: liblitertasr.so's init knobs and the gate's run shape (see the KDoc above). */
+    val perfMode: Int,
+    val wantMajor: Int,
+    val socStamp: String,
+    val diag: Boolean,
+    val rearm: Boolean,
+    val detect: Boolean,
+    val lang: String,
 ) {
     companion object {
         fun from(intent: Intent?): ProbeArgs = ProbeArgs(
@@ -130,6 +146,13 @@ data class ProbeArgs(
             suppress = intent?.getStringExtra("suppress"),
             beginSuppress = intent?.getStringExtra("beginsuppress"),
             topk = intent?.getIntExtra("topk", 0) ?: 0,
+            perfMode = intent?.getIntExtra("perfmode", -1) ?: -1,
+            wantMajor = intent?.getIntExtra("wantmajor", 8) ?: 8,
+            socStamp = intent?.getStringExtra("socstamp") ?: "mt6989",
+            diag = intent?.getBooleanExtra("diag", true) ?: true,
+            rearm = intent?.getBooleanExtra("rearm", true) ?: true,
+            detect = intent?.getBooleanExtra("detect", true) ?: true,
+            lang = intent?.getStringExtra("lang") ?: "en",
         )
     }
 }
