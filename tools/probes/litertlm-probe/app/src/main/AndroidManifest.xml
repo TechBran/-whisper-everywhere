@@ -21,19 +21,19 @@
              NeuroPilot magic number from it before choosing an adapter, and on this ROM that read waits 5 s on
              an unregistered binder service (INeuronService) - once per adapter instantiation. Undeclared, the
              dlopen fails at once and the loader goes straight to libneuronusdk_adapter.mtk.so. -->
-        <!-- <uses-native-library android:name="libneuron_sys_util.mtk.so" android:required="false" /> -->
+        <!-- P0 / P0c-ii undeclared: uses-native-library libneuron_sys_util.mtk.so -->
         <uses-native-library android:name="libneuronusdk_adapter.mtk.so" android:required="false" />
-        <uses-native-library android:name="libneuronusdk_adapter.9.mtk.so" android:required="false" />
-        <uses-native-library android:name="libneuronservice_adapter.mtk.so" android:required="false" />
-        <uses-native-library android:name="libneuron_graph_delegate.mtk.so" android:required="false" />
-        <uses-native-library android:name="libapuwareutils_v2.mtk.so" android:required="false" />
-        <uses-native-library android:name="libapuwareutils.mtk.so" android:required="false" />
-        <uses-native-library android:name="libapuwareapusys_v2.mtk.so" android:required="false" />
-        <uses-native-library android:name="libapuwareapusys.mtk.so" android:required="false" />
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libneuronusdk_adapter.9.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libneuronservice_adapter.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libneuron_graph_delegate.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libapuwareutils_v2.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libapuwareutils.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libapuwareapusys_v2.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libapuwareapusys.mtk.so" android:required="false" /> -->
         <!-- The VENDOR-partition adapter LiteRT tries first; NOT in /vendor/etc/public.libraries.txt on
              this tablet (E0), so this line is expected to resolve to nothing — kept so the linker log
              says so rather than the probe assuming it. -->
-        <uses-native-library android:name="libneuron_adapter_mgvi.so" android:required="false" />
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libneuron_adapter_mgvi.so" android:required="false" /> -->
 
         <activity
             android:name=".MainActivity"

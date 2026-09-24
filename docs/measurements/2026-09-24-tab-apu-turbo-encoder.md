@@ -142,6 +142,31 @@ the second model in the same process pays NO wait, which settles the research la
 **2.24 s** (2.44 s with the probe's copy overhead), against the Fold6's 1.89 s and the S23's 2.47 + 20 × ~10 ms
 ≈ 2.7 s. **The Tab S10+ qualifies for the NPU tier at S23 class or better, on turbo, with correct output.**
 
+**Memory of the resident pair (t6 snapshots):** PSS **4.80 GB** after both creates, **4.85–4.95 GB** during and
+after the utterances (RSS 1.2–3.5 GB; PSS is the number to budget — it counts the device memory the APU
+mapped that RSS does not). Battery 30.0 °C, thermal 0 throughout.
+
+### 5b. The reference in the APP's decode mode (t8, 17:12) — also correct, with timestamps
+
+The design judges pointed out that t6 used the probe's old discipline (a 4-token prompt with
+`<|notimestamps|>`, raw argmax). Since 4.11 the app sends the 3-token prompt `[SOT, <|lang|>, TRANSCRIBE]`,
+masks `WhisperTokens.BASE_SUPPRESS` (82 ids) + the six large-v3 control ids + `<|notimestamps|>` at every
+generated step, masks `[220, EOT]` at the first generated step, and **emits timestamps** (its only sentence
+timing). `t8_appmode_e2eqc_npu_npu` ran exactly that (probe `suppress=…89 ids`, `beginsuppress=220,50257`,
+`tokens=50258,50259,50360`), both models on the APU:
+
+| utt | clip | tokens | EOT | encode ms | step ms | timestamp tokens (s) | text |
+|---|---|---|---|---|---|---|---|
+| 0 (cold) | jfk | 28 | yes | 1,826 | 19.1 | `<\|0.00\|>` … `<\|11.00\|>`, paired, monotonic | ` And so, my fellow Americans, ask not what your country can do for you, ask what you can do for your country.` |
+| 1 | canary | 12 | yes | 1,784 | 23.8 | `<\|0.00\|>` … `<\|2.56\|>` | ` One, two, three, four, five.` |
+| 2 | jfk | 28 | yes | 1,804 | 20.9 | as utt 0 | as utt 0 |
+| 3 | canary | 12 | yes | 1,862 | 18.3 | as utt 1 | as utt 1 |
+
+Warm over utts 1–3: encode 1,816.8 ms (sd 40.5), step **21.0 ms** (sd 3.2), cache copy 9.3 ms. Deterministic
+across rounds. (The canary reads "One, two, three" under the app's masks and "1, 2, 3" under t6's raw argmax —
+the begin-suppress of the leading-space token changes the first choice; both are the spoken digits.) This is
+the acceptance reference for the tier: text equality plus paired, monotonic timestamps.
+
 This closes K0 (fp16 Whisper correctness on the MDLA, never checked before today), K1 (single-partition
 encoder), K2/K3 (encode under the S23 bar at 1500 positions, RSS under 4 GB), and the decoder question (an
 APU decoder exists and is 2.3× Hexagon's per token, with no CPU decoder needed).

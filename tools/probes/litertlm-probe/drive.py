@@ -27,7 +27,7 @@ import time
 
 PKG = "com.whispereverywhere.probe"
 ACT = PKG + "/.MainActivity"
-INT_KEYS = {"threads", "warm", "maxtokens", "prefill", "utts", "eot", "pad", "decbench", "padms", "loops", "duration", "load"}
+INT_KEYS = {"threads", "warm", "maxtokens", "prefill", "utts", "eot", "pad", "decbench", "padms", "loops", "duration", "load", "topk"}
 BOOL_KEYS = {"nofallback", "bench", "freshbufs", "rewriteall", "dumpstates"}
 FILTER = re.compile(
     r"PROBE|LiteRt|litert|LITERT|tflite|TfLite|TFLite|neuron|Neuron|NEURON|apusys|APUSYS|apuware|mtk|MTK|"
