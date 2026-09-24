@@ -22,6 +22,8 @@ class ProbeRunner(private val ctx: Context, private val args: ProbeArgs) {
             when (args.mode) {
                 "info" -> LiteRtProbe(ctx, args).info(res)
                 "litert" -> LiteRtProbe(ctx, args).run(res)
+                "sig" -> SigProbe(ctx, args).run(res)
+                "e2eqc" -> E2eQcProbe(ctx, args).run(res)
                 "lm" -> LmProbe(ctx, args).run(res)
                 "e2e" -> E2eProbe(ctx, args).run(res)
                 "sherpa" -> SherpaProbe(ctx, args).run(res)

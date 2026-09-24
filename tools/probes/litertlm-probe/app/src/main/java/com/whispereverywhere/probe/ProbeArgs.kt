@@ -75,6 +75,11 @@ data class ProbeArgs(
     val duration: Int,
     val load: Int,
     val provider: String,
+    /** `mode=sig`: comma list of input names (`name:0` = zeros) and of output names. */
+    val inputs: String?,
+    val outputs: String?,
+    /** `mode=e2eqc`: the decoder model path (`model` is the encoder). */
+    val dec: String?,
 ) {
     companion object {
         fun from(intent: Intent?): ProbeArgs = ProbeArgs(
@@ -111,6 +116,9 @@ data class ProbeArgs(
             duration = intent?.getIntExtra("duration", 0) ?: 0,
             load = intent?.getIntExtra("load", 0) ?: 0,
             provider = intent?.getStringExtra("provider") ?: "cpu",
+            inputs = intent?.getStringExtra("inputs"),
+            outputs = intent?.getStringExtra("outputs"),
+            dec = intent?.getStringExtra("dec"),
         )
     }
 }
