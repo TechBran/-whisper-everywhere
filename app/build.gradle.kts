@@ -261,8 +261,8 @@ android {
             // into filesDir — the first ADSP_LIBRARY_PATH entry — at first arm. Everything else
             // the AAR carries is dead weight in the APK:
             //
-            // libQnnHtpPrepare.so alone is 79 MB and exists only to COMPILE a graph on device —
-            // we never compile one.
+            // libQnnHtpPrepare.so alone is 85 MB (85,026,392 B at 2.50) and exists only to
+            // COMPILE a graph on device — we never compile one.
             excludes += "**/libQnnHtpPrepare.so"
             // Non-HTP backends: unused.
             excludes += "**/libQnnDsp.so"
@@ -270,18 +270,21 @@ android {
             excludes += "**/libQnnDspV66Stub.so"
             excludes += "**/libQnnGpu.so"
             // The census families' DSP-side skels — relocated to assets per the rule above.
-            // Their stubs are deliberately NOT excluded.
+            // Their stubs are deliberately NOT excluded. V69 joined on 2026-09-24 with the 8gen1
+            // family (the S22 generation): its skel moved up here from the uncovered list below,
+            // and its stub's exclude was deleted, so libQnnHtpV69Stub.so now ships in lib/ like
+            // every other census stub.
+            excludes += "**/libQnnHtpV69Skel.so"
             excludes += "**/libQnnHtpV73Skel.so"
             excludes += "**/libQnnHtpV75Skel.so"
             excludes += "**/libQnnHtpV79Skel.so"
             excludes += "**/libQnnHtpV81Skel.so"
             // HTP architectures with no covered family: skel AND stub stay excluded — and these
             // presences are what keep the census families' stub live-zeros honest in
-            // NpuSkelPackagingTest.
+            // NpuSkelPackagingTest. V68 is the only one left since V69 became a census
+            // architecture.
             excludes += "**/libQnnHtpV68Skel.so"
             excludes += "**/libQnnHtpV68Stub.so"
-            excludes += "**/libQnnHtpV69Skel.so"
-            excludes += "**/libQnnHtpV69Stub.so"
         }
     }
 
@@ -988,8 +991,9 @@ val fetchSherpaAar = tasks.register("fetchSherpaAar") {
 tasks.named("preBuild") { dependsOn(fetchSherpaAar) }
 
 // Every census family's HTP skel, re-materialised from the RESOLVED qnn-runtime AAR into
-// generated assets (4.1 L6 — the I5 answer; the fleet at 4.2 F2: one APK covers four families,
-// and the device stages exactly its own row's skel at arm time). PROPRIETARY: the blobs land in
+// generated assets (4.1 L6 — the I5 answer; the fleet at 4.2 F2: one APK covers every census
+// family — six families on five HTP architectures since 2026-09-24 — and the device stages exactly
+// its own row's skel at arm time). PROPRIETARY: the blobs land in
 // the build directory, outside the repo, and the root .gitignore is hardened with the blob
 // shapes besides.
 //
@@ -1007,17 +1011,20 @@ val extractQnnSkel = tasks.register("extractQnnSkel") {
     inputs.files(qnnSkelSource)
     outputs.dir(qnnSkelAssetDir)
     doLast {
-        // THE FLEET TABLE (4.2 F2): one row per census family, full literals. These are the same
-        // four (bytes, sha256) pairs NpuFleetCensus.families carries — restated here because a
-        // build script cannot read the app's classes, and pinned EQUAL to the census by
+        // THE FLEET TABLE (4.2 F2): one row per census ARCHITECTURE, full literals — the skel is
+        // the HTP version's blob, so qcs8550 and 7gen4 (both v73) share one row. These are the
+        // same five (bytes, sha256) pairs NpuFleetCensus.families carries — restated here because
+        // a build script cannot read the app's classes, and pinned EQUAL to the census by
         // NpuSkelPackagingTest (executed set-equality, both directions), the same two-spellings
-        // discipline as the qnn-runtime coordinate below. A row joins when a family joins the
-        // census, never alone.
+        // discipline as the qnn-runtime coordinate below. A row joins when an architecture joins
+        // the census, never alone. All five measured out of qnn-runtime-2.50.0.aar on 2026-09-24
+        // (Maven Central, 71,270,746 B, sha256 b507656e…c9d743); V69 is the 8gen1 family's.
         val qnnSkels = listOf(
-            Triple("libQnnHtpV73Skel.so", 17_909_588L, "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1"),
-            Triple("libQnnHtpV75Skel.so", 17_913_608L, "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c"),
-            Triple("libQnnHtpV79Skel.so", 17_721_548L, "9cad65a621d154e5282ea9d2849d0a8838932ed91dc7e2514db4e992e2d933c6"),
-            Triple("libQnnHtpV81Skel.so", 18_844_384L, "b3453265c4574c69bb446bcb98dda117ded531b86b2307e0f02c595050fab8b1"),
+            Triple("libQnnHtpV69Skel.so", 12_529_660L, "262f3e8807ea969cfc446ea8717500475ea1ea1be6205201486a5431ffcb490e"),
+            Triple("libQnnHtpV73Skel.so", 18_709_712L, "024a0aea3d8d44fc5b59ffab20bde4348d07d05ad7d23f27c8bd06aa3d240d8a"),
+            Triple("libQnnHtpV75Skel.so", 18_693_300L, "3e9774b74769915b4f54364f8fc25887b3439561a970dca57c9f4dc9612b38af"),
+            Triple("libQnnHtpV79Skel.so", 18_513_604L, "860c9d2e7c937c9fb8f8f18daa9a79cab6c566066a2d36f235f6c8708fdc75bd"),
+            Triple("libQnnHtpV81Skel.so", 19_708_192L, "02047c9fef8a22801c0eefaa79188e87b600372c9813dea3f621ba256d1ddce0"),
         )
         val aar = qnnSkelSource.singleFile
         val outDir = qnnSkelAssetDir.get().asFile
@@ -1042,7 +1049,7 @@ val extractQnnSkel = tasks.register("extractQnnSkel") {
                 // device.
                 check(skel.length() == bytes) {
                     "extractQnnSkel: $name is ${skel.length()} bytes, expected $bytes " +
-                        "(measured from qnn-runtime-2.49.0.aar). A runtime bump must " +
+                        "(measured from qnn-runtime-2.50.0.aar). A runtime bump must " +
                         "re-measure and update this table AND NpuFleetCensus's row for $name together."
                 }
                 val digest = MessageDigest.getInstance("SHA-256")
@@ -1066,10 +1073,11 @@ tasks.named("preBuild") { dependsOn(extractQnnSkel) }
 
 // The Play pack gate (4.2 F4): every bundle build re-proves that the pack payload on disk IS
 // the census before AGP packages it. The payload is a BUILD artifact — tools/build_asset_packs.py
-// build assembles the eight #group_ variants from the measured vendor zips, hash-verifying every
-// byte on the way in and out — so the committed tree carries no payload at all, and a bundle
-// built on a machine that never ran the script fails HERE with every missing variant named,
-// instead of shipping packs whose targeted variants are silently empty.
+// build assembles every #group_ variant the census names (twelve since 2026-09-24) from the
+// measured vendor zips, hash-verifying every byte on the way in and out — so the committed tree
+// carries no payload at all, and a bundle built on a machine that never ran the script fails
+// HERE with every missing variant named, instead of shipping packs whose targeted variants are
+// silently empty.
 //
 // THE VARIANT DIRECTORY IS NAMED AFTER THE PACK (4.2 F8), and the reason is a rule, not a
 // preference: an AAB merges nothing, but bundletool validates that any entry path appearing in
@@ -1088,7 +1096,7 @@ tasks.named("preBuild") { dependsOn(extractQnnSkel) }
 // THE PACK TABLE: one row per variant — module, Play device group, encoder bytes, decoder
 // bytes. The byte counts are NpuFleetCensus.artifacts' own, restated because a build script
 // cannot read the app's classes, and pinned EQUAL to the census by NpuPackLayoutTest (the
-// extractQnnSkel fleet-table discipline, one gate over). sha256 of ~4.3 GB per bundle build is
+// extractQnnSkel fleet-table discipline, one gate over). sha256 of ~7.9 GB per bundle build is
 // deliberately NOT taken here: the script's own build step hash-verifies what it writes, the
 // app's arrival hash stays the invariant on device, and this gate's job is missing, stale or
 // swapped VARIANTS — which exact byte counts catch in milliseconds.
@@ -1096,18 +1104,23 @@ val npuPackDeliveryNames = mapOf(
     "npu_small" to listOf("encoder_qairt_context.bin", "decoder_qairt_context.bin"),
     "npu_turbo" to listOf("turbo_encoder_qairt_context.bin", "turbo_decoder_qairt_context.bin"),
 )
+// Every length below is the v0.63.0 measurement (2026-09-24, QAIRT 2.50 rebuilds): all ten
+// pre-existing rows moved with it, the encoders 11.6-22.1% smaller and the decoders within 0.06%.
 val npuPackCensusRows = listOf(
-    listOf("npu_small", "soc_8gen3", 132_927_488L, 225_316_864L),
-    listOf("npu_small", "soc_8elite_galaxy", 132_333_568L, 225_234_944L),
-    listOf("npu_small", "soc_8elite5_galaxy", 133_554_176L, 225_411_072L),
-    listOf("npu_small", "soc_7gen4", 147_595_264L, 225_382_400L),
-    listOf("npu_turbo", "soc_8gen3", 775_831_552L, 295_854_080L),
-    listOf("npu_turbo", "soc_8elite_galaxy", 775_544_832L, 295_821_312L),
-    listOf("npu_turbo", "soc_8elite5_galaxy", 777_441_280L, 295_911_424L),
-    listOf("npu_turbo", "soc_7gen4", 846_360_576L, 295_895_040L),
-    // 8 Gen 2 (SM8550), added 2026-09-22 — device-executed on an S23 Ultra.
-    listOf("npu_small", "soc_qcs8550", 132_931_584L, 225_312_768L),
-    listOf("npu_turbo", "soc_qcs8550", 775_843_840L, 295_854_080L),
+    listOf("npu_small", "soc_8gen3", 113_123_776L, 225_298_736L),
+    listOf("npu_small", "soc_8elite_galaxy", 113_091_008L, 225_151_280L),
+    listOf("npu_small", "soc_8elite5_galaxy", 113_770_944L, 225_290_544L),
+    listOf("npu_small", "soc_7gen4", 115_028_408L, 225_397_032L),
+    listOf("npu_turbo", "soc_8gen3", 686_112_520L, 295_856_032L),
+    listOf("npu_turbo", "soc_8elite_galaxy", 685_997_832L, 295_765_920L),
+    listOf("npu_turbo", "soc_8elite5_galaxy", 687_283_976L, 295_847_840L),
+    listOf("npu_turbo", "soc_7gen4", 703_946_504L, 295_917_472L),
+    // 8 Gen 2 (SM8550), added 2026-09-22 — device-executed on an S23 Ultra (the v0.62.2 pair).
+    listOf("npu_small", "soc_qcs8550", 113_127_872L, 225_298_736L),
+    listOf("npu_turbo", "soc_qcs8550", 686_108_424L, 295_847_840L),
+    // 8 Gen 1 (SM8450), added 2026-09-24 at v0.63.0 — the sixth family, HTP v69.
+    listOf("npu_small", "soc_8gen1", 111_915_456L, 223_562_032L),
+    listOf("npu_turbo", "soc_8gen1", 681_574_152L, 294_692_768L),
 )
 val verifyNpuPacks = tasks.register("verifyNpuPacks") {
     description = "Verifies every NPU asset-pack variant against the census byte counts and " +
@@ -1195,7 +1208,7 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
     }
 }
 // Wired before bundle PACKAGING only. assembleDebug must NOT depend on this gate: an APK build
-// carries no packs at all, and the everyday build must never demand 4.3 GB of payload.
+// carries no packs at all, and the everyday build must never demand 7.9 GB of payload.
 tasks.matching { it.name.startsWith("package") && it.name.endsWith("Bundle") }
     .configureEach { dependsOn(verifyNpuPacks) }
 
@@ -1417,11 +1430,11 @@ dependencies {
     // by fetchQnnHeaders above, never committed). The version MUST stay in step with the pinned
     // literal in tools/fetch_qnn_headers.py. Most of the AAR's payload is excluded in
     // packaging.jniLibs above; see the rule there.
-    implementation("com.qualcomm.qti:qnn-runtime:2.49.0")
+    implementation("com.qualcomm.qti:qnn-runtime:2.50.0")
     // 4.1 L6: extractQnnSkel resolves the SAME artifact through its own configuration to pull
     // the census families' skels out of the AAR (see the task above the dependencies block).
     // The restated coordinate is pinned equal to the line above by NpuSkelPackagingTest.
-    qnnSkelSource("com.qualcomm.qti:qnn-runtime:2.49.0")
+    qnnSkelSource("com.qualcomm.qti:qnn-runtime:2.50.0")
 
     // Play Asset Delivery (4.2 F5): the on-demand fetch of the two NPU pack modules the F4
     // bundle declares. The pure state machine (NpuPackFetch) mirrors AssetPackStatus /

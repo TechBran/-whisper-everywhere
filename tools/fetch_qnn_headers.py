@@ -15,7 +15,7 @@ prevents is silent:
 
 1. THE VERSION IS A PINNED LITERAL, never argv. The spike took the version from `sys.argv[1]` and
    defaulted to 2.45. A forgotten argument therefore fetched 2.45 headers to compile against the
-   2.49 runtime the APK bundles (`com.qualcomm.qti:qnn-runtime:2.49.0`) — a struct-layout mismatch
+   2.49 runtime the APK then bundled (`com.qualcomm.qti:qnn-runtime`) — a struct-layout mismatch
    that COMPILES CLEAN and only shows up as garbage tensor metadata on device. Nothing about this
    build should be able to depend on how someone typed a command.
 2. THE FETCHED BUILD ID IS ASSERTED. After extraction, QnnSdkBuildId.h must contain the pinned
@@ -23,8 +23,10 @@ prevents is silent:
    `fetchSherpaAar` in app/build.gradle.kts, which verifies a hardcoded sha256 for the same reason.
 3. THERE IS AN OFFLINE FALLBACK. Every build of every tier would otherwise depend on a vendor
    download portal staying up and keeping its URL scheme. If the fetch fails and the proven spike
-   copy exists locally, it is copied with a warning; if it does not, the error names that path as
-   the manual source rather than leaving the reader to guess.
+   copy exists locally AND is the pinned build, it is copied with a warning; if it does not, the
+   error names that path as the manual source rather than leaving the reader to guess. (The spike
+   tree is QAIRT 2.49, so since the 2026-09-24 move to 2.50 it no longer qualifies: a fallback
+   that is the wrong build is not a fallback, it is the skew arriving by the side door.)
 
 THE TWO FAILURE CLASSES ARE DIFFERENT AND EXIT DIFFERENTLY (Q1 review, I-1). Collapsing them into
 one non-zero exit is what made the "a network outage must not brick the CPU tiers" guarantee
@@ -58,9 +60,19 @@ import zlib
 
 # PINNED LITERALS. Do NOT make either configurable, and do NOT take them from argv (point 1 above).
 # They match the qnn-runtime AAR coordinate in app/build.gradle.kts EXACTLY; all of it moves
-# together or not at all. The blobs the app deserialises were produced by QAIRT 2.45 and are read
-# by this 2.49 runtime — that pairing is the known risk R7, verified on device at Q10a, and it is
-# only arguable at all because the HEADERS and the RUNTIME match each other.
+# together or not at all. Through 4.14 the blobs the app deserialised were produced by QAIRT 2.45
+# and read by a 2.49 runtime — the known risk R7, verified on device at Q10a, and only arguable at
+# all because the HEADERS and the RUNTIME matched each other.
+#
+# 2026-09-24, 2.49 -> 2.50, with the runtime AAR and the v0.63.0 pack refresh in one move. The
+# three now name ONE build: Qualcomm compiled every v0.63.0 pack with QAIRT 2.50.0.260828221209
+# (the manifests' tool_versions.qairt), libQnnHtp.so inside qnn-runtime-2.50.0.aar embeds the
+# string v2.50.0.260828221209, and the headers below carry the same id. The same check holds one
+# version back (the 2.49 AAR embeds v2.49.0.260730134355, the old needle), which is what says the
+# runtime's own build id is the right needle. What moved in the API headers: the core minor
+# 38 -> 39, three function pointers APPENDED to the end of QNN_INTERFACE_VER_TYPE (graphValidate,
+# graphFreeValidationResult, backendRegisterOpPackageFromBinary), one appended to the system
+# interface, and new DCVS voltage corners — nothing reordered or resized ahead of them.
 #
 # TWO STRINGS, NOT ONE, and confusing them is a 404 rather than anything subtle:
 #   VER_URL  — the portal's path segment. SHORT form: version + build DATE only.
@@ -69,13 +81,19 @@ import zlib
 # serves a 2,414,977,444-byte archive, while the long form 404s. The spike's script had only the
 # short form (its 2.45 default) and never needed the distinction, because it never asserted the
 # build id it fetched — which is precisely the check being added here.
-VER_URL = "2.49.0.260730"
-BUILD_ID_NEEDLE = "v2.49.0.260730134355"
+#
+# Re-verified for 2.50 on 2026-09-24: `.../All/2.50.0.260828/v2.50.0.260828.zip` serves a
+# 2,601,473,189-byte archive, 216 headers match (215 at 2.49: HTP/core/qhpi_compat.h is gone,
+# HTP/core/qhpi_cxx.h and HTP/core/define_deserialization_enabled.h are new), and the fetched
+# QnnSdkBuildId.h reads exactly v2.50.0.260828221209.
+VER_URL = "2.50.0.260828"
+BUILD_ID_NEEDLE = "v2.50.0.260828221209"
 
 URL = ("https://softwarecenter.qualcomm.com/api/download/software/sdks/"
        f"Qualcomm_AI_Runtime_Community/All/{VER_URL}/v{VER_URL}.zip")
 
-# The proven spike tree — the port source for this whole task, and the offline fallback here.
+# The proven spike tree — the port source for this whole task, and the offline fallback here
+# whenever its own QnnSdkBuildId.h is the pin (main() checks before copying). It is QAIRT 2.49.
 SPIKE_HEADERS = r"C:\Users\bastr\.androidbuild\npu-spike\app\src\main\cpp\include\QNN"
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -131,7 +149,7 @@ def assert_pinned(qnn_dir, provenance):
             "produce a usable header tree; delete the directory and re-run." % (qnn_dir, provenance))
     if got != BUILD_ID_NEEDLE:
         die("QNN header version mismatch. Expected %s (the pinned literal, matching "
-            "com.qualcomm.qti:qnn-runtime:2.49.0) but %s supplied %s.\n"
+            "com.qualcomm.qti:qnn-runtime:2.50.0) but %s supplied %s.\n"
             "        This is exactly the failure the pin exists to catch: a header/runtime skew "
             "COMPILES CLEAN and then misreads every versioned struct on device.\n"
             "        Delete %s and re-run; do not 'fix' this by relaxing the check."
@@ -242,7 +260,8 @@ def fetch_from_portal(out):
 
 
 def copy_from_spike(qnn_dir):
-    """Offline fallback: the proven spike tree, which is the pinned version by construction."""
+    """Offline fallback: the proven spike tree. main() calls this only after reading the tree's
+    own build id and finding it equal to the pin, so what it copies is the pinned version."""
     shutil.copytree(SPIKE_HEADERS, qnn_dir, dirs_exist_ok=True)
     n = sum(len(files) for _, _, files in os.walk(qnn_dir))
     print("copied %d files from the local spike tree" % n)
@@ -269,7 +288,10 @@ def main():
         fetch_from_portal(out)
     except Exception as exc:                                    # noqa: BLE001 - any failure falls back
         print("WARNING: portal fetch failed (%s: %s)" % (type(exc).__name__, exc), file=sys.stderr)
-        if not os.path.isdir(SPIKE_HEADERS):
+        # The fallback must BE the pinned build, not merely exist: copying a 2.49 tree into place
+        # under a 2.50 pin would fail assert_pinned below as a FATAL skew (exit 2) on a machine
+        # whose only fault is being offline. Absent and wrong-build get the same answer here.
+        if build_id_of(SPIKE_HEADERS) != BUILD_ID_NEEDLE:
             if existing is not None:
                 # A tree IS on disk and it is the WRONG version. That stays FATAL even with no
                 # route to correct it: degrading to "tolerable" here would leave CMake compiling
@@ -280,7 +302,8 @@ def main():
                     "        Delete that directory and re-run with network access. Do NOT build "
                     "the NPU tier against a version the bundled runtime does not match."
                     % (qnn_dir, existing, BUILD_ID_NEEDLE))
-            cannot_fetch(qnn_dir, "could not fetch the QNN headers and no local copy exists.")
+            cannot_fetch(qnn_dir, "could not fetch the QNN headers and no local copy of the "
+                                  "pinned build exists.")
         print("WARNING: falling back to the local spike copy at %s" % SPIKE_HEADERS,
               file=sys.stderr)
         copy_from_spike(qnn_dir)

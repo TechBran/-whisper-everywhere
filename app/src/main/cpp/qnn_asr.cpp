@@ -68,6 +68,9 @@
 #include "QnnGraph.h"
 #include "QnnTensor.h"
 #include "QnnTypes.h"
+// QNN_SDK_BUILD_ID, so the binary-info log below names the headers this file was compiled
+// against from the headers themselves rather than from a literal that goes stale at a bump.
+#include "QnnSdkBuildId.h"
 #include "System/QnnSystemInterface.h"
 #include "System/QnnSystemContext.h"
 // The two HTP-specific headers, and the ONLY two things in this file that are not generic QNN:
@@ -1042,9 +1045,11 @@ std::string loadGraphSlot(GraphSlot &slot, const std::string &path,
             return expect.label + std::string(" binary info version: unsupported version ") +
                    std::to_string(static_cast<int>(binInfo->version)) + " (reader knows 1,2,3)";
     }
-    // R7 lives on this line: the blobs were produced by QAIRT 2.45 and this runtime is 2.49. The
-    // pairing is proven for the encoder only; the decoder has never been deserialised under 2.49.
-    LOGI("%s: produced by QAIRT build %s (runtime headers are v2.49.0.260730134355), socVersion %s",
+    // R7 LIVED ON THIS LINE through 4.14: the blobs were produced by QAIRT 2.45 and read by a 2.49
+    // runtime. Since 4.15 (2026-09-24) the v0.63.0 packs, the qnn-runtime AAR and the headers are
+    // all QAIRT 2.50.0.260828221209, so the two ids printed here should be the same build - and
+    // a device log where they differ is the first place to look if a context refuses to load.
+    LOGI("%s: produced by QAIRT build %s (runtime headers are " QNN_SDK_BUILD_ID "), socVersion %s",
          expect.label, buildId ? buildId : "?", socVersion ? socVersion : "?");
 
     if (!graphs || numGraphs == 0) return expect.label + std::string(" binary info: no graphs");
