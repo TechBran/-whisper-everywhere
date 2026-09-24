@@ -38,6 +38,7 @@ import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModel
 import com.whispereverywhere.npu.NpuPackController
 import com.whispereverywhere.npu.NpuPackFetch
+import com.whispereverywhere.npu.NpuRefreshNotice
 import com.whispereverywhere.service.MediaNotificationListener
 import com.whispereverywhere.service.WhisperAccessibilityService
 import com.whispereverywhere.tts.TtsPackController
@@ -166,6 +167,26 @@ fun OnboardingFlowScreen(
     val liveWarmth by
         com.whispereverywhere.transcription.stream.PreviewWarm.warmth.collectAsState()
 
+    // (4.15) THE REFRESH SENTENCE. The app-wide gate (firstRunStartDestination: no installed model
+    // -> first_run) lands a phone whose AI-chip pair the launch sweep just removed HERE, and
+    // without a word it looks as if the app forgot its setup. So while the re-download record
+    // stands for the SELECTED tier and this device has a pack to get, one sentence above every
+    // step says why — the user meets the permissions step first and the Download button two steps
+    // later. Collected, not remembered: the shared finalise clears the record the moment the pair
+    // lands, and a pick of another tier moves the selection, and either one takes the sentence
+    // away in the same composition. The family memo is a pure table lookup, so this is Main-safe.
+    val notePrefs = (context.applicationContext as WhisperEverywhereApp).preferencesManager
+    val refreshRecord by notePrefs.npuRedownloadFlow.collectAsState()
+    val selectedTierForNote by notePrefs.selectedModelIdFlow.collectAsState()
+    val refreshPackBytes = remember(refreshRecord) {
+        NpuRefreshNotice.downloadBytesFor(
+            (context.applicationContext as WhisperEverywhereApp).npuSocFamily,
+            refreshRecord?.tierId,
+        )
+    }
+    val showRefreshNote =
+        NpuRefreshNotice.showsInAppNote(refreshRecord, selectedTierForNote, refreshPackBytes)
+
     // Permission state lives at flow level (3.5.x): the pinned footer gates Continue on the
     // bubble's two required permissions (mic, overlay — 4.3.3 made accessibility a
     // recommendation), so the step and the footer read the same truth. Re-checked on every
@@ -254,6 +275,10 @@ fun OnboardingFlowScreen(
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
             ) {
+                if (showRefreshNote) {
+                    RefreshNote()
+                    Spacer(Modifier.height(12.dp))
+                }
                 when (step) {
                     Step.PERMISSIONS -> PermissionsStep(
                         mic = mic,
@@ -396,6 +421,33 @@ fun OnboardingFlowScreen(
                     Text("Skip setup")
                 }
             }
+        }
+    }
+}
+
+/**
+ * (4.15) The refresh sentence — [NpuRefreshNotice.IN_APP_NOTE], the in-app half of the notice the
+ * shade carries after the v0.63.0 refresh removed the selected tier's old pair. The copy is
+ * NpuRefreshNotice's alone (pinned word for word there, claim rules included); this card only
+ * renders it, in the tint the Home setup banner uses for "here is what to do next".
+ */
+@Composable
+private fun RefreshNote() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = Primary.copy(alpha = 0.08f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Info, contentDescription = null, tint = Primary)
+            Spacer(Modifier.width(12.dp))
+            Text(
+                NpuRefreshNotice.IN_APP_NOTE,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

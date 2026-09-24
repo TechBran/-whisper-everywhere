@@ -420,6 +420,54 @@ class NpuRefreshNoticeTest {
     }
 
     @Test
+    fun theOnboardingFlowTheGateLandsOnShowsTheSentenceWhileTheRecordStands() {
+        // The app-wide gate is firstRunStartDestination(hasModel): no installed model routes to
+        // first_run, so a phone whose selected pair the sweep removed opens THIS screen — its
+        // permissions step first, the Download button on its engines step. HomeScreen's missing-
+        // engine row and the Settings picker are reachable only from Home, which the gate never
+        // shows a modelless install.
+        val gate = read("src/main/java/com/whispereverywhere/ui/screens/ModeDashboard.kt")
+        assertEquals(1, liveLineCount(gate, "if (hasModel) ROUTE_HOME else ROUTE_FIRST_RUN"))
+        val flow = read("src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt")
+        assertEquals(
+            "the visibility is the pure rule, once",
+            1,
+            liveLineCount(flow, "NpuRefreshNotice.showsInAppNote(refreshRecord, selectedTierForNote, refreshPackBytes)"),
+        )
+        assertEquals(
+            "COLLECTED, not remembered: the record clears when the pair lands and the sentence must go with it",
+            1,
+            liveLineCount(flow, "val refreshRecord by notePrefs.npuRedownloadFlow.collectAsState()"),
+        )
+        assertEquals(
+            "and the selection too: a pick of another tier takes the sentence away",
+            1,
+            liveLineCount(flow, "val selectedTierForNote by notePrefs.selectedModelIdFlow.collectAsState()"),
+        )
+        assertEquals(
+            "the pack size is the device family's, so the sentence never names a download the phone cannot get",
+            1,
+            liveLineCount(flow, "NpuRefreshNotice.downloadBytesFor("),
+        )
+        assertEquals("the card renders the pinned sentence", 1, liveLineCount(flow, "NpuRefreshNotice.IN_APP_NOTE,"))
+        assertEquals(
+            "and the screen spells none of the copy itself",
+            0,
+            liveLineCount(flow, "faster version"),
+        )
+        // The step content's `when` — not the top bar's, which also switches on the step — is the
+        // one whose first arm is the permissions step.
+        val note = flow.indexOf("                if (showRefreshNote) {\n                    RefreshNote()")
+        val steps = flow.indexOf("                when (step) {\n                    Step.PERMISSIONS -> PermissionsStep(")
+        assertTrue("the note block is where the step content starts", note >= 0)
+        assertTrue("the step content's when", steps >= 0)
+        assertTrue(
+            "ABOVE every step, so the permissions step the user meets first already says why",
+            note < steps,
+        )
+    }
+
+    @Test
     fun theModelUpdatesChannelIsItsOwnAtDefaultImportance() {
         assertEquals(1, liveLineCount(app, "const val MODEL_UPDATES_CHANNEL_ID = \"model_updates\""))
         val create = body(app, "WhisperEverywhereApp.kt", "    private fun createNotificationChannel() {")

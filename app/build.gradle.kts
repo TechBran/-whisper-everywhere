@@ -592,6 +592,10 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/receiver/BootReceiver.kt",
         "src/main/java/com/whispereverywhere/npu/NpuRefreshNotice.kt",
         "src/main/res/values/strings.xml",
+        // (4.15) And the app-wide gate's one routing line, which the same test reads to prove the
+        // onboarding flow is the screen a modelless install lands on — the reason the in-app
+        // sentence lives there and not on Home.
+        "src/main/java/com/whispereverywhere/ui/screens/ModeDashboard.kt",
         // (4.1 L8) NpuBackendSelector.kt — the plan's own found-while-writing hole, the same one
         // Q7a MEASURED and I3 named, on the one file that carries the routing decision:
         // NpuBackendWiringTest source-pins this file (the routesToNpu signature, the zero-literal
