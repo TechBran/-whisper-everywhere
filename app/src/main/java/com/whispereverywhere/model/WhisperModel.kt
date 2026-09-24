@@ -258,13 +258,13 @@ object WhisperCatalog {
     /**
      * Provenance of the npu-turbo pair (4.1): Qualcomm AI Hub's public precompiled QNN-ONNX
      * release for whisper_large_v3_turbo_quantized on Snapdragon 8 Gen 3 — the zip the plan's
-     * asset work downloaded, CRC-verified and hashed (v0.61.0), and since 4.15 the v0.63.0 zip. Same shape as [NPU_ASSET_ZIP_URL]: both
-     * context binaries live inside this ONE archive, so both entries carry the same URL and
-     * neither is a DownloadManager source. Note the vendor zip is NOT the delivery zip — its
-     * entries sit under a directory prefix and carry the SAME bare names as the 4.0 npu tier's
-     * installed files, so the delivery repack (L8) strips the prefix and renames turbo's entries
-     * to the `turbo_*` filenames the catalog states below; importing the vendor names as-is
-     * would overwrite the owner's 358 MB npu pair.
+     * asset work downloaded, CRC-verified and hashed (v0.61.0), and since 4.15 the v0.63.0 zip.
+     * Same shape as [NPU_ASSET_ZIP_URL]: both context binaries live inside this ONE archive, so
+     * both entries carry the same URL and neither is a DownloadManager source. Note the vendor
+     * zip is NOT the delivery zip — its entries sit under a directory prefix and carry the SAME
+     * bare names as the 4.0 npu tier's installed files, so the delivery repack (L8) strips the
+     * prefix and renames turbo's entries to the `turbo_*` filenames the catalog states below;
+     * importing the vendor names as-is would overwrite the owner's 338 MB npu pair.
      */
     private const val NPU_TURBO_ASSET_ZIP_URL =
         "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/" +
@@ -749,7 +749,7 @@ object WhisperCatalog {
      *
      * **When [ONE_TIER_ID] is in the set, the lineup IS that tier**, plus whatever the caller
      * names in [alsoOfferedIds]. Everything else — the CPU tiers (since 4.7 `small-q8` 264 MB,
-     * `medium-q8` 823 MB and `ultra-q8` 874 MB), the 358 MB `npu` — is
+     * `medium-q8` 823 MB and `ultra-q8` 874 MB), the 338 MB `npu` — is
      * not offered, because on this hardware the answer is not a menu. `npu` STAYS CATALOGUED
      * (the streaming arc needs it; hiding is not retiring) and its census/pack/import machinery
      * is untouched — see `WhisperCatalogHelpersTest`'s catalogued-but-unoffered pin.

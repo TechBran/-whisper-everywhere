@@ -1,10 +1,10 @@
 // The npu-turbo tier's asset pack (4.2 F4): large-v3-turbo's per-SoC QAIRT context binaries,
 // one #group_ variant per census family, delivered by Play against app/device_targeting_config.xml.
 //
-// The payload is a BUILD artifact — `tools/build_asset_packs.py build` assembles the four
-// variants into src/main/assets/npu_turbo#group_<packGroup>/ from the measured vendor zips as
-// RAW bins (Play deflates in transit and delta-patches across app updates; pre-zipping would
-// break both and double on-device disk for zero win). The committed tree carries ONLY this
+// The payload is a BUILD artifact — `tools/build_asset_packs.py build` assembles one variant
+// per census family into src/main/assets/npu_turbo#group_<packGroup>/ from the measured vendor
+// zips as RAW bins (Play deflates in transit and delta-patches across app updates; pre-zipping
+// would break both and double on-device disk for zero win). The committed tree carries ONLY this
 // file, the EMPTY default variant (src/main/assets/npu_turbo#group_other/.gitkeep) and the
 // .gitignore that keeps the payload dirs structurally uncommittable; :app's verifyNpuPacks task
 // gates every bundle build on the payload matching the census and the default staying empty.

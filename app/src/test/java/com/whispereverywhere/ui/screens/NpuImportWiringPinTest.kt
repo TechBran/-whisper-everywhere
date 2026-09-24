@@ -750,8 +750,10 @@ class NpuImportWiringPinTest {
     /**
      * 4.2 F7 — the byte badge tells the census's truth (the F3 §7.3 residual, landed by name):
      * on a census family a gated card's size is THE FAMILY'S measured pair — encoder plus
-     * decoder — because the catalog's approximation understates a 7gen4 pair by ~4%. Every
-     * tier the census cannot answer for keeps the catalog figure.
+     * decoder — because the catalog's approximation is the 8gen3 pair. That understated a 7gen4
+     * pair by 4.1% at 0.61.0; at v0.63.0 every family is within 2% of it (7gen4 turbo the widest,
+     * +1.82%), and the badge still states the measured bytes. Every tier the census cannot answer
+     * for keeps the catalog figure.
      */
     @Test
     fun theByteBadgeStatesTheFamilysMeasuredPairBytesWhereTheFamilyAnswers() {

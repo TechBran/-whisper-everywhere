@@ -36,7 +36,7 @@ import com.whispereverywhere.model.WhisperModel
  *
  * ### Null is a refusal that names the tier, never a silent wrong model
  *
- * `cpuTierModelPath()` can be null: a device with the 358 MB pair imported and no ggml installed at
+ * `cpuTierModelPath()` can be null: a device with the 338 MB pair imported and no ggml installed at
  * all. That case must fail, and it must not fail with `loadCtx`'s existing *"No on-device model
  * installed"* — which would be a lie to a user staring at an installed model. [refusal] is that
  * sentence, and it names the tier and the way out.

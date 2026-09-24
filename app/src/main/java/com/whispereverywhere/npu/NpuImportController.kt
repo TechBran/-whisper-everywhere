@@ -38,14 +38,14 @@ import kotlinx.coroutines.launch
  * ### Why the work arrives as a lambda
  *
  * So this object can be **executed** by a JVM test. The real import needs a `Context`, a
- * `ContentResolver` and 358 MB; the *state machine* around it — single-flight, `Running` published
+ * `ContentResolver` and 338 MB; the *state machine* around it — single-flight, `Running` published
  * before the work starts, the terminal state published after, a thrown exception becoming a refusal
  * rather than a crash — is the part that can be proved, and it is the part that was wrong. Same
  * split, same reason, as every other object in this package.
  *
  * ### What it deliberately does not survive
  *
- * Process death. A 358 MB copy is not worth a foreground service on a tier that ships to one owner
+ * Process death. A 338 MB copy is not worth a foreground service on a tier that ships to one owner
  * on one phone, so an in-flight import is lost and the next one starts over.
  *
  * What cleans up after it is worth stating precisely, because an earlier draft of this KDoc got it

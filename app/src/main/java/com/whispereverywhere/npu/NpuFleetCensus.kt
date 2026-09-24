@@ -133,8 +133,9 @@ object NpuFleetCensus {
      * WHAT THE EVIDENCE LINES CAN AND CANNOT SAY SINCE 2026-09-24. Each device or AI Hub execution
      * below ran the PREVIOUS bytes — v0.61.0/v0.62.2 binaries built with QAIRT 2.45, under the 2.49
      * runtime in the app. The v0.63.0 binaries are QAIRT 2.50 builds under a 2.50 runtime, and
-     * none of them has run anywhere yet, which is why every line now says so rather than letting
-     * an old execution vouch for new files.
+     * none of them has run in this program yet, in an AI Hub job of ours or in the app (the
+     * vendor's own AI Hub profiles are the vendor's), which is why every line now says so rather
+     * than letting an old execution vouch for new files.
      */
     val families: List<NpuSocFamily> = listOf(
         NpuSocFamily(
@@ -168,10 +169,12 @@ object NpuFleetCensus {
         // AND IT WAS THEN EXECUTED, the same day, on real silicon nobody here owns: Qualcomm AI
         // Hub's hosted Galaxy S25 and S26 and, the question the ruling actually turned on, its
         // PLAIN-bin reference phones, "Snapdragon 8 Elite QRD" and "Snapdragon 8 Elite Gen 5
-        // QRD". The exact shipped turbo binaries (hashed against this file's digests first)
-        // loaded and ran on all four (docs/measurements/2026-09-22-aihub-hosted-device-matrix.md).
-        // What that still is not: the app. Delivery, capture, mel and the decode loop have run on
-        // no such phone.
+        // QRD". The turbo binaries of that day, v0.62.2's, hashed first against the digests the
+        // census then carried, loaded and ran on all four
+        // (docs/measurements/2026-09-22-aihub-hosted-device-matrix.md). The v0.63.0 binaries
+        // this file's digests name now have run on none of them: that matrix run is re-planned
+        // in tools/aihub_matrix.py and still pending. And neither run is the app. Delivery,
+        // capture, mel and the decode loop have run on no such phone.
         NpuSocFamily(
             id = "8elite_galaxy",
             packGroup = "soc_8elite_galaxy",
@@ -296,7 +299,8 @@ object NpuFleetCensus {
             evidence = "AI Hub v0.63.0 HEAD-verified 2026-09-24 (release_assets.json at 0.63.0, " +
                 "qualcomm-snapdragon-8gen1 w8a16, tool_versions.qairt 2.50.0.260828221209; " +
                 "vendor metadata htp 69 / soc_model 36); Last-Modified 2026-09-23; Play catalog " +
-                "67 rows 'QTI SM8450' (15 Samsung); not yet executed on AI Hub or any device",
+                "67 rows 'QTI SM8450' (15 Samsung); not yet executed in this program, in an " +
+                "AI Hub job of ours or on any device",
         ),
     )
 
@@ -307,8 +311,20 @@ object NpuFleetCensus {
     private const val MEASURED = "re-measured 2026-09-24 by build_asset_packs.py measure " +
         "(manifest v0.63.0, QAIRT 2.50.0.260828221209; Last-Modified 2026-09-23; CRC-clean; " +
         "vendor metadata htp + IO census verified). A REBUILD, not a re-release: no 0.62.2 " +
-        "digest reproduces, every encoder is 11.6-22.1% smaller and every decoder within 0.06%, " +
+        "digest reproduces, every encoder is 11.5-22.1% smaller and every decoder within 0.06%, " +
         "and the graph IO census is unchanged on every pack"
+
+    /**
+     * The 8gen1 rows' measurement record. Not [MEASURED]: that string compares against 0.62.2,
+     * and this family had no 0.62.2 package, so "no 0.62.2 digest reproduces" would be vacuous
+     * and "every encoder is smaller" a comparison with nothing.
+     */
+    private const val MEASURED_8GEN1 = "measured 2026-09-24 by build_asset_packs.py measure " +
+        "(manifest v0.63.0, QAIRT 2.50.0.260828221209; Last-Modified 2026-09-23; CRC-clean). " +
+        "First published at v0.63.0, so there is no earlier package to compare; the gate read " +
+        "vendor metadata htp 69 and an IO census equal to NpuModelSpec, and soc_model 36 was " +
+        "read by hand from the same metadata.json. Not device-executed in this program: no " +
+        "v69 binary has run in an AI Hub job of ours or in the app"
 
     /**
      * The artifact census: twelve measured pairs — 6 families x 2 tiers, family-major in
@@ -492,7 +508,7 @@ object NpuFleetCensus {
                 "decoder_qairt_context.bin", 223_562_032L,
                 "810557e909a44a1f7ea3889421fbd8c1385a29110f49b962b29b50a48070169f",
             ),
-            evidence = MEASURED,
+            evidence = MEASURED_8GEN1,
         ),
         PackArtifact(
             familyId = "8gen1",
@@ -506,7 +522,7 @@ object NpuFleetCensus {
                 "turbo_decoder_qairt_context.bin", 294_692_768L,
                 "c5bb0775b19afb1f7b115c231aaaf78d003479228b3e905181fe0436c87b5fc2",
             ),
-            evidence = MEASURED,
+            evidence = MEASURED_8GEN1,
         ),
     )
 
@@ -576,8 +592,11 @@ object NpuFleetCensus {
         // SM8450 LEFT THIS LEDGER on 2026-09-24 for the 8gen1 family. Its line read "8 Gen 1 —
         // no published w8a16 package as of 2026-08-29", which was true through v0.62.2 and
         // stopped being true at AI Hub v0.63.0, the first release with a
-        // `qualcomm-snapdragon-8gen1` key. Measured, not inferred: the metadata gate read htp 69 /
-        // soc_model 36 and the IO census equal to both spec rows.
+        // `qualcomm-snapdragon-8gen1` key. Measured, not inferred, by two different hands: the
+        // measure run's metadata gate read htp 69 and the IO census equal to both spec rows, and
+        // soc_model 36 was read by hand out of the same vendor metadata.json (2026-09-24). The
+        // gate did not check soc_model on that run. It does since, from FAMILIES' soc_model
+        // column in tools/build_asset_packs.py, and no run has executed that check yet.
         "SM8350" to "888 — no published w8a16 package as of 2026-08-29 " +
             "(both release manifests re-fetched)",
         // SM8750 / SM8850 LEFT THIS LEDGER on 2026-09-22 for the 8elite_galaxy / 8elite5_galaxy

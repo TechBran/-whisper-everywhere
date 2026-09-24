@@ -1,11 +1,19 @@
 """Run the SHIPPED NPU pack binaries on Qualcomm AI Hub's hosted real phones.
 
-Why this exists: the census admits silicon nobody here owns (the Galaxy S25 and S26 generations,
-every plain 8 Elite / 8 Elite Gen 5 phone, the 7 Gen 4). AI Hub hosts real devices for each of
-those chips, including the PLAIN-bin reference phones ("Snapdragon 8 Elite QRD", "Snapdragon 8
-Elite Gen 5 QRD") that stand in for every non-Samsung phone. A profile job on the exact bytes Play
-delivers answers "does this family's context binary load and execute on that silicon, and how
-fast" without a phone in hand. First run: 2026-09-22, all 14 jobs PASS on the v0.62.2 binaries
+Why this exists: the census admits silicon nobody here can run the app on (the Galaxy S25 and
+S26 generations, every plain 8 Elite / 8 Elite Gen 5 phone, the 7 Gen 4), and since 4.15 the
+8 Gen 1 (SM8450), on which no v69 binary has yet run in this program. AI Hub hosts real devices
+for each of those chips. A profile job on the exact bytes Play delivers answers "does this
+family's context binary load and execute on that silicon, and how fast" without a phone in hand.
+
+What it runs is PLAN below, one entry per census family: each 8 Elite family on its own Galaxy
+phone (S25, S26), the 7 Gen 4 QRD (that family's only hosted device), 8gen1 on the two hosted
+SM8450 devices (the Galaxy S22 family and the Tab S8), and the S23 (qcs8550) and S24 (8gen3) as
+controls. The plain-bin reference phones ("Snapdragon 8 Elite QRD", "Snapdragon 8 Elite Gen 5
+QRD") are NOT in the plan since 2026-09-24 (the reason is at PLAN); their 2026-09-22 PASS on the
+v0.62.2 binaries stays the plain-bin evidence the 8 Elite rows cite.
+
+First run: 2026-09-22, all 14 jobs PASS on the v0.62.2 binaries, QRDs included
 (docs/measurements/2026-09-22-aihub-hosted-device-matrix.md). Re-planned 2026-09-24 for the
 v0.63.0 refresh and the 8gen1 family: not yet run.
 

@@ -10,9 +10,10 @@ chipset key, and holds every zip to the same gates:
 
   1. HEAD first: HTTP 200; ``Last-Modified`` on the pinned hash-stable re-upload event the
      research pinned (a bucket rewrite fails loudly rather than silently measuring new bytes);
-     ``Content-Length`` asserted against EXPECTED_ZIP_BYTES where a measurement already existed
-     (the four turbo zips + the 8gen3 small zip) and recorded where not (the other three small
-     zips).
+     ``Content-Length`` asserted against EXPECTED_ZIP_BYTES where a measurement already exists
+     and recorded where not. Since the 2026-09-24 v0.63.0 pass all twelve zips are pinned, so
+     today every HEAD asserts; the record mode is what the next re-measurement (a blanked table,
+     or a new family) runs in.
   2. Download to the workspace (skipped when the local copy already matches the exact length --
      the 4.1 turbo zip and workspace re-runs cost nothing), then ``zipfile.testzip()``: every
      entry CRC-clean.
@@ -103,11 +104,14 @@ RELEASE = "0.63.0"
 # so a bucket rewrite on any later date fails the HEAD gate by name.
 #
 # 2026-09-22: was "25 Aug 2026" (release v0.61.0, research doc
-# 2026-08-29-pad-soc-delivery.md section 7). Qualcomm rebuilt every pack with QAIRT 2.45.0 for
-# v0.62.2 and re-uploaded on 11 Sep 2026 — small at 20:36, turbo at 20:34, so the DAY covers
-# both models. This gate was the THIRD independent guard to refuse the new bytes, after the
-# release string and the zip-length pins. All three named the same fact, which is the point of
-# having three: no single edit can wave a vendor rebuild through.
+# 2026-08-29-pad-soc-delivery.md section 7). Qualcomm re-uploaded every pack for v0.62.2 on
+# 11 Sep 2026 — small at 20:36, turbo at 20:34, so the DAY covers both models. It was a
+# RE-RELEASE, not a rebuild: the v0.61.0 binaries were already QAIRT 2.45.0 builds (their own
+# metadata.json reads 2.45.0.260326154327), and the 0.62.2 measure run reproduced all sixteen
+# binary digests and the four small zips exactly; only the four turbo zip lengths moved, by
+# one byte each. This gate was one of three independent guards to notice the re-upload, with
+# the release string and those four turbo length pins. All three named the same fact, which is
+# the point of having three: no single edit can wave a vendor re-upload through.
 #
 # 2026-09-24: was "11 Sep 2026". v0.63.0 is a real rebuild with QAIRT 2.50.0.260828221209 (every
 # w8a16 asset's tool_versions.qairt says so), and the bucket serves all twelve objects dated
@@ -238,7 +242,7 @@ CENSUS = {
     # Measured 2026-09-24 against manifest v0.63.0 (Last-Modified 23 Sep 2026), every row by
     # the instrument and pasted from its own printed line. THE FINDING: nothing reproduces.
     # v0.63.0 is a QAIRT 2.50 REBUILD, not a re-release: none of the twenty 0.62.2 digests
-    # appears below, every ENCODER shrank (small 14.5-22.1%, turbo 11.6-16.8%; 7gen4 the most)
+    # appears below, every ENCODER shrank (small 14.5-22.1%, turbo 11.5-16.8%; 7gen4 the most)
     # while every decoder moved by under 0.06%, and the graph IO census is EQUAL to
     # NpuModelSpec on all twelve packs, 8gen1 included. Same graphs, same shapes, same tensor
     # byte totals; different compiled code inside the context binaries.
@@ -686,7 +690,8 @@ def extract_pair_to(tier: str, family: str, zip_path: str, out_dir: str) -> None
 
 
 def build_packs(workspace: str) -> None:
-    """Assemble all eight pack variants into the two module trees. Measure runs FIRST (the F3
+    """Assemble all twelve pack variants (six families x two tiers) into the two module trees.
+    The count is FAMILIES x MODELS, never spelled in the loop. Measure runs FIRST (the F3
     handoff: packs are always built from gate-verified bytes; idempotent and cheap on a warm
     workspace), so every zip this reads has just passed the HEAD, length, CRC and vendor
     metadata gates."""

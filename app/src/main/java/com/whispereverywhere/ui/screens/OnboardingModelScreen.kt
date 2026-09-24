@@ -156,11 +156,14 @@ fun OnboardingModelScreen(
     val recoveryModel = WhisperCatalog.byId(NpuTierStatus.RECOVERY_TIER_ID)
 
     // 4.2 F7 — the F3 §7.3 residual, landed by name: a gated card's byte badge states THE
-    // DEVICE FAMILY'S measured pair, because the catalog's approximation understates a 7gen4
-    // pair by ~4% and the census carries the honest number. Catalog fallback everywhere the
-    // family cannot answer (CPU tiers, off-census devices). The answer is immutable while the
-    // process lives — family and census cannot change — so this producer deliberately has no
-    // key; it runs off Main because npuSocFamily's first read resolves Build fields.
+    // DEVICE FAMILY'S measured pair, because the catalog's approximation is the 8gen3 pair and
+    // the census carries every other family's own. At 0.61.0 that understated a 7gen4 pair by
+    // 4.1% (small) and 6.6% (turbo); at v0.63.0 every family is within 2% of it (7gen4 +0.59%
+    // small, +1.82% turbo; 8gen1 -0.87%, -0.58%), and the badge still states the measured
+    // bytes rather than the nearest reference. Catalog fallback everywhere the family cannot
+    // answer (CPU tiers, off-census devices). The answer is immutable while the process lives —
+    // family and census cannot change — so this producer deliberately has no key; it runs off
+    // Main because npuSocFamily's first read resolves Build fields.
     val censusPairBytes by produceState(initialValue = emptyMap<String, Long>()) {
         value = withContext(Dispatchers.IO) {
             val family = app.npuSocFamily ?: return@withContext emptyMap<String, Long>()
@@ -172,7 +175,7 @@ fun OnboardingModelScreen(
     }
 
     // 4.2 F7 — THE FETCH AFFORDANCE's state, mirrored from the process-scoped owner (F5). The
-    // composition may not own an ~860 MB fetch any more than it may own a 358 MB import (the
+    // composition may not own a ~1 GB fetch any more than it may own a 338 MB import (the
     // I3 lesson): a recreation re-subscribes and finds the fetch exactly where it was — and
     // WHICH card renders it is the controller's own answer, so the state can never wear a
     // sibling card, and a fetch started before a rotation still lands on the right one.
@@ -460,7 +463,7 @@ fun OnboardingModelScreen(
  * The npu tier's asset-pair import, on any device whose silicon can run the tier (4.0, Q8).
  *
  * Rendered for capability alone, so it is present in exactly the state the chooser cannot show
- * an installed card for: the right phone, and 358 MB that has not arrived yet. [offered] only
+ * an installed card for: the right phone, and 338 MB that has not arrived yet. [offered] only
  * changes what it SAYS — "enable it" before the pair lands, "replace it" afterwards — never
  * whether it is there. Since 4.2 F7 it is the sideload path AND the Play-failure fallback both:
  * [fetchAbove] adds one leading sentence while a fetch card renders above, so the two
@@ -715,7 +718,8 @@ private fun ModelTierCard(
                 )
                 Text(
                     // The family's measured pair where the census answers (4.2 F7 — the F3
-                    // §7.3 residual: the approximation understates a 7gen4 pair by ~4%).
+                    // §7.3 residual: the approximation is the 8gen3 pair, which at v0.63.0 is
+                    // within 2% of every family's, 7gen4 turbo the widest at +1.82%).
                     text = formatBytes(pairBytes ?: model.approxBytes),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

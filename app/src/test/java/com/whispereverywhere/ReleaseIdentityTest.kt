@@ -194,7 +194,7 @@ import org.junit.Test
  * headers pinned to the same QAIRT build (v2.50.0.260828221209) — the build the new packs were
  * compiled with, so runtime, headers and blobs agree for the first time since 4.0 (R7, the
  * 2.45-blob-under-2.49 pairing, is retired rather than re-proven). Every family's packs move to AI
- * Hub v0.63.0, a REBUILD: no 0.62.2 digest reproduces, every encoder is 11.6-22.1% smaller, the
+ * Hub v0.63.0, a REBUILD: no 0.62.2 digest reproduces, every encoder is 11.5-22.1% smaller, the
  * graph IO census is unchanged, and AI Hub's own profiles show the turbo encoder 4-7x faster (the
  * vendor's numbers; no device here has run a v0.63.0 pair yet). And `8gen1` joins as the sixth
  * census family — SM8450, the Galaxy S22s, the Tab S8s and the S23 FE's Snapdragon build, on

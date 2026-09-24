@@ -778,9 +778,10 @@ class NpuAssetImportTest {
     fun theFreeSpacePrecheckScalesToTurbosPair() {
         // 4.1 L6. The precheck's numbers are the TIER's: turbo's pair is 981,968,552 B since the
         // v0.63.0 refresh (1,071,685,632 before 4.15), so the replace-an-installed-pair transient
-        // is ~1.96 GB on disk and the budget ~2.16 GB with the house margin. A precheck still budgeting npu's 358 MB would pass a device that the
-        // renames then fill mid-import — the exact too-late failure the precheck exists to move
-        // before the first byte.
+        // is ~1.96 GB on disk and the budget ~2.16 GB with the house margin. A precheck still
+        // budgeting npu's pair (338,422,512 B, 338 MB) would pass a device that the renames then
+        // fill mid-import — the exact too-late failure the precheck exists to move before the
+        // first byte.
         val turbo = WhisperCatalog.byId("npu-turbo")!!
         val entries =
             NpuAssetImport.requiredEntriesFor(turbo, NpuFleetCensus.artifactFor("8gen3", "npu-turbo"))
@@ -795,12 +796,15 @@ class NpuAssetImportTest {
         assertEquals("one staged copy plus the margin", (pair * 11) / 10, fresh)
         assertEquals("the replace transient doubles it", (pair * 2 * 11) / 10, replacing)
         assertTrue(
-            "the doubled budget covers the real ~2.14 GB transient of pair + parked pair",
+            "the doubled budget covers the real ~1.96 GB transient of pair + parked pair",
             replacing > pair * 2,
         )
         val refusal = NpuAssetImport.freeSpaceRefusal(1_000_000_000L, replacing)
         assertNotNull("a 1 GB-free device replacing a turbo pair must refuse", refusal)
-        assertTrue("it names the ~2.36 GB it needs: $refusal", refusal!!.contains("${replacing / 1_000_000}"))
+        assertTrue(
+            "it names the ~2.16 GB it needs: $refusal",
+            refusal!!.contains("${replacing / 1_000_000}"),
+        )
         assertTrue("what the device has: $refusal", refusal.contains("1000"))
         assertTrue(
             "and the shortfall in real figures: $refusal",

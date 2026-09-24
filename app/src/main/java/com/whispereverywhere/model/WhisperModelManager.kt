@@ -55,17 +55,20 @@ class WhisperModelManager(
      *
      * The reference selection is [NpuAssetImport.installedGateBytes], a pure decision with its
      * own tests, because the F3 measurement proved the catalog reference is not one number per
-     * tier: both 7gen4 encoders sit outside ±5% of it (+11.0%/+9.1%), so around the catalog a
-     * CORRECT 7gen4 import verified exactly and then failed THIS predicate inside the
-     * finalise's own verification and rolled itself back. The family memo is the F2 chain
-     * (`WhisperEverywhereApp.npuSocFamily` — the one resolution, never re-derived), and a
-     * single-file tier never resolves an artifact row at all, so the six ggml tiers keep the
+     * tier: at v0.61.0 both 7gen4 encoders sat outside ±5% of it (+11.0%/+9.1%), so around the
+     * catalog a CORRECT 7gen4 import verified exactly and then failed THIS predicate inside the
+     * finalise's own verification and rolled itself back. At v0.63.0 every family's encoder is
+     * inside the band (the widest, 7gen4 turbo, +2.6%), so no family needs the rescue today; the
+     * family bytes stay the reference because they make the import's exact acceptance and this
+     * predicate agree by construction, whatever the next rebuild does. The family memo is the
+     * F2 chain (`WhisperEverywhereApp.npuSocFamily` — the one resolution, never re-derived), and
+     * a single-file tier never resolves an artifact row at all, so the six ggml tiers keep the
      * predicate they have always had.
      *
      * The primary is gated against the gate's `primaryBytes`, NOT `approxBytes`: for a paired
      * tier `approxBytes` is the sum of both files, and comparing the encoder alone against the
-     * pair's total is 63% out — the tier would read as "not installed" forever no matter what
-     * the owner imported.
+     * pair's total is 67% out for npu at v0.63.0 (63% before) — the tier would read as "not
+     * installed" forever no matter what the owner imported.
      */
     fun isInstalled(model: WhisperModel): Boolean {
         val artifact = (context.applicationContext as? WhisperEverywhereApp)?.npuSocFamily
@@ -196,7 +199,7 @@ class WhisperModelManager(
      * fallback something is unambiguously better than nothing.
      *
      * Null means the NPU tier cannot come up AND cannot fall back — a clean refusal at
-     * `stage=mel-donor`, before any of the 358 MB is touched.
+     * `stage=mel-donor`, before any of the 338 MB is touched.
      */
     override fun cpuTierModelPath(): String? {
         val preferred = WhisperCatalog.byId(prefs.selectedModelId)
@@ -266,9 +269,9 @@ class WhisperModelManager(
         // gone.
         //
         // What it prevents, on the only device that can reach it — a gate-passing phone with the
-        // npu pair imported by hand: the card's Download button deletes the 132,927,488-byte
-        // encoder immediately, fetches ~423 MB of provenance zip over a possibly-metered link,
-        // fails the size gate against the PAIR's 358,244,352 bytes, deletes that too, and leaves
+        // npu pair imported by hand: the card's Download button deletes the 113,123,776-byte
+        // encoder immediately, fetches the ~285 MB provenance zip over a possibly-metered link,
+        // fails the size gate against the PAIR's 338,422,512 bytes, deletes that too, and leaves
         // `isInstalled(npu)` false — so the tier's card silently vanishes on the next composition
         // and the only way back is re-importing. `download()` never reads `pairedArtifact`, so this
         // path could never have installed the tier even with a correct URL.
@@ -536,12 +539,12 @@ class WhisperModelManager(
      *
      * **Per-tier since L6.** [tierId] names which of `NpuAssetImport.PAIRED_TIER_IDS` this zip is
      * for; every number below — the allow-list names, both exact lengths, both digests, the
-     * free-space budget — scales off that tier's own catalog entry, so turbo's ~1.07 GB pair flows
-     * through the identical transaction npu's 358 MB pair proved out. The digest verification is
-     * STREAMED during the copy (never a second read of a ~GB file) and a hash failure lands in
-     * the same refusal path as a size failure, before anything is parked. The owner's `adb push`
-     * dev route never enters this function and stays hash-exempt by design — the run-book states
-     * it where it prescribes the push.
+     * free-space budget — scales off that tier's own catalog entry, so turbo's ~982 MB pair flows
+     * through the identical transaction npu's pair (358 MB then) proved out. The digest
+     * verification is STREAMED during the copy (never a second read of a ~GB file) and a hash
+     * failure lands in the same refusal path as a size failure, before anything is parked. The
+     * owner's `adb push` dev route never enters this function and stays hash-exempt by design —
+     * the run-book states it where it prescribes the push.
      *
      * **Both-or-neither, and a re-import is non-destructive.** Every entry lands as `.part`
      * alongside whatever is already installed, so an existing pair survives a zip that turns out to
@@ -577,7 +580,7 @@ class WhisperModelManager(
      * announces last: a signal sent for files that get deleted a line later is worse than no
      * signal.
      *
-     * Main-safe by construction (`Dispatchers.IO`): 358 MB of inflate on the main thread is an ANR,
+     * Main-safe by construction (`Dispatchers.IO`): 338 MB of inflate on the main thread is an ANR,
      * not a jank. Cancellation is honoured between buffers and leaves no `.part` behind, so a retry
      * starts clean.
      *
@@ -628,8 +631,9 @@ class WhisperModelManager(
         // already-installed question below are answered about the directory as it really is.
         reconcileStagingDebris(dir, required.keys)
 
-        // The transient, checked BEFORE a byte is read: 358 MB of .part files, doubled when a pair
-        // is already installed because those stay on disk until the renames at the very end.
+        // The transient, checked BEFORE a byte is read: the pair's worth of .part files (338 MB for
+        // npu, ~982 MB for turbo), doubled when a pair is already installed because those stay on
+        // disk until the renames at the very end.
         val total = NpuAssetImport.pairBytes(required)
         val usable = runCatching { StatFs(dir.absolutePath).availableBytes }
             .getOrDefault(Long.MAX_VALUE)
@@ -1154,7 +1158,7 @@ class WhisperModelManager(
      *
      * With no parked file at all there is no interrupted finalise, and any `.part` is debris from
      * an interrupted COPY — swept here, which is also what stops a process death mid-copy leaving
-     * 358 MB behind forever.
+     * a pair's worth of `.part` (338 MB for npu, ~982 MB for turbo) behind forever.
      */
     private fun reconcileStagingDebris(dir: File, names: Set<String>) {
         val parked = names.filter { File(dir, it + NpuAssetImport.PREVIOUS_SUFFIX).exists() }.toSet()

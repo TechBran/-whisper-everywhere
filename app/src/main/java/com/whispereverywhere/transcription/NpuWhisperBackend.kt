@@ -86,7 +86,7 @@ import java.util.Locale
  * guard a guard once more than one npu-class tier exists.
  *
  * **It has no default value, deliberately.** A default would let a future call site arm one model's
- * 358 MB of context binaries under another model's census, and the outcomes run from a refusal at
+ * 338 MB of context binaries under another model's census, and the outcomes run from a refusal at
  * load (the good case, because the census guard fires) to a decode driven by the wrong token family
  * — another model's transcript, fluent and confident, with nothing failing. `NpuBackendSelector`
  * resolves it from the tier id through `NpuModelSpec.forTier`, and answers `WhisperNativeBackend`
@@ -285,7 +285,7 @@ class NpuWhisperBackend(
      * it is a null test on a `String?` and is the likeliest reason this tier does not come up
      * (4.1 L3, Q6 M2 — until then it sat fourth, behind everything it could have saved). The mel
      * context is next because it is ~64 KB and its failure is a clean "tier unavailable" **before**
-     * 358 MB of NPU assets have been touched; the vocabulary follows for the same reason (563 KB,
+     * 338 MB of NPU assets have been touched; the vocabulary follows for the same reason (563 KB,
      * and a decoder that failed to construct does not exist, so there is nothing to run degraded);
      * `nativeInit` — the expensive one — is last. Every failure before it costs nothing.
      *
@@ -426,8 +426,9 @@ class NpuWhisperBackend(
             // EXCLUDES every census family's skel: under extractNativeLibs="false" a lib/ copy
             // is provably unopenable by the FastRPC loader, which needs a real file on disk and
             // searches only ADSP_LIBRARY_PATH. The extractQnnSkel Gradle task re-materialises
-            // all four families' skels from the resolved AAR into assets — asserting the same
-            // census-pinned (bytes, sha256) pairs at build time — and this stage copies exactly
+            // the census's skels from the resolved AAR into assets — five of them for six
+            // families, one per architecture (qcs8550 and 7gen4 share V73) — asserting the same
+            // census-pinned (bytes, sha256) pairs at build time, and this stage copies exactly
             // ONE of them, the row this device resolved to, into filesDir, the FIRST
             // ADSP_LIBRARY_PATH entry, where nativeInit's dlopen of libQnnHtp.so will have
             // FastRPC find it. The three values are the family row's — the census is their one
@@ -438,11 +439,11 @@ class NpuWhisperBackend(
             //
             // stagedPathWithMarker, NOT stagedPath — the L3 handoff's explicit warning to this
             // stage: the plain arm full-hashes the destination on EVERY arm, free at the
-            // melbank's 103 KB and a per-session ~17.9-18.8 MiB flash read here. The first arm
-            // pays one verified write (once per install); every later arm is a handful of stats
-            // against the stored marker. A null is a stage refusal like any other stage's:
-            // without it the HTP backend would come up and then fail somewhere far less
-            // legible, inside FastRPC.
+            // melbank's 103 KB and a per-session 12.5-19.7 MB flash read here (V69 12,529,660 B
+            // to V81 19,708,192 B at QNN 2.50). The first arm pays one verified write (once per
+            // install); every later arm is a handful of stats against the stored marker. A null
+            // is a stage refusal like any other stage's: without it the HTP backend would come
+            // up and then fail somewhere far less legible, inside FastRPC.
             NpuAssetStage.stagedPathWithMarker(
                 appContext,
                 family.skelAsset,

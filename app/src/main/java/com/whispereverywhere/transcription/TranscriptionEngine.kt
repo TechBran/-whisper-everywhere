@@ -792,7 +792,7 @@ interface ModelPathProvider {
      * anything noticing.
      *
      * Null means the NPU tier cannot come up at all — which is a clean refusal at load, before any
-     * of the 358 MB of NPU assets is touched. `WhisperModelManager` supplies the real answer at Q8.
+     * of the 338 MB of NPU assets is touched. `WhisperModelManager` supplies the real answer at Q8.
      */
     fun cpuTierModelPath(): String? = null
 

@@ -1814,7 +1814,7 @@ class FloatingBubbleService : Service(),
                 android.util.Log.i("WE-DIAG", "$reason: re-prewarming engine")
                 // (4.0, Q9) Both triggers can change the offer gate's answer, and the INSTALL one
                 // is the case a memo taken at service start cannot see: Q8's importer writes the
-                // 358 MB pair into files/models while this service is up, and the gate's installed
+                // 338 MB pair into files/models while this service is up, and the gate's installed
                 // half is a live stat. Re-read before warmLocalEngine() decides which backend the
                 // engine it may be about to rebuild is built on.
                 refreshNpuTierOffer()

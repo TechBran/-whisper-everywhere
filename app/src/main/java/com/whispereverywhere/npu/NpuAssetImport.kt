@@ -92,7 +92,7 @@ object NpuAssetImport {
     /**
      * The same 10 % headroom `WhisperModelManager.download` applies, for the same reason: a
      * filesystem that reports exactly enough free space still fails, because the writes are not the
-     * only thing happening on the device while 358 MB inflates.
+     * only thing happening on the device while 338 MB (npu) or ~982 MB (turbo) inflates.
      */
     const val FREE_SPACE_MARGIN: Double = 1.1
 
@@ -139,7 +139,8 @@ object NpuAssetImport {
      * The tier's file NAMES alone (4.2 F3) — the launch debris sweep's view. Sweeping parked
      * `.prev`/`.part` files settles PATHS and needs no digests, so it deliberately does NOT
      * take the family answer the verifying map requires: debris must be swept even on a device
-     * whose family cannot resolve, or 358 MB of orphaned `.part` outlives the import that died.
+     * whose family cannot resolve, or a pair's worth of orphaned `.part` outlives the import
+     * that died.
      */
     fun pairedFileNames(model: WhisperModel?): Set<String> {
         val paired = model?.pairedArtifact ?: return emptySet()
@@ -160,13 +161,20 @@ object NpuAssetImport {
      * The installed-size gate's reference bytes — THE DEVICE FAMILY'S census row when it can
      * answer, the catalog's reference record when it cannot (4.2 F5, the F3 carry BY NAME).
      *
-     * **The measured discovery this exists for:** both 7gen4 ENCODERS sit outside the ±5%
-     * tolerance around the catalog's reference record (147,595,264 B = +11.0% over 132,927,488
-     * for small; 846,360,576 B = +9.1% over 775,831,552 for turbo — HTP v73 packs weights less
-     * densely), so a gate that only knew the catalog rolled back a CORRECT 7gen4 install at the
-     * finalise's own `isInstalled` verification. The reference must be the family's measured
-     * bytes — which also restores the strict-inside-tolerant nesting fleet-wide: everything the
-     * import accepts (the exact family bytes), this gate accepts.
+     * **The measured discovery this was built for (2026-08-30, v0.61.0):** both 7gen4 ENCODERS
+     * sat outside the ±5% tolerance around the catalog's reference record (147,595,264 B = +11.0%
+     * over 132,927,488 for small; 846,360,576 B = +9.1% over 775,831,552 for turbo), so a gate
+     * that only knew the catalog rolled back a CORRECT 7gen4 install at the finalise's own
+     * `isInstalled` verification. **At v0.63.0 (2026-09-24) that fact dissolved:** every
+     * family's encoder now sits inside the band around the new reference — the widest is 7gen4
+     * turbo at +2.6% (703,946,504 over 686,112,520), 7gen4 small is +1.7% — so the family's
+     * bytes are no longer what rescues a family. They stay the reference because they keep the
+     * strict-inside-tolerant nesting exact fleet-wide: everything the import accepts (the exact
+     * family bytes) this gate accepts, whatever the next rebuild does to the spread. And the
+     * gate has a new job, the one `NpuFleetCensus.artifacts`' KDoc records: it refuses the OLD
+     * pairs. A 0.62.2 turbo encoder on disk (775,831,552 B on an 8 Gen 3) is 13% over
+     * 686,112,520, so after the update the tier reads as not installed until the v0.63.0 pack
+     * is fetched. That is the refresh arriving, not a defect.
      *
      * **Null falls BACK rather than refusing, and deliberately** — the opposite arm from
      * [requiredEntriesFor], stated so nobody "fixes" the asymmetry: an IMPORT on an unresolved
@@ -271,9 +279,11 @@ object NpuAssetImport {
      * Bytes that must be free before the import may start (I12 — the transient the earlier draft
      * ignored).
      *
-     * The pair inflates to 358 MB of `.part` files, and when a pair is ALREADY installed those
-     * 358 MB stay on disk until the two renames at the very end — that is what makes a re-import
-     * non-destructive, and it is also what doubles the requirement. The picked zip (~280 MB) is
+     * The pair inflates to its own size in `.part` files (338,422,512 B for the 8gen3 npu pair,
+     * 981,968,552 B for turbo's). When a pair is ALREADY installed, that much again stays on disk
+     * until the two renames at the very end — that is what makes a re-import non-destructive,
+     * and it is also what doubles the requirement. The picked zip (about the vendor zip's size,
+     * ~285 MB for npu and ~824 MB for turbo) is
      * read as a stream and never copied by this app, but on a single-partition device it is
      * usually on this same filesystem, so the number the user must actually have free is higher
      * still; the margin is not a substitute for that and the refusal names real figures rather
@@ -461,7 +471,10 @@ object NpuAssetImport {
     /** `npu: import refused reason=…` — one greppable line under the house tag. */
     fun refusedLine(reason: String): String = "npu: import refused reason=$reason"
 
-    /** `npu: import ok entries=2 bytes=358244352` — the success landmark for the Q10a run-book. */
+    /**
+     * `npu: import ok entries=2 bytes=338422512` (the 8gen3 npu pair since v0.63.0) — the
+     * success landmark for the Q10a run-book.
+     */
     fun okLine(entries: Int, bytes: Long): String = "npu: import ok entries=$entries bytes=$bytes"
 
     /** The import as the UI sees it. One type, so a screen cannot render a state the manager

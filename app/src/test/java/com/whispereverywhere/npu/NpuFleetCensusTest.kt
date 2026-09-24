@@ -442,7 +442,7 @@ class NpuFleetCensusTest {
         // HISTORY, because each move was a different kind of event: at v0.62.2 the four turbo
         // zips lost exactly one byte each (903->902, 781->780, 426->425, 306->305) — the
         // archive wrapper, a re-release. At v0.63.0 (2026-09-24) EVERY zip moved by megabytes,
-        // all smaller (small -2.7 to -3.3%, turbo -4.2 to -5.0%): a QAIRT 2.50 rebuild, and the
+        // all smaller (small -2.7 to -3.3%, turbo -4.2 to -4.9%): a QAIRT 2.50 rebuild, and the
         // binary digests moved with them. The 8gen1 pair is new at this release.
         assertEquals(823_721_812L, artifact("8gen3", "npu-turbo").vendorZipBytes)
         assertEquals(823_685_860L, artifact("8elite_galaxy", "npu-turbo").vendorZipBytes)
@@ -603,11 +603,20 @@ class NpuFleetCensusTest {
                 a.evidence.contains("build_asset_packs.py measure")
             )
         }
-        for (tierId in listOf("npu", "npu-turbo")) {
+        // The 8gen3 rows used to record that they reproduced the catalog's pins, which was the
+        // run's self-check. At a vendor rebuild that cannot hold (v0.63.0 replaced every digest),
+        // so what each row must record now is the opposite fact and the check that replaced it:
+        for ((tierId, release) in listOf("npu" to "4.0", "npu-turbo" to "4.1")) {
+            val evidence = artifact("8gen3", tierId).evidence
             assertTrue(
-                "the 8gen3 $tierId row records that it reproduced the catalog's pins " +
-                    "(the run's self-check)",
-                artifact("8gen3", tierId).evidence.contains("self-check")
+                "the 8gen3 $tierId row records that the rebuild cannot reproduce the $release " +
+                    "pins it replaced — got \"$evidence\"",
+                evidence.contains("A rebuild cannot reproduce the $release pins it replaced")
+            )
+            assertTrue(
+                "and that the self-check is now the second measure run reproducing every row " +
+                    "from the pasted literals — got \"$evidence\"",
+                evidence.contains("the self-check is the second measure run reproducing every row")
             )
         }
     }
