@@ -81,3 +81,57 @@ else()
         "C:/Users/bastr/AppData/Local/Programs/Python/Python313/python.exe tools/fetch_qnn_headers.py")
 
 endif()
+
+# ---------------------------------------------------------------------------------------------
+# liblitertasr.so - the MediaTek APU tier's LiteRT seam (P1b; design §2.5).
+#
+# A THIRD add_library in this same file, for the reason the second one is here: AGP accepts one
+# cmake path per module. It shares nothing with qnnasr but band_scan.h, and it links nothing of
+# LiteRT's: libLiteRt.so 2.1.1 is dlopen()ed at runtime and every entry point is dlsym()ed, so the
+# vendored headers are compile-time signatures and enums only.
+set(LITERT_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/litert-2.1.1)
+
+# GUARDED ON HEADER PRESENCE, like qnnasr and for its reason: a checkout without the headers must
+# still build the CPU and GPU tiers. The headers are vendored (Apache-2.0), so the skip is a broken
+# tree rather than a missing download - which is why the message says where they should be.
+if(EXISTS ${LITERT_INCLUDE_DIR}/litert/c/litert_compiled_model.h
+        AND EXISTS ${LITERT_INCLUDE_DIR}/litert/c/options/litert_mediatek_options.h
+        AND EXISTS ${LITERT_INCLUDE_DIR}/litert/build_common/build_config.h.in)
+
+    # litert_common.h includes the build_config.h that LiteRT's own CMake generates from this
+    # template. GPU off: the GPU declarations would pull <CL/cl.h> and the EGL/GLES headers into a
+    # file that uses none of them. NPU on: the AHardwareBuffer / DMA-BUF declarations stay visible.
+    # Neither switch changes libLiteRt.so - they choose which of its declarations this file sees.
+    set(LITERT_BUILD_CONFIG_DISABLE_GPU 1)
+    set(LITERT_BUILD_CONFIG_DISABLE_NPU 0)
+    configure_file(
+        ${LITERT_INCLUDE_DIR}/litert/build_common/build_config.h.in
+        ${CMAKE_CURRENT_BINARY_DIR}/litert-2.1.1-config/litert/build_common/build_config.h)
+
+    add_library(litertasr SHARED litert_asr.cpp)
+
+    target_include_directories(litertasr PRIVATE
+        ${LITERT_INCLUDE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/litert-2.1.1-config)
+
+    # The file-global -O3 applies; no per-target -O (see qnnasr's note).
+    target_compile_options(litertasr PRIVATE
+        -Wall
+        -Wno-unused-parameter)
+
+    # log for __android_log_print, dl for dlopen/dlsym. Nothing else - deliberately, as for qnnasr:
+    # a link edge to libLiteRt.so would make a missing runtime a load-time crash of this library.
+    target_link_libraries(litertasr
+        log
+        dl)
+    # 16 KB page alignment comes free from the global CMAKE_SHARED_LINKER_FLAGS above.
+
+else()
+
+    message(WARNING
+        "LiteRT 2.1.1 headers not found at ${LITERT_INCLUDE_DIR} - SKIPPING liblitertasr.so. The "
+        "MediaTek APU tier will be unavailable at runtime; the CPU, GPU and Qualcomm NPU tiers are "
+        "unaffected. The headers are vendored in the repo: restore app/src/main/cpp/third_party/litert-2.1.1 "
+        "from git.")
+
+endif()
