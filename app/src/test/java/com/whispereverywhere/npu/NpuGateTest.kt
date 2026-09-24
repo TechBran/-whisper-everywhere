@@ -24,8 +24,9 @@ import java.io.File
  *  - **a false DENY** hides the tier from silicon that can run it, which is invisible: the user
  *    simply never sees the card and nothing anywhere reports why.
  *
- * 4.2: the gate reads the fleet census, so this table has two halves — the four families' strings
- * all pass (and resolve to their own rows), and the census's own CPU ledger all denies. The 4.0
+ * 4.2: the gate reads the fleet census, so this table has two halves — every census family's
+ * strings pass (and resolve to their own rows; six families since 2026-09-24), and the census's
+ * own CPU ledger all denies. The 4.0
  * owner-device rows are unchanged below; they became census rows without moving.
  */
 class NpuGateTest {
@@ -112,6 +113,21 @@ class NpuGateTest {
         assertTrue(
             "SM8750 ALLOWS since 2026-09-22 — it is what every Galaxy S25-family phone reports",
             NpuGate.isSocSupported("SM8750", "QTI")
+        )
+        // SM8450 SAT BESIDE SM8475 IN THE CPU LEDGER until 2026-09-24 — "8 Gen 1, no published
+        // w8a16 package" — and it left for the same reason the 8 Gen 2 did: AI Hub v0.63.0
+        // published a package compiled for the part's own soc_model (36). The 8+ Gen 1 is a
+        // different die with no package at all, so it keeps this test's role as the canonical
+        // false allow; the 8 Gen 1 beside it now allows, and the two lines together are the
+        // point — one HTP generation apart, one Qualcomm naming step apart, and only one has a
+        // binary compiled for it.
+        assertTrue(
+            "SM8450 (8 Gen 1) ALLOWS since 2026-09-24 — the 8gen1 family, on the v0.63.0 package",
+            NpuGate.isSocSupported("SM8450", "QTI")
+        )
+        assertEquals(
+            "and it resolves to the 8gen1 row, whose HTP v69 is what stages the V69 skel",
+            "8gen1", NpuGate.familyFor("SM8450", "QTI")?.id
         )
     }
 
@@ -257,14 +273,14 @@ class NpuGateTest {
             NpuGate.isSocSupported(" SM8650", "QTI")
         )
         assertEquals(
-            "the gate's set is exactly the census's nine strings — the five families' " +
+            "the gate's set is exactly the census's ten strings — the six families' " +
                 "socModels. It grew twice on 2026-09-22: by the 8 Gen 2's two strings, then by " +
                 "plain SM8750 and SM8850, the strings the S25 and S26 generations actually " +
-                "report. That is how it is allowed to grow: a census edit with evidence, and " +
-                "the device-group XML regenerated in the same commit. Never because a part " +
-                "looked close.",
+                "report; and once on 2026-09-24, by SM8450, the 8 Gen 1's only string. That is " +
+                "how it is allowed to grow: a census edit with evidence, and the device-group " +
+                "XML regenerated in the same commit. Never because a part looked close.",
             setOf("SM8650", "SM8650-AC", "SM8750", "SM8750-AC", "SM8850", "SM8850-AD", "SM7750",
-                "SM8550", "SM8550-AC"),
+                "SM8550", "SM8550-AC", "SM8450"),
             NpuGate.SUPPORTED_SOCS
         )
         assertEquals(

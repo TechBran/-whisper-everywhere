@@ -636,6 +636,8 @@ class NpuImportWiringPinTest {
      */
     @Test
     fun theImportPanelDoesNotContradictItsOwnLeadingSentence() {
+        // The size in the block moved 358 MB -> 338 MB on 2026-09-24 with the catalog's npu pair
+        // (the v0.63.0 rebuild: 113,123,776 + 225,298,736 B). The sentence is otherwise verbatim.
         assertEquals(
             "with a fetch card above, the body says import is the fallback FOR a Play failure",
             1,
@@ -646,7 +648,7 @@ class NpuImportWiringPinTest {
                     "                        \"The multilingual model can run on this device's AI chip, which is \" +",
                     "                            \"much faster than the CPU. If Google Play can't deliver the files, \" +",
                     "                            \"get the model pair zip from the release page and import it here. \" +",
-                    "                            \"It needs about 358 MB once installed, and roughly twice that free \" +",
+                    "                            \"It needs about 338 MB once installed, and roughly twice that free \" +",
                     "                            \"while importing.\"",
                 ),
             ),

@@ -40,13 +40,15 @@ class NpuAssetImportTest {
 
     private val encoder = "encoder_qairt_context.bin"
     private val decoder = "decoder_qairt_context.bin"
-    private val encoderBytes = 132_927_488L
-    private val decoderBytes = 225_316_864L
+    private val encoderBytes = 113_123_776L
+    private val decoderBytes = 225_298_736L
 
-    // The npu pair's MEASURED digests (the spike staged and hashed the extracted files) — restated
-    // here as literals so the catalog moving is a decision somebody made, not a silent follow-on.
-    private val encoderSha = "3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec"
-    private val decoderSha = "fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4"
+    // The npu pair's MEASURED digests — restated here as literals so the catalog moving is a
+    // decision somebody made, not a silent follow-on. It was one on 2026-09-24: the 4.0 pair the
+    // spike staged and hashed (3e92ac26… / fda23d73…) gave way to the v0.63.0 8gen3 pair, a
+    // QAIRT 2.50 rebuild measured by build_asset_packs.py.
+    private val encoderSha = "813d0e847bf1ba21b991a421a2f57f56884252d1ca6e780a02a55582c519bac0"
+    private val decoderSha = "bd853be4710bb0aa01dd2a5ce78c03f3e9f722cab47fad3ac24555995f21a929"
 
     /** `classifyEntry` at the entry's own correct size, with nothing accepted yet. */
     private fun classify(name: String, declared: Long = -1L) =
@@ -392,7 +394,7 @@ class NpuAssetImportTest {
                 script.contains("\"$sha\""),
             )
         }
-        listOf("132_927_488", "225_316_864", "775_831_552", "295_854_080").forEach { bytes ->
+        listOf("113_123_776", "225_298_736", "686_112_520", "295_856_032").forEach { bytes ->
             assertTrue(
                 "and the exact byte length $bytes — the size half of the same gate",
                 script.contains(bytes),
@@ -404,14 +406,14 @@ class NpuAssetImportTest {
         // worse for a future edit, verify a wrong one). Each (name, bytes, sha) triple is pinned
         // as one block, indentation and trailing commas included.
         listOf(
-            Triple(encoder, "132_927_488", encoderSha),
-            Triple(decoder, "225_316_864", decoderSha),
+            Triple(encoder, "113_123_776", encoderSha),
+            Triple(decoder, "225_298_736", decoderSha),
             Triple(
-                "turbo_encoder_qairt_context.bin", "775_831_552",
+                "turbo_encoder_qairt_context.bin", "686_112_520",
                 WhisperCatalog.byId("npu-turbo")!!.sha256,
             ),
             Triple(
-                "turbo_decoder_qairt_context.bin", "295_854_080",
+                "turbo_decoder_qairt_context.bin", "295_856_032",
                 WhisperCatalog.byId("npu-turbo")!!.pairedArtifact!!.sha256,
             ),
         ).forEach { (name, bytes, sha) ->
@@ -774,9 +776,9 @@ class NpuAssetImportTest {
 
     @Test
     fun theFreeSpacePrecheckScalesToTurbosPair() {
-        // 4.1 L6. The precheck's numbers are the TIER's: turbo's pair is 1,071,685,632 B, so the
-        // replace-an-installed-pair transient is ~2.14 GB on disk and the budget ~2.36 GB with
-        // the house margin. A precheck still budgeting npu's 358 MB would pass a device that the
+        // 4.1 L6. The precheck's numbers are the TIER's: turbo's pair is 981,968,552 B since the
+        // v0.63.0 refresh (1,071,685,632 before 4.15), so the replace-an-installed-pair transient
+        // is ~1.96 GB on disk and the budget ~2.16 GB with the house margin. A precheck still budgeting npu's 358 MB would pass a device that the
         // renames then fill mid-import — the exact too-late failure the precheck exists to move
         // before the first byte.
         val turbo = WhisperCatalog.byId("npu-turbo")!!
@@ -785,7 +787,7 @@ class NpuAssetImportTest {
         val pair = NpuAssetImport.pairBytes(entries)
         assertEquals(
             "turbo's pair is the sum of its two published lengths",
-            1_071_685_632L,
+            981_968_552L,
             pair,
         )
         val fresh = NpuAssetImport.requiredFreeBytes(pair, pairAlreadyInstalled = false)
@@ -1005,13 +1007,15 @@ class NpuAssetImportTest {
     @Test
     fun requiredEntriesComeFromTheDeviceFamilysArtifactRow() {
         // THE RED (4.2 F3): an SM8750-AC device's turbo import must verify against the
-        // 8elite_galaxy artifact row's MEASURED values (build_asset_packs.py measure,
-        // 2026-08-30) -- never the catalog's 8gen3 record. The one-argument form had no family
-        // to differ by: it answered the reference family's digests to every caller, which
-        // refused a correct v79 zip as "not the published file" -- a TRUE refusal for the
-        // WRONG stated reason, on every non-reference device. The v79 values stay HARD
-        // literals here, the same both-ways census every pin in this class applies: derived
-        // needles alone would follow a census edit anywhere it went.
+        // 8elite_galaxy artifact row's MEASURED values (build_asset_packs.py measure) -- never
+        // the catalog's 8gen3 record. The one-argument form had no family to differ by: it
+        // answered the reference family's digests to every caller, which refused a correct v79
+        // zip as "not the published file" -- a TRUE refusal for the WRONG stated reason, on
+        // every non-reference device. The v79 values stay HARD literals here, the same
+        // both-ways census every pin in this class applies: derived needles alone would follow
+        // a census edit anywhere it went. They moved once, deliberately: on 2026-09-24 from the
+        // 2026-08-30 measurement (775,544,832 / 4776799f…, 295,821,312 / 04f5fe2b…) to the
+        // v0.63.0 rebuild's.
         val turbo = WhisperCatalog.byId("npu-turbo")!!
         val v79 = NpuAssetImport.requiredEntriesFor(
             turbo, NpuFleetCensus.artifactFor("8elite_galaxy", "npu-turbo")
@@ -1020,12 +1024,12 @@ class NpuAssetImportTest {
             "the v79 family's import map carries the v79 pair's measured bytes and digests",
             mapOf(
                 "turbo_encoder_qairt_context.bin" to NpuAssetImport.RequiredEntry(
-                    775_544_832L,
-                    "4776799f89514e2e96bd2ccb9a2fb9bdca246bdbeba8c7df84d671e2a6ca024c",
+                    685_997_832L,
+                    "a72593f052fa9a4fb589bdc3dfe520860ea5684369afde6444198385f0e60ef5",
                 ),
                 "turbo_decoder_qairt_context.bin" to NpuAssetImport.RequiredEntry(
-                    295_821_312L,
-                    "04f5fe2b77b3bc12f20944401106ba4f878b5275113cba5fbea3ec60d481efaa",
+                    295_765_920L,
+                    "2f9aafff7a15d779aef799fd5a25ac02a17b6455b7a4d293964cbed7e25fe7c8",
                 ),
             ),
             v79,
@@ -1224,13 +1228,13 @@ class NpuAssetImportTest {
 
     @Test
     fun theInstalledGateReadsTheDeviceFamilysCensusBytesSoEveryFamilysPairPassesIt() {
-        // THE F3 CARRY, BY NAME — the measured discovery this fix exists for: both 7gen4
-        // ENCODERS sit outside the ±5% tolerance around the CATALOG's reference record
-        // (+11.0% small, +9.1% turbo — HTP v73 packs weights less densely), so under the old
-        // gate a CORRECT 7gen4 import verified its copy exactly and then FAILED the finalise's
-        // isInstalled check and rolled itself back. The fix: the gate's reference bytes come
-        // from THE DEVICE FAMILY'S census row, and the catalog record is only the fallback for
-        // a device whose family cannot answer. Walked here for ALL FOUR families x both tiers.
+        // THE F3 CARRY, BY NAME — the measured discovery this fix exists for: through v0.62.2
+        // both 7gen4 ENCODERS sat outside the ±5% tolerance around the CATALOG's reference
+        // record (+11.0% small, +9.1% turbo), so under the old gate a CORRECT 7gen4 import
+        // verified its copy exactly and then FAILED the finalise's isInstalled check and rolled
+        // itself back. The fix: the gate's reference bytes come from THE DEVICE FAMILY'S census
+        // row, and the catalog record is only the fallback for a device whose family cannot
+        // answer. Walked here for every family x both tiers (six families since 2026-09-24).
         NpuFleetCensus.artifacts.forEach { a ->
             val model = WhisperCatalog.byId(a.tierId)!!
             val gate = NpuAssetImport.installedGateBytes(model, a)
@@ -1264,21 +1268,38 @@ class NpuAssetImportTest {
                 WhisperCatalog.sizeWithinTolerance(a.decoder.bytes, paired.bytes),
             )
         }
-        // The 7gen4 flip, stated as the before/after in one place: the same encoder bytes that
-        // FAIL the catalog-reference tolerance PASS the family-aware gate. This is the row that
-        // used to verify-then-roll-back.
+        // THE 7GEN4 FLIP, and why it is no longer spelled as one. Through v0.62.2 this block
+        // was the before/after in one place: the 7gen4 small encoder (147,595,264 B) sat outside
+        // ±5% of the catalog's 132,927,488 B and inside the family-aware gate, which is the row
+        // that used to verify-then-roll-back. At v0.63.0 (2026-09-24) the fact dissolved: the
+        // rebuilt 7gen4 encoder is 115,028,408 B, +1.7% over the new reference, so the catalog
+        // band and the family gate now AGREE about it and "BEFORE fails" is simply false.
+        //
+        // What is still true, and is what the fix is FOR, is asserted instead. The gate reads
+        // the family's own bytes — not the catalog's — for a family whose bytes differ from the
+        // reference; and that is exactly what makes a stale pair from the previous release read
+        // as not installed on a 7gen4 device, rather than the catalog band happening to decide.
         val sevenGenFourSmall = NpuFleetCensus.artifactFor("7gen4", "npu")!!
         val npuModel = WhisperCatalog.byId("npu")!!
-        assertFalse(
-            "BEFORE (the defect): 147,595,264 B is outside ±5% of the catalog's 132,927,488 B",
-            WhisperCatalog.sizeWithinTolerance(sevenGenFourSmall.encoder.bytes, npuModel.primaryBytes),
+        val sevenGenFourGate = NpuAssetImport.installedGateBytes(npuModel, sevenGenFourSmall)
+        assertTrue(
+            "the 7gen4 and reference encoders now differ (115,028,408 vs 113,123,776 B), so the " +
+                "next assertion distinguishes the family's bytes from the catalog's",
+            sevenGenFourSmall.encoder.bytes != npuModel.primaryBytes,
+        )
+        assertEquals(
+            "the 7gen4 gate is the 7gen4 row's own encoder bytes, not the catalog reference",
+            sevenGenFourSmall.encoder.bytes,
+            sevenGenFourGate.primaryBytes,
         )
         assertTrue(
-            "AFTER (the fix): the family-aware gate accepts the same file",
-            WhisperCatalog.sizeWithinTolerance(
-                sevenGenFourSmall.encoder.bytes,
-                NpuAssetImport.installedGateBytes(npuModel, sevenGenFourSmall).primaryBytes,
-            ),
+            "at v0.63.0 the catalog band accepts the 7gen4 encoder too — the flip is gone",
+            WhisperCatalog.sizeWithinTolerance(sevenGenFourSmall.encoder.bytes, npuModel.primaryBytes),
+        )
+        assertFalse(
+            "and the 0.62.2 7gen4 encoder (147,595,264 B) fails the family gate — the previous " +
+                "release's pair reads as not installed, so the refreshed pack is offered",
+            WhisperCatalog.sizeWithinTolerance(147_595_264L, sevenGenFourGate.primaryBytes),
         )
     }
 

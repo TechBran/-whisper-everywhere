@@ -166,10 +166,11 @@ class NpuSkelPackagingTest {
         // ONE ROW PER ARCHITECTURE, not per family — and until 2026-09-22 those were the same
         // number, so this line could say "family" and be right by coincidence. The skel is the
         // HTP version's blob: qcs8550 (8 Gen 2) is v73 exactly as 7gen4 is and names the same
-        // libQnnHtpV73Skel.so, so five families now stage four skels. Both halves of the
-        // original intent still hold and are still asserted — the loop above proves every
-        // family's skel IS in the table (no stage a gate offers but the APK lacks), and this
-        // count proves no Triple is unnamed by any family (no dead asset).
+        // libQnnHtpV73Skel.so, so six families stage five skels (8gen1 brought V69, the fifth
+        // architecture, on 2026-09-24). Both halves of the original intent still hold and are
+        // still asserted — the loop above proves every family's skel IS in the table (no stage a
+        // gate offers but the APK lacks), and this count proves no Triple is unnamed by any
+        // family (no dead asset).
         assertEquals(
             "the table carries exactly one row per census ARCHITECTURE — an extra Triple is a " +
                 "skel no census row will ever stage (dead assets); a missing one is a family " +
@@ -216,37 +217,43 @@ class NpuSkelPackagingTest {
      * The continuity pin's GRADLE half — hard literals on purpose, NOT derived from the census
      * object (`NpuFleetCensusTest` holds the census half with the same two literals). A
      * co-mutation that drifts the census and the build script together still dies here.
+     *
+     * RE-MADE AT THE 2.50 BUMP (2026-09-24), not inherited: the 4.1-shipped pair (17_913_608 /
+     * a56519d6…) was the V75 blob of qnn-runtime 2.49.0, which the Fold6 device-executed. 2.50
+     * ships a different V75 blob, so the pin now names the value pair measured out of
+     * qnn-runtime-2.50.0.aar — the one the next Fold6 run on the internal track will execute.
      */
     @Test
-    fun theV75GradleRowIsTheShippedFourOnePinExactly() {
+    fun theV75GradleRowIsTheMeasuredTwoFiftyPinExactly() {
         assertEquals(
-            "the V75 row carries the 4.1-shipped pair VERBATIM — 17_913_608 bytes, a56519d6…. " +
-                "This is the value pair the Fold6 has device-executed; a build whose V75 row " +
-                "moved without a measured runtime bump is extracting a different blob than the " +
-                "one 4.1 shipped.",
+            "the V75 row carries the 2.50 pair VERBATIM — 18_693_300 bytes, 3e9774b7…. A build " +
+                "whose V75 row moves without a measured runtime bump is extracting a different " +
+                "blob than the one this census was measured against.",
             1,
             liveLineCount(
                 extractTask,
-                "Triple(\"libQnnHtpV75Skel.so\", 17_913_608L, " +
-                    "\"a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c\")",
+                "Triple(\"libQnnHtpV75Skel.so\", 18_693_300L, " +
+                    "\"3e9774b74769915b4f54364f8fc25887b3439561a970dca57c9f4dc9612b38af\")",
             ),
         )
     }
 
-    /** The three new rows, as hard literals — the plan's measured table, second reading. */
+    /** The other four rows, as hard literals — the 2.50 measured table, second reading. */
     @Test
-    fun theOtherThreeGradleRowsCarryTheMeasuredAarValues() {
+    fun theOtherGradleRowsCarryTheMeasuredAarValues() {
         listOf(
-            "Triple(\"libQnnHtpV73Skel.so\", 17_909_588L, " +
-                "\"7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1\")",
-            "Triple(\"libQnnHtpV79Skel.so\", 17_721_548L, " +
-                "\"9cad65a621d154e5282ea9d2849d0a8838932ed91dc7e2514db4e992e2d933c6\")",
-            "Triple(\"libQnnHtpV81Skel.so\", 18_844_384L, " +
-                "\"b3453265c4574c69bb446bcb98dda117ded531b86b2307e0f02c595050fab8b1\")",
+            "Triple(\"libQnnHtpV69Skel.so\", 12_529_660L, " +
+                "\"262f3e8807ea969cfc446ea8717500475ea1ea1be6205201486a5431ffcb490e\")",
+            "Triple(\"libQnnHtpV73Skel.so\", 18_709_712L, " +
+                "\"024a0aea3d8d44fc5b59ffab20bde4348d07d05ad7d23f27c8bd06aa3d240d8a\")",
+            "Triple(\"libQnnHtpV79Skel.so\", 18_513_604L, " +
+                "\"860c9d2e7c937c9fb8f8f18daa9a79cab6c566066a2d36f235f6c8708fdc75bd\")",
+            "Triple(\"libQnnHtpV81Skel.so\", 19_708_192L, " +
+                "\"02047c9fef8a22801c0eefaa79188e87b600372c9813dea3f621ba256d1ddce0\")",
         ).forEach { row ->
             assertEquals(
-                "the row must carry the values measured out of qnn-runtime-2.49.0.aar on " +
-                    "2026-08-29, verbatim: $row",
+                "the row must carry the values measured out of qnn-runtime-2.50.0.aar on " +
+                    "2026-09-24, verbatim: $row",
                 1,
                 liveLineCount(extractTask, row),
             )
@@ -273,7 +280,7 @@ class NpuSkelPackagingTest {
                     "the CPU-side half, dlopen()ed by libQnnHtp.so straight out of the APK, " +
                     "which works page-aligned without extraction — a family whose stub is " +
                     "excluded arms all the way to nativeInit and dies inside the QNN loader " +
-                    "with nothing naming why (the V68/V69 stub excludes keep this zero honest " +
+                    "with nothing naming why (the V68 stub exclude keeps this zero honest " +
                     "— see noUncoveredArchitectureLosesItsExcludes)",
                 0,
                 count(jniLibs, "excludes += \"**/libQnnHtp${arch}Stub.so\""),
@@ -291,10 +298,22 @@ class NpuSkelPackagingTest {
      * The honesty half of the stub live-zeros above: a zero is satisfied by deleting the whole
      * exclude mechanism, so the architectures with NO covered family must still be PRESENT as
      * excludes — skel and stub both — along with the never-used backends.
+     *
+     * V69 LEFT THIS LIST on 2026-09-24: the 8gen1 family made it a census architecture, so its
+     * stub now ships in lib/ (the live-zero above covers it) and its skel's exclude moved to the
+     * census-skel list (the exactly-once above covers that). V68 is the one uncovered
+     * architecture left, and the list is derived-checked below so the next family that brings
+     * one cannot leave it here by accident.
      */
     @Test
     fun noUncoveredArchitectureLosesItsExcludes() {
-        listOf("V68", "V69").forEach { arch ->
+        val covered = NpuFleetCensus.families.map { "V${it.htpVersion}" }.toSet()
+        assertFalse(
+            "an architecture listed as UNCOVERED here must not be a census architecture — its " +
+                "stub would be excluded from lib/ while a family stages its skel",
+            "V68" in covered,
+        )
+        listOf("V68").forEach { arch ->
             listOf("Skel", "Stub").forEach { half ->
                 assertEquals(
                     "libQnnHtp$arch$half.so stays excluded — no census family runs $arch, so " +
@@ -406,7 +425,7 @@ class NpuSkelPackagingTest {
                 "extractQnnSkel's resolution config — and the two must stay the same version, " +
                 "or the build extracts one runtime's skels while the app dlopens another's stack",
             2,
-            liveLineCount(gradle, "com.qualcomm.qti:qnn-runtime:2.49.0"),
+            liveLineCount(gradle, "com.qualcomm.qti:qnn-runtime:2.50.0"),
         )
         NpuFleetCensus.families.forEach { family ->
             assertEquals(

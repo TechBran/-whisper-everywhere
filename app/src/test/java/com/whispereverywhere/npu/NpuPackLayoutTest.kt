@@ -380,9 +380,16 @@ class NpuPackLayoutTest {
                 )
             }
             assertEquals(
-                "$module must carry the FIVE census variants plus the empty #group_other — " +
-                    "four until 2026-09-22, when the 8 Gen 2 became a family on device evidence",
-                6, names.size
+                "$module must carry the SIX census variants plus the empty #group_other — " +
+                    "four until 2026-09-22, when the 8 Gen 2 became a family on device evidence; " +
+                    "five until 2026-09-24, when v0.63.0 published the 8 Gen 1's package",
+                families.size + 1, names.size
+            )
+            assertEquals(
+                "...and they are exactly the census's groups under this module's prefix, plus " +
+                    "#group_other — a count alone would pass with one family's dir renamed",
+                (families.map { "$module#group_${it.packGroup}" } + "$module#group_other").sorted(),
+                names
             )
             names.toSet()
         }

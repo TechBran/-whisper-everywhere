@@ -12,10 +12,11 @@ import org.junit.Test
 import java.io.File
 
 /**
- * The census AS DATA: every value pinned to the measured table the 2026-08-29 plan bound
- * (research-verified soc strings and HTP versions; skel rows measured out of
- * `qnn-runtime-2.49.0.aar`; the 8gen3 row equal to the 4.1-shipped pins). A mismatch here is a
- * census edit nobody measured — exactly the drift these pins exist to make loud.
+ * The census AS DATA: every value pinned to a measured table — first the one the 2026-08-29 plan
+ * bound, and since 2026-09-24 the v0.63.0 / QNN 2.50 re-measurement (research-verified soc strings
+ * and HTP versions; skel rows measured out of `qnn-runtime-2.50.0.aar`; the 8gen3 artifact rows
+ * equal to the catalog's record). A mismatch here is a census edit nobody measured — exactly the
+ * drift these pins exist to make loud.
  *
  * WHY EVERY ROW IS RESTATED: the census is the ONE home downstream tasks read (the gate's derived
  * set, F2's skel stage, F3's artifact verify, F4's device-group XML). A wrong value would flow to
@@ -57,13 +58,15 @@ class NpuFleetCensusTest {
         n.toString().reversed().chunked(3).joinToString("_").reversed()
 
     @Test
-    fun theCensusHasExactlyTheFivePublishedFamiliesInTableOrder() {
+    fun theCensusHasExactlyTheSixPublishedFamiliesInTableOrder() {
         assertEquals(
-            "five families have published w8a16 packages (manifests re-fetched 2026-09-22) — " +
-                "a sixth row is a vendor event with evidence, a dropped row is lost coverage " +
-                "nothing reports. qcs8550 is the 8 Gen 2, appended 2026-09-22 on DEVICE " +
-                "evidence (S23 Ultra) rather than a HEAD check alone",
-            listOf("8gen3", "8elite_galaxy", "8elite5_galaxy", "7gen4", "qcs8550"),
+            "six families have published w8a16 packages (manifests re-fetched 2026-09-24, " +
+                "v0.63.0) — a seventh row is a vendor event with evidence, a dropped row is lost " +
+                "coverage nothing reports. qcs8550 is the 8 Gen 2, appended 2026-09-22 on DEVICE " +
+                "evidence (S23 Ultra); 8gen1 is the 8 Gen 1, appended 2026-09-24 when v0.63.0 " +
+                "first published its key — on the metadata and IO-census gates, with no " +
+                "execution yet",
+            listOf("8gen3", "8elite_galaxy", "8elite5_galaxy", "7gen4", "qcs8550", "8gen1"),
             families.map { it.id }
         )
         assertEquals(
@@ -71,7 +74,7 @@ class NpuFleetCensusTest {
                 "F4 regenerates the device-group XML from THESE strings, so a drift here is a " +
                 "store/gate disagreement",
             listOf("soc_8gen3", "soc_8elite_galaxy", "soc_8elite5_galaxy", "soc_7gen4",
-                "soc_qcs8550"),
+                "soc_qcs8550", "soc_8gen1"),
             families.map { it.packGroup }
         )
     }
@@ -116,10 +119,11 @@ class NpuFleetCensusTest {
     }
 
     @Test
-    fun theHtpVersionsAreTheFourMeasuredArchitecturesOnTheRightRows() {
+    fun theHtpVersionsAreTheFiveMeasuredArchitecturesOnTheRightRows() {
         assertEquals(
-            "the four published architectures, nothing else",
-            setOf(73, 75, 79, 81),
+            "the five published architectures, nothing else — v69 joined on 2026-09-24 with the " +
+                "8gen1 family, read out of the vendor's own metadata by the measure gate",
+            setOf(69, 73, 75, 79, 81),
             families.map { it.htpVersion }.toSet()
         )
         // Per-row as well, because two rows SWAPPING versions keeps the set equal while every
@@ -131,6 +135,11 @@ class NpuFleetCensusTest {
             "the 7 Gen 4 is HTP v73 — the oldest arch on the newest part, which is why nothing " +
                 "orders these",
             73, byId("7gen4").htpVersion
+        )
+        assertEquals(
+            "the 8 Gen 1 is HTP v69 — the oldest architecture in the census, and the only " +
+                "family on it",
+            69, byId("8gen1").htpVersion
         )
     }
 
@@ -154,6 +163,12 @@ class NpuFleetCensusTest {
             "the 7 Gen 4 ships suffix-free — one string until a device proves another",
             setOf("SM7750"), byId("7gen4").socModels
         )
+        assertEquals(
+            "the 8 Gen 1 carries ONE string, the plain one — what the S22s and Tab S8s report, " +
+                "and the only spelling Play's catalog holds for the part (67 rows, all " +
+                "'QTI SM8450'). No bin suffix exists to write out",
+            setOf("SM8450"), byId("8gen1").socModels
+        )
         for (a in families) {
             for (b in families) {
                 if (a !== b) {
@@ -169,7 +184,7 @@ class NpuFleetCensusTest {
     }
 
     @Test
-    fun everySkelSha256IsSixtyFourLowercaseHexAndAllFourDistinct() {
+    fun everySkelSha256IsSixtyFourLowercaseHexAndAllFiveDistinct() {
         val hex = Regex("^[0-9a-f]{64}$")
         for (f in families) {
             assertTrue(
@@ -180,50 +195,61 @@ class NpuFleetCensusTest {
             )
         }
         assertEquals(
-            "four architectures, four DISTINCT digests — a duplicate is a copy-paste, " +
-                "not a measurement",
-            4, families.map { it.skelSha256 }.toSet().size
+            "five architectures, five DISTINCT digests — a duplicate is a copy-paste, " +
+                "not a measurement (qcs8550 and 7gen4 share V73's, which is one architecture)",
+            5, families.map { it.skelSha256 }.toSet().size
         )
     }
 
     @Test
-    fun theEightGenThreeSkelRowIsTheShippedFourOnePinExactly() {
-        // The continuity pin: 4.1 L6 shipped exactly these two values (build task assert + arm
-        // stage assert + drift pin). If the census's copy moved, the fleet table is not a second
-        // reading of the shipped mechanism — it is a new source, unmeasured.
+    fun theEightGenThreeSkelRowIsTheMeasuredTwoFiftyPinExactly() {
+        // The continuity pin, re-made at the runtime bump rather than inherited. 4.1 L6 shipped
+        // 17,913,608 B / a56519d6… and 4.2-4.14 carried that pair unchanged; QNN 2.50 is a new
+        // blob for every architecture, so on 2026-09-24 this pin moved to the value pair
+        // measured out of qnn-runtime-2.50.0.aar (Maven Central, sha256 b507656e…). The Fold6
+        // executed the OLD pair; this one is owed a device run. If the census's copy moves
+        // again without a runtime bump, the fleet table is a new source, unmeasured.
         val row = byId("8gen3")
         assertEquals("libQnnHtpV75Skel.so", row.skelAsset)
-        assertEquals(17_913_608L, row.skelBytes)
+        assertEquals(18_693_300L, row.skelBytes)
         assertEquals(
-            "a56519d6ef8510c47bf955f919a119eb3d249f4845576f723cfb40ee8010ed5c",
+            "3e9774b74769915b4f54364f8fc25887b3439561a970dca57c9f4dc9612b38af",
             row.skelSha256
         )
     }
 
     @Test
-    fun theOtherThreeSkelRowsCarryTheMeasuredAarValues() {
-        // Measured out of qnn-runtime-2.49.0.aar (jni/arm64-v8a/) on 2026-08-29 — the plan's
-        // table. F2's extract task asserts the same pairs at build time; these are the census's
+    fun theOtherSkelRowsCarryTheMeasuredAarValues() {
+        // Measured out of qnn-runtime-2.50.0.aar (jni/arm64-v8a/) on 2026-09-24 — every row
+        // moved from the 2026-08-29 qnn-runtime-2.49.0 table, and V69 is new with the 8gen1
+        // family. F2's extract task asserts the same pairs at build time; these are the census's
         // copies, and the two spellings meeting IS the check.
+        val v69 = byId("8gen1")
+        assertEquals("libQnnHtpV69Skel.so", v69.skelAsset)
+        assertEquals(12_529_660L, v69.skelBytes)
+        assertEquals(
+            "262f3e8807ea969cfc446ea8717500475ea1ea1be6205201486a5431ffcb490e",
+            v69.skelSha256
+        )
         val v73 = byId("7gen4")
         assertEquals("libQnnHtpV73Skel.so", v73.skelAsset)
-        assertEquals(17_909_588L, v73.skelBytes)
+        assertEquals(18_709_712L, v73.skelBytes)
         assertEquals(
-            "7be4f8a4ec21a9d8d51f59c73094154f42d2f8fc91cfaadaef03441b77d7ddb1",
+            "024a0aea3d8d44fc5b59ffab20bde4348d07d05ad7d23f27c8bd06aa3d240d8a",
             v73.skelSha256
         )
         val v79 = byId("8elite_galaxy")
         assertEquals("libQnnHtpV79Skel.so", v79.skelAsset)
-        assertEquals(17_721_548L, v79.skelBytes)
+        assertEquals(18_513_604L, v79.skelBytes)
         assertEquals(
-            "9cad65a621d154e5282ea9d2849d0a8838932ed91dc7e2514db4e992e2d933c6",
+            "860c9d2e7c937c9fb8f8f18daa9a79cab6c566066a2d36f235f6c8708fdc75bd",
             v79.skelSha256
         )
         val v81 = byId("8elite5_galaxy")
         assertEquals("libQnnHtpV81Skel.so", v81.skelAsset)
-        assertEquals(18_844_384L, v81.skelBytes)
+        assertEquals(19_708_192L, v81.skelBytes)
         assertEquals(
-            "b3453265c4574c69bb446bcb98dda117ded531b86b2307e0f02c595050fab8b1",
+            "02047c9fef8a22801c0eefaa79188e87b600372c9813dea3f621ba256d1ddce0",
             v81.skelSha256
         )
     }
@@ -233,7 +259,8 @@ class NpuFleetCensusTest {
         for (f in families) {
             // 2026-09-22: was "2026-08-2" (the v0.61.0 measurement). The re-measurement at
             // v0.62.2 recorded 2026-09-22, so the assertion is that a date is PRESENT and is
-            // the one the current census was measured on — not that it is August's.
+            // the one the current census was measured on — not that it is August's. The
+            // v0.63.0 re-measurement recorded 2026-09-24, which the same needle still covers.
             assertTrue(
                 "family ${f.id}'s evidence must carry a recorded 2026-09-2x date — a date was " +
                     "recorded, not a vibe. Got: \"${f.evidence}\"",
@@ -252,12 +279,13 @@ class NpuFleetCensusTest {
     @Test
     fun theCpuLedgerNamesTheAbsentPartsAndStaysDisjointFromTheCensus() {
         assertEquals(
-            "three checked-absent strings for three absent parts — 8+ Gen 1, 8 Gen 1, 888. Four " +
-                "strings LEFT this ledger on 2026-09-22, which is the only way out of it, a " +
-                "measurement with a date: the 8 Gen 2's two for the qcs8550 family " +
-                "(device-executed), then plain SM8750 and SM8850, which were never 'non-Galaxy' " +
-                "strings at all — the Galaxy phones report them too",
-            setOf("SM8475", "SM8450", "SM8350"),
+            "two checked-absent strings for two absent parts — 8+ Gen 1 and 888, both " +
+                "re-checked against the v0.63.0 manifests on 2026-09-24. Five strings have LEFT " +
+                "this ledger, which is the only way out of it, a measurement with a date: the " +
+                "8 Gen 2's two for the qcs8550 family (2026-09-22, device-executed), plain SM8750 " +
+                "and SM8850 the same day (never 'non-Galaxy' strings at all), and SM8450 on " +
+                "2026-09-24 for the 8gen1 family, when v0.63.0 first published its package",
+            setOf("SM8475", "SM8350"),
             NpuFleetCensus.CPU_BY_CENSUS.keys
         )
         assertEquals(
@@ -310,9 +338,9 @@ class NpuFleetCensusTest {
     // ------------------------------------------------------------------ the artifact census (F3)
 
     @Test
-    fun theArtifactCensusHasEightRowsFamilyMajorInTableOrderUnderTheCatalogsNames() {
+    fun theArtifactCensusHasTwelveRowsFamilyMajorInTableOrderUnderTheCatalogsNames() {
         assertEquals(
-            "ten measured pairs: 5 families x 2 tiers, family-major in families order, " +
+            "twelve measured pairs: 6 families x 2 tiers, family-major in families order, " +
                 "npu before npu-turbo — a missing row is a family that cannot verify an " +
                 "arrival, a surplus row is a measurement nobody made",
             families.flatMap { f -> listOf(f.id to "npu", f.id to "npu-turbo") },
@@ -344,10 +372,10 @@ class NpuFleetCensusTest {
     }
 
     @Test
-    fun allTwentyArtifactDigestsAreSixtyFourHexAndPairwiseDistinct() {
+    fun allTwentyFourArtifactDigestsAreSixtyFourHexAndPairwiseDistinct() {
         val hex = Regex("^[0-9a-f]{64}$")
         val digests = artifacts.flatMap { listOf(it.encoder.sha256, it.decoder.sha256) }
-        assertEquals("ten pairs carry twenty digests", 20, digests.size)
+        assertEquals("twelve pairs carry twenty-four digests", 24, digests.size)
         for (d in digests) {
             assertTrue(
                 "every artifact digest is 64 lowercase hex — got \"$d\"; anything else is a " +
@@ -356,15 +384,15 @@ class NpuFleetCensusTest {
             )
         }
         assertEquals(
-            "twenty DISTINCT digests — a copy-paste between rows would install one " +
+            "twenty-four DISTINCT digests — a copy-paste between rows would install one " +
                 "family's binary under another family's verification with a passing " +
                 "metadata check",
-            20, digests.toSet().size
+            24, digests.toSet().size
         )
-        // Twenty artifact digests plus FOUR skels, not five: qcs8550 and 7gen4 are both HTP
-        // v73 and name the same blob, so the union is 24 rather than 25. Derived from the
-        // census rather than spelled, because the two counts now move independently — a new
-        // family adds two artifact digests and a skel only if it brings a new architecture.
+        // Twenty-four artifact digests plus FIVE skels, not six: qcs8550 and 7gen4 are both HTP
+        // v73 and name the same blob, so the union is 29 rather than 30. Derived from the
+        // census rather than spelled, because the two counts move independently — 8gen1 added
+        // two artifact digests AND a skel, because it brought a new architecture (v69).
         val skels = families.map { it.skelSha256 }.toSet()
         assertEquals(
             "and none of them collides with a skel digest — every artifact digest and every " +
@@ -379,7 +407,9 @@ class NpuFleetCensusTest {
         // The catalog cross-pin: WhisperCatalog keeps its constants as the REFERENCE family's
         // record (provenance + the published delivery zips), and this equality is what makes
         // the two records one record — the measure run's own 8gen3 self-check, re-executed
-        // against the committed tables on every suite run.
+        // against the committed tables on every suite run. At v0.63.0 both records moved
+        // together, from one measurement (2026-09-24): a rebuild replaces the reference pair,
+        // so this pin is what proved the catalog edit and the census edit were the same edit.
         for (tierId in listOf("npu", "npu-turbo")) {
             val model = requireNotNull(WhisperCatalog.byId(tierId))
             val row = artifact("8gen3", tierId)
@@ -407,56 +437,46 @@ class NpuFleetCensusTest {
                 a.vendorZipBytes > 0L
             )
         }
-        // The four turbo zips, byte for byte (the values the measure run ASSERTS at HEAD).
+        // All twelve zips, byte for byte (the values the measure run ASSERTS at HEAD).
         //
-        // EACH ONE LOST EXACTLY ONE BYTE at v0.62.2 — 903->902, 781->780, 426->425, 306->305.
-        // That is the whole of what the re-release changed in this table: the archive wrapper,
-        // not the payload. All sixteen binary digests below reproduced the v0.61.0 measurement
-        // unchanged, which is why only these four lines moved.
-        assertEquals(859_786_902L, artifact("8gen3", "npu-turbo").vendorZipBytes)
-        assertEquals(859_689_780L, artifact("8elite_galaxy", "npu-turbo").vendorZipBytes)
-        assertEquals(860_709_425L, artifact("8elite5_galaxy", "npu-turbo").vendorZipBytes)
-        assertEquals(871_118_305L, artifact("7gen4", "npu-turbo").vendorZipBytes)
-        // The small zips: 8gen3 was known (the spike's download); the other three were
-        // RECORDED by the 2026-08-30 measure run and are exact values from here on.
-        assertEquals(293_598_974L, artifact("8gen3", "npu").vendorZipBytes)
-        assertEquals(293_117_989L, artifact("8elite_galaxy", "npu").vendorZipBytes)
-        assertEquals(293_798_379L, artifact("8elite5_galaxy", "npu").vendorZipBytes)
-        assertEquals(295_361_549L, artifact("7gen4", "npu").vendorZipBytes)
+        // HISTORY, because each move was a different kind of event: at v0.62.2 the four turbo
+        // zips lost exactly one byte each (903->902, 781->780, 426->425, 306->305) — the
+        // archive wrapper, a re-release. At v0.63.0 (2026-09-24) EVERY zip moved by megabytes,
+        // all smaller (small -2.7 to -3.3%, turbo -4.2 to -5.0%): a QAIRT 2.50 rebuild, and the
+        // binary digests moved with them. The 8gen1 pair is new at this release.
+        assertEquals(823_721_812L, artifact("8gen3", "npu-turbo").vendorZipBytes)
+        assertEquals(823_685_860L, artifact("8elite_galaxy", "npu-turbo").vendorZipBytes)
+        assertEquals(824_020_866L, artifact("8elite5_galaxy", "npu-turbo").vendorZipBytes)
+        assertEquals(828_034_458L, artifact("7gen4", "npu-turbo").vendorZipBytes)
+        assertEquals(823_697_212L, artifact("qcs8550", "npu-turbo").vendorZipBytes)
+        assertEquals(821_903_663L, artifact("8gen1", "npu-turbo").vendorZipBytes)
+        assertEquals(285_197_039L, artifact("8gen3", "npu").vendorZipBytes)
+        assertEquals(285_116_926L, artifact("8elite_galaxy", "npu").vendorZipBytes)
+        assertEquals(285_450_230L, artifact("8elite5_galaxy", "npu").vendorZipBytes)
+        assertEquals(285_697_544L, artifact("7gen4", "npu").vendorZipBytes)
+        assertEquals(285_198_646L, artifact("qcs8550", "npu").vendorZipBytes)
+        assertEquals(284_581_383L, artifact("8gen1", "npu").vendorZipBytes)
     }
 
     @Test
-    fun theSevenGenFourEncodersSitOutsideTheReferenceToleranceAndTheFamilyAwareGateAcceptsThem() {
-        // MEASURED 2026-08-30, and stated rather than blurred: HTP v73 packs weights less
-        // densely, so BOTH 7gen4 encoders exceed the ±5% band around the CATALOG's reference
-        // record (+11.0% small, +9.1% turbo). Under the 4.0 gate that meant a CORRECT 7gen4
-        // install verified its copy exactly and then failed the finalise's isInstalled check
-        // and rolled itself back. THE FIX LANDED IN 4.2 F5 — this statement re-made with it,
-        // as its own message demanded: NpuAssetImport.installedGateBytes reads THIS census's
-        // per-family bytes, and the gate walk below holds every family GREEN through the fixed
-        // gate. The reference-band half stays the fact's tripwire in BOTH directions: if a
-        // vendor re-release brings the encoders inside the reference band, or pushes any other
-        // row outside it, the census was re-measured and this statement must be re-made again,
-        // not inherited.
+    fun everyEncoderSitsInsideTheReferenceBandAtV063AndTheOldPairsNoLongerReadAsInstalled() {
+        // RE-MADE 2026-09-24, as the previous statement's own message demanded ("if a vendor
+        // re-release brings the encoders inside the reference band, or pushes any other row
+        // outside it, the census was re-measured and this statement must be re-made again, not
+        // inherited"). It was: `theSevenGenFourEncodersSitOutsideTheReferenceTolerance…` held,
+        // from the 2026-08-30 measurement, that both 7gen4 encoders sat OUTSIDE the ±5% band
+        // around the catalog's reference (+11.0% small, +9.1% turbo), which is why 4.2 F5 made
+        // the installed-size gate read each family's own census bytes. At v0.63.0 that fact is
+        // gone: every family's encoder sits inside the band — 7gen4 turbo is the widest at +2.6%
+        // — and 8gen1 sits just under the reference (-1.1% small, -0.7% turbo).
         for (a in artifacts) {
             val model = requireNotNull(WhisperCatalog.byId(a.tierId))
-            val encoderInsideReference =
+            assertTrue(
+                "${a.familyId}/${a.tierId}: encoder ${a.encoder.bytes} B within ±5% of the " +
+                    "reference ${model.primaryBytes} B — every family sits inside the reference " +
+                    "band at v0.63.0, 7gen4 included",
                 WhisperCatalog.sizeWithinTolerance(a.encoder.bytes, model.primaryBytes)
-            if (a.familyId == "7gen4") {
-                assertFalse(
-                    "${a.familyId}/${a.tierId}: the v73 encoder (${a.encoder.bytes} B) is " +
-                        "OUTSIDE the ±5% band around the reference ${model.primaryBytes} B — " +
-                        "the measured fact the F5 gate fix exists for",
-                    encoderInsideReference
-                )
-            } else {
-                assertTrue(
-                    "${a.familyId}/${a.tierId}: encoder ${a.encoder.bytes} B within ±5% of " +
-                        "the reference ${model.primaryBytes} B — every other family sits " +
-                        "inside the reference band today",
-                    encoderInsideReference
-                )
-            }
+            )
             assertTrue(
                 "${a.familyId}/${a.tierId}: every family's decoder sits within ±5% of the " +
                     "reference record",
@@ -464,12 +484,12 @@ class NpuFleetCensusTest {
                     a.decoder.bytes, requireNotNull(model.pairedArtifact).approxBytes
                 )
             )
-            // GREEN-BY-FIX: the family-aware gate accepts every family's own pair — 7gen4
-            // included, the row that used to verify-then-roll-back.
+            // The family-aware gate still accepts every family's own pair — it reads the row's
+            // bytes, so this holds whatever the reference band says.
             val gate = NpuAssetImport.installedGateBytes(model, a)
             assertTrue(
                 "${a.familyId}/${a.tierId}: the F5 gate reads this row's own encoder bytes, " +
-                    "so a correct install of this family's pair now reads as installed",
+                    "so a correct install of this family's pair reads as installed",
                 WhisperCatalog.sizeWithinTolerance(a.encoder.bytes, gate.primaryBytes)
             )
             assertTrue(
@@ -477,6 +497,28 @@ class NpuFleetCensusTest {
                 WhisperCatalog.sizeWithinTolerance(
                     a.decoder.bytes, requireNotNull(gate.paired).bytes
                 )
+            )
+        }
+        // THE NEW FACT THE REFRESH BRINGS, pinned so nobody meets it on a device first: the
+        // pre-refresh encoders on an installed phone fall OUTSIDE the band of their own family's
+        // v0.63.0 row, so `isInstalled` answers false for them after the 4.15 update and the NPU
+        // tier is fetchable again rather than silently running the old binaries. The 0.62.2
+        // 8gen3 turbo encoder (775,831,552 B, the Fold6's) is +13.1% over 686,112,520; the
+        // qcs8550 one (775,843,840 B, the S23 Ultra's) the same; the small encoder
+        // (132,927,488 B) is +17.5%. A future vendor release that lands inside ±5% of the old
+        // bytes would silently keep old pairs installed, and this is where that shows.
+        for ((family, tier, oldEncoderBytes) in listOf(
+            Triple("8gen3", "npu-turbo", 775_831_552L),
+            Triple("qcs8550", "npu-turbo", 775_843_840L),
+            Triple("8gen3", "npu", 132_927_488L),
+        )) {
+            val model = requireNotNull(WhisperCatalog.byId(tier))
+            val gate = NpuAssetImport.installedGateBytes(model, artifact(family, tier))
+            assertFalse(
+                "$family/$tier: the 0.62.2 encoder ($oldEncoderBytes B) must NOT pass the v0.63.0 " +
+                    "installed gate (${gate.primaryBytes} B ±5%) — a pass would keep the slow " +
+                    "binaries installed across the refresh with nothing offering the new ones",
+                WhisperCatalog.sizeWithinTolerance(oldEncoderBytes, gate.primaryBytes)
             )
         }
     }
@@ -505,16 +547,18 @@ class NpuFleetCensusTest {
                 )
             )
         }
-        // Both moved on 2026-09-22 with the re-measurement (was 0.61.0 / "25 Aug 2026").
-        // They are pinned HERE as well as in the script so the two tables cannot drift: a
-        // release bump in the instrument without a re-measured census fails this line.
+        // Both moved on 2026-09-22 with the re-measurement (was 0.61.0 / "25 Aug 2026"), and
+        // again on 2026-09-24 with the v0.63.0 one (was 0.62.2 / "11 Sep 2026"; the new day read
+        // off a HEAD of every object). They are pinned HERE as well as in the script so the two
+        // tables cannot drift: a release bump in the instrument without a re-measured census
+        // fails this line.
         assertEquals(
             "the script pins the release the census describes",
-            1, count(script, "RELEASE = \"0.62.2\"")
+            1, count(script, "RELEASE = \"0.63.0\"")
         )
         assertEquals(
             "and the hash-stable Last-Modified day every HEAD must reproduce",
-            1, count(script, "LAST_MODIFIED_DAY = \"11 Sep 2026\"")
+            1, count(script, "LAST_MODIFIED_DAY = \"23 Sep 2026\"")
         )
     }
 
@@ -547,11 +591,11 @@ class NpuFleetCensusTest {
             assertTrue(
                 "${a.familyId}/${a.tierId}: evidence must carry the measure date — got " +
                     "\"${a.evidence}\"",
-                a.evidence.contains("2026-09-22")
+                a.evidence.contains("2026-09-24")
             )
             assertTrue(
                 "and the pinned Last-Modified event the gates held it to",
-                a.evidence.contains("Last-Modified 2026-09-11")
+                a.evidence.contains("Last-Modified 2026-09-23")
             )
             assertTrue(
                 "and the instrument, by name — a row nobody can re-measure is a row nobody " +

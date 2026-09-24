@@ -944,16 +944,19 @@ class WhisperCatalogHelpersTest {
         assertFalse(npu.retired)
         assertFalse(npu.unsupported)
         assertEquals("encoder_qairt_context.bin", npu.fileName)
-        assertEquals("3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec", npu.sha256)
-        assertEquals(132_927_488L, npu.primaryBytes)
+        // The v0.63.0 8gen3 pair since 4.15 (2026-09-24, QAIRT 2.50 rebuild, measured by
+        // build_asset_packs.py) — the 4.0 pins were 3e92ac26… / 132,927,488 and fda23d73… /
+        // 225,316,864. NpuFleetCensusTest holds these equal to the census's 8gen3 row.
+        assertEquals("813d0e847bf1ba21b991a421a2f57f56884252d1ca6e780a02a55582c519bac0", npu.sha256)
+        assertEquals(113_123_776L, npu.primaryBytes)
 
         val decoder = npu.pairedArtifact!!
         assertEquals("decoder_qairt_context.bin", decoder.fileName)
-        assertEquals("fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4", decoder.sha256)
-        assertEquals(225_316_864L, decoder.approxBytes)
+        assertEquals("bd853be4710bb0aa01dd2a5ce78c03f3e9f722cab47fad3ac24555995f21a929", decoder.sha256)
+        assertEquals(225_298_736L, decoder.approxBytes)
 
         // The advertised size is the PAIR: what the user downloads, stores, and reads on the badge.
-        assertEquals(358_244_352L, npu.approxBytes)
+        assertEquals(338_422_512L, npu.approxBytes)
         assertEquals(npu.approxBytes, npu.primaryBytes + decoder.approxBytes)
         // Both files come out of one archive, so one URL is the honest answer for both.
         assertEquals(npu.url, decoder.url)
@@ -1478,16 +1481,18 @@ class WhisperCatalogHelpersTest {
         // tier's installed files, in the same models directory — importing them un-renamed would
         // overwrite the owner's 358 MB pair, which is why the catalog states `turbo_*`.
         assertEquals("turbo_encoder_qairt_context.bin", turbo.fileName)
-        assertEquals("f7d11c08a20ea671f59b3ace2f9421da00b06170ac9fe946f29092ee59be6bbe", turbo.sha256)
-        assertEquals(775_831_552L, turbo.primaryBytes)
+        // The v0.63.0 8gen3 pair since 4.15 (2026-09-24) — the 4.1 pins were f7d11c08… /
+        // 775,831,552 and c19b0677… / 295,854,080. The encoder is 11.6% smaller at QAIRT 2.50.
+        assertEquals("c9403eaa9c4b4313419d650e316be7cc1c9020cd8cd716ed909ddb0b61f0886a", turbo.sha256)
+        assertEquals(686_112_520L, turbo.primaryBytes)
 
         val decoder = turbo.pairedArtifact!!
         assertEquals("turbo_decoder_qairt_context.bin", decoder.fileName)
-        assertEquals("c19b067766180843fca6266531605bf037820c5e5ae178bd6dc03785df4c6ae4", decoder.sha256)
-        assertEquals(295_854_080L, decoder.approxBytes)
+        assertEquals("a5597486dd53a0847fa042588279d6ab58f736078ea133c513b15e5d8c39d241", decoder.sha256)
+        assertEquals(295_856_032L, decoder.approxBytes)
 
         // The advertised size is the PAIR: what the user installs, stores, and reads on the badge.
-        assertEquals(1_071_685_632L, turbo.approxBytes)
+        assertEquals(981_968_552L, turbo.approxBytes)
         assertEquals(turbo.approxBytes, turbo.primaryBytes + decoder.approxBytes)
         // Both files come out of one archive, so one URL is the honest answer for both.
         assertEquals(turbo.url, decoder.url)
@@ -1540,21 +1545,23 @@ class WhisperCatalogHelpersTest {
         // Q7a M2, folded here: the URL on a gated tier is provenance — the ONLY record of where
         // these bytes came from — and it was unpinned. Pinned by endsWith on the vendor path
         // (model id, release version, runtime, precision, chipset): the bucket host is the
-        // vendor's to move, the release path is the identity.
+        // vendor's to move, the release path is the identity. The release moved v0.61.0 ->
+        // v0.63.0 on 2026-09-24 with the digests: the provenance is the zip they were measured out
+        // of, so a digest move that left the URL behind would be a record of the wrong bytes.
         val npu = WhisperCatalog.byId("npu")!!
         assertTrue(
-            "npu's URL must record the whisper_small_quantized v0.61.0 8gen3 release, got: ${npu.url}",
+            "npu's URL must record the whisper_small_quantized v0.63.0 8gen3 release, got: ${npu.url}",
             npu.url.endsWith(
-                "/qai-hub-models/models/whisper_small_quantized/releases/v0.61.0/" +
+                "/qai-hub-models/models/whisper_small_quantized/releases/v0.63.0/" +
                     "whisper_small_quantized-precompiled_qnn_onnx-w8a16-qualcomm_snapdragon_8gen3.zip",
             ),
         )
         val turbo = WhisperCatalog.byId("npu-turbo")!!
         assertTrue(
-            "npu-turbo's URL must record the whisper_large_v3_turbo_quantized v0.61.0 8gen3 " +
+            "npu-turbo's URL must record the whisper_large_v3_turbo_quantized v0.63.0 8gen3 " +
                 "release, got: ${turbo.url}",
             turbo.url.endsWith(
-                "/qai-hub-models/models/whisper_large_v3_turbo_quantized/releases/v0.61.0/" +
+                "/qai-hub-models/models/whisper_large_v3_turbo_quantized/releases/v0.63.0/" +
                     "whisper_large_v3_turbo_quantized-precompiled_qnn_onnx-w8a16-" +
                     "qualcomm_snapdragon_8gen3.zip",
             ),

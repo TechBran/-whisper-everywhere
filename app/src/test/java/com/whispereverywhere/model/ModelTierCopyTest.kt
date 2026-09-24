@@ -1226,12 +1226,14 @@ class ModelTierCopyTest {
 
     @Test fun the_npu_badges_state_coverage_and_the_size_of_the_whole_pair() {
         val copy = ModelTierCopy.forId("npu")!!
-        assertEquals(listOf("90+ languages", "358 MB"), copy.badges)
+        // 338 MB since 4.15: the v0.63.0 pair (113,123,776 + 225,298,736). It read 358 MB for the
+        // 4.0-4.14 pair, and the tolerance check below is what forced the move.
+        assertEquals(listOf("90+ languages", "338 MB"), copy.badges)
         // Not "English only" and not a bespoke wording: the SAME string every multilingual tier
         // carries, so the two cards are comparable at a glance.
         assertTrue(copy.badges.contains("90+ languages"))
-        // 358 MB is the PAIR (encoder + decoder). A future edit that badges only the encoder's
-        // 132 MB — or a catalog edit that changes the pair — fires here.
+        // 338 MB is the PAIR (encoder + decoder). A future edit that badges only the encoder's
+        // 113 MB — or a catalog edit that changes the pair — fires here.
         val npu = WhisperCatalog.byId("npu")!!
         val statedMb = copy.badges.first { it.endsWith(" MB") }.removeSuffix(" MB").toInt()
         val expectedMb = (npu.approxBytes / 1_000_000L).toInt()
@@ -1345,11 +1347,13 @@ class ModelTierCopyTest {
 
     @Test fun the_npu_turbo_badges_state_coverage_and_the_size_of_the_whole_pair() {
         val copy = ModelTierCopy.forId("npu-turbo")!!
-        assertEquals(listOf("90+ languages", "1072 MB"), copy.badges)
+        // 981 MB since 4.15: the v0.63.0 pair (686,112,520 + 295,856,032). It read 1072 MB for
+        // the 4.1-4.14 pair.
+        assertEquals(listOf("90+ languages", "981 MB"), copy.badges)
         // The SAME coverage string every multilingual tier carries, so the cards stay comparable
         // at a glance.
         assertTrue(copy.badges.contains("90+ languages"))
-        // 1072 MB is the PAIR (encoder + decoder), within the census's ±5 MB of approxBytes...
+        // 981 MB is the PAIR (encoder + decoder), within the census's ±5 MB of approxBytes...
         val turbo = WhisperCatalog.byId("npu-turbo")!!
         val statedMb = copy.badges.first { it.endsWith(" MB") }.removeSuffix(" MB").toInt()
         val expectedMb = (turbo.approxBytes / 1_000_000L).toInt()
@@ -1358,7 +1362,7 @@ class ModelTierCopyTest {
             kotlin.math.abs(statedMb - expectedMb) <= 5,
         )
         // ...and STRICTLY greater than the encoder alone, so a future edit that badges only the
-        // 776 MB primary fires here even before the approxBytes tolerance does.
+        // 686 MB primary fires here even before the approxBytes tolerance does.
         assertTrue(
             "the badge must state the pair, not just the encoder",
             statedMb > turbo.primaryBytes / 1_000_000L,
