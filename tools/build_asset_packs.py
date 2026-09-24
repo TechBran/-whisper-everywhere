@@ -4,7 +4,7 @@
 ``measure`` is the instrument behind ``NpuFleetCensus.artifacts``: nobody had ever downloaded
 the v79/v81/v73 packages, so their digests existed nowhere, and a census row nobody measured
 is the one unforgivable output. For each of the two w8a16 models it fetches the pinned Hugging
-Face ``release_assets.json`` (release v0.61.0 asserted -- a different release string is a hard
+Face ``release_assets.json`` (the pinned RELEASE asserted -- a different release string is a hard
 failure naming both), resolves the ``precompiled_qnn_onnx`` zip URL for each census family's
 chipset key, and holds every zip to the same gates:
 
@@ -29,15 +29,15 @@ The 8gen3 rows must reproduce the four digests the catalog already pins -- the r
 self-check: if the instrument cannot re-measure the two pairs a device has executed, none of
 its other rows deserve belief.
 
-CENSUS below embeds all sixteen digests as literals. ``NpuFleetCensusTest`` reads this file
+CENSUS below embeds every row's two digests as literals. ``NpuFleetCensusTest`` reads this file
 and asserts every ``NpuFleetCensus.artifacts`` digest appears here -- the ``pack_npu_zip.py``
 pattern, so the committed census and the instrument that fills the packs cannot drift apart.
 Nothing binary is ever committed: the workspace lives outside the repo, and the census output
 is DATA (digests, sizes, dates).
 
-``build`` (F4) assembles the eight pack variants into the two asset-pack modules'
+``build`` (F4) assembles every census row's pack variant into the two asset-pack modules'
 ``src/main/assets/<module>#group_<packGroup>/`` dirs -- RAW bins under the census's delivery
-names (turbo's renamed ``turbo_*`` -- all eight vendor zips share the same two bare names, so
+names (turbo's renamed ``turbo_*`` -- every vendor zip carries the same two bare names, so
 an unrenamed turbo pack could overwrite the npu pair) plus OUR ``metadata.json`` written from
 the census. It runs ``measure`` first (the F3 handoff: packs are always built from
 gate-verified bytes; idempotent and cheap on a warm workspace), streams each binary with
@@ -93,7 +93,7 @@ import sys
 import urllib.request
 import zipfile
 
-RELEASE = "0.62.2"
+RELEASE = "0.63.0"
 
 # The hash-stable re-upload event. Substring-matched against the RFC 1123 Last-Modified header,
 # so a bucket rewrite on any later date fails the HEAD gate by name.
@@ -104,7 +104,13 @@ RELEASE = "0.62.2"
 # both models. This gate was the THIRD independent guard to refuse the new bytes, after the
 # release string and the zip-length pins. All three named the same fact, which is the point of
 # having three: no single edit can wave a vendor rebuild through.
-LAST_MODIFIED_DAY = "11 Sep 2026"
+#
+# 2026-09-24: was "11 Sep 2026". v0.63.0 is a real rebuild with QAIRT 2.50.0.260828221209 (every
+# w8a16 asset's tool_versions.qairt says so), and the bucket serves all twelve objects dated
+# Wed, 23 Sep 2026 — small 21:58:18-19 GMT, turbo 21:56:00-02 GMT — read off a HEAD of each
+# before this pin moved. Each of the three guards refuses these bytes on its own: the manifest
+# says 0.63.0, the day is 23 Sep, and every one of the ten pinned lengths moved.
+LAST_MODIFIED_DAY = "23 Sep 2026"
 
 # Portable since the 2026-09-22 Linux port: the workspace holds multi-GB vendor zips and
 # lives outside the repo on whatever machine is measuring. An explicit argument still wins.
@@ -169,27 +175,17 @@ FAMILIES = {
 # tier in the app's UI).
 PACK_MODULE_BY_TIER = {"npu": "npu_small", "npu-turbo": "npu_turbo"}
 
-# Vendor zip Content-Length, asserted at HEAD where a measurement already existed BEFORE this
-# script first ran: the four turbo zips (research section 7) and the 8gen3 small zip. The
-# other three small zips were RECORDED by the first measure run and then promoted into CENSUS.
-# RE-MEASUREMENT 2026-09-22: emptied for the 0.62.2 pass. Every length here described
-# 0.61.0 bytes, and Qualcomm rebuilt all eight packs with QAIRT 2.45.0 — so these were not
-# stale by a little, they described different artifacts. head_gate RECORDS a length it has
-# no pin for, which is exactly the mode a re-measurement wants.
-# Every one of the eight is measured now, so every one is pinned — the 0.61.0 table only
-# carried five because three had never been measured.
-EXPECTED_ZIP_BYTES = {
-    ("npu", "8gen3"): 293_598_974,
-    ("npu", "8elite_galaxy"): 293_117_989,
-    ("npu", "8elite5_galaxy"): 293_798_379,
-    ("npu", "7gen4"): 295_361_549,
-    ("npu-turbo", "8gen3"): 859_786_902,
-    ("npu-turbo", "8elite_galaxy"): 859_689_780,
-    ("npu-turbo", "8elite5_galaxy"): 860_709_425,
-    ("npu-turbo", "7gen4"): 871_118_305,
-    ("npu-turbo", "qcs8550"): 859_787_787,
-    ("npu", "qcs8550"): 293_600_815,
-}
+# Vendor zip Content-Length, asserted at HEAD for every row the census has measured. HISTORY: the
+# 0.61.0 table carried only five (the four turbo zips from research section 7 and the 8gen3 small
+# zip) because three small zips had never been measured; the 0.62.2 re-measurement pinned all
+# ten rows it then had.
+#
+# RE-MEASUREMENT 2026-09-24: emptied for the v0.63.0 pass. Every length here described 0.62.2
+# bytes, and Qualcomm rebuilt every pack with QAIRT 2.50.0 — the ten HEADs read before this edit
+# are all SMALLER than their old pins, by 8.0 to 9.7 MB (small) and 36.0 to 43.1 MB (turbo).
+# head_gate RECORDS a length it has no pin for, which is exactly the mode a re-measurement wants;
+# the measured lengths return here.
+EXPECTED_ZIP_BYTES: dict = {}
 
 # ---------------------------------------------------------------------------- the census
 # (tier, family) -> (zip bytes, encoder bytes, encoder sha256, decoder bytes, decoder sha256)
@@ -197,71 +193,23 @@ EXPECTED_ZIP_BYTES = {
 # The verification table: every measured value must reproduce these literals exactly, and a
 # (tier, family) with None here is a pair this script has not yet measured (printed loudly,
 # never invented). The 8gen3 rows are the catalog's own four digests -- the self-check.
-# NpuFleetCensus.artifacts carries the same sixteen digests; NpuFleetCensusTest pins the two
+# NpuFleetCensus.artifacts carries the same digests, row for row; NpuFleetCensusTest pins the two
 # tables together.
 CENSUS = {
-    # Re-measured 2026-09-22 against manifest v0.62.2 (Last-Modified 11 Sep 2026).
-    # THE FINDING: all sixteen binary digests reproduce v0.61.0 exactly, and so do the
-    # four small zips. Only the four TURBO zip lengths changed, by one byte each. 0.62.2
-    # is a re-release, not a rebuild — the manifest advertises QAIRT 2.45.0 and the
-    # artifacts are the same bytes, so the graphs the app decodes against did not move.
-    ("npu", "8gen3"): (
-        293_598_974,
-        132_927_488, "3e92ac26545b6b9d22ecfab594ae57523134006e2722b09fa10e16b193e9e5ec",
-        225_316_864, "fda23d731e6b0ab7fb0a50373a49efe2d1792faa5dad456837624d8b8e44b0e4",
-    ),
-    ("npu", "8elite_galaxy"): (
-        293_117_989,
-        132_333_568, "3001e590274f3377af7f18d33b3f41ab1d573f3e447045bb7a10b516755b9f99",
-        225_234_944, "57aff15b592f1afc2d29d16fb78e6c7b3e80a861a0ecee3838a00884ef040d43",
-    ),
-    ("npu", "8elite5_galaxy"): (
-        293_798_379,
-        133_554_176, "3c63c40b09374773903855f587bc0530f199a3aa74136fdd4e395c94d258eda5",
-        225_411_072, "a5f6c090a4df6f987e3b47dce04d999fc941f7ef87c5960db8fdf447edc82ab8",
-    ),
-    # Measured 2026-09-22; reproduces the spike's hand-hashed values, with the metadata and
-    # graph-IO gates passing this time. Both tiers are catalogued for every family: 4.3's
-    # one-tier rule hides the small tier from a capable device's CHOOSER and touches the pack
-    # machinery not at all (WhisperCatalogHelpersTest pins exactly that).
-    ("npu", "qcs8550"): (
-        293_600_815,
-        132_931_584, "b9416b7200e69c715f197e7c5169760483ea39fa30bcae89f9ff6045691523bf",
-        225_312_768, "0349446e32462ca2923fa8244b32c1272167f1cc1d692153b6efa54777d385ec",
-    ),
-    ("npu", "7gen4"): (
-        295_361_549,
-        147_595_264, "83a678810bad8b06f3dfab369c2bb87a4ae8aef14cb1886ba3b7a58f7acf2c13",
-        225_382_400, "81c0d683753cd13d98a3a744377e60d180e832f0fd128fe1ecaa8c94890e8069",
-    ),
-    ("npu-turbo", "8gen3"): (
-        859_786_902,
-        775_831_552, "f7d11c08a20ea671f59b3ace2f9421da00b06170ac9fe946f29092ee59be6bbe",
-        295_854_080, "c19b067766180843fca6266531605bf037820c5e5ae178bd6dc03785df4c6ae4",
-    ),
-    ("npu-turbo", "8elite_galaxy"): (
-        859_689_780,
-        775_544_832, "4776799f89514e2e96bd2ccb9a2fb9bdca246bdbeba8c7df84d671e2a6ca024c",
-        295_821_312, "04f5fe2b77b3bc12f20944401106ba4f878b5275113cba5fbea3ec60d481efaa",
-    ),
-    ("npu-turbo", "8elite5_galaxy"): (
-        860_709_425,
-        777_441_280, "841cecfeade064bed27956401c298a2df86eeaac5c33270a284c34d11619c7a2",
-        295_911_424, "ceca18cf506f14d8eaf141c69cf7674aca210b825316f0f4c481289cca457430",
-    ),
-    # Measured 2026-09-22 by the instrument, and it REPRODUCED the spike's hand-hashed values
-    # exactly — with the metadata and graph-IO gates passing this time (htp=73,
-    # chipset='qualcomm-qcs8550-proxy', io-census equal to the npu-turbo spec row).
-    ("npu-turbo", "qcs8550"): (
-        859_787_787,
-        775_843_840, "785043fbef7a17f80404f17423f97ae0ef1e2a8f4a5d446d413346445d6b9e6d",
-        295_854_080, "ca70b66c3035a35af78ed43b488ff201d30413edde59f5832208925da080a4b2",
-    ),
-    ("npu-turbo", "7gen4"): (
-        871_118_305,
-        846_360_576, "c482288d5899590a87cfea3faea3e39df30242095b8c93e0e02e7d1f1c79a813",
-        295_895_040, "ce8ad981b89999f4eb9dace8dfb9b64129322e976ac89188a719e59842baacc5",
-    ),
+    # RE-MEASUREMENT IN PROGRESS (2026-09-24, v0.63.0). Every row blanked on purpose: the
+    # 0.62.2 digests they held are not this release's bytes (QAIRT 2.45.0 then, 2.50.0 now),
+    # and the honest way to replace them is to let measure() print what it finds rather than
+    # to edit sixty-four hex characters by hand. Fill from the tool's own output.
+    ("npu", "8gen3"): None,
+    ("npu", "8elite_galaxy"): None,
+    ("npu", "8elite5_galaxy"): None,
+    ("npu", "qcs8550"): None,
+    ("npu", "7gen4"): None,
+    ("npu-turbo", "8gen3"): None,
+    ("npu-turbo", "8elite_galaxy"): None,
+    ("npu-turbo", "8elite5_galaxy"): None,
+    ("npu-turbo", "qcs8550"): None,
+    ("npu-turbo", "7gen4"): None,
 }
 
 
