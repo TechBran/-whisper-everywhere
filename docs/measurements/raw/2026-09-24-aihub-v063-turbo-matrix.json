@@ -1,0 +1,166 @@
+{
+ "models": {
+  "npu-turbo/8elite_galaxy/encoder": {
+   "id": "mn75jpgom",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8elite_galaxy/decoder": {
+   "id": "mqvog83em",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8elite5_galaxy/encoder": {
+   "id": "mnwvkzopq",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8elite5_galaxy/decoder": {
+   "id": "mnlz9kz3q",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/7gen4/encoder": {
+   "id": "mn75jp5om",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/7gen4/decoder": {
+   "id": "mqkpr481m",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/qcs8550/encoder": {
+   "id": "mno4k5gpm",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/qcs8550/decoder": {
+   "id": "mm5v3w69n",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8gen3/encoder": {
+   "id": "mn0gd9r9m",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8gen3/decoder": {
+   "id": "mqeywpx5m",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8gen1/encoder": {
+   "id": "mqy5gw3xn",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  },
+  "npu-turbo/8gen1/decoder": {
+   "id": "mq803xkvn",
+   "type": "SourceModelType.QNN_CONTEXT_BINARY"
+  }
+ },
+ "jobs": {
+  "npu-turbo/8elite_galaxy/encoder@Samsung Galaxy S25": {
+   "id": "j5qllj1mp",
+   "status": "SUCCESS",
+   "inference_ms": 150.5,
+   "first_load_ms": 412.5,
+   "warm_load_ms": 407.6,
+   "peak_mem_mb": 155.5
+  },
+  "npu-turbo/8elite_galaxy/decoder@Samsung Galaxy S25": {
+   "id": "j5688km7g",
+   "status": "SUCCESS",
+   "inference_ms": 3.7,
+   "first_load_ms": 159.4,
+   "warm_load_ms": 157.4,
+   "peak_mem_mb": 171.9
+  },
+  "npu-turbo/8elite5_galaxy/encoder@Samsung Galaxy S26": {
+   "id": "j5wlljzjp",
+   "status": "SUCCESS",
+   "inference_ms": 121.3,
+   "first_load_ms": 452.6,
+   "warm_load_ms": 456.3,
+   "peak_mem_mb": 165.1
+  },
+  "npu-turbo/8elite5_galaxy/decoder@Samsung Galaxy S26": {
+   "id": "jg9zz62vp",
+   "status": "SUCCESS",
+   "inference_ms": 3.3,
+   "first_load_ms": 169.3,
+   "warm_load_ms": 178.2,
+   "peak_mem_mb": 181.6
+  },
+  "npu-turbo/7gen4/encoder@Snapdragon 7 Gen 4 QRD": {
+   "id": "j5m00jlqg",
+   "status": "SUCCESS",
+   "inference_ms": 481.4,
+   "first_load_ms": 718.3,
+   "warm_load_ms": 653.0,
+   "peak_mem_mb": 168.8
+  },
+  "npu-turbo/7gen4/decoder@Snapdragon 7 Gen 4 QRD": {
+   "id": "jprllz7ep",
+   "status": "SUCCESS",
+   "inference_ms": 8.6,
+   "first_load_ms": 213.1,
+   "warm_load_ms": 185.8,
+   "peak_mem_mb": 186.9
+  },
+  "npu-turbo/qcs8550/encoder@Samsung Galaxy S23": {
+   "id": "jpvlljnm5",
+   "status": "SUCCESS",
+   "inference_ms": 273.4,
+   "first_load_ms": 1524.9,
+   "warm_load_ms": 613.0,
+   "peak_mem_mb": 110.9
+  },
+  "npu-turbo/qcs8550/decoder@Samsung Galaxy S23": {
+   "id": "jprllzmep",
+   "status": "SUCCESS",
+   "inference_ms": 5.9,
+   "first_load_ms": 508.0,
+   "warm_load_ms": 309.5,
+   "peak_mem_mb": 129.5
+  },
+  "npu-turbo/8gen3/encoder@Samsung Galaxy S24": {
+   "id": "jglyyj9l5",
+   "status": "SUCCESS",
+   "inference_ms": 186.4,
+   "first_load_ms": 1084.2,
+   "warm_load_ms": 535.6,
+   "peak_mem_mb": 122.7
+  },
+  "npu-turbo/8gen3/decoder@Samsung Galaxy S24": {
+   "id": "jpe77j005",
+   "status": "SUCCESS",
+   "inference_ms": 4.4,
+   "first_load_ms": 470.4,
+   "warm_load_ms": 214.5,
+   "peak_mem_mb": 139.7
+  },
+  "npu-turbo/8gen1/encoder@Samsung Galaxy S22 (Family)": {
+   "id": "jp4yyz7lp",
+   "status": "SUCCESS",
+   "inference_ms": 380.6,
+   "first_load_ms": 2099.1,
+   "warm_load_ms": 607.6,
+   "peak_mem_mb": 91.7
+  },
+  "npu-turbo/8gen1/encoder@Samsung Galaxy Tab S8": {
+   "id": "jpxllwq9p",
+   "status": "SUCCESS",
+   "inference_ms": 317.9,
+   "first_load_ms": 1436.1,
+   "warm_load_ms": 626.1,
+   "peak_mem_mb": 93.2
+  },
+  "npu-turbo/8gen1/decoder@Samsung Galaxy S22 (Family)": {
+   "id": "jpyoo9l45",
+   "status": "SUCCESS",
+   "inference_ms": 7.1,
+   "first_load_ms": 439.6,
+   "warm_load_ms": 280.7,
+   "peak_mem_mb": 111.1
+  },
+  "npu-turbo/8gen1/decoder@Samsung Galaxy Tab S8": {
+   "id": "jp0mmnweg",
+   "status": "SUCCESS",
+   "inference_ms": 7.1,
+   "first_load_ms": 322.5,
+   "warm_load_ms": 286.7,
+   "peak_mem_mb": 111.9
+  }
+ }
+}
