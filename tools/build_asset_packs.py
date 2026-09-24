@@ -167,6 +167,13 @@ FAMILIES = {
     # compiled for soc_model 43, which is the SM8550's own number — that is why this is a family
     # and not the cross-load CPU_BY_CENSUS rejected (7 Gen 4's, compiled for soc_model 86).
     "qcs8550": ("qualcomm-qcs8550-proxy", 73, "soc_qcs8550"),
+    # 8 Gen 1 (SM8450) — the Galaxy S22, S22+ and S22 Ultra (Snapdragon), the Galaxy Tab S8,
+    # S8+ and S8 Ultra, and the S23 FE's Snapdragon build. Added 2026-09-24 at v0.63.0, the first
+    # release to publish this key; it was CPU_BY_CENSUS as "no published w8a16 package" before.
+    # HTP v69, the oldest architecture in the census and the only one no other family shares.
+    # The 8+ Gen 1 (SM8475) is NOT this family: a different die with its own soc_model, and no
+    # package for it exists under any key.
+    "8gen1": ("qualcomm-snapdragon-8gen1", 69, "soc_8gen1"),
 }
 
 
@@ -210,6 +217,11 @@ CENSUS = {
     ("npu-turbo", "8elite5_galaxy"): None,
     ("npu-turbo", "qcs8550"): None,
     ("npu-turbo", "7gen4"): None,
+    # The sixth family, blank for the same reason and on the same run: both tiers, as for every
+    # family (4.3's one-tier rule hides the small tier from the chooser and touches the pack
+    # machinery not at all).
+    ("npu", "8gen1"): None,
+    ("npu-turbo", "8gen1"): None,
 }
 
 
