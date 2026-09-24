@@ -109,6 +109,13 @@ class E2eQcProbe(private val ctx: Context, private val args: ProbeArgs) {
         val mels = (args.mels ?: "jfk_mel128.bin").split(",").map { it.trim() }.filter { it.isNotEmpty() }
         val prompt = args.tokens.split(",").map { it.trim().toInt() }
         val eot = args.eot
+        // The app's decode discipline (NpuDecodePolicy): an always-on mask and a first-generated-step mask,
+        // applied to the logits before the argmax. Empty lists = the raw argmax the first t6 run used.
+        val suppress = (args.suppress ?: "").split(",").mapNotNull { it.trim().toIntOrNull() }.toIntArray()
+        val beginSuppress = (args.beginSuppress ?: "").split(",").mapNotNull { it.trim().toIntOrNull() }.toIntArray()
+        val stepsFile = if (args.topk > 0) File(File(ctx.filesDir, "results").apply { mkdirs() }, args.tag + ".steps.jsonl") else null
+        stepsFile?.writeText("")
+        ProbeLog.i("e2eqc|suppress=${suppress.size} ids|beginsuppress=${beginSuppress.joinToString(",")}|topk=${args.topk}")
         val melData = mels.associateWith { name ->
             val f = File(ctx.filesDir, name)
             require(f.exists()) { "mel not found: ${f.absolutePath}" }
@@ -170,7 +177,13 @@ class E2eQcProbe(private val ctx: Context, private val args: ProbeArgs) {
                 }
                 val s2 = System.nanoTime()
                 stepMs.add((s1 - s0) / 1e6); copyMs.add((s2 - s1) / 1e6)
+                // the masks, as the app applies them: always-on at every generated step, begin at the first
+                if (t >= prompt.size - 1) {
+                    for (id in suppress) if (id in 0 until vocab) logits[id] = Float.NEGATIVE_INFINITY
+                    if (t == prompt.size - 1) for (id in beginSuppress) if (id in 0 until vocab) logits[id] = Float.NEGATIVE_INFINITY
+                }
                 next = argmax(logits, vocab)
+                if (stepsFile != null && index == 0) stepsFile.appendText(topkLine(t, tok, logits, vocab, args.topk) + "\n")
                 if (index == 0 && t < prompt.size + 6) ProbeLog.i("e2eqc|diag|utt=0|t=$t|in=$tok|" + rowDiag(logits, vocab, next))
                 t += 1
                 if (t < prompt.size) continue         // still feeding the prompt
@@ -199,6 +212,14 @@ class E2eQcProbe(private val ctx: Context, private val args: ProbeArgs) {
         (listOf(encIn) + encOuts + dIn.values + dOut.values).forEach { it.close() }
         dec.close(); enc.close(); env.close()
         Metrics.snapshot(ctx, "after_close").let { res.put("mem_after_close", it) }
+    }
+
+    /** One JSON line per step: the top-k (id, logit) pairs after masking, for a host differential test. */
+    private fun topkLine(t: Int, input: Int, logits: FloatArray, n: Int, k: Int): String {
+        val idx = (0 until n).sortedByDescending { logits[it] }.take(k)
+        val sb = StringBuilder("{\"t\":").append(t).append(",\"in\":").append(input).append(",\"top\":[")
+        idx.forEachIndexed { i, id -> if (i > 0) sb.append(','); sb.append('[').append(id).append(',').append("%.4f".format(logits[id])).append(']') }
+        return sb.append("]}").toString()
     }
 
     private fun argmax(logits: FloatArray, n: Int): Int {

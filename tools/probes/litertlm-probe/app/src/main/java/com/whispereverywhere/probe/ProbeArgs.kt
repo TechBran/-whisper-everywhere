@@ -80,6 +80,14 @@ data class ProbeArgs(
     val outputs: String?,
     /** `mode=e2eqc`: the decoder model path (`model` is the encoder). */
     val dec: String?,
+    /**
+     * `mode=e2eqc`: the app's decode discipline — `suppress` is the always-on mask (comma list of ids, applied
+     * at every generated step), `beginsuppress` applies at the first generated step only, `topk` > 0 writes
+     * the top-k (id, logit) of every step to files/results/<tag>.steps.jsonl for a host differential test.
+     */
+    val suppress: String?,
+    val beginSuppress: String?,
+    val topk: Int,
 ) {
     companion object {
         fun from(intent: Intent?): ProbeArgs = ProbeArgs(
@@ -119,6 +127,9 @@ data class ProbeArgs(
             inputs = intent?.getStringExtra("inputs"),
             outputs = intent?.getStringExtra("outputs"),
             dec = intent?.getStringExtra("dec"),
+            suppress = intent?.getStringExtra("suppress"),
+            beginSuppress = intent?.getStringExtra("beginsuppress"),
+            topk = intent?.getIntExtra("topk", 0) ?: 0,
         )
     }
 }
