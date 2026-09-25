@@ -203,14 +203,17 @@ class PreviewPackLayoutTest {
         // THE UNCONDITIONALITY PIN. Asserted as EXACT TEXT rather than as a set of zero-counts,
         // because a zero-count has to guess at the shape of the condition it forbids and exact
         // text does not have to guess at anything.
+        // (P2-5) The MediaTek pair's two untargeted packs joined as a third concatenated list, so
+        // the literal grew by exactly that list and nothing else; it is still flat and
+        // unconditional.
         val statement =
             "    assetPacks += listOf(\":npu_turbo\", \":npu_small\", \":preview_en\", " +
                 "\":tts_kokoro\") + listOf(\n" +
                 "        \":preview_fr\", \":preview_de\", \":preview_ru\",\n" +
                 "        \":preview_id\", \":preview_ko\", \":preview_zh\",\n" +
-                "    )\n"
+                "    ) + listOf(\":npu_turbo_mt6989_enc\", \":npu_turbo_mt6989_dec\")\n"
         assertEquals(
-            "the assetPacks expression must stay a FLAT LITERAL of the ten pack modules: no build " +
+            "the assetPacks expression must stay a FLAT LITERAL of the twelve pack modules: no build " +
                 "type, no flavour, no gradle property, no environment read and — the one this pin " +
                 "exists for — no per-language readiness term of any kind. A build-time exclusion " +
                 "of a language is FORBIDDEN (owner, 2026-09-12: \"I still will need to be able to " +

@@ -72,7 +72,10 @@ sealed interface NpuRuntimeNeeds {
  *   (`8-elite-for-galaxy`); that mapping belongs to the artifact rows (F3), never to this field.
  * @property packGroup the Play device-group name this family's pack variant ships under. The
  *   device-group XML must carry exactly [socModels] under exactly this name — F4's layout pin
- *   holds the two files equal, which is what gives maintenance rule 1 its teeth.
+ *   holds the two files equal, which is what gives maintenance rule 1 its teeth. That holds for
+ *   every DEVICE-TARGETED family (the Qualcomm rows); a MediaTek row's pair ships in untargeted
+ *   modules of its own (P2-5, bundletool's `DeviceGroupParityValidator`), so its group names the
+ *   family in the census and in its pack metadata and renders into no XML.
  * @property socModels every `Build.SOC_MODEL` string known to name this silicon — exact, complete,
  *   and taken from what DEVICES REPORT, never from a spec sheet or a vendor catalog's alias
  *   (maintenance rule 1 in the [NpuFleetCensus] KDoc).

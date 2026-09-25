@@ -345,10 +345,18 @@ android {
     // languages on the internal track, so a language must be PRESENT and FETCHABLE in every bundle
     // this repo can build; anything that gates PUBLICATION is a promotion decision and does not
     // live where the bundle is assembled.
+    //
+    // (P2-5, the MediaTek APU tier) The mt6989 turbo pair's two packs join the same way, by a
+    // third concatenated list, for the same mechanical reason: the prefix and the six languages
+    // stay contiguous text for the pins that read them. They are UNTARGETED — each module one
+    // payload directory, no #group_ folder (bundletool's DeviceGroupParityValidator requires every
+    // group-targeted module to carry the same set of groups) — and the census gate decides who
+    // fetches them. Unconditional like every entry here: the NeuroPilot licence ruling gates
+    // PUBLICATION, and publication is not decided where the bundle is assembled.
     assetPacks += listOf(":npu_turbo", ":npu_small", ":preview_en", ":tts_kokoro") + listOf(
         ":preview_fr", ":preview_de", ":preview_ru",
         ":preview_id", ":preview_ko", ":preview_zh",
-    )
+    ) + listOf(":npu_turbo_mt6989_enc", ":npu_turbo_mt6989_dec")
 
     bundle {
         // The census spelled for Play — committed, and byte-pinned to NpuFleetCensus by
@@ -816,6 +824,13 @@ tasks.withType<Test>().configureEach {
         rootProject.file("npu_small/build.gradle.kts"),
         rootProject.file("npu_turbo/.gitignore"),
         rootProject.file("npu_small/.gitignore"),
+        // (P2-5) The MediaTek pair's two untargeted modules, by the same rule: NpuPackLayoutTest
+        // reads their build files (packName / on-demand) and their payload walls, and neither half
+        // of a pack module is an input to any compile task.
+        rootProject.file("npu_turbo_mt6989_enc/build.gradle.kts"),
+        rootProject.file("npu_turbo_mt6989_dec/build.gradle.kts"),
+        rootProject.file("npu_turbo_mt6989_enc/.gitignore"),
+        rootProject.file("npu_turbo_mt6989_dec/.gitignore"),
         // (4.4.0, the 2026-09-10 amendment) PreviewPackLayoutTest's own two, by the same rule:
         // the third pack module's build file (packName/on-demand/no-#group_ pins) and its payload
         // wall are inputs to no compile task, so without these entries an edit confined to either
@@ -1172,7 +1187,7 @@ tasks.named("preBuild") { dependsOn(extractQnnSkel) }
 // assets/npu_small/ can ever share a path with one under assets/npu_turbo/ — instead of adding a
 // second prefix and waiting for the third file. Play strips the #group_<g> suffix on delivery,
 // so the device sees assets/<packName>/, which is what installFromPack opens (through
-// NpuPackFetch.PACK_BY_TIER, the same map that names the pack to fetch).
+// NpuPackFetch.packsFor since P2-4 — the same census parts that name the packs to fetch).
 //
 // THE PACK TABLE: one row per variant — module, Play device group, encoder bytes, decoder
 // bytes. The byte counts are NpuFleetCensus.artifacts' own, restated because a build script
@@ -1203,9 +1218,27 @@ val npuPackCensusRows = listOf(
     listOf("npu_small", "soc_8gen1", 111_915_456L, 223_562_032L),
     listOf("npu_turbo", "soc_8gen1", 681_574_152L, 294_692_768L),
 )
+// (P2-5, the MediaTek APU tier) THE UNTARGETED RULE, a second rule beside the targeted one above
+// and weakening nothing of it. A MediaTek pair is 1.88 GB — over Play's 1.5 GB per-pack cap — so it
+// arrives in TWO packs, and they are UNTARGETED modules of the family's own: bundletool's
+// DeviceGroupParityValidator requires every module with device-group targeting to support the same
+// set of groups, which a MediaTek pair can never share with npu_small/npu_turbo. So each module
+// holds ONE payload directory named after the pack, assets/<module>/ (delivered as itself), carrying
+// exactly its part's entry — plus metadata.json in the pair's first part, which lists both — plus
+// the tracked .gitkeep anchor, and no #group_ folder at all. There is no default variant to keep
+// empty: nothing targets, and the census gate is what decides which device fetches these.
+//
+// THE PARTS TABLE: one row per PART — module, census family, the one delivery name it carries, its
+// exact bytes, and whether metadata.json rides in it. The values are NpuFleetCensus.artifacts' own
+// parts, restated because a build script cannot read the app's classes, and pinned EQUAL to the
+// census by NpuPackLayoutTest.
+val npuPackPartRows = listOf(
+    listOf("npu_turbo_mt6989_enc", "mt6989", "turbo_encoder_qairt_context.bin", 1_302_606_488L, true),
+    listOf("npu_turbo_mt6989_dec", "mt6989", "turbo_decoder_qairt_context.bin", 584_862_184L, false),
+)
 val verifyNpuPacks = tasks.register("verifyNpuPacks") {
-    description = "Verifies every NPU asset-pack variant against the census byte counts and " +
-        "that both default variants are EMPTY. Runs before every bundle packaging task."
+    description = "Verifies every NPU asset-pack variant and untargeted part against the census " +
+        "byte counts and that both default variants are EMPTY. Runs before every bundle packaging task."
     doLast {
         val problems = mutableListOf<String>()
         for (row in npuPackCensusRows) {
@@ -1249,6 +1282,51 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
                         "'${meta["packGroup"]}' — the variant dir and its own metadata disagree"
             }
         }
+        // (P2-5) THE UNTARGETED PARTS: one payload directory per module, exactly its part's entry
+        // (+ metadata.json in part 1) + the anchor, and nothing that looks like a group variant.
+        for (row in npuPackPartRows) {
+            val module = row[0] as String
+            val familyId = row[1] as String
+            val name = row[2] as String
+            val bytes = row[3] as Long
+            val carriesMetadata = row[4] as Boolean
+            val assetsDir = rootProject.file("$module/src/main/assets")
+            val payloadDir = File(assetsDir, module)
+            if (!payloadDir.isDirectory) {
+                problems += "$module: assets/$module/ is MISSING"
+                continue
+            }
+            val beside = (assetsDir.listFiles() ?: emptyArray()).map { it.name }.filter { it != module }
+            if (beside.isNotEmpty()) {
+                problems += "$module: an untargeted module carries assets/$module/ and nothing " +
+                    "else, but it also carries $beside"
+            }
+            val listed = (payloadDir.listFiles() ?: emptyArray()).map { it.name }.sorted()
+            val expected = (listOf(name, ".gitkeep") +
+                if (carriesMetadata) listOf("metadata.json") else emptyList()).sorted()
+            if (listed != expected) {
+                problems += "$module/assets/$module: carries $listed; this part is exactly $expected"
+                continue
+            }
+            val part = File(payloadDir, name)
+            if (part.length() != bytes) {
+                problems += "$module/assets/$module: $name is ${part.length()} B, the census says $bytes"
+            }
+            if (carriesMetadata) {
+                val meta = try {
+                    JsonSlurper().parse(File(payloadDir, "metadata.json")) as? Map<*, *>
+                } catch (bad: Exception) {
+                    null
+                }
+                when {
+                    meta == null ->
+                        problems += "$module/assets/$module: metadata.json is not parseable JSON"
+                    meta["familyId"] != familyId ->
+                        problems += "$module/assets/$module: metadata.json names familyId " +
+                            "'${meta["familyId"]}' — the module is $familyId's own"
+                }
+            }
+        }
         // THE EMPTY-DEFAULT RULE (the research §6 CI check). Play cannot be told to deliver
         // nothing: an unmatched device can never be prevented from receiving the default
         // variant, so the default must contain nothing worth receiving — a bundle whose
@@ -1283,8 +1361,9 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
             )
         }
         logger.lifecycle(
-            "verifyNpuPacks: all ${npuPackCensusRows.size} pack variants match the census " +
-                "byte counts and both default variants are empty."
+            "verifyNpuPacks: all ${npuPackCensusRows.size} targeted pack variants and " +
+                "${npuPackPartRows.size} untargeted parts match the census byte counts, and both " +
+                "default variants are empty."
         )
     }
 }

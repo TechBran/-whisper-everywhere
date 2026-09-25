@@ -86,6 +86,9 @@ The device-group renderer emits **the family's own** manufacturer set, so `devic
 `<config:device-group name="soc_mt6989"><config:device-selector><config:system-on-chip manufacturer="Mediatek" model="MT6989"/>…`
 and Qualcomm groups keep exactly their two selectors; `NpuGate.SUPPORTED_SOC_MANUFACTURERS` survives only as
 the derived union for the XML-wide equality at `NpuPackLayoutTest.kt:230-234`.
+*Amended at P2-5 (§2.7 "Modules"):* the MediaTek pair's modules are untargeted, so the renderer emits the
+device-targeted (Qualcomm) families only and `soc_mt6989` is not in the XML; the row keeps its `packGroup` for
+the census and the pack metadata, and the XML's spelling pin reads the rendered families' own union.
 
 ### 2.2 Gate: the family decides its manufacturer
 
@@ -301,6 +304,19 @@ variant, `NpuFleetCensusTest.kt:330-342` pinning per-tier delivery names). So:
   `npu_turbo_mtk_dec`, carry the encoder and the decoder for MediaTek device groups (`soc_mt6989` now,
   `soc_mt6991` later). Every module keeps one uniform layout rule (one variant dir per group with its files
   and, in the encoder module only, `metadata.json`).
+  *Amended at P2-5, where this met bundletool:* bundletool 1.18.1 (what AGP 8.13.2 resolves) runs
+  `DeviceGroupParityValidator` — "all modules with device group targeting must support the same set of
+  groups", read from each module's `#group_` folders — so MediaTek modules carrying `{soc_mt6989, other}`
+  beside `npu_small`/`npu_turbo`'s six Qualcomm groups would fail `bundleRelease`. The MediaTek pair
+  therefore ships in two **untargeted** modules, named per **family** because an untargeted module cannot
+  hold a per-group variant: `npu_turbo_mt6989_enc` and `npu_turbo_mt6989_dec` (a later MT6991 gets its own
+  two). Each is one payload directory named after the pack (`assets/<module>/`: the part's entry,
+  `metadata.json` in the encoder module, the tracked `.gitkeep`), with no `#group_` folder, so the validator
+  skips them and the census gate alone decides who fetches them (`packsFor` names them only for the mt6989
+  row). `soc_mt6989` leaves `device_targeting_config.xml` (§2.1 below said it joined): with untargeted
+  modules nothing uses it, and Play's acceptance of a declared-but-unused group is undocumented. The Qualcomm
+  rule is unchanged; the untargeted one is a second rule beside it (`verifyNpuPacks`, `NpuPackLayoutTest`,
+  `build_asset_packs.py`).
 - **Parts:** `PackArtifact` gets `parts: List<PackPart>` (pack name + the entries it carries). Qualcomm rows
   have one part — today's behaviour, unchanged. The pure pack machine aggregates across parts: the worst status
   wins, bytes are summed, cellular confirmation and cancel apply to all parts, install begins only when EVERY
