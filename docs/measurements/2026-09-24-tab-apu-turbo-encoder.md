@@ -329,7 +329,7 @@ probe 200 ms pass, init 3,452 ms, encode 1,720 ms warm, step 30.5 ms, and **all 
 timestamps, EOT. The files were removed from the tablet afterwards.
 
 **What the census therefore records** (P2-3): the pinned digests above are THE artefact, held in the private
-store (the MS-02 mirror; a second copy off that machine is still to be made); the recipe in `tools/mtk-apu/`
+store (the MS-02 mirror, and a second copy on the PC at `C:SERSBASTR.ANDROIDBUILDMTK-ARTEFACTS-2026-09-24OT_MT6989`, `SHA256SUM -C` OK AT 21:28); THE RECIPE in `tools/mtk-apu/`
 reproduces a functionally identical pair and is the provenance of the model; a rebuilt pair is a NEW artefact
 that must be re-pinned, re-measured against the reference and re-mirrored before it ships. Rule 2's "recorded
 self-compile whose recipe is in the repo" is met in that sense and no stronger one.
