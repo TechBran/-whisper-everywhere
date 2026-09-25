@@ -931,7 +931,7 @@ class WhisperModelManager(
      * DELIVERED and nothing more: everything below is what makes it installed.
      *
      * ```
-     * <packName>/metadata.json exists?  (absent = the EMPTY default variant, refused by name)
+     * <part 1's packName>/metadata.json exists?  (absent = the EMPTY default variant, refused by name)
      *   ->  strict parse  ->  crossCheckRefusal   (IDENTITY: the wrong pack dies here by name)
      *   ->  reconcile .prev debris  ->  free-space precheck
      *   ->  stream-copy each bin to <name>.part, sha256 riding the copy   (INTEGRITY)
@@ -955,43 +955,52 @@ class WhisperModelManager(
      * @param family the device's resolved census family — the controller read it from the app
      *        memo (the F2 chain) and refuses a null itself, so this parameter is non-null by
      *        construction.
-     * @param packAssetsPath `AssetPackLocation.assetsPath()` — the delivered pack's assets
-     *        root, containing a directory named after the PACK with exactly three files in it
-     *        (F4's layout as F8 re-spelled it). Play strips the `#group_<g>` suffix on
-     *        delivery, so `assets/npu_turbo#group_soc_8gen3/` arrives as `npu_turbo/`; the
-     *        directory carries the pack's name because two modules may not ship the same entry
-     *        path with different bytes, which is what an AAB build refuses by name.
+     * @param packAssetsPaths `AssetPackLocation.assetsPath()` of every delivered PART, by pack
+     *        name (P2-4) — one entry for a Qualcomm pair, two for a MediaTek one. Each part's
+     *        assets root contains a directory named after its PACK (F4's layout as F8 re-spelled
+     *        it): Play strips the `#group_<g>` suffix on delivery, so
+     *        `assets/npu_turbo#group_soc_8gen3/` arrives as `npu_turbo/`, and an untargeted
+     *        module's `assets/npu_turbo_mt6989_enc/` arrives as itself; the directory carries the
+     *        pack's name because two modules may not ship the same entry path with different
+     *        bytes, which is what an AAB build refuses by name. Part 1's directory holds
+     *        `metadata.json` (listing both entries) and the encoder; a second part's holds the
+     *        decoder.
      */
     suspend fun installFromPack(
         tierId: String,
         family: NpuSocFamily,
-        packAssetsPath: String,
+        packAssetsPaths: Map<String, String>,
         onProgress: (soFar: Long, total: Long) -> Unit = { _, _ -> },
     ): NpuAssetImport.ImportState = withContext(Dispatchers.IO) {
         val model = WhisperCatalog.byId(tierId)
         val artifact = NpuFleetCensus.artifactFor(family.id, tierId)
         val required = NpuAssetImport.requiredEntriesFor(model, artifact)
-        // (4.2 F8) The delivered pack's assets arrive in a directory named after the PACK, and
-        // the map that decides which pack serves this tier is the one that names it — so the
-        // fetch and the read cannot disagree about which pack this is. A tier with no pack row
-        // is a catalog fact, not a delivery fact, so it joins the catalog guard below rather
-        // than inventing a second empty-delivery site (the refusal has exactly one, and a pin
-        // says so).
-        val packDirName = NpuPackFetch.PACK_BY_TIER[tierId]
-        if (model == null || artifact == null || required.isEmpty() || packDirName == null) {
+        // (4.2 F8) The delivered packs' assets arrive in directories named after each PACK, and
+        // (P2-4) the parts that decide which packs serve this tier on this family are the ones
+        // that name them — `packsFor`, the census row's own, the same answer the controller
+        // fetched — so the fetch and the read cannot disagree about which pack is which. A tier
+        // with no parts is a catalog fact, not a delivery fact, so it joins the catalog guard
+        // below rather than inventing a second empty-delivery site (the refusal has exactly
+        // one, and a pin says so).
+        val packParts = NpuPackFetch.packsFor(tierId, family)
+        if (model == null || artifact == null || required.isEmpty() || packParts.isEmpty()) {
             return@withContext NpuAssetImport.ImportState.Refused(
                 "this build's catalog has no installable model pair for that tier, so there " +
                     "is nothing to install into."
             )
         }
+        // Each entry is read out of the part that carries it: the encoder from part 1's
+        // directory and the decoder from part 2's on a two-part pair; both from the one pack's
+        // on a Qualcomm pair, exactly as before parts existed.
+        val entryDirs = NpuPackFetch.deliveredEntryDirs(packParts, packAssetsPaths)
 
         // THE EMPTY-DEFAULT SIGNATURE. Every real variant carries metadata.json (F4 writes it
-        // and self-verifies it); a delivered pack WITHOUT one is the empty default variant —
-        // Play's answer for a device in no census group — refused by name, with the import
-        // fallback named as the path forward.
-        val packModelDir = File(packAssetsPath, packDirName)
-        val metaFile = File(packModelDir, NpuPackMetadata.ENTRY_NAME)
-        if (!metaFile.isFile) {
+        // and self-verifies it) — in PART 1, for the whole pair (P2-4); a delivered pack WITHOUT
+        // one is the empty default variant — Play's answer for a device in no census group —
+        // refused by name, with the import fallback named as the path forward.
+        val metaFile = NpuPackFetch.deliveredMetadataDir(packParts, packAssetsPaths)
+            ?.let { File(it, NpuPackMetadata.ENTRY_NAME) }
+        if (metaFile == null || !metaFile.isFile) {
             return@withContext NpuAssetImport.ImportState.Refused(
                 NpuPackFetch.emptyDeliveryRefusal()
             )
@@ -1041,7 +1050,9 @@ class WhisperModelManager(
             var lastTick = 0L
             val buffer = ByteArray(COPY_BUFFER_BYTES)
             for ((name, entry) in required) {
-                val src = File(packModelDir, name)
+                // Out of the part that carries this entry (P2-4); no such part delivered is a
+                // missing entry, which missingEntriesRefusal names below.
+                val src = File(entryDirs[name] ?: continue, name)
                 if (!src.isFile) continue   // missingEntriesRefusal names it below
                 // The file's own length is its declared size; wrong dies before the copy.
                 val srcLen = src.length()
