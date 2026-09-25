@@ -1275,35 +1275,60 @@ tasks.named("preBuild") { dependsOn(extractLiteRtRuntime) }
 // on Maven — Google Maven's litert group carries no vendor runtime — and v2.1.1's
 // litert_npu_runtime_libraries_jit.zip is the LAST release zip that ships the MediaTek pair
 // (tools/probes/litertlm-probe/fetch_mediatek_runtime.py, the probe's copy of the same three pins).
-// The zip is fetched once into the build directory, held to its length and sha256, and the one
-// member is extracted into the generated ASSETS dir and held to LiteRtRuntime's DISPATCH_BYTES and
-// DISPATCH_SHA256 — the zip member's own digest. An asset is packaged as it is; a lib/ copy would be
-// stripped into a different file of the same length, which is why this is not jniLibs.
+// The zip is fetched once into a CACHE OUTSIDE build/ (below), held to its length and sha256, and
+// the one member is extracted into the generated ASSETS dir and held to LiteRtRuntime's
+// DISPATCH_BYTES and DISPATCH_SHA256 — the zip member's own digest. An asset is packaged as it is; a
+// lib/ copy would be stripped into a different file of the same length, which is why this is not
+// jniLibs.
+//
+// THE CACHE (the P2b review's small 2). The zip used to live in build/, so every build after a
+// `clean` needed GitHub, and `--offline` could not help: the fetch is this task's own, not a Gradle
+// dependency. It lives under the user's home now — ~/.androidbuild, the parent the QNN headers'
+// offline tree (tools/fetch_qnn_headers.py) and this machine's other build caches already share —
+// so a clean costs nothing, every worktree shares one copy, and an offline build passes whenever
+// the cache holds the pinned bytes. The pins are unchanged and apply to the cached copy every time:
+// a copy that fails its length or digest is deleted by the check that refuses it, so the next
+// build fetches it afresh rather than failing on the same bad bytes forever; a download lands in a
+// `.part` beside it and is renamed in only once complete; and an offline build with no cached copy
+// fails naming the path to put one.
 val litertDispatchZipUrl =
     "https://github.com/google-ai-edge/LiteRT/releases/download/v2.1.1/litert_npu_runtime_libraries_jit.zip"
-val litertDispatchZip = layout.buildDirectory.file("litertDispatch/litert_npu_runtime_libraries_jit-2.1.1.zip")
+val litertDispatchZip = File(System.getProperty("user.home"), ".androidbuild/litert-cache/litert_npu_runtime_libraries_jit-2.1.1.zip")
 val extractLiteRtDispatch = tasks.register("extractLiteRtDispatch") {
-    description = "Fetches LiteRT v2.1.1's NPU runtime zip and extracts the MediaTek dispatch into generated assets."
+    description = "Fetches LiteRT v2.1.1's NPU runtime zip (cached outside build/) and extracts the MediaTek dispatch into generated assets."
     inputs.property("url", litertDispatchZipUrl)
     outputs.dir(litertDispatchAssetDir)
-    outputs.file(litertDispatchZip)
+    val offline = gradle.startParameter.isOffline
     doLast {
-        val zip = litertDispatchZip.get().asFile
+        val zip = litertDispatchZip
         if (!zip.isFile || zip.length() != 2_847_687L) {
+            check(!offline) {
+                "extractLiteRtDispatch: offline, and no cached ${zip.name} at ${zip.parentFile.absolutePath}. " +
+                    "Run once with network access, or copy the v2.1.1 release zip there."
+            }
             zip.parentFile.mkdirs()
+            val part = File(zip.parentFile, zip.name + ".part")
             uri(litertDispatchZipUrl).toURL().openStream().use { input ->
-                zip.outputStream().use { input.copyTo(it) }
+                part.outputStream().use { input.copyTo(it) }
+            }
+            zip.delete()
+            check(part.renameTo(zip)) {
+                "extractLiteRtDispatch: the download could not be moved into the cache at ${zip.absolutePath}"
             }
         }
         check(zip.length() == 2_847_687L) {
-            "extractLiteRtDispatch: ${zip.name} is ${zip.length()} bytes, expected 2_847_687 (the " +
-                "v2.1.1 release asset). Delete it and re-run."
+            val got = zip.length()
+            zip.delete()
+            "extractLiteRtDispatch: ${zip.name} is $got bytes, expected 2_847_687 (the v2.1.1 " +
+                "release asset). The cached copy was removed; re-run to fetch it again."
         }
         val zipDigest = MessageDigest.getInstance("SHA-256")
             .digest(zip.readBytes())
             .joinToString("") { b -> "%02x".format(b) }
         check(zipDigest == "4d6433eceb0e9c97388e5d10af9c71a1f97cf93f4a0f21acc492b97a342d45c3") {
-            "extractLiteRtDispatch: ${zip.name} sha256 mismatch ($zipDigest) — the release asset moved."
+            zip.delete()
+            "extractLiteRtDispatch: ${zip.name} sha256 mismatch ($zipDigest) — the cached copy was " +
+                "removed; re-run to fetch it again. If it fails again, the release asset moved."
         }
         val outDir = litertDispatchAssetDir.get().asFile
         outDir.deleteRecursively()

@@ -214,6 +214,60 @@ class LiteRtPackagingTest {
         )
     }
 
+    /**
+     * THE P2b REVIEW'S SMALL 2 — the release zip is cached OUTSIDE `build/`. In `build/` every build
+     * after a `clean` needed GitHub, and `--offline` could not help (the fetch is this task's own, not
+     * a dependency Gradle caches). Under the user's home it survives `clean`, is shared by every
+     * worktree, and an offline build passes whenever the cache holds the pinned bytes; the length and
+     * sha256 pins above apply to the cached copy on every run, a copy that fails them is deleted by
+     * the check that refuses it, a download is renamed in only once complete, and an offline build
+     * with no cached copy says where to put one.
+     */
+    @Test
+    fun theReleaseZipIsCachedOutsideBuildAndAnOfflineBuildUsesIt() {
+        assertEquals(
+            "the zip's one home is under the user's home, beside the machine's other build caches",
+            1,
+            liveLineCount(
+                gradle,
+                "val litertDispatchZip = File(System.getProperty(\"user.home\"), \".androidbuild/litert-cache/litert_npu_runtime_libraries_jit-2.1.1.zip\")",
+            ),
+        )
+        assertEquals(
+            "…never the build directory, and never declared as a build output (clean must not reach it)",
+            listOf(0, 0),
+            listOf(
+                liveLineCount(gradle, "layout.buildDirectory.file(\"litertDispatch/"),
+                liveLineCount(dispatchTask, "outputs.file(litertDispatchZip)"),
+            ),
+        )
+        assertEquals(
+            "offline with no cached copy is a named refusal — the network is never tried",
+            listOf(1, 1),
+            listOf(
+                liveLineCount(dispatchTask, "val offline = gradle.startParameter.isOffline"),
+                liveLineCount(dispatchTask, "check(!offline) {"),
+            ),
+        )
+        val fetch = dispatchTask.indexOf("uri(litertDispatchZipUrl).toURL().openStream()")
+        val guard = dispatchTask.indexOf("check(!offline) {")
+        assertTrue("the offline guard ($guard) comes before the fetch ($fetch)", guard in 0 until fetch)
+        assertEquals(
+            "a download lands in a .part and is renamed in only once complete",
+            listOf(1, 1),
+            listOf(
+                liveLineCount(dispatchTask, "val part = File(zip.parentFile, zip.name + \".part\")"),
+                liveLineCount(dispatchTask, "check(part.renameTo(zip)) {"),
+            ),
+        )
+        assertEquals(
+            "and a cached copy that fails either pin is removed by the check that refuses it (plus " +
+                "the one delete that makes room for the rename)",
+            3,
+            liveLineCount(dispatchTask, "zip.delete()"),
+        )
+    }
+
     @Test
     fun theProductShipsTheDispatchTheDeviceGateStaged() {
         val fetch = read("tools/probes/litertlm-probe/fetch_mediatek_runtime.py")
