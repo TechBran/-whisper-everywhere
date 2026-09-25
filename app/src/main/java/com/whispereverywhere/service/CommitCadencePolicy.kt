@@ -230,6 +230,18 @@ object CommitCadencePolicy {
      * The oldest micro-pause the wall cap will still cut at. An offer older than this is not the
      * boundary near where the cap fired — taking it would defer most of the window into the next
      * one and push the effective wall bound from 15 s to ~28 s. Owner-tunable knob.
+     *
+     * **4.16.1: the AI-chip tiers' 5 s sustained wall (`SegmentCapPolicy.NPU_SUSTAINED_WALL_MS`)
+     * keeps this 3 000, deliberately.** A retain can only thrash if it could swallow a whole
+     * window, and it cannot while it is shorter than every wall in force — 4 000 first, 5 000 on
+     * the AI-chip tiers, 15 000 elsewhere (`SegmentCapPolicyTest.theRetainWindowIsShorterThanEveryWallInForce`).
+     * Then each cap cut commits at least 2 s of its own 5 s window; the offer is cleared on every
+     * commit and reset, so it always lies inside the current window and no audio is deferred twice;
+     * `reset()` re-anchors the governor at the cap cut, so the floor still holds before the next
+     * VAD cut; and the worst wait for a commit is 5 + 3 = 8 s, where the 15 s wall's was 18 s. The
+     * session's first 4 s wall has run with this retain since 3.7, a steeper ratio than 3 of 5. A
+     * shorter retain would lower that worst case and buy more blind cuts — mid-word seams, at three
+     * times the seam rate — which is the one cost `no_context = true` makes permanent.
      */
     const val CAP_CUT_MAX_RETAIN_MS = 3_000L
 
