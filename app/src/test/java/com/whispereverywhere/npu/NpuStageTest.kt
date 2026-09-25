@@ -23,7 +23,12 @@ import java.io.File
  * refuse with, in order — so the ORDER pin still means "the order a session reaches them", which
  * is how it caught `quant` moving to arm time.
  *
- * Source-anchored for the house reason: the backend and the QNN engine reach native code, so no
+ * **Two engines since P2-7.** `LiteRtAsrEngine` answers the same three members for MediaTek rows,
+ * so the derivation runs once per session shape — a Qualcomm session through the QNN engine's
+ * refusals, a MediaTek one through the LiteRT engine's — and `dispatch`, reserved at P1a for an
+ * engine that did not exist yet, is that engine's prepare now.
+ *
+ * Source-anchored for the house reason: the backend and both engines reach native code, so no
  * JVM test may name them; the enum itself is plain Kotlin and is executed.
  */
 class NpuStageTest {
@@ -67,6 +72,15 @@ class NpuStageTest {
     }
 
     /**
+     * The LiteRT engine (P2-7) — the seam's second engine, and the one whose prepare is the
+     * `dispatch` stage the enum reserved for it until it landed. A MediaTek session reaches the
+     * backend's stages through the same funnel, with THIS engine's refusals spliced in.
+     */
+    private val liteRtEngine: String by lazy {
+        source("src/main/java/com/whispereverywhere/transcription/LiteRtAsrEngine.kt")
+    }
+
+    /**
      * One Kotlin member's body, bounded by the anchor's own indent (the house `kotlinMemberBody`
      * rule, 4.1 L1). Loud when the anchor is missing: `indexOf() == -1` would rebase the scope.
      */
@@ -98,9 +112,13 @@ class NpuStageTest {
 
     private val refusalSite = Regex("Refusal\\(\\s*NpuStage\\.([A-Z_]+)")
 
-    /** The wire words one engine member can refuse with, in its own source order. */
-    private fun engineStages(member: String): List<String> =
-        refusalSite.findAll(memberBody(live(qnnEngine), routedEngineMembers.getValue(member)))
+    /**
+     * The wire words one engine member can refuse with, in its own source order — of the QNN
+     * engine unless [engine] names the other one (P2-7: both engines answer the same three
+     * members, under the same signatures, so one anchor table serves both).
+     */
+    private fun engineStages(member: String, engine: String = qnnEngine): List<String> =
+        refusalSite.findAll(memberBody(live(engine), routedEngineMembers.getValue(member)))
             .map { NpuStage.valueOf(it.groupValues[1]).wire }
             .toList()
 
@@ -114,15 +132,18 @@ class NpuStageTest {
      * engine's reach it as a [Refusal] from `engine.prepare(`, `engine.init(` or `engine.encode(`,
      * so at each of those call sites, in the backend's source order, the stages that engine member
      * can refuse with are spliced in, in ITS source order. First occurrence wins.
+     *
+     * [engine] is the session's engine — the QNN one by default, the Qualcomm session this
+     * derivation was written for; the LiteRT one for a MediaTek session (P2-7).
      */
-    private fun derivedDeclineOrder(): List<String> {
+    private fun derivedDeclineOrder(engine: String = qnnEngine): List<String> {
         val site = Regex(
             "fallBack(?:ToCpuTier|AndRun)\\(\\s*\"([a-z-]+)\"|engine\\.(prepare|init|encode)\\("
         )
         val out = mutableListOf<String>()
         site.findAll(live(backend)).forEach { match ->
             val literal = match.groups[1]?.value
-            if (literal != null) out += literal else out += engineStages(match.groupValues[2])
+            if (literal != null) out += literal else out += engineStages(match.groupValues[2], engine)
         }
         return out.distinct()
     }
@@ -135,10 +156,11 @@ class NpuStageTest {
             derived.size >= 10 && "encode" in derived && "decode" in derived,
         )
         assertEquals(
-            "NpuStage, less the reserved DISPATCH, is EXACTLY the stages the decline sites produce, " +
-                "in the order a session reaches them — re-derived, never retyped. A stage added to " +
-                "the backend and not to the enum, one renamed on either side, or one retired from " +
-                "the backend and left in the enum all fail here by name.",
+            "NpuStage, less DISPATCH (the LiteRT engine's prepare since P2-7 — a Qualcomm session " +
+                "never reaches it), is EXACTLY the stages a QUALCOMM session's decline sites " +
+                "produce, in the order it reaches them — re-derived, never retyped. A stage added " +
+                "to the backend and not to the enum, one renamed on either side, or one retired " +
+                "from the backend and left in the enum all fail here by name.",
             derived,
             NpuStage.entries.filter { it != NpuStage.DISPATCH }.map { it.wire },
         )
@@ -151,23 +173,75 @@ class NpuStageTest {
     }
 
     /**
-     * RESERVED, and said so where it can fail. `dispatch` is the LiteRT engine's prepare stage
-     * (P1b's `LiteRtAsrEngine`, staged by P2-6's helper); no Qualcomm session can produce it, and
-     * a live `NpuStage.DISPATCH` on the Qualcomm path would be a refusal naming a runtime this
-     * device does not have. THE NAMED TRIGGER: when an engine that stages a dispatch lands, the
-     * derivation above must learn that engine's file and this exemption goes — re-spelled, not
-     * deleted.
+     * RESERVED UNTIL P2-7, AND RE-SPELLED WHEN ITS TRIGGER FIRED, not deleted. `dispatch` is the
+     * LiteRT engine's prepare stage — `LiteRtAsrEngine.prepare`, staging the MediaTek dispatch
+     * through P2-6's directory stage — and the named trigger was exactly this: "when an engine
+     * that stages a dispatch lands, the derivation above must learn that engine's file and this
+     * exemption goes". The derivation learned it ([theLiteRtSessionDeclinesAtTheEnumLessTheQnnStagesAndTheTwoSessionsTogetherAreTheWholeEnum]),
+     * and what this test holds now is the claim that survives the exemption: no QUALCOMM site
+     * produces it (a live `NpuStage.DISPATCH` on the Qualcomm path would be a refusal naming a
+     * runtime the device does not have), and the LiteRT engine produces it in prepare and
+     * nowhere else.
      */
     @Test
     fun dispatchIsReservedForTheLiteRtEngineAndNoQualcommSiteProducesIt() {
         assertFalse(
-            "no decline site on the Qualcomm path produces `dispatch` today",
+            "no decline site on the Qualcomm path produces `dispatch`",
             "dispatch" in derivedDeclineOrder(),
         )
         assertEquals(
             "and neither the backend nor the QNN engine names NpuStage.DISPATCH on a live line",
             0,
             liveLineCount(backend, "NpuStage.DISPATCH") + liveLineCount(qnnEngine, "NpuStage.DISPATCH"),
+        )
+        assertTrue(
+            "the LiteRT engine's session DOES reach it — the trigger this test named has fired",
+            "dispatch" in derivedDeclineOrder(liteRtEngine),
+        )
+        assertEquals(
+            "…from prepare alone: every NpuStage.DISPATCH in LiteRtAsrEngine.kt is one of " +
+                "prepare's refusals (the row of another vendor, the row it was not built for, the " +
+                "stage that could not stage)",
+            listOf("dispatch", "dispatch", "dispatch"),
+            engineStages("prepare", liteRtEngine),
+        )
+        assertEquals(
+            "and no other member of the LiteRT engine spells it",
+            3,
+            liveLineCount(liteRtEngine, "NpuStage.DISPATCH"),
+        )
+    }
+
+    /**
+     * THE SECOND SESSION'S DECLINE ORDER (P2-7). A MediaTek session runs the same backend — the
+     * same literal stages, in the same order — with the LiteRT engine's refusals spliced in at the
+     * three engine calls: `dispatch` where the QNN session has `skel`, `init` alone where it has
+     * `init` then `quant`, and `encode`. So its derivation is the enum less the two QNN-only
+     * stages, in the enum's order — and the two sessions together are exactly the enum, which is
+     * what "closed" means now that nothing in it is reserved.
+     */
+    @Test
+    fun theLiteRtSessionDeclinesAtTheEnumLessTheQnnStagesAndTheTwoSessionsTogetherAreTheWholeEnum() {
+        val liteRt = derivedDeclineOrder(liteRtEngine)
+        assertEquals(
+            "a MediaTek session reaches every stage but the QNN engine's own two (skel, quant), " +
+                "in the enum's declaration order — which is decline order",
+            NpuStage.entries.filter { it != NpuStage.SKEL && it != NpuStage.QUANT }.map { it.wire },
+            liteRt,
+        )
+        val qnn = derivedDeclineOrder()
+        assertEquals(
+            "and the two sessions' stages, together, are EXACTLY the enum — no member is reserved " +
+                "for an engine that does not exist, and none is produced by nothing",
+            NpuStage.entries.map { it.wire }.toSet(),
+            (qnn + liteRt).toSet(),
+        )
+        assertEquals(
+            "the LiteRT engine refuses at exactly one stage per member it answers: prepare at " +
+                "dispatch, init at init (no quant on this vendor — the pair is float at its " +
+                "boundary), encode at encode",
+            listOf(listOf("dispatch"), listOf("init"), listOf("encode")),
+            listOf("prepare", "init", "encode").map { engineStages(it, liteRtEngine).distinct() },
         )
     }
 
@@ -203,6 +277,24 @@ class NpuStageTest {
             "the engine's side is exactly the four stages the seam moved there",
             setOf("skel", "init", "quant", "encode"),
             engineWords,
+        )
+        // P2-7 — THE RULE HOLDS WITH THE SECOND ENGINE. The LiteRT engine's refusal words are
+        // disjoint from the backend's literals too, so a MediaTek session's `init` or `encode`
+        // tells one story exactly as a Qualcomm one does; the two ENGINES share words (both arm
+        // at `init`, both encode at `encode`) because those are one stage of the one policy
+        // body, answered by whichever runtime the row names.
+        val liteRtWords = refusalSite.findAll(live(liteRtEngine))
+            .map { NpuStage.valueOf(it.groupValues[1]).wire }.toSet()
+        assertEquals(
+            "no stage word is produced both by the backend and by the LiteRT engine. Shared: " +
+                "${literals intersect liteRtWords}",
+            emptySet<String>(),
+            literals intersect liteRtWords,
+        )
+        assertEquals(
+            "the LiteRT engine's side is exactly its three: its own staging, its arm, its encode",
+            setOf("dispatch", "init", "encode"),
+            liteRtWords,
         )
     }
 
@@ -250,6 +342,20 @@ class NpuStageTest {
                 "is built from a value the derivation cannot read",
             all,
             Regex("Refusal\\(").findAll(live(qnnEngine)).count(),
+        )
+        // P2-7 — and the same completeness for the LiteRT engine: its probe answers native's
+        // string, never a Refusal, so every Refusal it builds is one the backend routes.
+        val liteRtAll = refusalSite.findAll(live(liteRtEngine)).count()
+        assertTrue("the LiteRT engine refuses at all (got $liteRtAll)", liteRtAll > 0)
+        assertEquals(
+            "every Refusal(NpuStage.…) in LiteRtAsrEngine.kt is inside prepare, init or encode",
+            liteRtAll,
+            routedEngineMembers.keys.sumOf { engineStages(it, liteRtEngine).size },
+        )
+        assertEquals(
+            "and every `Refusal(` it builds names its stage from the closed set",
+            liteRtAll,
+            Regex("Refusal\\(").findAll(live(liteRtEngine)).count(),
         )
     }
 
@@ -306,8 +412,9 @@ class NpuStageTest {
     @Test
     fun everyWireWordIsTheWordADeviceHasAlwaysPrinted() {
         assertEquals(
-            "the fourteen stage words the 4.2 F5 derivation produced before the seam, plus the " +
-                "reserved `dispatch` — and nothing else",
+            "the fourteen stage words the 4.2 F5 derivation produced before the seam, plus " +
+                "`dispatch` (reserved at P1a, the LiteRT engine's prepare since P2-7) — and " +
+                "nothing else",
             setOf(
                 "companion", "mel-donor", "mel-asset", "mel-init", "vocab", "skel", "init",
                 "epoch", "session", "mel", "quant", "encode", "lang", "decode", "dispatch",
@@ -386,6 +493,7 @@ class NpuStageTest {
             "\"src/main/java/com/whispereverywhere/npu/NpuStage.kt\",",
             "\"src/main/java/com/whispereverywhere/transcription/NpuAsrEngine.kt\",",
             "\"src/main/java/com/whispereverywhere/transcription/QnnAsrEngine.kt\",",
+            "\"src/main/java/com/whispereverywhere/transcription/LiteRtAsrEngine.kt\",",
         ).forEach {
             assertEquals(
                 "app/build.gradle.kts must list $it among sourcePinnedInputs",

@@ -198,9 +198,10 @@ object NpuDiag {
      *        stale by six stages and still named a retired one):
      *        `companion`, `mel-donor`, `mel-asset`, `mel-init`, `vocab`, `skel`, `dispatch`,
      *        `init`, `quant`, `epoch`, `session`, `mel`, `encode`, `lang`, `decode`. The seventh
-     *        is the LiteRT engine's prepare stage and is reserved: no Qualcomm session produces
-     *        it. The ninth declines at arm since the seam (the QNN engine reads the quant pair
-     *        once, right after nativeInit); before it, it declined on a segment, after mel.
+     *        is the LiteRT engine's prepare stage (P2-7): only a MediaTek session produces it,
+     *        as only a Qualcomm one produces the sixth. The ninth declines at arm since the seam
+     *        (the QNN engine reads the quant pair once, right after nativeInit); before it, it
+     *        declined on a segment, after mel — and a MediaTek session never reaches it.
      * @param detail `QnnAsrNative.nativeLastError()` or an equivalent one-line reason. Never
      *        transcript content: every producer of this string is a stage name and a native error.
      */

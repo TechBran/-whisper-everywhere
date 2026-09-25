@@ -658,6 +658,14 @@ tasks.withType<Test>().configureEach {
         // (NpuStageTest). No JVM test may name the class — it touches QnnAsrNative — so source
         // is the only instrument, and a comment-only edit must still re-run it.
         "src/main/java/com/whispereverywhere/transcription/QnnAsrEngine.kt",
+        // (P2-7) LiteRtAsrEngine.kt — the seam's second engine, by the same rule and for the same
+        // reason: it touches LiteRtAsrNative (System.loadLibrary("litertasr")), so no JVM test may
+        // name it, and LiteRtAsrEngineContractTest (every entry point reached from here and from
+        // nowhere else in main, the scalar order, the two literal defaults, the dispatch stage,
+        // the teardown census) and NpuStageTest (the MediaTek session's stage derivation) read it
+        // as text. Several of those pins are comment-shaped or count call sites, so without this
+        // entry the one edit each exists to catch is the one that never re-runs it.
+        "src/main/java/com/whispereverywhere/transcription/LiteRtAsrEngine.kt",
         // (4.1 L7) LocalWhisperEngine.kt joins because PerUtteranceLanguageTest now READS it:
         // the languageFor-exactly-once-inside-the-conditional claim is what stops a second,
         // unconditional pin consult from reinstating the 3.7 latch under a per-utterance
