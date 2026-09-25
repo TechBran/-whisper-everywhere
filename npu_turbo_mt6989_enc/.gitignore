@@ -5,13 +5,11 @@
 # remote, and the root .gitignore's blob walls (*.so, *.dlc, *.context) do not cover .bin — so
 # this pattern IS the wall.
 #
-# The wall is written as "everything in the payload directory EXCEPT the anchor" — the preview
-# packs' untargeted shape — rather than as the one file name: anything else placed here would be
-# committable by default, and everything in this directory rides into the AAB.
-#
-# The .gitkeep is TRACKED and is the one file here that must stay visible to git: it is what
-# proves the payload directory exists in a clean clone, and NpuPackLayoutTest reads the directory
-# from the repo. The negation can only re-include a DIRECT child, which is why the wall stops at
-# the payload directory's contents instead of walling src/main/assets/ wholesale.
-src/main/assets/npu_turbo_mt6989_enc/*
-!src/main/assets/npu_turbo_mt6989_enc/.gitkeep
+# (P3a) The wall is the WHOLE packaged tree, src/main/assets/, and nothing in it is re-included.
+# AGP's asset-pack plugin zips src/main/assets into the pack whole — no filter, and no DSL to add
+# one (AssetPackExtension is packName + dynamicDelivery, nothing else) — so every file under it
+# ships in the AAB. The tracked .gitkeep that anchored the payload directory until P3a rode into
+# the bundle as a zero-byte asset (the packaging probe of 2026-09-25, sheet §8); it is gone, the
+# payload directory exists once build-local has placed the part, and a delivered pack holds
+# exactly its payload files.
+src/main/assets/

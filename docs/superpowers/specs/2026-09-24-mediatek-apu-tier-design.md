@@ -337,7 +337,12 @@ variant, `NpuFleetCensusTest.kt:330-342` pinning per-tier delivery names). So:
   therefore ships in two **untargeted** modules, named per **family** because an untargeted module cannot
   hold a per-group variant: `npu_turbo_mt6989_enc` and `npu_turbo_mt6989_dec` (a later MT6991 gets its own
   two). Each is one payload directory named after the pack (`assets/<module>/`: the part's entry,
-  `metadata.json` in the encoder module, the tracked `.gitkeep`), with no `#group_` folder, so the validator
+  `metadata.json` in the encoder module, the tracked `.gitkeep` — *corrected at P3a, where the
+  packaging probe met the bundle (sheet §8):* the `.gitkeep` shipped as a zero-byte asset, because
+  AGP 8.13.2's asset-pack plugin zips `src/main/assets` whole, with no filter and no DSL to add one
+  (`AssetPackExtension` is `packName` + `dynamicDelivery`), so the marker left the packaged tree:
+  the module `.gitignore` walls `src/main/assets/` whole and a delivered pack holds exactly its
+  payload files), with no `#group_` folder, so the validator
   skips them and the census gate alone decides who fetches them (`packsFor` names them only for the mt6989
   row). `soc_mt6989` leaves `device_targeting_config.xml` (§2.1 below said it joined): with untargeted
   modules nothing uses it, and Play's acceptance of a declared-but-unused group is undocumented. The Qualcomm

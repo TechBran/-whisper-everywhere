@@ -4,8 +4,8 @@
 # NeuroPilot-compiled bytecode must never enter a repo with a public remote, and the root
 # .gitignore's blob walls do not cover .bin — so this pattern IS the wall.
 #
-# "Everything in the payload directory EXCEPT the anchor", for the reasons the encoder module's
-# .gitignore states: the tracked .gitkeep proves the directory exists in a clean clone, and a
-# negation can only re-include a direct child.
-src/main/assets/npu_turbo_mt6989_dec/*
-!src/main/assets/npu_turbo_mt6989_dec/.gitkeep
+# (P3a) The whole packaged tree, src/main/assets/, for the reasons the encoder module's
+# .gitignore states: the asset-pack plugin zips that directory whole, so the tracked .gitkeep
+# that used to anchor the payload directory shipped as a zero-byte asset, and a delivered pack
+# must hold exactly its payload files.
+src/main/assets/

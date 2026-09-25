@@ -1478,9 +1478,12 @@ val npuPackCensusRows = listOf(
 // DeviceGroupParityValidator requires every module with device-group targeting to support the same
 // set of groups, which a MediaTek pair can never share with npu_small/npu_turbo. So each module
 // holds ONE payload directory named after the pack, assets/<module>/ (delivered as itself), carrying
-// exactly its part's entry — plus metadata.json in the pair's first part, which lists both — plus
-// the tracked .gitkeep anchor, and no #group_ folder at all. There is no default variant to keep
-// empty: nothing targets, and the census gate is what decides which device fetches these.
+// exactly its part's entry — plus metadata.json in the pair's first part, which lists both — and
+// NOTHING ELSE: no anchor file (P3a — the asset-pack plugin zips src/main/assets whole, with no
+// filter and no DSL to add one, so the tracked .gitkeep these directories carried until P3a shipped
+// as a zero-byte asset, sheet §8 of the 2026-09-24 APU sheet), and no #group_ folder at all. There
+// is no default variant to keep empty: nothing targets, and the census gate is what decides which
+// device fetches these.
 //
 // THE PARTS TABLE: one row per PART — module, census family, the one delivery name it carries, its
 // exact bytes, and whether metadata.json rides in it. The values are NpuFleetCensus.artifacts' own
@@ -1537,7 +1540,9 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
             }
         }
         // (P2-5) THE UNTARGETED PARTS: one payload directory per module, exactly its part's entry
-        // (+ metadata.json in part 1) + the anchor, and nothing that looks like a group variant.
+        // (+ metadata.json in part 1), and nothing that looks like a group variant. (P3a) And no
+        // anchor: whatever sits in src/main/assets ships in the pack, so the listing below is the
+        // delivered pack's listing — its payload files and nothing else.
         for (row in npuPackPartRows) {
             val module = row[0] as String
             val familyId = row[1] as String
@@ -1556,7 +1561,7 @@ val verifyNpuPacks = tasks.register("verifyNpuPacks") {
                     "else, but it also carries $beside"
             }
             val listed = (payloadDir.listFiles() ?: emptyArray()).map { it.name }.sorted()
-            val expected = (listOf(name, ".gitkeep") +
+            val expected = (listOf(name) +
                 if (carriesMetadata) listOf("metadata.json") else emptyList()).sorted()
             if (listed != expected) {
                 problems += "$module/assets/$module: carries $listed; this part is exactly $expected"

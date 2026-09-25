@@ -52,10 +52,12 @@ import javax.xml.parsers.DocumentBuilderFactory
  * UNTARGETED modules of its own family (`npu_turbo_mt6989_enc` / `_dec`): bundletool's
  * `DeviceGroupParityValidator` requires every group-targeted module to support the same set of
  * groups, so a MediaTek variant can never sit beside the Qualcomm modules' six. Each untargeted
- * module is one payload directory named after the pack — its part's entry, `metadata.json` in
- * part 1, the tracked `.gitkeep` — with no group folder; its family renders into no XML group;
- * and the census gate alone decides who fetches it. The tests at the bottom hold that second
- * rule.
+ * module is one payload directory named after the pack — its part's entry and `metadata.json` in
+ * part 1, and nothing else — with no group folder; its family renders into no XML group; and the
+ * census gate alone decides who fetches it. The tests at the bottom hold that second rule. (P3a:
+ * the tracked `.gitkeep` that anchored each payload directory is gone — the asset-pack plugin
+ * zips `src/main/assets` whole, with no filter and no DSL to add one, so it shipped in the pack
+ * as a zero-byte asset; [aDeliveredUntargetedPackHoldsExactlyItsPayloadFiles] holds its absence.)
  *
  * No JVM test can run a Gradle bundle build or call Play, so the build-side halves are
  * SOURCE pins (the L6 split); the census side executes. Every file this class reads is in
@@ -704,9 +706,10 @@ class NpuPackLayoutTest {
     fun eachUntargetedModuleIsOnePayloadDirectoryWithTheAnchorAndNoGroupFolder() {
         // THE UNTARGETED LAYOUT RULE: src/main/assets/ holds ONE directory, named after the pack
         // (the 4.2 F8 rule — no entry path can clash across modules — and exactly what
-        // deliveredEntryDirs reads on the device), and its tracked .gitkeep proves it exists in a
-        // clean clone. No #group_ folder of any kind: that is what keeps bundletool's
-        // DeviceGroupParityValidator from counting these modules at all.
+        // deliveredEntryDirs reads on the device). Since P3a it is a build artifact end to end —
+        // placed by build-local, with no tracked anchor in it (see below). No #group_ folder of
+        // any kind: that is what keeps bundletool's DeviceGroupParityValidator from counting
+        // these modules at all.
         for ((_, part) in untargetedParts) {
             val module = part.packName
             val assets = repoFile("$module/src/main/assets")
@@ -716,7 +719,16 @@ class NpuPackLayoutTest {
                 (assets.listFiles() ?: emptyArray()).map { it.name }.sorted()
             )
             val names = (File(assets, module).listFiles() ?: emptyArray()).map { it.name }
-            assertTrue("the payload directory's .gitkeep anchor is present: $names", ".gitkeep" in names)
+            // RE-SPECCED AT P3a (the brief's "small"): this asserted the tracked .gitkeep anchor
+            // PRESENT. The asset-pack plugin zips src/main/assets whole — no filter, no DSL to add
+            // one — so that anchor shipped in the AAB as a zero-byte asset (the packaging probe of
+            // 2026-09-25, sheet §8). It left the packaged tree; this now guards its ABSENCE, and
+            // aDeliveredUntargetedPackHoldsExactlyItsPayloadFiles holds the whole listing.
+            assertTrue(
+                "the payload directory carries no .gitkeep anchor — everything in src/main/assets " +
+                    "ships in the pack: $names",
+                ".gitkeep" !in names
+            )
             assertTrue(
                 "and nothing in it looks like a group variant: $names",
                 names.none { it.contains("#group_") }
@@ -729,15 +741,21 @@ class NpuPackLayoutTest {
         for ((_, part) in untargetedParts) {
             val module = part.packName
             val lines = read("$module/.gitignore").lines().map { it.trim() }
+            // RE-SPECCED AT P3a: this pinned `src/main/assets/$module/*` plus the anchor's
+            // re-include, `!src/main/assets/$module/.gitkeep`. The anchor left the packaged tree
+            // (the asset-pack plugin zips src/main/assets whole, so it shipped as a zero-byte
+            // asset — sheet §8), so the wall is the whole tree and nothing in it is re-included.
             assertEquals(
-                "$module/.gitignore walls the payload directory's contents with the LINE " +
-                    "`src/main/assets/$module/*` — NeuroPilot bytecode must never enter a repo with a " +
-                    "public remote, and the root walls do not cover .bin",
-                1, lines.count { it == "src/main/assets/$module/*" }
+                "$module/.gitignore walls the WHOLE packaged tree with the LINE `src/main/assets/` — " +
+                    "NeuroPilot bytecode must never enter a repo with a public remote, the root " +
+                    "walls do not cover .bin, and every file under that tree ships in the pack",
+                1, lines.count { it == "src/main/assets/" }
             )
             assertEquals(
-                "…and re-includes the anchor by the LINE `!src/main/assets/$module/.gitkeep`",
-                1, lines.count { it == "!src/main/assets/$module/.gitkeep" }
+                "…and re-includes NOTHING: a `!` line would make a file in the packaged tree " +
+                    "committable, and whatever is committed there is delivered to every device " +
+                    "that fetches the pack",
+                0, lines.count { it.startsWith("!") }
             )
         }
     }
@@ -764,14 +782,21 @@ class NpuPackLayoutTest {
                 "before every bundle packaging task",
             1, count(appGradle, "for (row in npuPackPartRows) {")
         )
+        // RE-SPECCED AT P3a: the expected listing carried the anchor (`listOf(name, ".gitkeep")`).
+        // The anchor left the packaged tree, so the gate's listing is the delivered pack's.
         assertEquals(
-            "the untargeted part is exactly its entry (+ metadata.json in part 1) + the anchor",
+            "the untargeted part is exactly its entry (+ metadata.json in part 1) — no anchor, " +
+                "because whatever the payload directory holds ships in the pack",
             1,
             count(
                 appGradle,
-                "val expected = (listOf(name, \".gitkeep\") +\n" +
+                "val expected = (listOf(name) +\n" +
                     "                if (carriesMetadata) listOf(\"metadata.json\") else emptyList()).sorted()"
             )
+        )
+        assertEquals(
+            "…and the anchor's spelling is gone from the untargeted rule",
+            0, count(appGradle, "listOf(name, \".gitkeep\")")
         )
         assertEquals(
             "…in the ONE payload directory, with nothing beside it",
@@ -785,6 +810,48 @@ class NpuPackLayoutTest {
             0,
             untargetedParts.sumOf { (_, part) -> count(appGradle, "listOf(\"${part.packName}\", \"soc_") }
         )
+    }
+
+    /**
+     * A DELIVERED UNTARGETED PACK HOLDS EXACTLY ITS PAYLOAD FILES (P3a).
+     *
+     * The packaging probe of 2026-09-25 (`docs/measurements/2026-09-24-tab-apu-turbo-encoder.md`
+     * §8) opened the bundle and found each mt6989 module carrying `.gitkeep` beside its payload —
+     * a zero-byte asset, harmless to the installer (which reads its entries by name), and a file
+     * nobody asked Play to deliver. The cause is AGP's, and it is why the fix is a MOVE rather
+     * than a filter: the asset-pack plugin publishes `src/main/assets` whole (`AssetPackPlugin`
+     * adds that directory as the pack's artifact, and `AssetPackPreBundleTaskRunnable` zips it with
+     * no filter), and `assetPack { }` has no `androidResources`/`aaptOptions` to add one —
+     * `AssetPackExtension` is `packName` + `dynamicDelivery` (AGP 8.13.2, read out of the jars).
+     * So the tree the plugin zips IS the delivered pack, and this walks all of it: every file
+     * under `<module>/src/main/assets/`, recursively, is one of the part's payload files at
+     * `<module>/<name>` — the part's entry, and `metadata.json` in part 1 — and every payload file
+     * is there. The tree is a build artifact (build-local places it; the module's `.gitignore`
+     * walls it whole), read from this checkout's placed payload like the targeted rule above.
+     */
+    @Test
+    fun aDeliveredUntargetedPackHoldsExactlyItsPayloadFiles() {
+        for ((artifact, part) in untargetedParts) {
+            val module = part.packName
+            val tree = File(repoFile(module), "src/main/assets")
+            assertTrue(
+                "$module/src/main/assets is not placed. Since P3a it is a build artifact end to end " +
+                    "(no tracked anchor): place it with `python tools/build_asset_packs.py build-local`",
+                tree.isDirectory
+            )
+            val shipped = tree.walkTopDown().filter { it.isFile }
+                .map { it.relativeTo(tree).path.replace('\\', '/') }
+                .sorted()
+                .toList()
+            val payload = (part.entries.map { "$module/${it.fileName}" } +
+                if (artifact.parts.first() == part) listOf("$module/${NpuPackMetadata.ENTRY_NAME}") else emptyList())
+                .sorted()
+            assertEquals(
+                "$module's packaged tree — what the asset-pack plugin zips into the pack, whole — is " +
+                    "exactly the part's payload files: no anchor, no stray",
+                payload, shipped
+            )
+        }
     }
 
     // ------------------------------------------------------------------ the LOCAL source (P2-5)

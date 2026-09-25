@@ -10,8 +10,9 @@
 //
 // The payload is a BUILD artifact placed by `python tools/build_asset_packs.py build-local` and
 // re-checked by :app's verifyNpuPacks before every bundle build. The committed tree carries only
-// this file, the .gitignore that keeps the payload uncommittable, and the payload directory's
-// .gitkeep anchor.
+// this file and the .gitignore that keeps the whole packaged tree, src/main/assets/,
+// uncommittable — no anchor file since P3a, for the reason npu_turbo_mt6989_enc's build file
+// states: the plugin zips src/main/assets whole, so a delivered pack holds exactly its payload.
 plugins {
     id("com.android.asset-pack")
 }
