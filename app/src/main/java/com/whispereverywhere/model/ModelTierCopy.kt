@@ -487,7 +487,7 @@ object ModelTierCopy {
      *
      * **THE SPEED CLAIM ON MEDIATEK FAMILIES — ruled 2026-09-25: accuracy only** (plan P3-2;
      * design §2.8 and §7 q3). The owner, at the end of the Tab S10+ ship session of 4.16.0/113,
-     * with this card in front of him: *"the MediaTek speed claim copy is fine for now."* So the
+     * in his words: *"the MediaTek speed claim copy is fine for now."* So the
      * card keeps its accuracy-only headline ("Best AI-chip accuracy") and body exactly as they
      * are, and carries NO speed claim — no headline "fastest", no body speed word. The reason is
      * the measurement above: on the Tab S10+ the CPU's small model commits in ~1.2 s (1,217 ms)
