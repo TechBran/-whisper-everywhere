@@ -34,6 +34,7 @@ import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuImportController
 import com.whispereverywhere.npu.NpuPackController
 import com.whispereverywhere.npu.NpuPackFetch
+import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.npu.NpuTierStatus
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel
 import com.whispereverywhere.ui.onboarding.ModelDownloadViewModel.DownloadState
@@ -182,6 +183,14 @@ fun OnboardingModelScreen(
             }.toMap()
         }
     }
+
+    // (P3a, the MediaTek APU tier) THE DEVICE'S CENSUS FAMILY, for the card copy: every card here
+    // renders ModelTierCopy.forIdOn(id, family) — a MediaTek family reads its own turbo card (no
+    // speed claim; the Qualcomm one is false on the Tab S10+) and every gated card's badge states
+    // the family's pair. The family memo is a pure table lookup (the flow's refresh sentence reads
+    // it on Main the same way), so it is remembered here rather than produced: the card must never
+    // render one frame of another vendor's claim while a producer is in flight.
+    val npuFamily: NpuSocFamily? = remember { app.npuSocFamily }
 
     // 4.2 F7 — THE FETCH AFFORDANCE's state, mirrored from the process-scoped owner (F5). The
     // composition may not own a ~1 GB fetch any more than it may own a 338 MB import (the
@@ -413,6 +422,8 @@ fun OnboardingModelScreen(
                     refusal = fetchRefusal?.takeIf { it.first == model.id }?.second,
                     // The honest size where the family's census answers; catalog otherwise.
                     pairBytes = censusPairBytes[model.id],
+                    // (P3a) The card this device's family reads, and its family-sized badge.
+                    family = npuFamily,
                     // 4.2 F7: a fetchable card's body tap FETCHES — the same one start site as
                     // the Get button — never the URL download, whose sink refuses gated tiers.
                     // Every other card keeps today's select.
@@ -640,6 +651,9 @@ private fun NpuImportPanel(
  *        round 1, I-1), or null. A tap that changes nothing must still say so.
  * @param pairBytes the device family's measured pair size from the census, or null where the
  *        family cannot answer — the badge then falls back to the catalog's approximation.
+ * @param family the device's census family, or null off the census (P3a) — the card copy is
+ *        `ModelTierCopy.forIdOn(model.id, family)`: the family's own card (a MediaTek family's
+ *        turbo card carries no speed claim) with the family's own pair on its size chip.
  * @param onFetch starts (or retries) the Play fetch of this tier's pack (4.2 F7).
  * @param recovery the decline's CPU-recovery tap (4.3), or null when this card does not need one.
  *        Non-null EXACTLY when [unavailableNote] is the no-fallback arm — both come from
@@ -662,6 +676,7 @@ private fun ModelTierCard(
     fetch: NpuPackFetch.FetchState?,
     refusal: String?,
     pairBytes: Long?,
+    family: NpuSocFamily?,
     onSelect: () -> Unit,
     onRetry: () -> Unit,
     onImport: () -> Unit = {},
@@ -672,7 +687,9 @@ private fun ModelTierCard(
     // the speed-vs-accuracy position, the badges make language coverage impossible to miss, the
     // body is the honest one-liner. Null only for a tier without copy (ModelTierCopyTest pins
     // that every pickable tier has some), which falls back to the old catalog-scope row.
-    val copy = ModelTierCopy.forId(model.id)
+    // (P3a) The card THIS DEVICE'S FAMILY reads — never the family-blind forId, which on a
+    // MediaTek row would render the Qualcomm turbo card's speed claim, false on the Tab S10+.
+    val copy = ModelTierCopy.forIdOn(model.id, family)
     val downloading = state as? DownloadState.Downloading
     val verifying = state is DownloadState.Verifying
     val error = state as? DownloadState.Error

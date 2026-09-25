@@ -872,6 +872,13 @@ private fun EnginesStep(
     // for the step in a remember — it reads Play's delivery state and the disk — and the answer
     // does not depend on the tier pick, so the choose phase may quote it too.
     val voiceClause = remember { vm.voiceSourceClause() }
+    // (P3a, the MediaTek APU tier) THE DEVICE'S CENSUS FAMILY: the choose phase's cards are
+    // ModelTierCopy.forIdOn(id, family) — a MediaTek family reads its own turbo card, with no
+    // speed claim, and every gated card's badge states the family's pair. The memo is a pure
+    // table lookup, Main-safe (the refresh sentence reads it the same way), so a remember and not
+    // a producer: a card must never render a frame of another vendor's claim while a producer is
+    // in flight.
+    val npuFamily = remember { WhisperEverywhereApp.getInstance().npuSocFamily }
 
     if (speech is EngineState.Pending) {
         // ---- choose phase: nothing downloads until the user has made an informed pick.
@@ -993,7 +1000,7 @@ private fun EnginesStep(
             .forEach { model ->
                 TierChoiceCard(
                     model = model,
-                    copy = ModelTierCopy.forId(model.id),
+                    copy = ModelTierCopy.forIdOn(model.id, npuFamily),
                     steered = model.id == steerId,
                     selected = pickedTierId == model.id,
                     onClick = { onPick(model.id) },

@@ -558,6 +558,9 @@ class ChooserSteerWiringPinTest {
     fun theGuidedFlowCardCallIsFullyNamedSoSteeredCannotTransposeWithSelected() {
         // `steered` and `selected` are adjacent Booleans. A positional call compiles, passes the
         // whole suite, and swaps the badge with the highlight. The named form IS the guard.
+        // (P3a: the copy is the card THIS DEVICE'S FAMILY reads — forIdOn(id, family) — so a
+        // MediaTek row never renders the Qualcomm turbo card's speed claim; ModelTierCopyTest's
+        // TODO(owner) pin holds both surfaces to it. The named-argument guard is unchanged.)
         assertEquals(
             "TierChoiceCard is called with every argument named, `steered` distinct from `selected`",
             1,
@@ -566,7 +569,7 @@ class ChooserSteerWiringPinTest {
                 block(
                     "                TierChoiceCard(",
                     "                    model = model,",
-                    "                    copy = ModelTierCopy.forId(model.id),",
+                    "                    copy = ModelTierCopy.forIdOn(model.id, npuFamily),",
                     "                    steered = model.id == steerId,",
                     "                    selected = pickedTierId == model.id,",
                     "                    onClick = { onPick(model.id) },",

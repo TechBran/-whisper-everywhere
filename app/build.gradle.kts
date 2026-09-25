@@ -737,6 +737,12 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/ui/screens/SettingsScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt",
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt",
+        // (P3a) ModelTierCopy.kt joins by the list's stated rule — membership follows what the
+        // tests READ. ModelTierCopyTest has read its KDoc since 4.9.1 (the evidence beside each
+        // card) and now also reads the MediaTek card's evidence and its TODO(owner); a comment-only
+        // edit to a plain Kotlin object compiles to a byte-identical class, so without this entry
+        // deleting the evidence block would leave the suite UP-TO-DATE and those pins green.
+        "src/main/java/com/whispereverywhere/model/ModelTierCopy.kt",
         // (4.4.0, Task 2b fix round 1, B2) HomeScreen.kt joins by the list's stated rule —
         // membership follows what the tests READ. TtsPackShellPinTest now pins Home's
         // missing-voice row as source: that it reads the Application's TtsModelManager (a
