@@ -30,13 +30,19 @@
 //     decoder's first step on zeroed caches and refuses one no APU step comes near.
 //   * THE DRIVER IS CHECKED BEFORE ANY MODEL IS OPENED (the owner's ruling, design §2.3), and the
 //     chip is checked against the file's own LiteRtStamp before LiteRT sees the file.
+//   * THE MODELS ARE MAPPED, NOT COPIED (4.16.1, the Tab S10+ ship sheet's F2). Each file is mapped
+//     read-only and handed to LiteRtCreateModelFromBuffer, so its pages stay file-backed and leave under
+//     pressure without a swap write. LiteRtCreateModelFromFile - which copies every DISPATCH_OP's
+//     bytecode onto the native heap, 1.62 GB of cold anonymous memory on this pair - is the fallback
+//     (openModelLocked says what was read where, model_map.h how).
 //
 // PROCESS STATE VERSUS SESSION STATE, and the line between them is the lifecycle rule of design
 // §2.6. The Neuron adapter handles (the walk's dlopen: 169-239 ms at P1's device gate), the
 // libLiteRt.so handle and the LiteRtEnvironment are created at most once per process and NEVER
 // destroyed: there is no LiteRtDestroyEnvironment in the symbol table below and no dlclose anywhere
-// in this file. nativeRelease frees the compiled models, their options, the models and every tensor
-// buffer - the session - so a re-arm after a trim pays the restores and never re-loads the adapter.
+// in this file. nativeRelease frees the compiled models, their options, the models, the two mappings
+// and every tensor buffer - the session - so a re-arm after a trim pays the restores and never
+// re-loads the adapter.
 // (P0's "5 s adapter wait" was LiteRT's magic-number read through libneuron_sys_util.mtk.so, which
 // the product does not declare: the device gate saw no wait at all. Sheet §4b, design §2.3.)
 //
@@ -68,6 +74,7 @@
 
 #include "band_scan.h"
 #include "litert_stamp.h"
+#include "model_map.h"
 
 #if !defined(__has_include)
 #error "compiler must support __has_include"
@@ -126,10 +133,15 @@ std::string dlErr() {
 // LiteRtCreateManagedTensorBufferFromRequirements, for the same reason and a worse failure: in 2.1.1
 // it gives the buffer the requirements' strides, which the MediaTek dispatch refuses to register
 // (createBufferLocked says how, and what is called instead).
+//
+// The two model loaders sit side by side: LiteRtCreateModelFromBuffer (4.16.1; exported as
+// LiteRtCreateModelFromBuffer@@VERS_1.0 by the same 6ddc1b3d... file) is the one openModelLocked
+// tries first, over a read-only mapping; LiteRtCreateModelFromFile is its fallback.
 #define LITERT_SYMBOLS(X)                                   \
     X(LiteRtGetStatusString)                                \
     X(LiteRtCreateEnvironment)                              \
     X(LiteRtCreateModelFromFile)                            \
+    X(LiteRtCreateModelFromBuffer)                          \
     X(LiteRtDestroyModel)                                   \
     X(LiteRtGetNumModelSignatures)                          \
     X(LiteRtGetModelSignature)                              \
@@ -599,6 +611,12 @@ constexpr int32_t kSpecialsAboveLangBand = 6;
 struct Slot {
     const char *label = "";
     LiteRtModel model = nullptr;
+    /// The read-only mapping [model] was made from (LiteRtCreateModelFromBuffer), or empty when LiteRT's
+    /// file loader made it. It must outlive the model, so only releaseSlotLocked releases it - after
+    /// LiteRtDestroyModel.
+    model_map::Mapping map;
+    /// Which loader made [model]: model_map::Via::Mapped or ::File (None before the open).
+    model_map::Via via = model_map::Via::None;
     LiteRtOptions options = nullptr;
     LiteRtCompiledModel compiled = nullptr;
     /// The set its options asked for (kEncoderAccelerators / kDecoderAccelerators), for the lines.
@@ -849,15 +867,53 @@ bool sameType(const LiteRtRankedTensorType &a, const LiteRtRankedTensorType &b) 
 // ---------------------------------------------------------------- models, signatures, IO
 
 /// Opens one model, finds its signature by key, and reads every IO tensor's name and ranked type.
-std::string openModelLocked(Slot &slot, const std::string &path, const char *sigKey) {
+///
+/// THROUGH A READ-ONLY MAPPING FIRST (the Tab S10+ ship sheet's F2; model_map::loadPreferMapped), with
+/// LiteRT's file loader as the fallback - and, with [allowMap] false, as the only loader: restoreLocked's
+/// re-open after the dispatch refused a mapped model. What the file loader costs, from the v2.1.1 source
+/// (litert/core/model/model_load.cc, LoadModelFromFile): it maps the file too (TFLite's MMAPAllocation,
+/// PROT_READ), then COPIES every DISPATCH_OP's bytecode into an owned heap buffer attached to the op - a
+/// copy only model serialization reads (FindOpAsset's one caller is model_serialize.cc), because the
+/// dispatch restores from the model's own bytes at the op's bytecode offset. On this pair that is
+/// 1,302,604,120 B (the encoder's one DISPATCH_OP is its whole file) + 317,005,992 B (the decoder's) of
+/// anonymous memory, cold from the restore on and swappable only; the sheet found 3.23 GB of native heap
+/// in zram. LiteRtCreateModelFromBuffer copies nothing ("The caller must ensure that the buffer remains
+/// valid for the lifetime of the model", litert/c/litert_model.h), so the slot holds the mapping until
+/// releaseSlotLocked, after LiteRtDestroyModel, and the model's pages stay file-backed.
+std::string openModelLocked(Slot &slot, const std::string &path, const char *sigKey, bool allowMap = true) {
     const auto t0 = Clock::now();
-    LiteRtStatus s = rt.api.LiteRtCreateModelFromFile(path.c_str(), &slot.model);
-    if (s != kLiteRtStatusOk || !slot.model) {
+    const auto fromBuffer = [&slot](const void *addr, size_t size) -> std::string {
+        const LiteRtStatus s = rt.api.LiteRtCreateModelFromBuffer(addr, size, &slot.model);
+        if (s == kLiteRtStatusOk && slot.model) return "";
+        slot.model = nullptr;
+        return "LiteRtCreateModelFromBuffer(" + std::to_string(size) + " B mapped): " + st(s);
+    };
+    const auto fromFile = [&slot, &path]() -> std::string {
+        const LiteRtStatus s = rt.api.LiteRtCreateModelFromFile(path.c_str(), &slot.model);
+        if (s == kLiteRtStatusOk && slot.model) return "";
         slot.model = nullptr;
         return std::string(slot.label) + " LiteRtCreateModelFromFile(" + path + "): " + st(s);
+    };
+    std::string why;
+    int advice = 0;
+    std::string err;
+    if (allowMap) {
+        err = model_map::loadPreferMapped(path, &slot.map, fromBuffer, fromFile, &slot.via, &why, &advice);
+    } else {
+        err = fromFile();
+        if (err.empty()) slot.via = model_map::Via::File;
+    }
+    if (!err.empty()) return err;
+    if (allowMap && slot.via == model_map::Via::File) {
+        LOGW("%s: not opened through a mapping (%s); LiteRT's file loader instead, whose bytecode copy stays "
+             "on the native heap", slot.label, why.c_str());
+    }
+    if (advice != 0) {
+        LOGW("%s: the compile pass's madvise answered %s - advice only, the load is unaffected", slot.label,
+             model_map::errnoText(advice).c_str());
     }
     LiteRtParamIndex nsig = 0;
-    s = rt.api.LiteRtGetNumModelSignatures(slot.model, &nsig);
+    LiteRtStatus s = rt.api.LiteRtGetNumModelSignatures(slot.model, &nsig);
     if (s != kLiteRtStatusOk) return std::string(slot.label) + " signatures: " + st(s);
     LiteRtSignature sig = nullptr;
     bool found = false;
@@ -913,8 +969,9 @@ std::string openModelLocked(Slot &slot, const std::string &path, const char *sig
             }
         }
     }
-    LOGI("%s: %s opened in %.0f ms, signature '%s' #%zu, %zu in / %zu out", slot.label, path.c_str(),
-         msSince(t0), sigKey, static_cast<size_t>(slot.sig), slot.inNames.size(), slot.outNames.size());
+    LOGI("%s: %s opened in %.0f ms via %s, signature '%s' #%zu, %zu in / %zu out", slot.label, path.c_str(),
+         msSince(t0), model_map::viaName(slot.via), sigKey, static_cast<size_t>(slot.sig), slot.inNames.size(),
+         slot.outNames.size());
     return "";
 }
 
@@ -1028,6 +1085,67 @@ std::string compileLocked(Slot &slot, double *ms) {
          accelName(slot.accelerators).c_str(), *ms,
          known ? (full ? "yes" : "no - the leftover ops run on LiteRT's CPU kernels") : "?");
     return "";
+}
+
+void releaseSlotLocked(Slot &slot);   // below, with the teardown: the one place a model and its mapping go
+
+/// ONE RESTORE, and the mapped model's fallback (model_map::compilePreferMapped): LiteRtCreateCompiledModel
+/// on the model as opened; if the dispatch refuses a MAPPED model, the slot is rebuilt through LiteRT's file
+/// loader - released (the model, then the mapping), re-opened, re-censused and given fresh options exactly
+/// as nativeInit did - and restored once more. A mapping that LiteRT or the dispatch will not take costs the
+/// file loader's heap copy and a second restore, never the tier. On success a slot that is still mapped
+/// gets the run phase's advice, NORMAL then COLD: the compile pass has read the file and the dispatch has
+/// the bytecode, so these pages go to the head of the reclaim queue (model_map.h says why never DONTNEED).
+std::string restoreLocked(Slot &slot, const std::string &path, const char *sigKey,
+                          const std::vector<TensorExpect> &ins, const std::vector<TensorExpect> &outs,
+                          LiteRtHwAcceleratorSet accelerators, int performanceMode, double *ms) {
+    std::string why;
+    const std::string err = model_map::compilePreferMapped(
+            slot.via, [&] { return compileLocked(slot, ms); },
+            [&] {
+                LOGW("%s: the restore refused the mapped model (%s); re-opening it through LiteRT's file loader",
+                     slot.label, why.c_str());
+                releaseSlotLocked(slot);
+                std::string e = openModelLocked(slot, path, sigKey, /*allowMap=*/false);
+                if (e.empty()) e = checkIoLocked(slot, ins, outs);
+                if (e.empty()) e = buildOptionsLocked(slot, accelerators, performanceMode);
+                return e;
+            },
+            &why);
+    if (!err.empty()) return err;
+    const int advice = model_map::adviseRunPhase(slot.map);
+    if (advice != 0) {
+        LOGW("%s: the run phase's madvise (NORMAL, COLD) answered %s - advice only; the pages age as they would "
+             "have", slot.label, model_map::errnoText(advice).c_str());
+    }
+    return "";
+}
+
+/// "%.0f" of [bytes] in MB (2^20 B), or "?" when mincore could not answer ([err] != 0).
+std::string residentMb(size_t bytes, int err) {
+    if (err != 0) return "?";
+    char b[32];
+    snprintf(b, sizeof(b), "%.0f", static_cast<double>(bytes) / (1024.0 * 1024.0));
+    return b;
+}
+
+/// THE MODELS' MEMORY, once per arm, after both restores: what each slot mapped (0 for a slot the file
+/// loader opened) and how much of it the compile pass left resident (mincore) - file-backed pages, advised
+/// COLD, which reclaim takes first and never writes to swap. The device's PSS/swap reading is the check
+/// that the copy the file loader makes is gone; this line says what replaced it.
+void logModelsLocked() {
+    size_t enc = 0, dec = 0;
+    const int encErr = model_map::residentBytes(g.enc.map, &enc);
+    const int decErr = model_map::residentBytes(g.dec.map, &dec);
+    LOGI("models: mapped %zu+%zu B, resident-after-compile %s MB (encoder %s MB via %s, decoder %s MB via %s)",
+         g.enc.map.size, g.dec.map.size, residentMb(enc + dec, encErr != 0 ? encErr : decErr).c_str(),
+         residentMb(enc, encErr).c_str(), model_map::viaName(g.enc.via), residentMb(dec, decErr).c_str(),
+         model_map::viaName(g.dec.via));
+    if (encErr != 0 || decErr != 0) {
+        const std::string e = encErr ? model_map::errnoText(encErr) : std::string("ok");
+        const std::string d = decErr ? model_map::errnoText(decErr) : std::string("ok");
+        LOGW("models: mincore answered %s (encoder) / %s (decoder); the mapped sizes stand", e.c_str(), d.c_str());
+    }
 }
 
 // ---------------------------------------------------------------- buffers from requirements
@@ -1689,13 +1807,36 @@ std::string checkTokenIdsLocked(const std::vector<int32_t> &ids, const char *wha
 
 // ---------------------------------------------------------------- teardown
 
+/// ONE SLOT'S TEARDOWN, in the only safe order: the compiled model, its options, the model - and the
+/// mapping the model was made from LAST. LiteRtCreateModelFromBuffer's buffer must outlive its model
+/// (litert/c/litert_model.h), and the model its compiled model ("The caller should keep the model alive
+/// until the CompiledModel is destroyed", litert/cc/litert_compiled_model.h), whose dispatch holds a
+/// pointer into the bytecode. The ONE place a model is destroyed or a mapping released: releaseLocked
+/// calls it for both slots - so every refused init, every re-arm and nativeRelease reach it - and
+/// restoreLocked's fallback for one. Safe on a partial slot and safe twice; the label survives.
+void releaseSlotLocked(Slot &slot) {
+    if (slot.compiled) rt.api.LiteRtDestroyCompiledModel(slot.compiled);
+    if (slot.options) rt.api.LiteRtDestroyOptions(slot.options);
+    if (slot.model) rt.api.LiteRtDestroyModel(slot.model);
+    const int unmapped = model_map::unmap(&slot.map);
+    if (unmapped != 0) {
+        LOGW("%s: munmap answered %s; the mapping is dropped regardless", slot.label,
+             model_map::errnoText(unmapped).c_str());
+    }
+    const char *label = slot.label;
+    slot = Slot{};
+    slot.label = label;
+}
+
 /// Frees THE SESSION - every tensor buffer, the requirement joins, both compiled models, their
-/// options and both models - and nothing else. The environment, libLiteRt.so and the Neuron adapter
-/// handles are process state and outlive every session (design §2.6): nothing here, or anywhere in
-/// this file, destroys the one or closes the others. Safe on a partial state and safe twice.
+/// options, both models and their two mappings - and nothing else. The environment, libLiteRt.so and
+/// the Neuron adapter handles are process state and outlive every session (design §2.6): nothing
+/// here, or anywhere in this file, destroys the one or closes the others. Safe on a partial state and
+/// safe twice.
 ///
 /// Buffers first, then the compiled models: the order the probe's e2eqc mode released in on every
-/// tablet run (t6-t11), i.e. the order that is known not to crash the v2.1.1 dispatch.
+/// tablet run (t6-t11), i.e. the order that is known not to crash the v2.1.1 dispatch. Then the
+/// decoder's slot before the encoder's, as ever, each ending with its mapping (releaseSlotLocked).
 void releaseLocked() {
     for (LiteRtTensorBuffer b : g.owned) {
         if (b) rt.api.LiteRtDestroyTensorBuffer(b);
@@ -1705,14 +1846,8 @@ void releaseLocked() {
         if (r) rt.api.LiteRtDestroyTensorBufferRequirements(r);
     }
     g.joined.clear();
-    for (Slot *slot : {&g.dec, &g.enc}) {
-        if (slot->compiled) rt.api.LiteRtDestroyCompiledModel(slot->compiled);
-        if (slot->options) rt.api.LiteRtDestroyOptions(slot->options);
-        if (slot->model) rt.api.LiteRtDestroyModel(slot->model);
-        const char *label = slot->label;
-        *slot = Slot{};
-        slot->label = label;
-    }
+    releaseSlotLocked(g.dec);
+    releaseSlotLocked(g.enc);
     g.mel = g.inputIds = g.positionIds = g.mask = g.logitsBuf = nullptr;
     g.melBytes = 0;
     g.cross.clear();
@@ -1770,11 +1905,13 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeProbe(
 /// Arms the session. First what needs no file - the spec scalars, then the process's state: the
 /// driver verdict (walking the adapter if no probe has), the runtime and the environment (once per
 /// process) - all judged BEFORE a live session is released. Then both files' LiteRtStamp against
-/// [socStamp], both models, the IO census, the options (the encoder on the NPU alone, the decoder on
-/// NPU | CPU, the MediaTek [performanceMode] passed through and inert on 2.1.1), both compiled models
-/// (the bytecode restores), every buffer typed and sized by the compiled models' requirements, and
-/// the APU check. [selfKvStrategy] picks how the decode loop advances the self-KV cache. Idempotent
-/// by releasing first - after everything that can be refused without the new files, never before.
+/// [socStamp], both models (each mapped read-only, LiteRT's file loader the fallback), the IO census,
+/// the options (the encoder on the NPU alone, the decoder on NPU | CPU, the MediaTek [performanceMode]
+/// passed through and inert on 2.1.1), both compiled models (the bytecode restores; a mapped model the
+/// dispatch refuses is re-opened through the file loader and restored again), the `models:` line,
+/// every buffer typed and sized by the compiled models' requirements, and the APU check.
+/// [selfKvStrategy] picks how the decode loop advances the self-KV cache. Idempotent by releasing
+/// first - after everything that can be refused without the new files, never before.
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(
         JNIEnv *env, jobject /* this */,
@@ -1869,13 +2006,22 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(
     if (!err.empty()) return refuse(err);
 
     // 3. Options - each model's own accelerator set - and the two restores. The first restore in a
-    //    process is where LiteRT's dispatch reaches the adapter - after a probe, only a refcount.
+    //    process is where LiteRT's dispatch reaches the adapter - after a probe, only a refcount. A
+    //    mapped model the restore refuses is re-opened through the file loader and restored once more
+    //    (restoreLocked), so a mapping LiteRT will not take costs memory, never the tier.
     double encMs = 0.0, decMs = 0.0;
     err = buildOptionsLocked(g.enc, kEncoderAccelerators, performanceMode);
     if (err.empty()) err = buildOptionsLocked(g.dec, kDecoderAccelerators, performanceMode);
-    if (err.empty()) err = compileLocked(g.enc, &encMs);
-    if (err.empty()) err = compileLocked(g.dec, &decMs);
+    if (err.empty()) {
+        err = restoreLocked(g.enc, encoderPath, kEncodeSignature, census.encIn, census.encOut, kEncoderAccelerators,
+                            performanceMode, &encMs);
+    }
+    if (err.empty()) {
+        err = restoreLocked(g.dec, decoderPath, kDecodeSignature, census.decIn, census.decOut, kDecoderAccelerators,
+                            performanceMode, &decMs);
+    }
     if (!err.empty()) return refuse(err);
+    logModelsLocked();
 
     // 4. Every buffer, typed and sized by the requirements and made unstrided.
     err = allocateLocked();
