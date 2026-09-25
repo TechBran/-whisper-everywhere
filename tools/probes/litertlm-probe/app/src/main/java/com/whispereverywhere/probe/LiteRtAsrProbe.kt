@@ -30,9 +30,11 @@ import java.security.MessageDigest
  *  - the prompt, the masks, the ladder and the guard constants come from the app's own `NpuDecodePolicy` over
  *    `WhisperTokens.LARGE_V3` - the call `NpuWhisperBackend.transcribe` makes, argument for argument.
  *
- * Sequence: probe (the adapter's 5 s, timed) -> init (runtime, environment, stamps, census, both restores,
- * buffers) -> for each round and each mel: encode -> [detect] -> decodeSegment -> release -> (rearm: init
- * again, one encode + decode, release - the re-arm after a trim, which must NOT pay the 5 s again).
+ * Sequence: probe (the adapter walk, timed: 169-239 ms at the first gate - with libneuron_sys_util.mtk.so absent
+ * from the merged manifest there is no 5 s wait, sheet §4b) -> init (runtime, environment, stamps, census, both
+ * restores, buffers, the APU check) -> for each round and each mel: encode -> [detect] -> decodeSegment -> release
+ * -> (rearm: init again, one encode + decode, release - the re-arm after a trim, which pays the restores and must
+ * not walk the adapter again).
  *
  * Logged per utterance: encode ms, detect ms, decode ms, steps, ms per step, the ids (timestamps included),
  * whether they equal the t8 reference, the timestamp pairing, the six stats, PSS. Native's `npu-debug: steptime`
@@ -61,8 +63,15 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         const val MEL_FRAMES = 3000
         const val DISPATCH = "libLiteRtDispatch_MediaTek.so"
 
-        /** The v2.1.1 release zip member (fetch_mediatek_runtime.py). AGP strips the copy it packages. */
+        /**
+         * The dispatch's two accepted identities - one v2.1.1 file, both 409,728 B. The release zip member
+         * (fetch_mediatek_runtime.py; the design's pin, §2.6) and the copy AGP packages into an APK's
+         * lib/arm64-v8a, whose strip rewrites bytes but not the size: that one is what P0(c) staged into
+         * files/litert_dispatch/ from the earlier probe APK, and what this APK's nativeLibraryDir would stage.
+         * Anything else is refused - the gate runs the pinned dispatch or none.
+         */
         const val DISPATCH_ZIP_SHA256 = "9e963c56a65b6146b0e94aed82dd0f73dbaee6805fc6ae090580565b57680706"
+        const val DISPATCH_APK_SHA256 = "f47bd9c02a6a5830e4c78c67236494b96d7ae20f53fe09f8a6f15cd38dc28b5e"
 
         /** The tablet's ids in the app's decode mode (t8 / t8b / t11, identical across all three). */
         val REFERENCE: Map<String, IntArray> = mapOf(
@@ -97,28 +106,32 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         Metrics.snapshot(ctx, "before_load").let { res.put("mem_before_load", it) }
         var t0 = System.nanoTime()
         LiteRtAsrNative.nativeSetDiag(args.diag)   // the first touch: System.loadLibrary("litertasr")
-        res.put("load_ms", ms(t0))
+        putNum(res, "load_ms", ms(t0))
 
-        // ---- the driver check: the adapter's own 5 s, on this (background) thread
+        // ---- the driver check: the adapter walk (169-239 ms at P1's gate; no 5 s wait in this manifest), on this
+        // background thread
         t0 = System.nanoTime()
         val probe = LiteRtAsrNative.nativeProbe(dispatchDir, nld, args.wantMajor)
         val probeMs = ms(t0)
         ProbeLog.i("litertasr|probe_ms=${f1(probeMs)}|result=${probe.ifEmpty { "pass" }}")
-        res.put("probe_ms", probeMs)
+        putNum(res, "probe_ms", probeMs)
         res.put("probe", probe.ifEmpty { "pass" })
         check(probe.isEmpty()) { "nativeProbe refused: $probe" }
         Metrics.snapshot(ctx, "after_probe").let { res.put("mem_after_probe", it) }
 
         // ---- arm
         val initMs = arm(encPath, decPath, dispatchDir, nld)
-        res.put("init_ms", initMs)
+        putNum(res, "init_ms", initMs)
         res.put("epoch", LiteRtAsrNative.nativeEpoch())
         Metrics.snapshot(ctx, "after_init").let { res.put("mem_after_init", it) }
 
-        // ---- the utterances
+        // ---- the utterances. The array is part of the result from the start and the result is checkpointed after
+        // every utterance, so a late failure - or a native crash, which never reaches ProbeRunner's catch - keeps
+        // every utterance before it (the gate's first run lost both to a JSON error after the last decode).
         val mels = (args.mels ?: "jfk_mel128.bin,canary_mel128.bin").split(",").map { it.trim() }.filter { it.isNotEmpty() }
         val melData = mels.associateWith { loadMel(it) }
         val utterances = JSONArray()
+        res.put("utterances", utterances)
         val warmEncode = ArrayList<Double>()
         val warmStep = ArrayList<Double>()
         var index = 0
@@ -128,12 +141,14 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
             utterances.put(uo)
             if (uo.optBoolean("matches_reference", true).not()) allMatch = false
             if (index > 0) {
-                warmEncode.add(uo.getDouble("encode_ms"))
-                warmStep.add(uo.getDouble("step_ms_mean"))
+                uo.optDouble("encode_ms", Double.NaN).takeIf { it.isFinite() }?.let { warmEncode.add(it) }
+                uo.optDouble("step_ms_mean", Double.NaN).takeIf { it.isFinite() }?.let { warmStep.add(it) }
             }
             index++
+            res.put("checkpoint_after_utterance", index - 1)
+            ProbeRunner.writeResult(ctx, args.tag, res)
         }
-        res.put("utterances", utterances)
+        res.remove("checkpoint_after_utterance")
         res.put("warm_encode", Metrics.stats(warmEncode))
         res.put("warm_step", Metrics.stats(warmStep))
         res.put("all_match_reference", allMatch)
@@ -144,20 +159,21 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         val epoch = LiteRtAsrNative.nativeEpoch()
         t0 = System.nanoTime()
         LiteRtAsrNative.nativeRelease(epoch)
-        res.put("release_ms", ms(t0))
+        putNum(res, "release_ms", ms(t0))
         check(LiteRtAsrNative.nativeEpoch() == 0L) { "nativeRelease($epoch) left a live session" }
         Metrics.snapshot(ctx, "after_release").let { res.put("mem_after_release", it) }
         if (args.rearm) {
             val rearm = JSONObject()
-            rearm.put("init_ms", arm(encPath, decPath, dispatchDir, nld))
+            res.put("rearm", rearm)   // in the result from the start, like the utterances
+            val rearmInitMs = arm(encPath, decPath, dispatchDir, nld)
+            putNum(rearm, "init_ms", rearmInitMs, "rearm.")
             Metrics.snapshot(ctx, "after_rearm").let { rearm.put("mem_after_rearm", it) }
             val first = mels.first()
             rearm.put("utterance", runOne(first, melData.getValue(first), index, -1))
             val e2 = LiteRtAsrNative.nativeEpoch()
             LiteRtAsrNative.nativeRelease(e2)
             check(LiteRtAsrNative.nativeEpoch() == 0L) { "nativeRelease($e2) left a live session after the re-arm" }
-            res.put("rearm", rearm)
-            ProbeLog.i("litertasr|rearm|init_ms=${f1(rearm.getDouble("init_ms"))}|" +
+            ProbeLog.i("litertasr|rearm|init_ms=${f1(rearmInitMs)}|" +
                 "matches_reference=${rearm.getJSONObject("utterance").optBoolean("matches_reference", true)}")
         }
         Metrics.snapshot(ctx, "end").let { res.put("mem_end", it) }
@@ -181,18 +197,19 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
     /** One window: encode -> [detect] -> decodeSegment, exactly NpuWhisperBackend.transcribe's calls. */
     private fun runOne(name: String, mel: ByteBuffer, index: Int, round: Int): JSONObject {
         val uo = JSONObject()
+        val at = "utt=$index."   // the field path a non-finite value is logged under
         uo.put("index", index); uo.put("mel", name); uo.put("round", round)
         var t0 = System.nanoTime()
         val enc = LiteRtAsrNative.nativeEncode(mel)
         val encMs = ms(t0)
         check(enc.isEmpty()) { "nativeEncode refused: $enc" }
-        uo.put("encode_ms", encMs)
+        putNum(uo, "encode_ms", encMs, at)
 
         var detected = -1
         if (args.detect || args.lang == "auto") {
             t0 = System.nanoTime()
             detected = LiteRtAsrNative.nativeDetectLanguage()
-            uo.put("detect_ms", ms(t0))
+            putNum(uo, "detect_ms", ms(t0), at)
             uo.put("detected", detected)
             uo.put("detected_code", family.codeForToken(detected) ?: JSONObject.NULL)
         }
@@ -236,9 +253,9 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         uo.put("ids", JSONArray(ids.toList()))
         uo.put("tokens", written)
         uo.put("hit_eot", stats[NpuDecodeStats.TERMINATOR] == NpuDecodeStats.TERM_EOT)
-        uo.put("decode_ms", decMs)
+        putNum(uo, "decode_ms", decMs, at)
         uo.put("steps", steps)
-        uo.put("step_ms_mean", stepMs)
+        putNum(uo, "step_ms_mean", stepMs, at)
         // Not a number Kotlin can measure for either strategy, so not a number here: step_ms_mean includes the
         // advance of both kinds, and the breakdown is native's decode line (`run`, `io`, `kv ...`).
         uo.put("cache_copy_ms_mean", JSONObject.NULL)
@@ -253,10 +270,12 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         uo.put("timestamps_paired", paired)
         uo.put("timestamps_monotonic", monotonic)
         if (matches != null) uo.put("matches_reference", matches)
+        // The stats keep NpuDecodeStats' NaN for "not measured" (avg_logprob with nothing scored, entropy below the
+        // 32-id text window - jfk's 26 text ids): written as null by putNum, which names the field in the log.
         val st = JSONObject()
-        st.put("nsp", stats[NpuDecodeStats.NO_SPEECH_PROB].toDouble())
-        st.put("avg_logprob", stats[NpuDecodeStats.AVG_LOGPROB].toDouble())
-        st.put("entropy", stats[NpuDecodeStats.ENTROPY].toDouble())
+        putNum(st, "nsp", stats[NpuDecodeStats.NO_SPEECH_PROB].toDouble(), "${at}stats.")
+        putNum(st, "avg_logprob", stats[NpuDecodeStats.AVG_LOGPROB].toDouble(), "${at}stats.")
+        putNum(st, "entropy", stats[NpuDecodeStats.ENTROPY].toDouble(), "${at}stats.")
         st.put("rung", stats[NpuDecodeStats.RUNG].toInt())
         st.put("terminator", NpuDecodeStats.terminatorName(stats[NpuDecodeStats.TERMINATOR]))
         uo.put("stats", st)
@@ -264,7 +283,8 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         ProbeLog.i("litertasr|utt=$index|mel=$name|encode_ms=${f1(encMs)}|detect=${uo.optInt("detected", -1)}|" +
             "decode_ms=${f1(decMs)}|tokens=$written|steps=$steps|step_ms=${"%.2f".format(stepMs)}|" +
             "kvstrategy=${args.kvStrategy}|" +
-            "nsp=${"%.3f".format(st.getDouble("nsp"))}|lp=${"%.3f".format(st.getDouble("avg_logprob"))}|" +
+            "nsp=${f3(stats[NpuDecodeStats.NO_SPEECH_PROB])}|lp=${f3(stats[NpuDecodeStats.AVG_LOGPROB])}|" +
+            "ent=${f3(stats[NpuDecodeStats.ENTROPY])}|" +
             "rung=${st.getInt("rung")}|term=${st.getString("terminator")}|stamps_paired=$paired|" +
             "stamps_monotonic=$monotonic|matches_reference=${matches ?: "n/a"}")
         ProbeLog.i("litertasr|utt=$index|ids=" + ids.joinToString(","))
@@ -295,11 +315,26 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
                 "<dir>/libneuron_adapter.so) - it also holds $others"
         }
         val sha = sha256(target)
-        val note = if (sha == DISPATCH_ZIP_SHA256) "the v2.1.1 release zip member" else "not the zip member (AGP-stripped copy?)"
-        ProbeLog.i("litertasr|dispatch|dir=$dir|staged_now=$staged|bytes=${target.length()}|sha256=$sha|$note")
+        val identity = when (sha) {
+            DISPATCH_ZIP_SHA256 -> "zip-member"
+            DISPATCH_APK_SHA256 -> "apk-copy"
+            else -> "unknown"
+        }
+        val note = when (identity) {
+            "zip-member" -> "the v2.1.1 release zip member (the design's pin)"
+            "apk-copy" -> "the APK-packaged copy of the same v2.1.1 file (AGP's strip, same 409,728 B)"
+            else -> "NEITHER pinned identity"
+        }
+        ProbeLog.i("litertasr|dispatch|dir=$dir|staged_now=$staged|bytes=${target.length()}|sha256=$sha|" +
+            "identity=$identity|$note")
         res.put("dispatch_dir", dir)
         res.put("dispatch_sha256", sha)
+        res.put("dispatch_identity", identity)
         res.put("dispatch_staged_now", staged)
+        require(identity != "unknown") {
+            "$dir/$DISPATCH is ${target.length()} B sha256 $sha - neither the v2.1.1 zip member ($DISPATCH_ZIP_SHA256) " +
+                "nor its APK-packaged copy ($DISPATCH_APK_SHA256)"
+        }
     }
 
     /** The float mel exactly as pcmToMel leaves it: melBins x 3000 float32, direct, native order. */
@@ -316,8 +351,23 @@ class LiteRtAsrProbe(private val ctx: Context, private val args: ProbeArgs) {
         return b
     }
 
+    /**
+     * org.json refuses NaN and the infinities ("Forbidden numeric value" - the gate's first run died on the
+     * entropy stat's documented NaN after its last decode). A non-finite value is a data point here, never a
+     * crash: it is written as null and the field is named in the log, [path] first (`utt=0.stats.`).
+     */
+    private fun putNum(o: JSONObject, key: String, v: Double, path: String = "") {
+        if (v.isFinite()) {
+            o.put(key, v)
+        } else {
+            o.put(key, JSONObject.NULL)
+            ProbeLog.i("litertasr|nonfinite|field=$path$key|value=$v|written=null")
+        }
+    }
+
     private fun ms(t0: Long) = (System.nanoTime() - t0) / 1e6
     private fun f1(v: Double) = "%.1f".format(v)
+    private fun f3(v: Float) = if (v.isFinite()) "%.3f".format(v) else "nan"
     private fun fmtStats(o: JSONObject): String =
         if (o.has("n")) "n=${o.getInt("n")} mean=${f1(o.getDouble("mean_ms"))} median=${f1(o.getDouble("median_ms"))} " +
             "min=${f1(o.getDouble("min_ms"))} max=${f1(o.getDouble("max_ms"))} sd=${f1(o.getDouble("sd_ms"))}" else "n=0"

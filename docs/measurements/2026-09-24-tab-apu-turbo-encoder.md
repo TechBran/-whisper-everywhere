@@ -57,7 +57,8 @@ restore succeeds silently (the same two-path behaviour §1.2 of the 2026-09-09 s
 `FastAPU is available` follows at 15:51:27.240. So: ~5.0 s wait + ~1.3 s restore of the 1.27 GB bytecode + ~2 s
 of LiteRT model load/partition bookkeeping. **The wait is removable in principle** (research lane, 2026-09-24:
 it is `NeuronService_getNeuroPilotMagicNumber` in `libneuron_sys_util.mtk.so`; not declaring that library in the
-manifest may skip it) — untested.
+manifest may skip it) — untested here. P0's t7 seemed to refute it and P1b's device gate confirmed it: with the
+library really absent from the MERGED manifest there is no wait at all (§4b, the correction).
 
 **Memory:** RSS 3.2–3.4 GB right after create (the 1.28 GB file mapped + the restored network), 1.6–2.8 GB
 after warm; PSS 3.8–4.7 GB. On a 12 GB tablet this leaves room for the decoder (~0.9 GB f32 / ~0.45 GB fp16).
@@ -102,7 +103,40 @@ with the concat+slice cache update — no DynamicUpdateSlice, which MediaTek lac
   (n=50, sd 2.9, min 19.3, max 31.5; run-only 23.3), cold 23.4, create 5,608.5 ms (the same single 5 s wait + a
   0.6 s restore), RSS 1.1 GB. Hexagon's shipped turbo decoder is 10.08 ms/token (Fold6).
 
-## 4b. P0: the 5 s wait is the adapter's own, not the magic-number read
+## 4b. P0: the 5 s wait — read here as the adapter's own; CORRECTED at P1b's device gate: it was the magic-number read
+
+**Correction (2026-09-24, P1b's device gate — runs `p1b_litertasr_kv0` and `p1b_litertasr_kv1`, the probe built at
+478ecf2; logs on the MS-02 under `~/.androidbuild/probe-logs/`).** This section's conclusion was wrong. The 5 s was
+LiteRT v2.1.1's NeuroPilot magic-number read through `libneuron_sys_util.mtk.so` — §2's research-lane reading
+(`NeuronService_getNeuroPilotMagicNumber`) — and not the adapter's constructor, and the product's configuration
+never pays it:
+
+- **No wait, in either run: zero `Waiting for service` lines.** The driver line was `apu:
+  driver=libneuronusdk_adapter.mtk.so 8.2.26 want=8 devices=3 device=mtk-gpu+mtk-dsp+mtk-mdla walk=169ms query=0ms
+  pass` (`probe_ms=169.7`; the walk was 169–239 ms across the two runs), and that walk IS a `dlopen` of
+  `libneuronusdk_adapter.mtk.so`, the first in the process; `.9`, `mgvi` and `<dispatch dir>/libneuron_adapter.so`
+  did not load. Then: the environment in 1 ms, both files' stamps matched, the encoder opened in 1,729 ms and the
+  decoder in 297 ms, the encoder compiled on the NPU alone in 1,404 ms (fully accelerated) and the decoder on
+  NPU|CPU in 452 ms, 29 buffers (every dispatch buffer AHWB), the APU check's decoder step 35.6 ms — `init_ms`
+  **4,044.6** (kv0) / **3,665.4** (kv1) for the whole arm, against 8.3–8.9 s for t2–t7's first create alone. PSS
+  after init 5,494,090 kB (RSS 4,208,812).
+- **What differed from t7 is the MERGED manifest.** t7's probe had the `libneuron_sys_util.mtk.so` declaration
+  commented out of its SOURCE manifest, but the litert 2.1.1 AAR's own manifest declares it (with `.9` and `mgvi`)
+  and the merger put it back. The `system_exposed_libraries` line read below as "confirms it absent" was cut at
+  230 characters, before that library's name (the coordinator's re-read of the t7 log, 2026-09-24); the P0(c)-ii
+  build's line shows it present (§4c, t10/t11 — recorded there, without the conclusion). The P1b probe (2beb43b
+  onward) strips the three AAR declarations from the MERGED manifest (`stripAarMediatekDeclarations`, which fails
+  the build if one survives), so these two runs are the first in this project in which `libneuron_sys_util.mtk.so`
+  was really undeclared — and the wait went with it.
+- **The t7 timeline does not contradict this.** v2.1.1's adapter loader reads the magic number before its
+  candidate loop, so the read also falls between the dispatch load and `Loading MediaTek NeuronAdapter .so` — the
+  placement taken below for "inside the adapter's dlopen".
+- **What stands:** the candidate loop's last-wins rule (a source read, unaffected), and not declaring
+  `libneuron_sys_util.mtk.so` — which is what removes the wait, rather than the no-op it looked like. **What falls:**
+  "not removable from the app side", "paid once per process", and the design's need to hide 5 s behind a prewarm
+  (design §2.3, §2.9, §4 and §6 P0(a), corrected the same day).
+
+What was believed at P0, and why, as it was written:
 
 `t7_p0_nosysutil_enc_aot_npu` (probe rebuilt with `libneuron_sys_util.mtk.so` NOT declared; nativeloader's
 `system_exposed_libraries` line confirms it absent): the AOT encoder, `create` **8,456.8 ms**, exactly one
@@ -140,7 +174,8 @@ was the whole exposed set). One thing to note for the product: `libneuron_sys_ut
 exposed set although the source manifest no longer declares it — the litert 2.1.1 **AAR's own manifest**
 declares it (and `.9` and `mgvi`) and the merger added it back. The product ships no AAR (it extracts
 `libLiteRt.so` only), so its merged manifest carries exactly what it declares; the design pins the merged
-manifest for that reason. The 5 s adapter wait is present in every configuration.
+manifest for that reason. The 5 s wait was present in every configuration here — every one of which, it turned
+out, still had `libneuron_sys_util.mtk.so` merged in: that declaration WAS the wait (§4b, the correction).
 
 ## 5. END-TO-END: real speech through the pair, both on the APU — CORRECT
 

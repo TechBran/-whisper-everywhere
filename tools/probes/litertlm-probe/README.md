@@ -88,7 +88,10 @@ gradlew.bat :app:assembleDebug
 
 The staging script copies `liblitertasr.so` and `libc++_shared.so` out of the app's built APK (the app builds with
 `ANDROID_STL=c++_shared`) and `libLiteRt.so` 2.1.1 out of the litert AAR, refusing any `libLiteRt.so` whose sha256
-is not the pinned `6ddc1b3d…`.
+is not the pinned `6ddc1b3d…`. The probe itself refuses a `files/litert_dispatch/libLiteRtDispatch_MediaTek.so`
+that is neither of the dispatch's two identities — both the one v2.1.1 file, 409,728 B: the release zip member
+`9e963c56…` (the design's pin) or the copy AGP packages into an APK, `f47bd9c0…` (what P0(c) staged there) — and
+logs which one it found (`identity=zip-member|apk-copy`).
 
 Run it with the AOT pair and the two mels already in `files/` (push recipe above):
 
@@ -113,12 +116,15 @@ type), and its bytecode load hard-codes `NEURON_PRIORITY_HIGH`, `NEURON_PREFER_S
 boost hint of 100. Every run is already in `PreferSustainedSpeed`; the extra is passed through (the init line
 says `perfmode=N (inert on LiteRT 2.1.1 AOT)`) and a run per value measures nothing.
 
-Sequence: `nativeProbe` (the adapter walk — the 5 s — timed on its own) → `nativeInit` (runtime, environment,
-both files' `LiteRtStamp`, the IO census, both restores, the buffers, and the APU check: the decoder's first step
-on zeroed caches, refused over 250 ms) → per round and mel: `nativeEncode` → `nativeDetectLanguage`
-(`detect=false` skips it) → `nativeDecodeSegment` with the app's arguments → `nativeRelease` → with `rearm=true`
-(default) a second `nativeInit` + one window + release: the re-arm after a trim, which must pay the restores and NOT
-the 5 s. Extras: `kvstrategy` (0 | 1), `perfmode` (-1 default | 0..3, inert), `wantmajor` (8), `socstamp`
+Sequence: `nativeProbe` (the adapter walk, timed on its own — 169–239 ms at the first gate; with
+`libneuron_sys_util.mtk.so` stripped from the merged manifest there is no 5 s wait at all, sheet §4b) →
+`nativeInit` (runtime, environment, both files' `LiteRtStamp`, the IO census, both restores, the buffers, and the
+APU check: the decoder's first step on zeroed caches, refused over 250 ms) → per round and mel: `nativeEncode` →
+`nativeDetectLanguage` (`detect=false` skips it) → `nativeDecodeSegment` with the app's arguments →
+`nativeRelease` → with `rearm=true` (default) a second `nativeInit` + one window + release: the re-arm after a trim,
+which pays the restores and must not walk the adapter again. The result JSON is checkpointed after every
+utterance, and a non-finite number (the stats' documented NaN for "not measured") is written as `null` with a
+`litertasr|nonfinite|field=…` line. Extras: `kvstrategy` (0 | 1), `perfmode` (-1 default | 0..3, inert), `wantmajor` (8), `socstamp`
 (mt6989), `diag` (true: native `npu-debug: steptime` lines for each segment's first four steps and its last),
 `lang` (en | auto).
 
@@ -126,8 +132,9 @@ Read back: `PROBE litertasr|…` lines (probe/init ms, per-utterance encode/dete
 nsp/lp/rung/terminator, timestamp pairing, `matches_reference` against t8's ids) and on `WE-DIAG` the native
 `apu:` driver line, the `stamp=` lines, both restores with their accelerator sets, the `apu: decoder step … pass`
 line, the `buffers:` line (each kind's requirements and the type made: 2 = AHWB, 4 = DMA-BUF for everything a
-DISPATCH_OP touches, 1 = host memory for `input_ids` and `position_ids`), `decode: … step=… ms (run …, io …, kv …)`
-and, with diag, the bounded step times. The result JSON keeps `detok.py`'s `utterances[].ids` shape.
+DISPATCH_OP touches, 1 = host memory for `input_ids` and `position_ids`), `decode: … nsp=… lp=… ent=… step=… ms
+(run …, io …, kv …)` — an unmeasured stat printed as `nan(unmeasured: …)`, the advance as `kv re-bind, re-registered
+inside run` (0) or `kv copy N ms xC` (1, per copy) — and, with diag, the bounded step times. The result JSON keeps `detok.py`'s `utterances[].ids` shape.
 `mode=e2eqc` on the same pair is the Kotlin-API arm (a Kotlin copy per step).
 
 ## Utilization sampling (which unit actually ran — measurements §3.1, §3.2)

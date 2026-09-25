@@ -32,11 +32,13 @@
 //     chip is checked against the file's own LiteRtStamp before LiteRT sees the file.
 //
 // PROCESS STATE VERSUS SESSION STATE, and the line between them is the lifecycle rule of design
-// §2.6. The Neuron adapter handles (the 5 s dlopen), the libLiteRt.so handle and the
-// LiteRtEnvironment are created at most once per process and NEVER destroyed: there is no
-// LiteRtDestroyEnvironment in the symbol table below and no dlclose anywhere in this file.
-// nativeRelease frees the compiled models, their options, the models and every tensor buffer - the
-// session - so a re-arm after a trim pays the restore (~1.3 s + 0.9 s), never the adapter's 5 s.
+// §2.6. The Neuron adapter handles (the walk's dlopen: 169-239 ms at P1's device gate), the
+// libLiteRt.so handle and the LiteRtEnvironment are created at most once per process and NEVER
+// destroyed: there is no LiteRtDestroyEnvironment in the symbol table below and no dlclose anywhere
+// in this file. nativeRelease frees the compiled models, their options, the models and every tensor
+// buffer - the session - so a re-arm after a trim pays the restores and never re-loads the adapter.
+// (P0's "5 s adapter wait" was LiteRT's magic-number read through libneuron_sys_util.mtk.so, which
+// the product does not declare: the device gate saw no wait at all. Sheet §4b, design §2.3.)
 //
 // This is the first execution of any of it: the device gate is the probe app's mode=litertasr.
 
@@ -292,7 +294,7 @@ constexpr int kNeuronNoError = 0;
 ///     RTLD_NODELETE. On bionic the VERDICT is identical - a candidate loads here exactly when it
 ///     loads there: RTLD_LAZY is "Not supported on Android; Android always uses RTLD_NOW" (the NDK's
 ///     dlfcn.h), RTLD_LOCAL is 0 and the default, and RTLD_NODELETE changes only what an unload would
-///     do. That is what it is for: the handle, and the adapter's 5 s constructor, never go away.
+///     do. That is what it is for: the handle, and the adapter's initialisation, never go away.
 constexpr const char *kAdapterCandidates[] = {
     "libneuronusdk_adapter.mtk.so",
     "libneuronusdk_adapter.9.mtk.so",
@@ -305,7 +307,7 @@ constexpr const char *kMeasuredAdapter = "libneuronusdk_adapter.mtk.so";
 
 /// PROCESS STATE: the walk's result. Walked once; every handle that loaded is kept for the life of
 /// the process (RTLD_NODELETE, and never closed), so LiteRT's own dlopen of the same name later only
-/// raises a refcount instead of paying the adapter's 5 s constructor again (P0, run t7).
+/// raises a refcount instead of running the adapter's initialisation again.
 struct AdapterWalk {
     bool walked = false;
     std::string dispatchDir;
@@ -323,11 +325,12 @@ struct AdapterWalk {
 
 AdapterWalk adapter;
 
-/// Walks the candidates exactly once per process. THIS IS THE 5 s WAIT: dlopen of
-/// libneuronusdk_adapter.mtk.so runs MediaTek's own constructor, which waits on a binder service
-/// this ROM never registers before falling back to the apuware path (P0, run t7). Bionic holds its
-/// loader lock for all of it, so this belongs on a background thread and nowhere else (the design's
-/// Application.onCreate prewarm), and nothing else may dlopen meanwhile.
+/// Walks the candidates exactly once per process: 169-239 ms at P1's device gate (runs
+/// p1b_litertasr_kv0 / kv1), with no binder wait. P0 had read a 5 s wait here, inside the adapter's
+/// dlopen (run t7); it was LiteRT's NeuroPilot magic-number read through libneuron_sys_util.mtk.so,
+/// which every P0 build still declared through the litert AAR's manifest merge and the product does
+/// not declare at all (sheet §4b, design §2.3). Bionic holds its loader lock for the dlopens, so this
+/// still belongs on a background thread, never Main, and nothing else may dlopen meanwhile.
 void walkAdapterCandidatesLocked(const std::string &dispatchDir) {
     if (adapter.walked) return;
     adapter.walked = true;
@@ -664,6 +667,7 @@ struct AsrState {
     double runMs = 0.0;
     double ioMs = 0.0;
     double kvMs = 0.0;
+    uint32_t kvCopies = 0;   // strategy 1's copies this segment, so the line reports the copy's own ms
 
     /// The encode-validity flag, qnn_asr.cpp's: set only by a successful encode, cleared on entry to
     /// every encode, by release and by a fresh init, and NOT consumed by a decode or a detect.
@@ -1375,6 +1379,7 @@ std::string copySelfKvLocked() {
         if (unlockOut != kLiteRtStatusOk) return "unlock self-KV output " + std::to_string(j) + ": " + st(unlockOut);
     }
     g.kvMs += msSince(t0);
+    ++g.kvCopies;
     return "";
 }
 
@@ -1476,6 +1481,34 @@ std::string checkFiniteLocked(uint32_t position) {
     return "the decoder's logits hold " + std::to_string(bad) + " non-finite values at position " +
            std::to_string(position) + " (first at id " + std::to_string(first) +
            ") - an fp16 overflow or a broken bytecode restore; this segment falls back";
+}
+
+/// THE STATS' NON-FINITE CHECK, on the three the decode line prints (P1b device gate, run
+/// p1b_litertasr_kv0). Each is a finite number, or the NaN NpuDecodeStats documents for "not
+/// measured" - only where it documents it, and the same NaN qnn_asr.cpp writes in the same case
+/// (its `stats[kStatEntropy] = entropyMeasured ? ... : NAN`, printed there as `ent=nan`):
+///   nsp - always measured here (the SOT step always runs, over raw logits already checked finite);
+///   lp  - NaN exactly when nothing was scored (no text id and no EOT);
+///   ent - NaN exactly when the text-only window was never reached on the returned rung - e.g. jfk,
+///         whose 26 text ids never pass the 32-id window: the gate's `ent=nan` was this, not a 0/0.
+/// Anything else - an infinity, or a NaN where a value was measured - is a bug in this loop, and
+/// the segment fails with -4 like a non-finite logit rather than reaching the no-speech gate as
+/// "cannot measure". "" when every stat is in contract.
+std::string checkStatsLocked(const float *stats, bool lpMeasured, bool entMeasured) {
+    const struct { const char *name; float v; bool measured; } rows[] = {
+        {"nsp", stats[kStatNoSpeechProb], true},
+        {"lp", stats[kStatAvgLogprob], lpMeasured},
+        {"ent", stats[kStatEntropy], entMeasured},
+    };
+    for (const auto &r : rows) {
+        if (r.measured ? std::isfinite(r.v) : std::isnan(r.v)) continue;
+        char v[32];
+        snprintf(v, sizeof(v), "%f", static_cast<double>(r.v));
+        return std::string("the ") + r.name + " stat is " + v +
+               (r.measured ? " although it was measured" : " where the contract writes NaN (not measured)") +
+               " - a non-finite stat outside NpuDecodeStats' contract; this segment falls back";
+    }
+    return "";
 }
 
 // ---------------------------------------------------------------- mask, THEN argmax (float)
@@ -1698,11 +1731,11 @@ void releaseLocked() {
 // String return is "" on success or "stage: detail" on failure, the same text readable afterwards
 // from nativeLastError() - QnnAsrNative's convention, so the backend reads both engines one way.
 
-/// THE DRIVER CHECK, and the tier's warm-up (design §2.3). Walks LiteRT v2.1.1's adapter candidates
-/// once per process, keeping every handle, reads the winner's Neuron version and judges it against
-/// [wantMajor]; then loads libLiteRt.so and resolves every entry point, so a pass means the whole
-/// runtime is reachable. The first call waits ~5 s inside MediaTek's adapter constructor - call it
-/// from a background thread, never from Main - and every later call answers from the cached walk.
+/// THE DRIVER CHECK (design §2.3). Walks LiteRT v2.1.1's adapter candidates once per process,
+/// keeping every handle, reads the winner's Neuron version and judges it against [wantMajor]; then
+/// loads libLiteRt.so and resolves every entry point, so a pass means the whole runtime is reachable.
+/// The first call does the walk - 169-239 ms at P1's device gate, with bionic's loader lock held, so
+/// call it from a background thread, never from Main - and every later call answers from the cache.
 ///
 /// Creates no environment, opens no model (see Runtime::env for why the environment waits for init).
 extern "C" JNIEXPORT jstring JNICALL
@@ -1767,7 +1800,7 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(
     // adapter walk, the driver verdict, libLiteRt.so and the environment belong to the process, not
     // to the session, and none of them depends on the new files - so a caller naming the wrong
     // dispatch directory, or a driver this family refuses, costs an error string and never the
-    // working session. A probe normally ran at process start; if none did, this walk is the 5 s.
+    // working session. A probe normally ran at process start; if none did, the walk runs here.
     if (adapter.walked && adapter.dispatchDir != dispatchDir) {
         err = "probe: the adapter was walked against " + adapter.dispatchDir + ", not " + dispatchDir;
     }
@@ -1905,11 +1938,12 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeEncode(
 ///   * p(nospeech) at the SOT step and avg_logprob are computed in float with the floor at -inf and
 ///     the scale at 1.0 - never 0, so the no-speech gate is always live on this tier;
 ///   * positions 0..maskLen-2 execute (0..198) - the 199-slot window - and maskLen-1 never runs;
-///   * every step's raw logits are checked for non-finite values first.
+///   * every step's raw logits are checked for non-finite values first, and the three printed
+///     stats against NpuDecodeStats' contract last (checkStatsLocked), before anything is written.
 ///
 /// Returns the count written into [jOut] (0 = EOT first = silence), or < 0 with the reason in
 /// nativeLastError(): -1 arguments or state, -2 a run/lock failure, -3 every logit at the floor,
-/// -4 non-finite logits.
+/// -4 non-finite logits, or a non-finite stat outside the contract.
 extern "C" JNIEXPORT jint JNICALL
 Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
         JNIEnv *env, jobject /* this */, jintArray jPrompt, jintArray jSuppress,
@@ -2007,6 +2041,7 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
     g.runMs = 0.0;
     g.ioMs = 0.0;
     g.kvMs = 0.0;
+    g.kvCopies = 0;
     if (g.diag) {
         LOGDIAG("npu-debug: prompt ids=%s len=%u maxTokens=%d positions=0..%u vocab=%u mask=%u",
                 diagIdList(prompt, 8).c_str(), promptLen, maxTokens, lastPosition, g.vocab, g.maskLen);
@@ -2022,6 +2057,7 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
     double entropyLast = 0.0;
     int32_t distinctLast = 0;
     bool entropyMeasured = false;
+    int32_t textCountLast = 0;   // the returned rung's text ids - what the line says when ent is unmeasured
     size_t rungUsed = 0;
     float terminator = kTermEot;
     // The segment's last step, for the one steptime line after the ladder (kStepTimeLines).
@@ -2159,6 +2195,7 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
         }
 
         scored = scoredIds;
+        textCountLast = textCount;
         avgLogprob = scored > 0 ? sumLogprob / scored : 0.0;
         // whisper.cpp:7835 - re-decode hotter only when the model does not think the segment silent.
         const bool lowConfidence = scored > 0 && avgLogprob < static_cast<double>(logprobThold) &&
@@ -2177,8 +2214,9 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
     if (terminator != kTermCut) {
         terminator = hitEot ? kTermEot : (count >= maxTokens ? kTermBudget : kTermCap);
     }
-    if (count > 0) env->SetIntArrayRegion(jOut, 0, count, reinterpret_cast<const jint *>(out.data()));
 
+    // The two NaNs below are NpuDecodeStats' "not measured", qnn_asr.cpp's to the letter, and the
+    // non-finite check holds every printed stat to exactly that - BEFORE anything reaches the caller.
     float stats[kStatSize];
     stats[kStatNoSpeechProb] = noSpeechProb;
     stats[kStatAvgLogprob] = scored > 0 ? static_cast<float>(avgLogprob) : NAN;
@@ -2186,25 +2224,40 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(
     stats[kStatRung] = static_cast<float>(rungUsed);
     stats[kStatTerminator] = terminator;
     stats[kStatSteps] = static_cast<float>(stepsRun);
+    err = checkStatsLocked(stats, scored > 0, entropyMeasured);
+    if (!err.empty()) {
+        failure("decode: " + err);
+        return -4;
+    }
+    if (count > 0) env->SetIntArrayRegion(jOut, 0, count, reinterpret_cast<const jint *>(out.data()));
     env->SetFloatArrayRegion(jStats, 0, kStatSize, stats);
 
     const double ms = msSince(t0);
     const char *termName = terminator == kTermCut ? "cut" : (hitEot ? "eot" : (count >= maxTokens ? "count" : "cap"));
-    // The self-KV advance's share: strategy 1's copy is timed on the host; strategy 0's re-bind costs
-    // nothing there, and its price - the dispatch re-registering every re-bound buffer - is inside
-    // run, so it is named rather than printed as a zero it is not.
-    char kv[48];
+    // An unmeasured stat is printed as what it is - `nan(` and why - never as a bare `nan` that reads
+    // like a failed computation (the gate's `ent=nan` was taken for one: jfk's 26 text ids never
+    // reach the entropy window, which needs kEntropyWindow + 1).
+    char lp[48], ent[64];
+    if (scored > 0) snprintf(lp, sizeof(lp), "%.2f", stats[kStatAvgLogprob]);
+    else snprintf(lp, sizeof(lp), "nan(unmeasured: nothing scored)");
+    if (entropyMeasured) snprintf(ent, sizeof(ent), "%.2f", stats[kStatEntropy]);
+    else snprintf(ent, sizeof(ent), "nan(unmeasured: %d text ids, the window needs %d)", textCountLast,
+                  kEntropyWindow + 1);
+    // The self-KV advance's share: strategy 1's copy is timed on the host, per copy; strategy 0's
+    // re-bind costs nothing there, and its price - the dispatch re-registering every re-bound buffer -
+    // is inside run, so it is named rather than printed as a zero it is not.
+    char kv[64];
     if (g.selfKvStrategy == kSelfKvCopy) {
-        snprintf(kv, sizeof(kv), "kv copy %.2f", stepsRun ? g.kvMs / stepsRun : 0.0);
+        snprintf(kv, sizeof(kv), "kv copy %.2f ms x%u", g.kvCopies ? g.kvMs / g.kvCopies : 0.0, g.kvCopies);
     } else {
         snprintf(kv, sizeof(kv), "kv re-bind, re-registered inside run");
     }
-    LOGI("decode: %d tokens in %.1f ms (%.2f ms/token), terminated by %s nsp=%.2f lp=%.2f ent=%.2f "
+    LOGI("decode: %d tokens in %.1f ms (%.2f ms/token), terminated by %s nsp=%.2f lp=%s ent=%s "
          "rung=%zu steps=%u step=%.2f ms (run %.2f, io %.2f, %s)",
          count, ms, count > 0 ? ms / count : 0.0,
          terminator == kTermCut ? "the repetition cut" :
          (hitEot ? "EOT" : (count >= maxTokens ? "the token budget" : "the position cap")),
-         stats[kStatNoSpeechProb], stats[kStatAvgLogprob], stats[kStatEntropy],
+         stats[kStatNoSpeechProb], lp, ent,
          rungUsed, stepsRun, stepsRun ? ms / stepsRun : 0.0, stepsRun ? g.runMs / stepsRun : 0.0,
          stepsRun ? g.ioMs / stepsRun : 0.0, kv);
     if (g.diag && stepsRun > 0 && (rungUsed > 0 || lastStep.position >= kStepTimeLines)) {

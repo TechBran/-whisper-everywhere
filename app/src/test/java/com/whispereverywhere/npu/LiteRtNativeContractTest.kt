@@ -173,8 +173,9 @@ class LiteRtNativeContractTest {
      * **The LiteRT environment is never destroyed, and nothing is ever dlclose()d** (design §2.6).
      *
      * The environment, libLiteRt.so and the Neuron adapter handles are process state: the adapter's
-     * first dlopen is MediaTek's own 5 s constructor, and a re-arm after a trim must pay only the
-     * bytecode restores. The environment also cannot be rebuilt against a different dispatch
+     * first dlopen is its initialisation (169-239 ms at P1's device gate; P0's "5 s" was the
+     * sys_util magic-number read the product never makes), and a re-arm after a trim must pay only
+     * the bytecode restores. The environment also cannot be rebuilt against a different dispatch
      * directory. So `LiteRtDestroyEnvironment` is not even RESOLVED - it is absent from the symbol
      * list, which makes the call unwritable - and release frees the session and nothing else.
      */
@@ -420,6 +421,12 @@ class LiteRtNativeContractTest {
                 liveLines(copy, "rt.api.LiteRtLockTensorBuffer(g.selfKv[0][j], &dst, kLiteRtTensorBufferLockModeWrite);")
                     .size == 1 &&
                 liveLines(copy, "memcpy(dst, src, g.selfKvBytes[j]);").size == 1
+        )
+        assertTrue(
+            "the decode line prints the copy's own ms per copy for strategy 1, and names the re-bind's cost for 0",
+            liveLines(loop, "\"kv copy %.2f ms x%u\"").size == 1 &&
+                liveLines(loop, "\"kv re-bind, re-registered inside run\"").size == 1 &&
+                liveLines(copy, "++g.kvCopies;").size == 1
         )
         assertTrue(
             "no live line reads a self-KV set back to the host any other way",
@@ -710,6 +717,61 @@ class LiteRtNativeContractTest {
         assertTrue(
             "and a refusal there releases nothing: no live `refuse(` before the release",
             liveLines(init.substring(0, release), "refuse(").isEmpty()
+        )
+    }
+
+    /**
+     * **Every stat the decode line prints is a number or the contract's own NaN, checked before
+     * anything is written - and the line says what an unmeasured NaN is** (P1b device gate).
+     *
+     * The gate's `ent=nan` (run p1b_litertasr_kv0) was not a 0/0: jfk's 26 text ids never reach the
+     * 32-id entropy window, and [NpuDecodeStats] documents NaN for exactly that - the NaN
+     * `qnn_asr.cpp` writes in the same case, and the one `NpuDecodePolicy.isNoSpeech` reads as "cannot
+     * measure, so never blank". The values therefore stay `qnn_asr.cpp`'s to the letter. What the pin
+     * holds is that no OTHER non-finite value gets through - an infinity, or a NaN where a value was
+     * measured, fails the segment with -4 before the ids and the stats reach the caller - and that the
+     * line prints an unmeasured stat as `nan(` and why, never a bare `nan` that reads like a bug.
+     */
+    @Test
+    fun everyPrintedStatIsANumberOrTheContractsOwnNaNCheckedBeforeAnythingIsWritten() {
+        val qnn = source("src/main/cpp/qnn_asr.cpp")
+        val entropyNaN = "stats[kStatEntropy] = entropyMeasured ? static_cast<float>(entropyLast) : NAN;"
+        assertTrue(
+            "the entropy NaN is qnn_asr.cpp's to the letter, and avg_logprob's is NaN only when nothing was scored",
+            liveLines(cpp, entropyNaN).size == 1 && liveLines(qnn, entropyNaN).size == 1 &&
+                liveLines(cpp, "stats[kStatAvgLogprob] = scored > 0 ? static_cast<float>(avgLogprob) : NAN;").size == 1
+        )
+        val check = collapsed(functionBody("std::string checkStatsLocked("))
+        assertTrue(
+            "the check covers nsp, lp and ent: measured means finite, unmeasured means NaN",
+            check.contains("{\"nsp\", stats[kStatNoSpeechProb], true},") &&
+                check.contains("{\"lp\", stats[kStatAvgLogprob], lpMeasured},") &&
+                check.contains("{\"ent\", stats[kStatEntropy], entMeasured},") &&
+                check.contains("if (r.measured ? std::isfinite(r.v) : std::isnan(r.v)) continue;")
+        )
+        val loop = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeDecodeSegment(")
+        val checkAt = liveOffsets(loop, "err = checkStatsLocked(stats, scored > 0, entropyMeasured);")
+        val idsAt = liveOffsets(loop, "env->SetIntArrayRegion(jOut, 0, count,")
+        val statsAt = liveOffsets(loop, "env->SetFloatArrayRegion(jStats, 0, kStatSize, stats);")
+        val lineAt = liveOffsets(loop, "LOGI(\"decode: %d tokens")
+        assertTrue(
+            "the check runs before the ids, the stats and the line are written (check $checkAt, ids $idsAt, " +
+                "stats $statsAt, line $lineAt)",
+            checkAt.size == 1 && idsAt.size == 1 && statsAt.size == 1 && lineAt.size == 1 &&
+                checkAt[0] < idsAt[0] && checkAt[0] < statsAt[0] && checkAt[0] < lineAt[0]
+        )
+        assertTrue(
+            "a stat outside the contract fails the segment with -4",
+            collapsed(loop).contains(
+                "err = checkStatsLocked(stats, scored > 0, entropyMeasured); if (!err.empty()) { " +
+                    "failure(\"decode: \" + err); return -4; }"
+            )
+        )
+        assertTrue(
+            "the line prints lp and ent as text - a number, or nan( and why - never %.2f of a NaN",
+            liveLines(loop, "nsp=%.2f lp=%s ent=%s").size == 1 &&
+                liveLines(loop, "\"nan(unmeasured: nothing scored)\"").size == 1 &&
+                liveLines(loop, "\"nan(unmeasured: %d text ids, the window needs %d)\"").size == 1
         )
     }
 

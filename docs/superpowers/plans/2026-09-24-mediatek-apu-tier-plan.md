@@ -123,8 +123,12 @@ with P1a.
    MERGED release manifest (usdk present; sys_util, .9, mgvi absent); `NpuSkelPackagingTest`-style pins for
    `libLiteRt.so` in lib/ and the dispatch asset digest.
 7. **Selector and lifecycle.** `NpuBackendSelector.backendFor` picks the engine by `family.vendor`; the boot
-   prewarm calls the engine's environment-only warm-up outside `NativeComputeGate`; `release` frees models and
-   buffers only; `StartupRing` capacity per family (12 s for MediaTek rows) with its test.
+   prewarm runs the probe (for the stored verdict) outside `NativeComputeGate` if `Application.onCreate` has
+   not — there is no 5 s wait left to warm up for: P0's was LiteRT's magic-number read through
+   `libneuron_sys_util.mtk.so`, which the product never declares, and P1b's gate walked the adapter in 169–239 ms
+   (spec §2.3, sheet §4b); `release` frees models and buffers only; `StartupRing` capacity per family (12 s for
+   MediaTek rows until P3's in-app cold-arm number decides it — the gate's arm was 3.7–4.0 s, spec §2.9) with its
+   test.
 8. **AAB.** `build_asset_packs.py build`, `verifyNpuPacks`, `bundleRelease` on the MS-02; size recorded
    (≈ 9.7 GB expected; per-pack ≤ 1.5 GB asserted).
 
@@ -136,7 +140,8 @@ with P1a.
    device can run, on its AI chip").
 3. **Version** 4.16.0 / 112 (or the next free code), `ReleaseIdentityTest` paragraph; internal track.
 4. **The Tab S10+ sheet** (owner session, logcat captured and read afterwards): offer line `soc=MT6989:pass`,
-   the driver line, cold-arm with and without a warm adapter, cold-tap loss, per-commit encode+decode vs the P1b
+   the driver line, cold-arm with and without a prior probe (and no `Waiting for service` line — the Play build's
+   merged manifest must not carry `libneuron_sys_util.mtk.so`), cold-tap loss, per-commit encode+decode vs the P1b
    gate, canary + jfk equal to t8 with paired timestamps, a 30-minute session with thermal status and PSS beside
    a foreground app, no lmkd kill. Ship when every row passes.
 

@@ -14,8 +14,10 @@ tier; a second vendor behind an engine seam, not a second tier.
 **Measured on the owner's tablet (`docs/measurements/2026-09-24-tab-apu-turbo-encoder.md`):** turbo encoder
 1,713–1,783 ms per 30 s window, flat over 120 runs; decoder step 22.8–24.3 ms per token; real speech through
 both, word-perfect (in the probe's decode mode — see §5 for the app's); PSS 4.8–4.95 GB with the pair
-resident (RSS 1.2–3.5 GB); first model's cold create 8.3 s, of which 5.0 s is MediaTek's own adapter
-initialisation (P0, §2.3), second model 0.9 s. A 20-token commit ≈ 2.24 s; the S23 was admitted at 2.47 s.
+resident (RSS 1.2–3.5 GB); first model's cold create 8.3 s in the probe, of which 5.0 s was LiteRT's
+magic-number read through `libneuron_sys_util.mtk.so` — a library the product does not declare, so the product
+never waits (P1b's device gate: 3.7–4.0 s for the whole arm, both models; §2.3) — second model 0.9 s. A 20-token
+commit ≈ 2.24 s; the S23 was admitted at 2.47 s.
 
 ## 1. Goals and non-goals
 
@@ -91,7 +93,8 @@ the derived union for the XML-wide equality at `NpuPackLayoutTest.kt:230-234`.
 The gate tests that assert the global set and "every family passes under QTI" become per-vendor
 (`NpuGateTest.kt:271-313`). The capability half, `WhisperEverywhereApp.npuCapableDevice`, becomes
 vendor-dispatched: Qualcomm keeps its QNN dlopen probe; MediaTek reads the **stored verdict** of §2.3 and never
-performs the dlopen itself (the dlopen is the 5 s wait, and this value is forced on the onboarding and chooser
+performs the dlopen itself (the walk holds bionic's loader lock — 169–239 ms at P1's device gate, no longer the
+5 s P0 measured, §2.3 — and this value is forced on the onboarding and chooser
 paths — `OnboardingModelScreen.kt:89-101`, `WhisperEverywhereApp.kt:244-254`). `offeredNpuTierIds()` and
 `pickableFor` are untouched; `fetchableNpuTierIds` and the catalog consult `family.tiers`, so a MediaTek family
 offers turbo only.
@@ -105,16 +108,25 @@ loop has no `break` (`neuron_adapter_api.cc` lines 109-116): **the last loadable
 restores only on a Neuron runtime of the same major as the compiler that produced it. On the Tab S10+ only the
 first name loads and it reports 8.2.26.
 
-**Where the 5 s goes (P0, run t7):** inside `dlopen("libneuronusdk_adapter.mtk.so")` — the adapter's own
-constructor tries an unregistered binder service for 5 s, logs `Faild to get neuron serivce`, then falls back to
-the `apuware` path that works. Not removable from the app; paid once per process while the handle lives.
-Bionic holds its loader lock for those 5 s, so nothing else may dlopen meanwhile.
+**Where the 5 s went — corrected at P1b's device gate (sheet §4b).** P0 (run t7) placed it inside
+`dlopen("libneuronusdk_adapter.mtk.so")`, as the adapter's own constructor waiting on an unregistered binder
+service, and concluded it was not removable and paid once per process. It was LiteRT's NeuroPilot magic-number
+read: while building the candidate list, v2.1.1 dlopens `libneuron_sys_util.mtk.so` and asks it for the magic
+number (`GetNeuroPilotMagicNumber`, the `.9` decision), and that call waits 5 s on the `INeuronService` binder
+service this ROM never registers. Every P0 build still declared that library — the litert AAR's manifest re-adds it
+through the merger, and t7's truncated `nativeloader` line hid it. The product does not declare it, so it never
+pays the wait: P1's gate (runs `p1b_litertasr_kv0` / `_kv1`, the merged manifest stripped of it) saw no
+`Waiting for service` line, and the whole adapter walk took 169–239 ms. Bionic holds its loader lock for the walk,
+so it still runs off every UI thread.
 
 What, therefore:
 
-1. **The probe is the warm-up, and it runs off every UI path.** `LiteRtAsrNative.nativeProbe(dispatchDir)`
+1. **The probe runs off every UI path — and it is cheap.** `LiteRtAsrNative.nativeProbe(dispatchDir)`
    is started once from `Application.onCreate` on a background thread on MediaTek families (and by the
-   service's boot prewarm if it has not run yet). It walks LiteRT's candidate list in LiteRT's order — with
+   service's boot prewarm if it has not run yet), where it fills `npuCapableDevice`'s stored verdict as
+   designed. There is no wait for it to hide: the product needs no warm-up for the adapter, the walk is
+   169–239 ms (P1's gate), and an arm that finds no probe run walks the adapter itself at that cost. It walks
+   LiteRT's candidate list in LiteRT's order — with
    `RTLD_NOW | RTLD_NODELETE` where LiteRT uses `RTLD_LAZY | RTLD_LOCAL`, which on bionic admit exactly the same
    candidates (`RTLD_LAZY` is unsupported there, `RTLD_LOCAL` is the default) — keeps the LAST candidate that
    loads (`RTLD_NODELETE`; the handle is never closed, so
@@ -148,8 +160,10 @@ only that one declaration, the dispatch loads from `filesDir/litert_dispatch/`, 
 pair's output is identical to the reference. Not `libneuron_sys_util.mtk.so`, not
 `libneuronusdk_adapter.9.mtk.so`, not `libneuron_adapter_mgvi.so`. A pin reads the MERGED release manifest
 (not the source one): P0(c) also showed the litert 2.1.1 AAR's own manifest re-adding `libneuron_sys_util`
-through the merger. The product takes `libLiteRt.so` out of that AAR without depending on it (§2.6), so no
-foreign manifest is merged — and the pin is what proves it stays that way.
+through the merger — and that re-added declaration is what cost every P0 run its 5 s (above), so the pin
+guards the tier's cold-arm time as well as its declaration set. The product takes `libLiteRt.so` out of that
+AAR without depending on it (§2.6), so no foreign manifest is merged — and the pin is what proves it stays that
+way.
 
 ### 2.4 The engine seam (narrow, and landed first as a Qualcomm-only refactor)
 
@@ -260,7 +274,7 @@ device-proven.
   `CompilerPluginLibraryDir` and loaded from `nativeLibraryDir`).
 - Lifecycle: the LiteRT environment, the dispatch and the adapter handle are created once per process and
   never destroyed; `release` frees only the compiled models and their buffers. Re-arms after a trim therefore
-  pay restore (1.3 s + 0.9 s), never the 5 s.
+  pay the two restores (1.4 s + 0.45 s at P1's gate) and never re-load the adapter.
 - Runtime pinned at 2.1.1 until Google publishes a MediaTek dispatch for a newer LiteRT; building the dispatch
   from source is the upgrade path, out of scope.
 
@@ -309,10 +323,14 @@ this device can run, on its AI chip". Onboarding's size line reads the family's 
 ### 2.9 Cadence, calibration, the ring
 
 Per-commit cost on the tablet = 1,783 + 22.8 × tokens ms (t6), re-measured in-app at P3. The cold-arm budget,
-from the measured parts: 8.3 s (first create, 5.0 of it the adapter) + 0.9 s (second) + 1.6 s (`load`'s
-non-native stages, `NpuWhisperBackend.kt:471-473`) ≈ 10.8 s worst case; ≈ 5.8 s with the adapter already
-warm — against `StartupRing.CAPACITY_MS = 6,000`. So: the ring is sized per family (12 s = 384 KB for MediaTek
-rows), the adapter is warmed at process start (§2.3) and kept, and the environment survives trims (§2.6).
+from the measured parts — corrected at P1b's device gate: P0's 8.3 s first create held a 5.0 s wait the product
+never pays (§2.3) — is `nativeInit` 3.7–4.0 s end to end (both opens, both restores, the buffers and the APU
+check), + the 169–239 ms walk when no probe has run, + 1.6 s (`load`'s non-native stages,
+`NpuWhisperBackend.kt:471-473`) ≈ 5.5–5.8 s — against `StartupRing.CAPACITY_MS = 6,000`, inside it by a margin
+too thin to lean on. (P0's figures were ≈ 10.8 s worst case and ≈ 5.8 s with the adapter warm.) So: the ring
+stays sized per family (12 s = 384 KB for MediaTek rows) until P3's in-app cold-arm number decides it, the probe
+still runs at process start for the stored verdict (§2.3) — not to hide a wait — and the environment survives
+trims (§2.6).
 The Tab sheet records cold-tap audio loss.
 
 ## 3. A commit, end to end
@@ -334,7 +352,7 @@ The Tab sheet records cold-tap audio loss.
 | A pack part missing or a digest mismatch | pack machine / install / SAF import | tier not installed; existing copy untouched |
 | Non-finite logits at a step | the float loop | that segment falls back loudly; the session continues |
 | lmkd kills the process (PSS ≈ 4.9 GB resident + the app) | not catchable: a SIGKILL | the service restarts; the Tab sheet measures whether it happens in a 30-min session beside a foreground app, and the PSS ceiling is a ship-gate number |
-| Cold tap before the adapter is warm | the ring | up to ~4.8 s of speech lost without the per-family ring; none with it |
+| Cold tap before the tier is armed | the ring | the cold arm is ≈ 5.5–5.8 s (P1's gate: `nativeInit` 3.7–4.0 s + the walk + `load`'s 1.6 s, §2.9) against the default 6 s ring — no speech lost, by a thin margin; none with the per-family ring. (P0's "up to ~4.8 s lost" counted a 5 s adapter wait the product never pays, §2.3.) |
 
 ## 5. Testing and acceptance
 
@@ -369,8 +387,11 @@ Order of the tree: `feat/bubble-tab-mute` (110) merges to main → workstream A 
 this tier on `feat/mediatek-apu-tier` (112+), each with its `ReleaseIdentityTest` paragraph. For the Tab test
 loop, Play internal app sharing (no versionCode spent) is checked as an alternative to burning codes.
 
-- **P0 — probe runs on the tablet (no app code) — DONE 2026-09-24:** (a) the 5 s wait is the adapter's own
-  (§2.3, run t7). (b) `PreferSustainedSpeed` vs default — not reachable from the probe's Kotlin API, and **not
+- **P0 — probe runs on the tablet (no app code) — DONE 2026-09-24:** (a) the 5 s wait — read at P0 as the
+  adapter's own (run t7); **corrected at P1b's device gate**: it was LiteRT's magic-number read through
+  `libneuron_sys_util.mtk.so`, which every P0 build still declared through the AAR's manifest merge. With the
+  library really undeclared, as in the product, there is no wait and the whole adapter walk is 169–239 ms (runs
+  `p1b_litertasr_kv0` / `_kv1`; §2.3, sheet §4b). (b) `PreferSustainedSpeed` vs default — not reachable from the probe's Kotlin API, and **not
   measurable on LiteRT 2.1.1 at all** (P1b review): with AOT files the dispatch never reads the mode and
   hard-codes `NEURON_PREFER_SUSTAINED_SPEED`, so every run so far was already in it; P1b passes the value
   through, inert. (c) the product's loading shape passes: dispatch from `files/litert_dispatch/`, no plugin, one

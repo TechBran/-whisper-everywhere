@@ -47,15 +47,17 @@ package com.whispereverywhere.npu
  * never null, never an exception — and the same text stays readable through [nativeLastError].
  *
  * THREADING: one process-global session behind one mutex. Safe from any thread; none of it may run
- * on Main. [nativeProbe]'s FIRST call waits ~5 s inside MediaTek's own adapter constructor (P0, run
- * t7) with bionic's loader lock held, and it holds this seam's mutex for the whole of it.
+ * on Main. [nativeProbe]'s FIRST call walks the adapter — 169–239 ms at P1's device gate — with
+ * bionic's loader lock held, and it holds this seam's mutex for the whole of it. (P0's "5 s adapter
+ * wait" was LiteRT's magic-number read through `libneuron_sys_util.mtk.so`, which the product does
+ * not declare; the gate saw no wait at all — design §2.3.)
  *
  * LIFECYCLE: [nativeInit] is idempotent (a live session is released first); every successful one
  * issues an arming epoch ([nativeEpoch]) and [nativeRelease] ignores any epoch that is not the live
  * one, exactly as [QnnAsrNative.nativeRelease]. **Unlike QNN, release frees less than init
  * created:** the Neuron adapter handles, `libLiteRt.so` and the LiteRT environment are process state
  * and are never closed or destroyed, so a re-arm after a trim pays the bytecode restores and never
- * the adapter's 5 s again.
+ * re-loads the adapter.
  *
  * LOADING: the `init` block throws `UnsatisfiedLinkError` when `liblitertasr.so` is absent (the
  * CMake target is skipped when the vendored LiteRT headers are missing). `libLiteRt.so` itself is
@@ -81,8 +83,9 @@ object LiteRtAsrNative {
      * its `Neuron_getVersion` (and the device names for the diag line), judges it, and on a pass
      * loads `libLiteRt.so` from [libDir] and resolves every entry point the engine calls.
      *
-     * The walk runs ONCE per process — the first call is the ~5 s wait — and later calls re-judge the
-     * cached walk against [wantMajor]. No environment is created and no model is opened.
+     * The walk runs ONCE per process — the first call pays it, 169–239 ms on the Tab S10+ — and later
+     * calls re-judge the cached walk against [wantMajor]. No environment is created and no model is
+     * opened.
      *
      * The `apu:` line is logged on `WE-DIAG` on every call:
      * `apu: driver=libneuronusdk_adapter.mtk.so 8.2.26 want=8 devices=… device=… walk=…ms pass`.
@@ -202,14 +205,18 @@ object LiteRtAsrNative {
      * staying the input and the step's output copied back into it (`1`) — both sets zeroed at every
      * rung's start.
      *
-     * What differs from the QNN engine is below the contract: p(nospeech) and avg_logprob are always
-     * computed (scale 1.0, never "unreadable"), so `NO_SPEECH_PROB` is never `-1` on this engine; and
-     * every step's raw logits are checked for NaN/infinity first.
+     * What differs from the QNN engine is below the contract: p(nospeech) is always computed (scale
+     * 1.0, never "unreadable"), so `NO_SPEECH_PROB` is never `-1` on this engine; every step's raw
+     * logits are checked for NaN/infinity first; and the three stats the decode line prints are held
+     * to [NpuDecodeStats]' contract — a finite number, or NaN exactly where it says "not measured"
+     * (`AVG_LOGPROB` when nothing was scored, `ENTROPY` when the text-only window was never reached,
+     * the same NaNs `qnn_asr.cpp` writes). The line prints such a NaN with its reason, e.g.
+     * `ent=nan(unmeasured: 26 text ids, the window needs 33)`.
      *
      * @return the number of ids written (`>= 0`; `0` = EOT came first, i.e. silence), or `< 0` with
      *         the text in [nativeLastError]: `-1` arguments or state, `-2` a run or lock failure,
-     *         `-3` every logit at the floor, `-4` non-finite logits (the segment falls back loudly;
-     *         the session stays armed).
+     *         `-3` every logit at the floor, `-4` non-finite logits or a non-finite stat outside the
+     *         contract (the segment falls back loudly; the session stays armed).
      */
     external fun nativeDecodeSegment(
         prompt: IntArray,
