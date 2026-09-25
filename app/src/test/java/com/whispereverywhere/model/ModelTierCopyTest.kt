@@ -3,6 +3,7 @@ package com.whispereverywhere.model
 import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.npu.NpuVendor
+import com.whispereverywhere.ui.onboarding.OnboardingLogic
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -1103,83 +1104,101 @@ class ModelTierCopyTest {
     // The spec's own acceptance list: "the offer-set truth table (capable x installed-state x
     // locale)". The steer and the three ordering keys are UNCHANGED IN BODY — what changed is the
     // list they order, which `WhisperCatalog.pickableFor` now narrows on a capable device. These
-    // drive the composition end to end, which is what the two chooser surfaces actually perform.
+    // drive the composition end to end, which is what the two chooser surfaces actually perform —
+    // since the owner's ruling of 2026-09-25 starting one step earlier, at
+    // `OnboardingLogic.chooserAlsoOfferedIds`, so the SELECTION is a column of the table.
 
     @Test fun the_offer_set_truth_table_capable_x_installed_x_locale() {
-        // rows: offered gate answer, installed ids, locale -> the exact lineup, in order
+        // rows: offered gate answer, installed ids, the selection, locale -> the exact lineup, in
+        // order. Composed as both surfaces compose it: the one rule's answer (delivery not failed —
+        // the escape's own table is OnboardingLogicTest's), then the ordering.
         data class Row(
             val offered: Set<String>,
             val installed: Set<String>,
+            val selected: String?,
             val tag: String,
             val expected: List<String>,
         )
         val table = listOf(
             // ---- CAPABLE. Fresh install: ONE card, whatever the locale. The owner's ruling.
-            Row(setOf("npu", "npu-turbo"), emptySet(), "en-US", listOf("npu-turbo")),
-            Row(setOf("npu", "npu-turbo"), emptySet(), "bn-BD", listOf("npu-turbo")),
-            Row(setOf("npu", "npu-turbo"), emptySet(), "zh-Hans-CN", listOf("npu-turbo")),
-            Row(setOf("npu", "npu-turbo"), emptySet(), "", listOf("npu-turbo")),
-            Row(setOf("npu-turbo"), emptySet(), "en-US", listOf("npu-turbo")),
-            Row(setOf("npu-turbo"), emptySet(), "bn-BD", listOf("npu-turbo")),
-            // ---- CAPABLE, with history. The card for a model the user already has survives.
+            Row(setOf("npu", "npu-turbo"), emptySet(), null, "en-US", listOf("npu-turbo")),
+            Row(setOf("npu", "npu-turbo"), emptySet(), null, "bn-BD", listOf("npu-turbo")),
+            Row(setOf("npu", "npu-turbo"), emptySet(), null, "zh-Hans-CN", listOf("npu-turbo")),
+            Row(setOf("npu", "npu-turbo"), emptySet(), null, "", listOf("npu-turbo")),
+            Row(setOf("npu-turbo"), emptySet(), null, "en-US", listOf("npu-turbo")),
+            Row(setOf("npu-turbo"), emptySet(), null, "bn-BD", listOf("npu-turbo")),
+            // ---- CAPABLE, with history. The card for the model the user is RUNNING ON survives;
+            // since the owner's ruling of 2026-09-25 ("if the NPU multilingual is here, then we
+            // hide all of the other CPU models"), no other installed CPU rung does.
             // 4.7: the CPU floor is `small-q8`; `multi` is RETIRED and asserted below as keeping
             // no card — the 4.6.0 production default, the tier the 4.3 recovery used to download.
-            Row(setOf("npu", "npu-turbo"), setOf("small-q8"), "bn-BD", listOf("npu-turbo", "small-q8")),
-            Row(setOf("npu", "npu-turbo"), setOf("small-q8"), "en-US", listOf("npu-turbo", "small-q8")),
+            Row(setOf("npu", "npu-turbo"), setOf("small-q8"), "small-q8", "bn-BD", listOf("npu-turbo", "small-q8")),
+            Row(setOf("npu", "npu-turbo"), setOf("small-q8"), "small-q8", "en-US", listOf("npu-turbo", "small-q8")),
+            Row(setOf("npu", "npu-turbo"), setOf("small-q8"), "npu-turbo", "en-US", listOf("npu-turbo")),
             // 4.6: was setOf("pro") — `pro` is RETIRED, so an installed one keeps no card (the
             // eco/base/pro row below asserts exactly that). An installed INSTRUMENT keeps its card
-            // like any other offered tier — 4.7: `ultra-q8`, the one instrument left.
-            Row(setOf("npu", "npu-turbo"), setOf("ultra-q8"), "en-US", listOf("npu-turbo", "ultra-q8")),
-            Row(setOf("npu", "npu-turbo"), setOf("ultra-q8"), "bn-BD", listOf("npu-turbo", "ultra-q8")),
-            Row(setOf("npu", "npu-turbo"), setOf("npu"), "bn-BD", listOf("npu-turbo", "npu")),
+            // like any other offered tier — 4.7: `ultra-q8`, the one instrument left — and since
+            // 2026-09-25 like any other, only as the selection.
+            Row(setOf("npu", "npu-turbo"), setOf("ultra-q8"), "ultra-q8", "en-US", listOf("npu-turbo", "ultra-q8")),
+            Row(setOf("npu", "npu-turbo"), setOf("ultra-q8"), "ultra-q8", "bn-BD", listOf("npu-turbo", "ultra-q8")),
+            Row(setOf("npu", "npu-turbo"), setOf("ultra-q8"), null, "bn-BD", listOf("npu-turbo")),
+            // The gated tiers are not the ruling's subject: an imported `npu` keeps its card.
+            Row(setOf("npu", "npu-turbo"), setOf("npu"), null, "bn-BD", listOf("npu-turbo", "npu")),
             // 4.6: `pro` dropped out of both expectations — retired, so `!it.retired` filters it
             // before `alsoOfferedIds` is ever consulted — and the two locales answer IDENTICALLY,
             // because the language key has no English-only tier left to order against the steer.
             // 4.7: `multi` drops out the same way, on the same rule.
             Row(
-                setOf("npu", "npu-turbo"), setOf("npu", "small-q8", "multi", "pro"), "bn-BD",
+                setOf("npu", "npu-turbo"), setOf("npu", "small-q8", "multi", "pro"), "small-q8", "bn-BD",
                 listOf("npu-turbo", "npu", "small-q8"),
             ),
             Row(
-                setOf("npu", "npu-turbo"), setOf("npu", "small-q8", "multi", "pro"), "en-US",
+                setOf("npu", "npu-turbo"), setOf("npu", "small-q8", "multi", "pro"), "small-q8", "en-US",
                 listOf("npu-turbo", "npu", "small-q8"),
             ),
+            Row(
+                setOf("npu", "npu-turbo"), setOf("npu", "small-q8", "multi", "pro"), "npu-turbo", "en-US",
+                listOf("npu-turbo", "npu"),
+            ),
             // Turbo already installed: it is both the one offer and an existing install.
-            Row(setOf("npu", "npu-turbo"), setOf("npu-turbo"), "en-US", listOf("npu-turbo")),
-            // An installed RETIRED tier changes nothing — `!retired` runs first. 4.7: the four Q5
-            // rungs join the set, and `multi` is the member that matters.
-            Row(setOf("npu-turbo"), setOf("eco", "base", "pro"), "bn-BD", listOf("npu-turbo")),
-            Row(setOf("npu-turbo"), setOf("multi", "medium-q5", "ultra", "large-v3"), "en-US", listOf("npu-turbo")),
-            // ---- NOT CAPABLE. The rule is byte-identical to 3.7/4.1 and the installed state is
-            // still irrelevant; 4.6 only made the list it orders longer (the whole ladder).
-            Row(emptySet(), emptySet(), "en-US", ladderLineup),
-            Row(emptySet(), emptySet(), "bn-BD", ladderLineup),
-            Row(emptySet(), setOf("pro", "multi"), "bn-BD", ladderLineup),
-            Row(emptySet(), setOf("npu", "npu-turbo"), "en-US", ladderLineup),
+            Row(setOf("npu", "npu-turbo"), setOf("npu-turbo"), "npu-turbo", "en-US", listOf("npu-turbo")),
+            // An installed RETIRED tier changes nothing — `!retired` runs first, even while it is
+            // the selection. 4.7: the four Q5 rungs join the set, and `multi` is the member that
+            // matters.
+            Row(setOf("npu-turbo"), setOf("eco", "base", "pro"), "pro", "bn-BD", listOf("npu-turbo")),
+            Row(setOf("npu-turbo"), setOf("multi", "medium-q5", "ultra", "large-v3"), "multi", "en-US", listOf("npu-turbo")),
+            // ---- NOT CAPABLE. The rule is byte-identical to 3.7/4.1 and the installed state and
+            // the selection are still irrelevant; 4.6 only made the list it orders longer (the
+            // whole ladder).
+            Row(emptySet(), emptySet(), null, "en-US", ladderLineup),
+            Row(emptySet(), emptySet(), null, "bn-BD", ladderLineup),
+            Row(emptySet(), setOf("pro", "multi"), "multi", "bn-BD", ladderLineup),
+            Row(emptySet(), setOf("npu", "npu-turbo"), "npu-turbo", "en-US", ladderLineup),
             // ---- CAPABLE FOR `npu` ONLY (no turbo row for this family). Unreachable on today's
             // census — every family carries both, pinned in NpuFleetCensusTest — but the rule
             // must still answer it, and its answer is the pre-4.3 one: turbo is what the ruling
             // is about, and a device that cannot be offered turbo keeps its menu.
-            Row(setOf("npu"), emptySet(), "bn-BD", listOf("npu") + ladderLineup),
-            Row(setOf("npu"), emptySet(), "en-US", listOf("npu") + ladderLineup),
-            Row(setOf("npu"), setOf("npu"), "bn-BD", listOf("npu") + ladderLineup),
+            Row(setOf("npu"), emptySet(), null, "bn-BD", listOf("npu") + ladderLineup),
+            Row(setOf("npu"), emptySet(), null, "en-US", listOf("npu") + ladderLineup),
+            Row(setOf("npu"), setOf("npu"), "npu", "bn-BD", listOf("npu") + ladderLineup),
         )
-        table.forEach { (offered, installed, tag, expected) ->
+        table.forEach { (offered, installed, selected, tag, expected) ->
+            val alsoOffered = OnboardingLogic.chooserAlsoOfferedIds(installed, false, offered, selected)
             assertEquals(
-                "$offered/$installed/'$tag': the 4.3 offer-set row",
+                "$offered/$installed/'$selected'/'$tag': the 4.3 offer-set row",
                 expected,
-                ModelTierCopy.orderedForLanguageTagFor(tag, offered, installed),
+                ModelTierCopy.orderedForLanguageTagFor(tag, offered, alsoOffered),
             )
             // The two calls every chooser makes must agree: the badged card is the head.
             assertEquals(
-                "$offered/$installed/'$tag': the steer chip is not on the card that leads",
+                "$offered/$installed/'$selected'/'$tag': the steer chip is not on the card that leads",
                 expected.first(),
                 ModelTierCopy.steerIdForLanguageTagFor(tag, offered),
             )
             // A permutation of what this device can pick — never a card invented or lost.
             assertEquals(
-                "$offered/$installed/'$tag': not a permutation of pickableFor",
-                WhisperCatalog.pickableFor(offered, installed).map { it.id }.toSet(),
+                "$offered/$installed/'$selected'/'$tag': not a permutation of pickableFor",
+                WhisperCatalog.pickableFor(offered, alsoOffered).map { it.id }.toSet(),
                 expected.toSet(),
             )
             expected.forEach {
@@ -1385,8 +1404,9 @@ class ModelTierCopyTest {
         // reads it as scoped and `ultra-q8` stays the one unscoped claimant. The first 4.9.1
         // draft said "our most accurate model" and the review caught it: an app-wide claim
         // beside `ultra-q8`'s "The most accurate one." on the same screen (a turbo device with
-        // ultra-q8 installed, or the CPU tiers joining via `chooserAlsoOfferedIds` after a
-        // delivery failure) — two cards claiming the top in plain words, held off the census
+        // ultra-q8 installed — since the owner's ruling of 2026-09-25, installed AND selected — or
+        // the CPU tiers joining via `chooserAlsoOfferedIds` after a delivery failure) — two cards
+        // claiming the top in plain words, held off the census
         // only because the em-dash joined the claim to "AI chip" in one `. `-split sentence.
         // `sentencesOf` now splits at the dash as well, so the clause has to carry its own scope.
         // The speed half is byte-identical to 4.6's: "the fastest on this device". The measured

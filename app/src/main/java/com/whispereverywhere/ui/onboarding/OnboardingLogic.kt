@@ -415,7 +415,9 @@ object OnboardingLogic {
      * lives now: medium wears "Our pick", small is one card down.
      *
      *  - **An NPU-capable device is untouched.** When `WhisperCatalog.ONE_TIER_ID` is in the
-     *    lineup, the 4.3 one-tier rule has already made it turbo plus installed ids; "if you have
+     *    lineup, the 4.3 one-tier rule has already made it turbo plus [chooserAlsoOfferedIds]'s
+     *    answer (since the owner's ruling of 2026-09-25, the installed gated tiers and the
+     *    selection — no other CPU rung); "if you have
      *    the NPU … you shouldn't see any other models" was already true, the owner re-ruled it
      *    the same day (*"NPU tier detection still stays the same … they should absolutely get
      *    the NPU tier — that's unmatched"*), and this returns the list as given. (The npu-only
@@ -425,7 +427,9 @@ object OnboardingLogic {
      *
      * **The non-disturbance rule rides through:** anything in [installedIds] keeps its card
      * whatever the RAM says, for the reason `WhisperCatalog.pickableFor`'s `alsoOfferedIds`
-     * exists — a model already on disk is never hidden from the user who downloaded it. Order is
+     * exists — a model already on disk is never hidden from the user who downloaded it. (That is
+     * the CPU fleet this function cuts; a one-tier lineup returned above, and on it the 2026-09-25
+     * ruling shows an installed CPU rung only while it is the selection.) Order is
      * preserved from [lineup]; nothing is added that was not in it. The floor read is the
      * catalogue's own `isRecommendedForDevice` comparison (`>=`), so a card is in the flow's
      * lineup on exactly the byte its "Fits your device" badge lights.

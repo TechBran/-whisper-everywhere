@@ -4,6 +4,7 @@ import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuModelSpec
 import com.whispereverywhere.npu.NpuVendor
+import com.whispereverywhere.ui.onboarding.OnboardingLogic
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -556,13 +557,13 @@ class WhisperCatalogHelpersTest {
      * 4.6 — **A DEVICE OFFERED THE ONE TIER IS OFFERED NO INSTRUMENT. Recorded, not fixed.**
      *
      * The 4.3 narrowing in [WhisperCatalog.pickableFor] collapses a capable device's lineup to
-     * [WhisperCatalog.ONE_TIER_ID] plus `alsoOfferedIds`, and `alsoOfferedIds` is the INSTALLED set
-     * on both chooser surfaces (`OnboardingModelScreen`, and `OnboardingFlowScreen` via
-     * `OnboardingLogic.chooserAlsoOfferedIds` before any delivery failure). So the six instrument
-     * rungs 4.6 adds are unselectable and undownloadable on the whole 8 Gen 3-class fleet — the
-     * Fold6 included, which is the device carrying the ladder's only measured anchor and therefore
-     * the one on which `multi` vs `small-q8` would be the most interpretable experiment in the
-     * research.
+     * [WhisperCatalog.ONE_TIER_ID] plus `alsoOfferedIds`, and `alsoOfferedIds` is drawn from the
+     * INSTALLED set on both chooser surfaces (`OnboardingLogic.chooserAlsoOfferedIds` before any
+     * delivery failure — since the owner's ruling of 2026-09-25 only its gated tiers and the
+     * selection, pinned below). So the six instrument rungs 4.6 adds are unselectable and
+     * undownloadable on the whole 8 Gen 3-class fleet — the Fold6 included, which is the device
+     * carrying the ladder's only measured anchor and therefore the one on which `multi` vs
+     * `small-q8` would be the most interpretable experiment in the research.
      *
      * **This test exists so that is a decision with a name rather than a hole.** It does not assert
      * that the collapse is right — it asserts what it does, in the terms the 4.6 session cares
@@ -592,8 +593,9 @@ class WhisperCatalogHelpersTest {
                 listOf(WhisperCatalog.ONE_TIER_ID),
                 WhisperCatalog.pickableFor(offered).map { it.id },
             )
-            // And with things on disk — the Settings surface's `alsoOfferedIds` IS `installedIds`,
-            // so an install of `multi` or `npu` does not bring the ladder with it.
+            // And with things on disk — whatever `alsoOfferedIds` a surface draws from the disk
+            // (all of it before the owner's ruling of 2026-09-25; its gated tiers and the
+            // selection since), an install of `multi` or `npu` does not bring the ladder with it.
             listOf(emptySet(), setOf("multi"), setOf("npu"), setOf("npu", "multi")).forEach { installed ->
                 val lineup = WhisperCatalog.pickableFor(offered, installed).map { it.id }
                 cpuRungIds.forEach { id ->
@@ -624,7 +626,10 @@ class WhisperCatalogHelpersTest {
         // every rung comes back, in catalog order, with turbo still leading and no retired tier
         // following it in. (The producer that would carry the ids is
         // `OnboardingLogic.chooserAlsoOfferedIds`, which already does exactly this with
-        // `WhisperCatalog.pickable` on the delivery-failure path — pinned in `OnboardingLogicTest`.)
+        // `WhisperCatalog.pickable` on the delivery-failure path — pinned in `OnboardingLogicTest`.
+        // His ruling of 2026-09-25 went the other way — FEWER CPU cards: an installed rung no
+        // longer joins unless it is the selection — and it landed exactly as predicted, at that
+        // producer, with nothing in `pickableFor` moving.)
         val capable = setOf("npu", WhisperCatalog.ONE_TIER_ID)
         val ifOpened = WhisperCatalog.pickableFor(capable, cpuRungIds).map { it.id }
         cpuRungIds.forEach { id ->
@@ -1101,69 +1106,132 @@ class WhisperCatalogHelpersTest {
     }
 
     /**
-     * **EXISTING INSTALLS ARE NOT DISTURBED.** A capable device already running a live CPU rung
-     * or `npu` keeps its card — the chooser offers turbo GOING FORWARD, it does not repossess a
-     * model the user already downloaded. (Deleting a gigabyte someone paid bandwidth for is not
-     * ours to do.)
+     * **EXISTING INSTALLS ARE NOT DISTURBED — and, since the owner's ruling of 2026-09-25, NOT
+     * SHOWN either, except the one the user is running on.** Re-specified, not weakened. This pin
+     * said, from 4.3, that a capable device already running a live CPU rung or `npu` keeps its
+     * card. Then, on the Tab S10+ ship session of 4.16.0/113 — whose chooser showed three installed
+     * Q8 rungs beside the AI-chip card — the owner ruled: *"if the NPU multilingual is here, then
+     * we hide all of the other CPU models so users don't get confused about which model to
+     * download."* Both halves are executed here, composed as both chooser surfaces compose them
+     * (`OnboardingLogic.chooserAlsoOfferedIds`, then the ordering):
+     *
+     *  - **On a capable device an installed CPU rung renders only while it is the selection** —
+     *    the one exception, by controller ruling: the card a user is running on is never hidden,
+     *    and once they pick the AI chip it goes. An installed `npu` keeps its card whatever is
+     *    selected; the gated tiers ride through the ruling unchanged.
+     *  - **The non-capable fleet's lineup is byte-identical** — the pre-4.3 construction, over
+     *    every offer set that does not name turbo, every installed state, every selection and
+     *    both latch values: the ruling cannot reach a device the one-tier rule never narrowed.
+     *
+     * Nothing is repossessed either way: the chooser offers turbo GOING FORWARD, the files stay
+     * (deleting a gigabyte someone paid bandwidth for is not ours to do), and routing reads the
+     * selection.
      *
      * **4.7 — and a RETIRED rung on disk keeps working but keeps NO CARD, which now includes
-     * `multi`.** `!it.retired` runs before `alsoOfferedIds`, so the 190 MB model a capable device
-     * downloaded through the 4.3 decline recovery is still installed, still transcribing, still
-     * the selection — and absent from the chooser, exactly as an installed `pro` has been since
-     * 4.6. That is the retired-not-uninstalled rule doing what it says, and it is why the
-     * recovery tier moved to `small-q8` (`NpuTierStatus.RECOVERY_TIER_ID`).
+     * `multi`** — even as the selection. `!it.retired` runs before `alsoOfferedIds`, so the 190 MB
+     * model a capable device downloaded through the 4.3 decline recovery is still installed, still
+     * transcribing, still the selection — and absent from the chooser, exactly as an installed
+     * `pro` has been since 4.6. That is the retired-not-uninstalled rule doing what it says, and it
+     * is why the recovery tier moved to `small-q8` (`NpuTierStatus.RECOVERY_TIER_ID`) — which, as
+     * the selection the recovery writes, is also why a recovered device still sees its CPU card.
      */
-    @Test fun a_capable_device_keeps_the_card_for_a_model_it_already_has() {
+    @Test fun an_installed_cpu_rung_renders_on_a_capable_device_only_while_it_is_the_selection() {
         val capable = setOf("npu", "npu-turbo")
+        // What both chooser surfaces render: the one rule's answer, then the ordering (delivery
+        // not failed — the escape's own half is OnboardingLogicTest's).
+        fun rendered(tag: String, offered: Set<String>, installed: Set<String>, selected: String?) =
+            ModelTierCopy.orderedForLanguageTagFor(
+                tag, offered, OnboardingLogic.chooserAlsoOfferedIds(installed, false, offered, selected),
+            )
         // Fresh capable install: exactly one card, in every locale. The spec's device acceptance.
         assertEquals(listOf("npu-turbo"), WhisperCatalog.pickableFor(capable).map { it.id })
-        // The 264 MB CPU floor already on disk: still there, and turbo still leads.
-        assertEquals(
-            listOf("small-q8", "npu-turbo"),
-            WhisperCatalog.pickableFor(capable, setOf("small-q8")).map { it.id },
-        )
-        assertEquals(
-            listOf("npu-turbo", "small-q8"),
-            ModelTierCopy.orderedForLanguageTagFor("bn-BD", capable, setOf("small-q8")),
-        )
-        assertEquals(
-            listOf("npu-turbo", "small-q8"),
-            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("small-q8")),
-        )
-        // The 358 MB npu pair already imported: same promise, and the L9 runner-up key still puts
-        // it directly below the pick.
-        assertEquals(
-            listOf("npu-turbo", "npu"),
-            ModelTierCopy.orderedForLanguageTagFor("bn-BD", capable, setOf("npu")),
-        )
-        // Both, plus a live CPU rung — everything the user has, nothing they do not. (4.6 used
+        assertEquals(listOf("npu-turbo"), rendered("en-US", capable, emptySet(), null))
+        for (tag in listOf("bn-BD", "en-US")) {
+            // THE RULING: the 264 MB CPU floor on disk, the AI chip selected (or nothing) — no card.
+            assertEquals(listOf("npu-turbo"), rendered(tag, capable, setOf("small-q8"), "npu-turbo"))
+            assertEquals(listOf("npu-turbo"), rendered(tag, capable, setOf("small-q8"), null))
+            // THE EXCEPTION: while it IS the selection, it keeps its card, and turbo still leads.
+            assertEquals(listOf("npu-turbo", "small-q8"), rendered(tag, capable, setOf("small-q8"), "small-q8"))
+        }
+        // Stated over the whole ladder: with every CPU rung on disk, a rung renders exactly while
+        // it is the selection — whichever rung, whatever else is selected, and on the MediaTek
+        // spelling of the gate (turbo alone) as on the Qualcomm one.
+        val ladder = WhisperCatalog.pickable.map { it.id }
+        for (offered in listOf(capable, setOf("npu-turbo"))) {
+            for (selected in listOf(null, "npu-turbo", "npu") + ladder) {
+                val lineup = rendered("en-US", offered, ladder.toSet() + "npu-turbo", selected)
+                assertEquals("$offered, '$selected' selected: turbo leads", "npu-turbo", lineup.first())
+                ladder.forEach { rung ->
+                    assertEquals("$offered, '$selected' selected: rung '$rung'", rung == selected, rung in lineup)
+                }
+            }
+        }
+        // The 338 MB npu pair already imported: its card stays whatever is selected — the gated
+        // tiers are not the ruling's subject — and the L9 runner-up key still puts it directly
+        // below the pick.
+        assertEquals(listOf("npu-turbo", "npu"), rendered("bn-BD", capable, setOf("npu"), "npu-turbo"))
+        assertEquals(listOf("npu-turbo", "npu"), rendered("bn-BD", capable, setOf("npu"), null))
+        // Both, plus a live CPU rung: the pair always, the rung only as the selection. (4.6 used
         // `medium-q5` here as an installed instrument; it is retired now, so `medium-q8` — the
         // medium tier — stands in, and the retired one is asserted absent below.)
         assertEquals(
             listOf("npu-turbo", "npu", "medium-q8"),
-            ModelTierCopy.orderedForLanguageTagFor("en-US", capable, setOf("npu", "medium-q8")),
+            rendered("en-US", capable, setOf("npu", "medium-q8"), "medium-q8"),
         )
-        // A RETIRED tier on disk does NOT re-enter through this door: `!it.retired` runs first,
-        // which is why the screens may stat the whole catalog for the fallback question. 4.7: the
-        // four Q5 rungs join the set, and `multi` is the important member — the 4.6.0 production
-        // default, and the tier the 4.3 recovery used to download — and this is the line that
-        // says its card does not come back.
+        assertEquals(listOf("npu-turbo", "npu"), rendered("en-US", capable, setOf("npu", "medium-q8"), "npu-turbo"))
         assertEquals(
-            listOf("npu-turbo"),
-            WhisperCatalog.pickableFor(capable, setOf("eco", "base", "pro", "extreme", "multi", "medium-q5", "ultra", "large-v3"))
-                .map { it.id },
+            "the 874 MB rung keeps its card as the selection exactly as `small-q8` does — the rule " +
+                "does not care how big the file is",
+            listOf("npu-turbo", "ultra-q8"),
+            rendered("en-US", capable, setOf("ultra-q8"), "ultra-q8"),
         )
+        // A RETIRED tier on disk does NOT re-enter — not even as the selection: `!it.retired` runs
+        // first, which is why the screens may stat the whole catalog for the fallback question.
+        // 4.7: the four Q5 rungs join the set, and `multi` is the important member — the 4.6.0
+        // production default, and the tier the 4.3 recovery used to download — and this is the
+        // line that says its card does not come back.
+        val retiredOnDisk = setOf("eco", "base", "pro", "extreme", "multi", "medium-q5", "ultra", "large-v3")
+        for (selected in listOf(null, "npu-turbo") + retiredOnDisk) {
+            assertEquals("'$selected' selected", listOf("npu-turbo"), rendered("en-US", capable, retiredOnDisk, selected))
+        }
+        // THE DOOR IS UNCHANGED IN BODY: `pickableFor` still admits exactly what its producer
+        // names — the ruling lives at the producer, as its 4.6 KDoc said a change of rule would.
         assertEquals(
-            "a capable device with the 874 MB instrument on disk keeps its card, exactly as it " +
-                "keeps `small-q8`'s — the non-disturbance rule does not care how big the file is, " +
-                "and an INSTRUMENT is an ordinary offered tier for every purpose but the badge",
-            listOf("ultra-q8", "npu-turbo"),
-            WhisperCatalog.pickableFor(capable, setOf("ultra-q8")).map { it.id },
+            listOf("small-q8", "npu-turbo"),
+            WhisperCatalog.pickableFor(capable, setOf("small-q8")).map { it.id },
         )
-        // Nothing THE 4.3 GATE does selects anything: it changes what is OFFERED, never what is
-        // chosen. (4.6 moved the default from `pro` to `multi`, 4.7 from `multi` to `small-q8` —
-        // separate decisions, made where the default lives, because a retired default is
-        // unreachable from the picker. The gate still does not touch it.)
+        // THE NON-CAPABLE FLEET IS BYTE-IDENTICAL: the pre-4.3 construction, written out, against
+        // what the surfaces now render — every offer set that does not name turbo x every
+        // installed state x every selection x both latch values, and the ordering surface too.
+        val nonCapableOfferSets = listOf(
+            emptySet(), setOf("npu"), setOf("ultra"), setOf("NPU-TURBO"), setOf("npu-turbo-x"),
+        )
+        val installedStates = listOf(
+            emptySet(), setOf("small-q8"), ladder.toSet(), setOf("npu"), setOf("npu", "npu-turbo"),
+            setOf("multi", "pro"), WhisperCatalog.entries.map { it.id }.toSet(),
+        )
+        for (offered in nonCapableOfferSets) {
+            val preChange = WhisperCatalog.entries.filter { !it.retired && (!it.gated || it.id in offered) }
+            for (installed in installedStates) for (selected in listOf(null, "small-q8", "medium-q8", "npu-turbo", "multi")) {
+                for (failed in listOf(false, true)) {
+                    val alsoOffered = OnboardingLogic.chooserAlsoOfferedIds(installed, failed, offered, selected)
+                    val cell = "$offered/$installed/'$selected'/failed=$failed"
+                    assertEquals("$cell: the non-capable lineup moved", preChange, WhisperCatalog.pickableFor(offered, alsoOffered))
+                    listOf("en-US", "bn-BD").forEach { tag ->
+                        assertEquals(
+                            "'$tag'/$cell: the non-capable ORDER moved",
+                            ModelTierCopy.orderedForLanguageTagFor(tag, offered),
+                            ModelTierCopy.orderedForLanguageTagFor(tag, offered, alsoOffered),
+                        )
+                    }
+                }
+            }
+        }
+        // Nothing THE 4.3 GATE does selects anything — nor the 2026-09-25 rule, which only READS
+        // the selection: they change what is OFFERED, never what is chosen. (4.6 moved the
+        // default from `pro` to `multi`, 4.7 from `multi` to `small-q8` — separate decisions,
+        // made where the default lives, because a retired default is unreachable from the picker.
+        // The gate still does not touch it.)
         assertEquals("small-q8", WhisperCatalog.DEFAULT_MODEL_ID)
         assertEquals("small-q8", ModelMigration.targetIdFor(ModelScope.MULTILINGUAL))
         // And every tier a user could already be ON still RESOLVES, so `installedModel()` never
