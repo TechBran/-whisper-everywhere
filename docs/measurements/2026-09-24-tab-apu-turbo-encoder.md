@@ -333,3 +333,23 @@ store (the MS-02 mirror, and a second copy on the PC at `C:SERSBASTR.ANDROIDBUIL
 reproduces a functionally identical pair and is the provenance of the model; a rebuilt pair is a NEW artefact
 that must be re-pinned, re-measured against the reference and re-mirrored before it ships. Rule 2's "recorded
 self-compile whose recipe is in the repo" is met in that sense and no stronger one.
+
+## 8. Packaging probe — bundletool accepts the untargeted mt6989 modules (2026-09-25 01:50)
+
+`:app:bundleRelease` on `feat/mediatek-apu-tier` @ 0594655 (P2a + P2b merged; the code is still 4.15.1/112 and
+this bundle is NOT for a track — the selector switch of P2c is not in it), on the PC with both vendors' payloads
+in one checkout (`python tools/build_asset_packs.py build-local` staged the pair from the PC's artefact store in
+~40 s; `verifyNpuPacks` green): BUILD SUCCESSFUL in ~21 min, AAB **9,162,559,443 B** (111/112 were 7.51 GB; the
+design's estimate was ≈ 9.7), sha256 `6d40537f…`. `bundletool validate` accepts it. Inside:
+
+| module | targeting | entries | raw → compressed |
+|---|---|---|---|
+| `npu_turbo_mt6989_enc` | none (untargeted, on-demand) | `turbo_encoder_qairt_context.bin`, `metadata.json` (v2), `.gitkeep` | 1,302,606,488 → 1,200,418,984 B (under Play's 1.5 GB per-pack ceiling) |
+| `npu_turbo_mt6989_dec` | none | `turbo_decoder_qairt_context.bin`, `.gitkeep` | 584,862,184 → 449,427,508 B |
+| `npu_turbo`, `npu_small` | the six Qualcomm groups, unchanged | as at 111 | as at 111 |
+
+`DeviceGroupConfig.pb` names the six Qualcomm groups only (no `soc_mt6989`); `base/lib/arm64-v8a/libLiteRt.so`
+5,104,832 B and `base/assets/libLiteRtDispatch_MediaTek.so` 409,728 B are in. So bundletool 1.18.x's
+`DeviceGroupParityValidator` is satisfied by leaving the MediaTek modules untargeted (§2.7 of the design as
+amended at P2b), and the 1.88 GB pair fits Play's per-pack rule as two packs. The `.gitkeep` markers ride
+along as zero-byte assets — harmless, and excluded at P3.
