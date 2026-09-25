@@ -686,6 +686,10 @@ tasks.withType<Test>().configureEach {
         // probe's path to the one function built from it. Both are claims a comment-shaped edit
         // or a second literal could break without changing what any executed test observes.
         "src/main/java/com/whispereverywhere/npu/NpuApuDriverCheck.kt",
+        // (P2-6, runtime packaging) The LiteRT runtime's Kotlin home — NpuAssetStageDirTest reads it
+        // as text to hold the dispatch stage to the one dispatch directory (NpuApuDriverCheck's) and
+        // to no second spelling of its name; comment-shaped edits compile to identical bytes.
+        "src/main/java/com/whispereverywhere/npu/LiteRtRuntime.kt",
         // (4.2 F5) NpuPackController.kt — the Play fetch flow's Android shell. It is
         // AssetPackManager-bound (no JVM test can construct it), so NpuDiagTest pins its
         // emission sites and the remove-after-install ORDER as source text; without this
