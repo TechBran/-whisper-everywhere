@@ -1287,6 +1287,56 @@ class NpuBackendWiringTest {
     }
 
     /**
+     * THE LITERT ENGINE'S CONSTRUCTION SITES, COUNTED ACROSS MAIN (the P2c review, a later item) —
+     * the walk above, for the other vendor. `LiteRtAsrEngine` is built in exactly two places: the
+     * selector's MediaTek arm (the engine a session arms) and the app's driver settle, whose probe
+     * goes through a throwaway engine so the app never names `LiteRtAsrNative` itself
+     * (`LiteRtAsrEngineContractTest`). A third construction is a second route to the APU — an
+     * engine armed outside the backend's policy body, or a walk outside the one settle per process
+     * — and every other test would stay green beside it. The class's own declaration is not a
+     * construction and is not counted.
+     */
+    @Test
+    fun theLiteRtEngineIsConstructedByTheSelectorAndTheDriverSettleOnly() {
+        val mainRoot = run {
+            var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+            var found: File? = null
+            while (dir != null && found == null) {
+                found = listOf(File(dir, "src/main/java"), File(dir, "app/src/main/java"))
+                    .firstOrNull { File(it, "com/whispereverywhere/transcription/NpuBackendSelector.kt").isFile }
+                dir = dir.parentFile
+            }
+            requireNotNull(found) { "cannot locate src/main/java from ${System.getProperty("user.dir")}" }
+        }
+        val constructions = mainRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .flatMap { file ->
+                val text = file.readText().replace("\r\n", "\n")
+                liveOffsets(text, "LiteRtAsrEngine(")
+                    .map { at -> text.substring(at, text.indexOf('\n', at).let { if (it < 0) text.length else it }) }
+                    .filterNot { it.contains("class LiteRtAsrEngine(") }
+                    .map { file.name }
+            }
+            .sorted().toList()
+        assertEquals(
+            "LiteRtAsrEngine is constructed by the selector's MediaTek arm and by the app's driver " +
+                "settle (a throwaway, for its probe) — once each, nowhere else. Found: $constructions",
+            listOf("NpuBackendSelector.kt", "WhisperEverywhereApp.kt"),
+            constructions,
+        )
+        assertEquals(
+            "the selector's site is the MediaTek arm, handed the row and the native library dir",
+            1,
+            liveOffsets(selector, "NpuVendor.MEDIATEK -> LiteRtAsrEngine(family, appContext.applicationInfo.nativeLibraryDir)").size,
+        )
+        assertEquals(
+            "the app's site is the settle's probe, and nothing else of the engine is used there",
+            1,
+            liveOffsets(app, "probe = { dispatchDir, lib, _ -> LiteRtAsrEngine(family, lib).probe(dispatchDir) },").size,
+        )
+    }
+
+    /**
      * The app memo the resolver reads (4.2 F2) — pinned with the helper this task fixed, on the
      * member this task added. One lazy `NpuGate.familyFor` read over the two existing guarded
      * getters: no new SOC read site (`ChooserSteerWiringPinTest` proves that by the same count
