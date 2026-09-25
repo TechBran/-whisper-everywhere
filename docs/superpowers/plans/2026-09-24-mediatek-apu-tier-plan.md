@@ -138,7 +138,9 @@ with P1a.
    the family; HowToGuide names the Tab S10+/S10 Ultra; `apu:` line on the offer channel; copy census pins.
 2. **The speed claim** on MediaTek families — the owner's wording (proposed: "the most accurate model this
    device can run, on its AI chip").
-3. **Version** 4.16.0 / 112 (or the next free code), `ReleaseIdentityTest` paragraph; internal track.
+3. **Version** 4.16.0 / 113 (or the next free code), `ReleaseIdentityTest` paragraph; internal track. (112 went
+   out as 4.15.1 — the seam and the refresh-notice take-down, the regression gate of P1a-6 — by owner ruling
+   2026-09-24: "you can seam it up for 112".)
 4. **The Tab S10+ sheet** (owner session, logcat captured and read afterwards): offer line `soc=MT6989:pass`,
    the driver line, cold-arm with and without a prior probe (and no `Waiting for service` line — the Play build's
    merged manifest must not carry `libneuron_sys_util.mtk.so`), cold-tap loss, per-commit encode+decode vs the P1b

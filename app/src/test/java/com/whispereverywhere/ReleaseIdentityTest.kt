@@ -185,20 +185,19 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
- * **versionCode 112 = 4.16.0 — the MediaTek APU gets the AI chip: the Tab S10+.** 112 because
- * 111 = 4.15.0 went to the internal track on 2026-09-24 (the owner's upload, for the Z Fold6), so
- * the code is spent. The name takes a MINOR because a whole silicon VENDOR gains the best tier —
- * one step past 4.12.0–4.15.0, each of which was a Qualcomm generation.
- *
- * The owner's rulings of 2026-09-24: build the tier ("the biggest, best model we can get on
- * there"), and check the driver's version so the dispatch never binds a mismatched adapter. The
- * engine was measured before the tier was written — `liblitertasr.so` in the product's shape on
- * his Tab S10+ (docs/measurements/2026-09-24-tab-apu-turbo-encoder.md §6): encode 1.72 s,
- * ~30 ms a token, a 2.8–3.6 s cold arm with no service wait, every utterance token-identical to
- * the reference decode, a 20-token commit ≈ 2.3–2.4 s. This bump OPENS the branch: the engine
- * seam beside the Qualcomm one, the mt6989 census row, the two MediaTek-only pack modules and the
- * copy follow it, and a bundle from this branch is not for a track until its ship sheet says so.
- * Every bump still re-arms GpuPolicy's canary latches (below).
+ * **versionCode 112 = 4.15.1 — the AI-chip engine gets a seam, and the refresh notice comes
+ * down.** 112 because 111 = 4.15.0 went to the internal track on 2026-09-24 (the owner's upload,
+ * for the Z Fold6), so the code is spent. The name takes a PATCH because nothing a user is offered
+ * changes: the QNN path is driven through the `NpuAsrEngine` seam with `QnnAsrEngine` behind it,
+ * `qnn_asr.cpp` byte-identical, the fourteen decline words a closed enum, and the "faster version"
+ * notification of 4.15.0 is cancelled when the pair it asked for lands (on 111 it stood in the
+ * owner's shade for hours after he re-downloaded through the app). This build is the MediaTek
+ * tier's REGRESSION GATE on the internal track (owner ruling 2026-09-24, "you can seam it up for
+ * 112"): canary + jfk on the Fold6 and the S23 Ultra, diag lines and transcripts equal to a
+ * 4.15.0 capture, before any MediaTek code reaches a track. `liblitertasr.so` — the LiteRT engine
+ * measured on the Tab S10+ (docs/measurements/2026-09-24-tab-apu-turbo-encoder.md §6) — is in the
+ * APK and unreferenced; the tier itself ships as 4.16.0 at the next free code. Every bump still
+ * re-arms GpuPolicy's canary latches (below).
  *
  * **versionCode 111 = 4.15.0 — the AI chip's first rebuild, and the 8 Gen 1 gets it.** 111
  * because 110 is 4.14.2, the bubble branch, merged to main on 2026-09-24 by owner ruling and on
@@ -461,10 +460,12 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_16_0_at_version_code_112() {
+    fun release_identity_is_4_15_1_at_version_code_112() {
         assertEquals(
-            "versionName must be 4.16.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.16.0",
+            "versionName must be 4.15.1 for this release (app/build.gradle.kts defaultConfig): " +
+                "the seam and the notice take-down are a PATCH on 4.15.0; the MediaTek tier is 4.16.0 " +
+                "at the next free code",
+            "4.15.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
