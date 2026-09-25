@@ -72,6 +72,16 @@ through `LiteRtCreateModelFromBuffer` over an mmap of the file (file-backed page
 and measure PSS/swap again; the encoder's bytecode is needed only until compile, the decoder's CPU-partition
 tables (its 23 gathers) stay needed.
 
+**F2, resolved the same evening (19:50, the probe app on the tablet, the production app paused, both engines
+back to back on the same AOT pair).** LiteRT v2.1.1's file loader maps the file but then copies every
+DISPATCH_OP's bytecode into a heap buffer only its serializer reads (1.62 GB for the pair); the engine now maps the
+files itself and opens them with `LiteRtCreateModelFromBuffer`. Peak while armed: Native Heap PSS **3,193 MB →
+1,604 MB**, TOTAL PSS 6,142 → 4,557 MB; cold init **2,844 ms → 957 ms** (the open+copy is gone: "opened in 0 ms
+via mmap"); encode 1,735 → 1,726 ms, 28.5 ms/step, both runs `all_match_reference=true`. The 1.6 GB that remains
+on the heap is the Neuron driver's own copy below LiteRT. (A first attempt with the production app still armed
+failed both engines with `kLiteRtStatusErrorRuntimeFailure` — two processes cannot share the APU and the memory —
+which is itself worth knowing.) Ships in 4.16.1.
+
 **F3 — the cold-tap words are lost on every tier, on every device (owner's report; pre-existing, not 113's).**
 The design since 4.5.x: a tap opens the session and the microphone at once, audio accumulates in `StartupRing`
 (6 s Qualcomm/CPU, 12 s MediaTek) until the engine's `connect()` callback, then `onAudioChunk` takes the DRAIN
