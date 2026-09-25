@@ -1537,6 +1537,18 @@ class FloatingBubbleService : Service(),
         // cloud/local question ~1.5 s after boot and then cache that answer for the service's
         // whole life, and (b) toast about a degraded mode before the user has asked for anything.
         serviceScope.launch {
+            // (P2-7, the P2a review's L1) THE DRIVER VERDICT BEFORE THE GATE'S FIRST READ. On a
+            // MediaTek row the gate's capability half IS the driver check's verdict, and it is
+            // UNKNOWN until the walk Application.onCreate started lands, ~200 ms in — while
+            // BootReceiver starts this service within milliseconds of onCreate on an update (and
+            // every first launch and OTA re-probes too). Read then, the memo below would say "not
+            // capable" for the whole service life and every session would run on the CPU, because
+            // nothing else refreshes it until a model switch. So the boot prewarm settles the
+            // verdict first: it waits for the launch thread's walk, or walks itself if that thread
+            // never ran (design §2.3 item 1) — on IO and OUTSIDE NativeComputeGate, for the verdict
+            // only; there is no wait left in the walk to hide. Every other device returns on the
+            // call's first lines, untouched. Wrapped: the tier may never cost the prewarm.
+            withContext(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }
             // (4.0, Q9) The offer gate BEFORE the prewarm it decides, and off Main — its first
             // evaluation dlopens two QNN libraries. Without this the first engine of every process
             // is built on the CPU backend and an npu user pays a rebuild for it.

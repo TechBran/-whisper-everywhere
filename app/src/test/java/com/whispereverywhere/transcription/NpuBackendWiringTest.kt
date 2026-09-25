@@ -581,6 +581,62 @@ class NpuBackendWiringTest {
     }
 
     /**
+     * THE P2a REVIEW'S L1 (P2-7) — **the routing memo is never taken before a MediaTek device's
+     * driver verdict exists.** The memo ([npuTierIds]) is refreshed at service start and on a model
+     * switch or install, and nowhere else; on a MediaTek row its capability half is the driver
+     * check's verdict, UNKNOWN for the ~200 ms the walk takes after `Application.onCreate` — and
+     * BootReceiver starts this service within milliseconds of `onCreate` on every update. A memo
+     * taken in that window says "not capable" for the whole service life: every session on the
+     * CPU, with the tier installed and the driver passing. So the service-start coroutine settles
+     * the verdict BEFORE its refresh — the app's one settle, which waits for the launch thread's
+     * walk or walks itself when that thread never ran (design §2.3 item 1: the boot prewarm runs
+     * the probe if `onCreate` has not) — off Main and outside `NativeComputeGate`, whose fair lock
+     * would otherwise park a live session's native work behind a driver walk.
+     */
+    @Test
+    fun theBootPrewarmSettlesTheDriverVerdictBeforeTheGateIsFirstRead() {
+        val settle = "withContext(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }"
+        assertEquals(
+            "the service asks for the verdict exactly once, on IO, wrapped so the tier can never " +
+                "cost the prewarm",
+            listOf(1, 1),
+            listOf(liveOffsets(service, settle).size, liveOffsets(service, "awaitApuDriverVerdict(").size),
+        )
+        val startRefresh = liveOffsets(
+            service,
+            block("            refreshNpuTierOffer()", "            delay(1500)", "            warmLocalEngine().prewarm()")
+                .substringBefore("\n"),
+        )
+        val at = liveOffsets(service, settle).single()
+        val launch = service.lastIndexOf("        serviceScope.launch {", at)
+        assertTrue(
+            "…in the SAME service-start coroutine as the boot refresh, and ABOVE it: the settle " +
+                "($at) precedes the first refresh (${startRefresh.firstOrNull()}), with no other " +
+                "coroutine opened between them",
+            startRefresh.isNotEmpty() && at < startRefresh.first() && launch in 0 until at &&
+                service.indexOf("serviceScope.launch", at) > startRefresh.first(),
+        )
+        assertEquals(
+            "…and the service never takes NativeComputeGate itself — the walk must not sit behind " +
+                "(or in front of) a session's native work",
+            0,
+            liveOffsets(service, "NativeComputeGate.").size,
+        )
+        val await = app.substringAfter("    fun awaitApuDriverVerdict() {").substringBefore("\n    }\n")
+        assertTrue("the app's settle was found", await.length in 1 until app.length)
+        assertEquals(
+            "the settle the service awaits takes no NativeComputeGate either",
+            0,
+            liveOffsets(await, "NativeComputeGate").size,
+        )
+        assertEquals(
+            "…and it is one settle per process, whoever asks first — the lock both callers take",
+            1,
+            liveOffsets(await, "synchronized(apuVerdictLock) {").size,
+        )
+    }
+
+    /**
      * C1 (Q9 review) — **only a session start may tear the cached engine down.**
      *
      * `warmLocalEngine` used to be `localEngine ?: LocalWhisperEngine(…)`: pure, idempotent, safe
