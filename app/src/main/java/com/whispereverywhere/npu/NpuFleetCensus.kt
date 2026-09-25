@@ -117,8 +117,11 @@ data class PackEntry(
  * single-pack machinery does today. A MediaTek pair is 1.88 GB against Play's 1.5 GB per-pack
  * cap, so it is TWO parts: the encoder in one module, the decoder in another.
  *
- * SHAPE ONLY at P2-3: nothing reads [PackArtifact.parts] yet. The machinery that fetches, installs
- * and removes per part is P2-4's, and the MediaTek modules the parts name are P2-5's.
+ * The Qualcomm modules are DEVICE-TARGETED (one `#group_` variant per family); a MediaTek
+ * family's two are UNTARGETED and its own — `npu_turbo_mt6989_enc` / `_dec`, named per family,
+ * because bundletool's `DeviceGroupParityValidator` requires every group-targeted module to carry
+ * the same set of groups, and the census gate (not Play) decides who fetches them (P2-5; design
+ * §2.7 "Modules").
  *
  * @property packName the asset-pack module — Play's identity for `fetch` / `getPackLocation`.
  * @property entries the pair's entries this pack carries, encoder first when it carries both.
@@ -176,9 +179,10 @@ private fun singlePackFor(tierId: String): String = when (tierId) {
  * @property encoder the primary context binary, under the tier's catalog `fileName`.
  * @property decoder the paired context binary, under the tier's catalog paired `fileName`.
  * @property evidence when and how this row was measured — a recorded date, never a vibe.
- * @property parts the asset packs the pair arrives in (P2, design §2.7; the SHAPE only until
- *   P2-4's machinery reads it). The default is today's single-pack behaviour, stated: one part,
- *   the tier's own module ([singlePackFor]), carrying both entries — every Qualcomm row's value.
+ * @property parts the asset packs the pair arrives in (P2, design §2.7), read by the pack
+ *   machinery through `NpuPackFetch.packsFor` since P2-4. The default is the single-pack
+ *   behaviour, stated: one part, the tier's own module ([singlePackFor]), carrying both entries —
+ *   every Qualcomm row's value.
  */
 data class PackArtifact(
     val familyId: String,
@@ -776,8 +780,10 @@ object NpuFleetCensus {
         ),
         // mt6989 — turbo alone (the owner's ruling, on the family row), a LOCAL pair: no vendor
         // zip, and TWO parts, because 1,887,468,672 B is over Play's 1.5 GB per-pack cap — the
-        // encoder in one on-demand module and the decoder in another (design §2.7; the modules
-        // are P2-5's, the machinery that reads parts P2-4's).
+        // encoder in one on-demand module and the decoder in another, both UNTARGETED and this
+        // family's own (P2-5, design §2.7: bundletool's DeviceGroupParityValidator refuses group-
+        // targeted modules whose group sets differ, so these carry no #group_ folder at all and
+        // the census gate decides who fetches them).
         PackArtifact(
             familyId = "mt6989",
             tierId = "npu-turbo",
@@ -786,8 +792,8 @@ object NpuFleetCensus {
             decoder = MT6989_TURBO_DECODER,
             evidence = COMPILED_MT6989,
             parts = listOf(
-                PackPart("npu_turbo_mtk_enc", listOf(MT6989_TURBO_ENCODER)),
-                PackPart("npu_turbo_mtk_dec", listOf(MT6989_TURBO_DECODER)),
+                PackPart("npu_turbo_mt6989_enc", listOf(MT6989_TURBO_ENCODER)),
+                PackPart("npu_turbo_mt6989_dec", listOf(MT6989_TURBO_DECODER)),
             ),
         ),
     )
