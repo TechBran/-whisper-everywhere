@@ -497,11 +497,16 @@ class NpuWhisperBackend(
                 return@serialized fallBackToCpuTier(refusal.stage.wire, refusal.detail)
             }
 
-            // (7) THE ARMING EPOCH, read the instant the session exists and BEFORE `armed = true`
-            // below. The order is an invariant, not a tidiness: between those two statements this
-            // instance would be a live backend holding epoch 0 — i.e. one whose release names no
-            // session — which is precisely the unguarded shape L1 removed. Native refuses 0
-            // outright, so the window is not dangerous; it is simply a state that must not exist.
+            // (7) THE ARMING EPOCH, read as soon as the engine's init has answered null — the first
+            // moment this file knows a session exists — and BEFORE `armed = true` below. Between
+            // the runtime's own arm (QNN: nativeInit) and this line the session is the ENGINE's to
+            // clean up: its init releases what it armed on every exit that is not a success, so
+            // no refusal and no Throwable can leave this file holding epoch 0 beside a live
+            // session. The order here is an invariant, not a tidiness: between these two
+            // statements this instance would be a live backend holding epoch 0 — i.e. one whose
+            // release names no session — which is precisely the unguarded shape L1 removed. Native
+            // refuses 0 outright, so the window is not dangerous; it is simply a state that must
+            // not exist.
             armedEpoch = engine.epoch()
 
             // Q10a-D1. The decoder runs and emits nothing, and every hypothesis about why is a

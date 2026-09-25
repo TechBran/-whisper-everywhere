@@ -29,7 +29,10 @@ import java.nio.ByteBuffer
  * reading them once in [init] feeds every segment the same values and leaves every line as it was.
  * What changes is only WHEN its (practically unreachable) refusal would fire: the `quant` stage
  * declines at arm now, directly after `init`, instead of on the first segment — which is where
- * `NpuStage` declares it.
+ * `NpuStage` declares it. Because the backend learns the epoch only when [init] answers null,
+ * [init] owns the session between its `nativeInit` and that answer: the quant buffer is allocated
+ * BEFORE `nativeInit`, and everything after it runs under one `finally` that releases this arm's
+ * session on every exit that is not a success.
  *
  * **No JVM test may name this class**: it touches [QnnAsrNative], whose `init` block runs
  * `System.loadLibrary("qnnasr")`. Its invariants are pinned as SOURCE TEXT — the skel stage in
@@ -97,6 +100,14 @@ class QnnAsrEngine : NpuAsrEngine {
         inputQuant = null
         quantBuffer = null
 
+        // THE ARM'S ONE ALLOCATION, BEFORE nativeInit (the P1a review's fix). `spec.inputFeaturesBytes`
+        // direct — the ufixed16 block nativeEncode copies in. Allocated after nativeInit, an
+        // OutOfMemoryError here would escape load with a live session this arm armed and no one
+        // holding its epoch — the backend records it only once init answers null, and the teardown
+        // that follows a failed load then names epoch 0, which native refuses. Allocated first, its
+        // failure costs nothing: nothing native has been touched.
+        val buffer = NpuQuantize.newInputFeaturesBuffer(spec)
+
         // runCatching, not try/catch on a named type: libqnnasr.so is
         // absent by design on builds where the proprietary QNN headers could not be fetched, and
         // the FIRST touch throws UnsatisfiedLinkError while every touch after it throws
@@ -126,30 +137,45 @@ class QnnAsrEngine : NpuAsrEngine {
             return Refusal(NpuStage.INIT, initError)
         }
 
-        // NEVER literals. The affine parameters belong to the asset and are read off
-        // input_features' own metadata; a hardcoded scale would survive an asset re-export and
-        // scale every spectrogram wrongly, which the encoder transcribes fluently into different
-        // words with nothing downstream able to notice.
-        val quant = QnnAsrNative.nativeInputQuant()
-        if (quant.size < 2) {
-            val detail = QnnAsrNative.nativeLastError()
-            // THE SESSION nativeInit JUST ARMED IS THIS ENGINE'S, AND IT MUST NOT OUTLIVE THIS
-            // REFUSAL. The backend learns its epoch only once init answers null, so its fallback's
-            // teardown would name epoch 0, native would keep the session, and the CPU tier would
-            // load beside a whole pair of NPU contexts — the transient the release-first fallback
-            // exists to forbid. The epoch read here is this arm's RECEIPT, not a fresh read at
-            // teardown: the backend holds NativeComputeGate across the whole of load, so nothing
-            // can arm between nativeInit above and this line (the same hold that makes the
-            // backend's own `armedEpoch = engine.epoch()` safe). Unreachable in practice — the
-            // session is initialised and the pair was read at nativeInit — which is why it is
-            // written out rather than trusted.
-            release(QnnAsrNative.nativeEpoch())
-            return Refusal(NpuStage.QUANT, detail)
+        // FROM HERE THE SESSION IS LIVE, IT IS THIS ARM'S, AND NO ONE ELSE KNOWS ITS EPOCH. The
+        // backend reads engine.epoch() only once this function answers null, so every OTHER way out
+        // of it — the quant refusal and any Throwable alike (NewFloatArray's out-of-memory inside
+        // nativeInputQuant arrives here as a thrown OutOfMemoryError, not as a short array) —
+        // releases the session, at ONE site: the finally below, keyed on the one flag that says
+        // this arm got as far as success. The epoch it names is read HERE, right after this arm's
+        // own nativeInit, and that is the only place in this file where such a read is safe: the
+        // backend holds NativeComputeGate across the whole of load, so nothing can arm or release
+        // between nativeInit and this block, and "whatever is live now" is this arm. Anywhere
+        // else — a teardown on a fresh read — it names whatever is live THEN (the 4.1 L1 F4
+        // shape), which is why NpuNativeContractTest counts every `release(` in this file.
+        var armedHere = false
+        try {
+            // NEVER literals. The affine parameters belong to the asset and are read off
+            // input_features' own metadata; a hardcoded scale would survive an asset re-export and
+            // scale every spectrogram wrongly, which the encoder transcribes fluently into different
+            // words with nothing downstream able to notice.
+            val quant = QnnAsrNative.nativeInputQuant()
+            if (quant.size < 2) {
+                // Native answers an EMPTY pair on one path only: the session is not initialised
+                // (`quant: session not initialised`). Straight after a successful nativeInit, under
+                // the load's gate hold, that cannot happen in practice — and if it did, there would
+                // be no session to release: g.epoch is zeroed with g.initialised, so the finally's
+                // release names epoch 0 and native refuses it. The branch stays because the refusal
+                // is a stage like any other; its cleanup is the finally's, so it is a property of
+                // this function rather than of native's failure modes. The error text is read in
+                // the return expression, which runs BEFORE the finally releases anything.
+                return Refusal(NpuStage.QUANT, QnnAsrNative.nativeLastError())
+            }
+            armedSpec = spec
+            inputQuant = quant
+            quantBuffer = buffer
+            armedHere = true
+        } finally {
+            // runCatching: a teardown that throws must neither mask the Throwable already in
+            // flight nor turn the quant refusal into one — the backend's releaseNpuResources
+            // wraps its release the same way, for the same reason.
+            if (!armedHere) runCatching { release(QnnAsrNative.nativeEpoch()) }
         }
-
-        armedSpec = spec
-        inputQuant = quant
-        quantBuffer = NpuQuantize.newInputFeaturesBuffer(spec)
         return null
     }
 

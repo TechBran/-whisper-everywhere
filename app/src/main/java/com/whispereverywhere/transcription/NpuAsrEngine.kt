@@ -60,8 +60,9 @@ interface NpuAsrEngine {
     /**
      * Arms the pair: both model files opened and the session built, against [spec]'s census.
      * The expensive stage (~2.5 s for QNN's npu-turbo pair) and the last one `load` runs; never on
-     * Main. Idempotent — a live session is released first — and a refused arm leaves nothing live
-     * that this engine armed.
+     * Main. Idempotent — a live session is released first — and an arm that refuses OR throws
+     * leaves nothing live that this engine armed: the caller learns the new session's epoch only
+     * from a null answer, so until then the session is the engine's to clean up.
      *
      * @param spec the tier's shape; the backend passes its own required spec, so the census the
      *        runtime checks and the tier the backend serves are one object.

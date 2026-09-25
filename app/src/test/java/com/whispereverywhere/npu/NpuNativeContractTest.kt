@@ -2202,43 +2202,103 @@ class NpuNativeContractTest {
                 "QnnAsrNative.nativeRelease(epoch)",
             ).isNotEmpty()
         )
+        // THE TEARDOWN'S WHOLE POPULATION IN THE ENGINE (P1a review). The pins above hold ONE
+        // nativeRelease, but the engine's own `release(` can be called from any of its members
+        // with any argument — and its arm-time cleanup is a teardown on a FRESH epoch read, safe
+        // only where it stands (straight after this arm's own nativeInit, under the load's gate
+        // hold) and the F4 shape anywhere else. Pasted into encode, that same line would pass
+        // every order pin in this file. So every live `release(` in QnnAsrEngine.kt is counted:
+        // exactly the override's declaration and init's one cleanup. (`nativeRelease(` does not
+        // match — capital R — and is pinned above on its own.)
+        val releases = liveLines(qnnEngine, "release(")
+        assertEquals(
+            "exactly TWO live `release(` lines in QnnAsrEngine.kt — `override fun release(epoch: " +
+                "Long) {` and init's one cleanup. A third is a second teardown spelling, and the " +
+                "likeliest one is a fresh-read release outside the arm. Found: $releases",
+            2,
+            releases.size
+        )
+        assertTrue(
+            "…and they are exactly those two lines. Found: $releases",
+            releases.count { it == "override fun release(epoch: Long) {" } == 1 &&
+                releases.count {
+                    it == "if (!armedHere) runCatching { release(QnnAsrNative.nativeEpoch()) }"
+                } == 1
+        )
     }
 
     /**
-     * **A refusal after a live arm tears down what that arm built (P1a).** The seam moved the
-     * quant read to arm time, directly after `nativeInit`, and that opened one path the old code
-     * did not have: a `quant` refusal while THIS engine's session is live and the backend has
-     * not yet recorded its epoch. The backend's fallback would then release epoch 0 — refused
-     * natively — and load the CPU tier beside a whole pair of NPU contexts: the transient the
-     * release-first fallback exists to forbid. So the engine releases its own session first, by
-     * the receipt `nativeEpoch()` answers right after its own `nativeInit` (under the load's
-     * gate hold, nothing else can arm in between), and reads the error text before it does.
+     * **The arm owns its session until it answers, and releases it on every exit that is not a
+     * success (P1a; the review's fix to it).** The backend learns a new session's epoch only when
+     * the engine's init answers null, so between the engine's `nativeInit` and that answer a live
+     * session exists that nobody else can name. At the seam's first cut two exits left it live:
+     * the `quant` refusal (a release was there) and any THROWABLE — an out-of-memory from
+     * `nativeInputQuant`'s `NewFloatArray`, which arrives in Kotlin as a thrown error, or from the
+     * quant buffer's allocation. Either escaped `load` with the pair resident and `armedEpoch` 0,
+     * and the teardown that follows a failed load names epoch 0, which native refuses. Before the
+     * seam the epoch was recorded ahead of both allocations, so that path could not strand one.
+     *
+     * The shape that closes it, pinned whole: the one allocation BEFORE `nativeInit` (a failure
+     * there has touched nothing native); then everything after `nativeInit` inside one `try`,
+     * whose `finally` releases by the receipt `nativeEpoch()` gives at that moment unless the
+     * arm's success flag was set — and that flag is set only after every field the arm hands on
+     * is in place. The `quant` refusal's text is read in its own return expression, which runs
+     * before the `finally`.
      */
     @Test
-    fun aQuantRefusalAtArmReleasesTheSessionThatArmBuilt() {
+    fun theArmReleasesTheSessionItBuiltOnEveryExitThatIsNotASuccess() {
         val init = kotlinMemberBody(
             qnnEngine,
             "override fun init(spec: NpuModelSpec, files: NpuEngineFiles, dirs: NpuEngineDirs): Refusal? {"
         )
-        val nativeInit = liveOffsets(init, "QnnAsrNative.nativeInit(")
-        val quant = liveOffsets(init, "val quant = QnnAsrNative.nativeInputQuant()")
-        val detail = liveOffsets(init, "val detail = QnnAsrNative.nativeLastError()")
-        val cleanup = liveOffsets(init, "release(QnnAsrNative.nativeEpoch())")
-        val refusal = liveOffsets(init, "return Refusal(NpuStage.QUANT, detail)")
-        assertTrue(
-            "init reads the quant pair once, after nativeInit, and on its refusal reads the error, " +
-                "releases its own session, then refuses — in that order. Found nativeInit=" +
-                "$nativeInit quant=$quant detail=$detail cleanup=$cleanup refusal=$refusal",
-            nativeInit.size == 1 && quant.size == 1 && detail.size == 1 && cleanup.size == 1 &&
-                refusal.size == 1 &&
-                nativeInit.first() < quant.first() && quant.first() < detail.first() &&
-                detail.first() < cleanup.first() && cleanup.first() < refusal.first()
+        val steps = listOf(
+            "val buffer = NpuQuantize.newInputFeaturesBuffer(spec)" to
+                "the quant buffer, allocated BEFORE nativeInit",
+            "QnnAsrNative.nativeInit(" to "nativeInit",
+            "return Refusal(NpuStage.INIT, initError)" to "the INIT refusal (no cleanup — see below)",
+            "var armedHere = false" to "the success flag, false",
+            "try {" to "the try every post-nativeInit statement runs inside",
+            "val quant = QnnAsrNative.nativeInputQuant()" to "the quant read",
+            "return Refusal(NpuStage.QUANT, QnnAsrNative.nativeLastError())" to
+                "the QUANT refusal, its text read in the return expression",
+            "quantBuffer = buffer" to "the last field the arm hands on",
+            "armedHere = true" to "the flag, set only once every field is in place",
+            "} finally {" to "the finally",
+            "if (!armedHere) runCatching { release(QnnAsrNative.nativeEpoch()) }" to
+                "the ONE cleanup: this arm's receipt, on every exit that is not a success",
+            "return null" to "success",
+        )
+        val offsets = steps.map { (needle, what) ->
+            val at = liveOffsets(init, needle)
+            assertEquals("`$needle` — $what — on exactly one live line of init. Found at $at", 1, at.size)
+            at.first()
+        }
+        assertEquals(
+            "…and in exactly this order: " + steps.joinToString(" < ") { it.second },
+            offsets.sorted(),
+            offsets
         )
         assertEquals(
-            "the INIT refusal needs no cleanup and has none: every nativeInit failure path " +
-                "releases natively (or, at the spec stage, touches nothing) before it returns",
-            1,
-            liveOffsets(init, "return Refusal(NpuStage.INIT, initError)").size
+            "the quant buffer is allocated at that one site and nowhere else in the engine, and the " +
+                "backend allocates none — its failure must be one that has touched nothing native",
+            listOf(1, 0),
+            listOf(
+                liveOffsets(qnnEngine, "NpuQuantize.newInputFeaturesBuffer(").size,
+                liveOffsets(backend, "newInputFeaturesBuffer(").size,
+            )
+        )
+        assertEquals(
+            "and the INIT refusal carries no cleanup, deliberately: every nativeInit failure path " +
+                "releases natively before it returns — except the spec refusal, which returns " +
+                "BEFORE releasing so that a mistyped scalar costs an error string, not a working " +
+                "session, and which therefore leaves ANOTHER arm's session live. A fresh-read " +
+                "release there would destroy that session: the F4 hazard, exactly. So the one " +
+                "cleanup sits inside the try, which only a successful nativeInit reaches",
+            0,
+            liveOffsets(
+                init.substring(0, liveOffsets(init, "var armedHere = false").first()),
+                "release("
+            ).size
         )
     }
 
