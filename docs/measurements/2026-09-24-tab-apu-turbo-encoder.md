@@ -249,3 +249,44 @@ rounded to fp16) moves the logits by ≤ 0.03 and changes neither divergence, so
 COMPUTE inside the graphs (32 encoder layers relaxed to fp16), not storage. Host stats: jfk nsp 0.0000, lp −0.087,
 rung 0, 31 steps; canary nsp 0.0000, lp −0.163, 15 steps. The acceptance stays device-vs-device (P1's gate against
 t8, fp16 against fp16); this run shows the loop logic — prompt, masks, cache shift, window — is the tablet's.
+
+## 6. P1's device gate — `liblitertasr.so` in the product's shape, on the tablet: PASS (20:19)
+
+Runs `p1b2_litertasr_kv0` and `p1b2_litertasr_kv1` (probe APK sha256 `87193e4c…`, `liblitertasr.so` 170,480 B,
+`libLiteRt.so` 2.1.1 `6ddc1b3d…`, the dispatch staged in `files/litert_dispatch/` as the APK copy `f47bd9c0…`;
+merged manifest holding the single MediaTek declaration; the app's own `LiteRtAsrNative`, `WhisperTokens` and
+`NpuDecodePolicy` compiled in). The engine's own LiteRT C-API path: encoder requested on the NPU alone, decoder on
+NPU + CPU, 29 unstrided AHWB/host buffers from the compiled models' requirements, the float decode loop with the
+app's 3-token prompt, both masks and timestamps, `nativeDetectLanguage` before every decode, three rounds of the
+two clips, then a release and a re-arm (a second `nativeInit` + one window). Raw logs and JSON archived on the PC
+under `~/.androidbuild/probe-logs/tab-apu-2026-09-24/`.
+
+| | kv0 — two self-KV sets, re-bound per step | kv1 — one set, native copy per step |
+|---|---|---|
+| driver probe (`apu:` line) | 207 ms, `libneuronusdk_adapter.mtk.so 8.2.26 want=8 devices=3 mtk-gpu+mtk-dsp+mtk-mdla` **pass** | 192 ms, same |
+| `Waiting for service` lines | **0** | **0** |
+| init (both restores, buffers, the APU check) | 3,555 ms | 2,752 ms |
+| encode, warm mean (n=5) | 1,725.4 ms (sd 14.6) | 1,718.2 ms (sd 5.0) |
+| decode step, warm mean (n=5 utterances) | 32.5 ms (30.0–35.8; utt 0 33.3) | **30.0 ms** (25.6–33.2; utt 0 23.4) |
+| jfk decode, 28 tokens | 930–1,109 ms | 727–999 ms |
+| transcripts (all 7 utterances incl. after the re-arm) | `matches_reference=true`, stamps paired + monotonic | same |
+| nsp / lp / rung / terminator | 0.000 / −0.087 (jfk), −0.114 (canary) / 0 / EOT | same |
+| PSS after init → during → after release | 4.79 GB → 4.5–4.8 GB → **94 MB** | 5.29 GB → 4.5–5.2 GB → 101 MB |
+| re-arm: init / PSS / first utterance | 3,558 ms / 5.55 GB / step 45.7 ms | 3,354 ms / 5.39 GB / step 29.7 ms |
+| thermal / battery | 0 / 26.1 °C throughout | same |
+
+**What this settles.**
+- The product's engine transcribes exactly what the reference decode mode transcribed (§5b), on every run, and the
+  re-armed session does too. `ent=nan` is the documented "window not reached" value (26 text ids; the entropy
+  window needs 33), identical to the Qualcomm engine's report on short segments.
+- **There is no 5 s wait in the product's shape** (see §4b's correction): the driver walk is ~200 ms, and a cold
+  arm is the two restores — ≈ 2.8–3.6 s — well inside the StartupRing's 6 s.
+- **The self-KV default is the copy strategy (kv1):** 30.0 ms per step against 32.5 with re-binding, steadier
+  (the re-bind arm's first steps after a fresh init were 45.7 ms — the dispatch's re-registration of 16 buffers),
+  and a simpler binding lifetime. A 20-token commit is 1,718 + 20 × 30 ≈ **2.32 s**, S23 class.
+- Memory: about 4.5–5.3 GB PSS while armed, released cleanly to ~100 MB; the re-arm climbs to 5.4–5.6 GB. On the
+  12 GB tablet this is the number the 30-minute session (P3) watches beside a foreground app.
+
+The plan's P1b done-conditions hold except one number: per-step ≤ 24 ms was the Kotlin probe's figure with
+runtime-created buffers; the product engine's 30 ms includes the 8 MB cache copy and the locked logits read, and it
+is the figure the cadence row now uses.
