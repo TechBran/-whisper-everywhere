@@ -1,0 +1,1385 @@
+# Galaxy Tab S10+ (SM-X828U, MT6989), Whisper Everywhere 4.16.0/113 sideloaded in place 2026-09-25 09:23 (bundletool install-apks, local-testing packs).
+# Every WE-DIAG / tombstone / lmkd line of the ship session 09:23-10:53, captured over adb from the MS-02 before the first launch; the
+# 'lowmemorykiller process_mrelease ... failed' storm lines (the system reaping other processes) are dropped. ActivityManager lines dropped.
+09-25 09:23:43.926 28373 28401 I WE-DIAG : apu: candidate libneuronusdk_adapter.9.mtk.so did not load (dlopen failed: library "libneuronusdk_adapter.9.mtk.so" not found)
+09-25 09:23:43.929 28373 28401 I WE-DIAG : apu: candidate libneuron_adapter_mgvi.so did not load (dlopen failed: library "libneuron_adapter_mgvi.so" not found)
+09-25 09:23:43.929 28373 28401 I WE-DIAG : apu: candidate /data/user/0/com.whispereverywhere/files/litert_dispatch/libneuron_adapter.so did not load (dlopen failed: library "/data/user/0/com.whispereverywhere/files/litert_dispatch/libneuron_adapter.so" not found)
+09-25 09:23:43.931 28373 28401 I WE-DIAG : apu: driver=libneuronusdk_adapter.mtk.so 8.2.26 want=8 devices=3 device=mtk-gpu+mtk-dsp+mtk-mdla walk=258ms query=2ms pass
+09-25 09:23:43.933 28373 28401 I WE-DIAG : runtime: libLiteRt.so loaded from libLiteRt.so (by SONAME; /data/app/~~bv_FZeHW5j0SmmR48ZQzyw==/com.whispereverywhere-_xqT1YTctwCjTO9UuU9ilg==/lib/arm64/libLiteRt.so did not load); every entry point resolved
+09-25 09:23:43.937 28373 28401 I WE-DIAG : apu: verdict=pass want=8 source=probe build=113 probedAtMs=1790342623933
+09-25 09:23:44.146 28373 28438 I WE-DIAG : npu: offer soc=MT6989:pass probe=skipped installed=none offered=none
+09-25 10:08:01.411 28373 29236 I WE-DIAG : npu: offer soc=MT6989:pass probe=pass installed=npu-turbo offered=npu-turbo
+09-25 10:08:07.382 28373  6753 I WE-DIAG : initMelOnly: mel-only context ready (128 bands, no weights)
+09-25 10:08:07.442 28373  6753 I WE-DIAG : nativeInit spec: melBins=128 decLayers=4 heads=20 vocab=51866 maxPositions=200 socStamp=mt6989 wantMajor=8 selfKvStrategy=1 perfmode=-1 (inert on LiteRT 2.1.1 AOT); language band 50259..50358
+09-25 10:08:07.442 28373  6753 I WE-DIAG : apu: driver=libneuronusdk_adapter.mtk.so 8.2.26 want=8 devices=3 device=mtk-gpu+mtk-dsp+mtk-mdla walk=258ms query=2ms pass
+09-25 10:08:07.450 28373  6753 I WE-DIAG : environment: created in 8 ms, dispatch dir /data/user/0/com.whispereverywhere/files/litert_dispatch (process lifetime; never destroyed)
+09-25 10:08:07.450 28373  6753 I WE-DIAG : apu: stamp=MediaTek mt6989 matches the family
+09-25 10:08:07.450 28373  6753 I WE-DIAG : apu: stamp=MediaTek mt6989 matches the family
+09-25 10:08:08.563 28373  6753 I WE-DIAG : encoder: /data/user/0/com.whispereverywhere/files/models/turbo_encoder_qairt_context.bin opened in 1112 ms, signature 'encode' #0, 1 in / 8 out
+09-25 10:08:08.871 28373  6753 I WE-DIAG : decoder: /data/user/0/com.whispereverywhere/files/models/turbo_decoder_qairt_context.bin opened in 308 ms, signature 'decode' #0, 19 in / 9 out
+09-25 10:08:10.470 28373  6753 I WE-DIAG : encoder: compiled with accelerators NPU in 1599 ms (fully accelerated: yes)
+09-25 10:08:11.019 28373  6753 I WE-DIAG : decoder: compiled with accelerators NPU|CPU in 549 ms (fully accelerated: no - the leftover ops run on LiteRT's CPU kernels)
+09-25 10:08:11.189 28373  6753 I WE-DIAG : buffers: 29 made, 16 joins; mel {size=1536000 types=[2,4] strides=3 -> type 2, 1536000 B packed}; cross-KV 0 {size=7680000 types=[2,4] strides=4 -> type 2, 7680000 B packed}; self-KV 0 {size=1018880 types=[2,4] strides=4 -> type 2, 1018880 B packed}; attention_mask {size=800 types=[2,4] strides=4 -> type 2, 800 B packed}; logits {size=207464 types=[2,4] strides=4 -> type 2, 207464 B packed}; input_ids {size=4 types=[1] strides=1 -> type 1, 4 B packed}; position_ids {size=4 types=[1] strides=1 -> type 1, 4 B packed}
+09-25 10:08:11.243 28373  6753 I WE-DIAG : apu: decoder step 42.8 ms on zeroed caches (ceiling 250 ms) pass
+09-25 10:08:11.243 28373  6753 I WE-DIAG : nativeInit OK - encoder 'encode' (1 in / 8 out, accelerators NPU, restore 1599 ms), decoder 'decode' (19 in / 9 out, accelerators NPU|CPU, restore 549 ms), 29 buffers, APU check 42.8 ms, selfKvStrategy=1 (one set, copied back per step - the default), perfmode=-1 (inert on LiteRT 2.1.1 AOT)
+09-25 10:08:11.243 28373  6753 I WE-DIAG : nativeInit: session armed with epoch 1
+09-25 10:08:11.243 28373  6753 I WE-DIAG : npu-debug: instrumentation disabled
+09-25 10:08:19.967 28373  6753 I WE-DIAG : nativeRelease complete (epoch 1); the environment and the adapter stay loaded
+09-25 10:08:22.145  7629  7629 F DEBUG   : *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+09-25 10:08:22.145  7629  7629 F DEBUG   : Build fingerprint: 'samsung/gts10psqw/gts10p:16/BP2A.250605.031.A3/X828USQS6CZA3:user/release-keys'
+09-25 10:08:22.145  7629  7629 F DEBUG   : Revision: '5'
+09-25 10:08:22.145  7629  7629 F DEBUG   : ABI: 'arm64'
+09-25 10:08:22.145  7629  7629 F DEBUG   : Processor: '7'
+09-25 10:08:22.145  7629  7629 F DEBUG   : Timestamp: 2026-09-25 10:08:21.616224482-0400
+09-25 10:08:22.145  7629  7629 F DEBUG   : Process uptime: 2679s
+09-25 10:08:22.145  7629  7629 F DEBUG   : Cmdline: com.whispereverywhere
+09-25 10:08:22.145  7629  7629 F DEBUG   : pid: 28373, tid: 28413, name: RenderThread  >>> com.whispereverywhere <<<
+09-25 10:08:22.145  7629  7629 F DEBUG   : uid: 10584
+09-25 10:08:22.145  7629  7629 F DEBUG   : tagged_addr_ctrl: 0000000000000001 (PR_TAGGED_ADDR_ENABLE)
+09-25 10:08:22.145  7629  7629 F DEBUG   : pac_enabled_keys: 000000000000000f (PR_PAC_APIAKEY, PR_PAC_APIBKEY, PR_PAC_APDAKEY, PR_PAC_APDBKEY)
+09-25 10:08:22.145  7629  7629 F DEBUG   : signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0xffffffffffffffff
+09-25 10:08:22.145  7629  7629 F DEBUG   :     x0  0000000000000008  x1  00000000000000a0  x2  00000078f9a5c2d0  x3  00000076001aed18
+09-25 10:08:22.145  7629  7629 F DEBUG   :     x4  00000000000000a8  x5  0000007749c24f4c  x6  0000000000010d2b  x7  0000121b0000f168
+09-25 10:08:22.145  7629  7629 F DEBUG   :     x8  b400007869add170  x9  0000000000000011  x10 0000000000011c60  x11 0000000000000000
+09-25 10:08:22.146  7629  7629 F DEBUG   :     x12 00000000000001c7  x13 000000000000fd7a  x14 0000000000000006  x15 000000000000f168
+09-25 10:08:22.146  7629  7629 F DEBUG   :     x16 00000076497b8630  x17 00000079bdaae540  x18 0000007567994000  x19 ffffffffffffffff
+09-25 10:08:22.146  7629  7629 F DEBUG   :     x20 ffffffffffffffff  x21 ffffffffffffffff  x22 0000000000000040  x23 b40000757678d4e0
+09-25 10:08:22.146  7629  7629 F DEBUG   :     x24 b40000757670d260  x25 b40000757670d260  x26 b400007739a76700  x27 b400007739a76740
+09-25 10:08:22.146  7629  7629 F DEBUG   :     x28 0000000000000040  x29 00000076001af060
+09-25 10:08:22.146  7629  7629 F DEBUG   :     lr  00000076486c0abc  sp  00000076001aed90  pc  00000076486c0ac8  pst 0000000080001000
+09-25 10:08:22.146  7629  7629 F DEBUG   : 25 total frames
+09-25 10:08:22.146  7629  7629 F DEBUG   : backtrace:
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #00 pc 0000000001a6bac8  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #01 pc 0000000001a6c8b4  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #02 pc 0000000001a65754  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #03 pc 00000000009b29ac  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #04 pc 00000000009b468c  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #05 pc 0000000001a4321c  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #06 pc 0000000001a60cac  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #07 pc 0000000001a42cd8  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #08 pc 00000000009b054c  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #09 pc 00000000009ada68  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #10 pc 00000000009ca19c  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #11 pc 00000000009c4158  /vendor/lib64/egl/mt6989/libGLES_mali.so (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #12 pc 00000000009c4a28  /vendor/lib64/egl/mt6989/libGLES_mali.so (eglDestroySurface+264) (BuildId: 697ca7dc63719382)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #13 pc 0000000000031cac  /system/lib64/libEGL.so (android::eglDestroySurfaceImpl(void*, void*)+60) (BuildId: 1c840ee4686ed0583f0f9745e32e725a)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #14 pc 000000000089956c  /system/lib64/libhwui.so (android::uirenderer::renderthread::EglManager::destroySurface(void*)+60) (BuildId: ded74b0af4d7cbaccd7d394aa640fe53)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #15 pc 0000000000896a44  /system/lib64/libhwui.so (android::uirenderer::skiapipeline::SkiaOpenGLPipeline::setSurface(ANativeWindow*, android::uirenderer::renderthread::SwapBehavior)+68) (BuildId: ded74b0af4d7cbaccd7d394aa640fe53)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #16 pc 00000000006234c4  /system/lib64/libhwui.so (android::uirenderer::renderthread::CanvasContext::setupPipelineSurface()+68) (BuildId: ded74b0af4d7cbaccd7d394aa640fe53)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #17 pc 00000000006233b0  /system/lib64/libhwui.so (android::uirenderer::renderthread::CanvasContext::setSurface(ANativeWindow*, bool)+96) (BuildId: ded74b0af4d7cbaccd7d394aa640fe53)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #18 pc 0000000000622f54  /system/lib64/libhwui.so (android::uirenderer::renderthread::CanvasContext::destroy()+116) (BuildId: ded74b0af4d7cbaccd7d394aa640fe53)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #19 pc 000000000086f900  /system/lib64/libhwui.so (std::__1::__function::__func<decltype(fp()) android::uirenderer::WorkQueue::runSync<android::uirenderer::renderthread::RenderProxy::setStopped(bool)::$_0>(android::uirenderer::renderthread::RenderProxy::setStopped(bool)::$_0&&)::'lambda'(), std::__1::allocator<decltype(fp()) android::uirenderer::WorkQueue::runSync<android::uirenderer::renderthread::RenderProxy::setStopped(bool)::$_0>(android::uirenderer::renderthread::RenderProxy::setStopped(bool)::$_0&&)::'lambda'()>, void ()>::operator()() (.__uniq.110435125376433984577876079601927332169.c64c4f1a25f6b451ab84db770168cb49)+96) (BuildId: ded74b0af4d7cbaccd7d394aa640fe53)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #20 pc 00000000006b0e84  /system/lib64/libhwui.so (android::uirenderer::renderthread::RenderThread::threadLoop()+772) (BuildId: ded74b0af4d7cbaccd7d394aa640fe53)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #21 pc 00000000000192e8  /system/lib64/libutils.so (android::Thread::_threadLoop(void*)+248) (BuildId: 688c1a689e464d4e0c83f8957a0e4112)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #22 pc 000000000001ba14  /system/lib64/libutils.so (libutil_thread_trampoline(void*) (.__uniq.226528677032898775202282855395389835431)+20) (BuildId: 688c1a689e464d4e0c83f8957a0e4112)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #23 pc 0000000000082c4c  /apex/com.android.runtime/lib64/bionic/libc.so (__pthread_start(void*)+236) (BuildId: 1a3e2eff9b521b59ef377e69d16e88b8)
+09-25 10:08:22.146  7629  7629 F DEBUG   :       #24 pc 00000000000754b0  /apex/com.android.runtime/lib64/bionic/libc.so (__start_thread+64) (BuildId: 1a3e2eff9b521b59ef377e69d16e88b8)
+09-25 10:08:23.466  7711  7730 I WE-DIAG : apu: verdict=pass want=8 source=stored build=113 probedAtMs=1790342623933
+09-25 10:08:23.757  7711  7813 I WE-DIAG : npu: offer soc=MT6989:pass probe=pass installed=npu-turbo offered=npu-turbo
+09-25 10:08:25.317  7711  8104 I WE-DIAG : initMelOnly: mel-only context ready (128 bands, no weights)
+09-25 10:08:25.358  7711  8104 I WE-DIAG : nativeInit spec: melBins=128 decLayers=4 heads=20 vocab=51866 maxPositions=200 socStamp=mt6989 wantMajor=8 selfKvStrategy=1 perfmode=-1 (inert on LiteRT 2.1.1 AOT); language band 50259..50358
+09-25 10:08:25.556  7711  8104 I WE-DIAG : apu: candidate libneuronusdk_adapter.9.mtk.so did not load (dlopen failed: library "libneuronusdk_adapter.9.mtk.so" not found)
+09-25 10:08:25.556  7711  8104 I WE-DIAG : apu: candidate libneuron_adapter_mgvi.so did not load (dlopen failed: library "libneuron_adapter_mgvi.so" not found)
+09-25 10:08:25.556  7711  8104 I WE-DIAG : apu: candidate /data/user/0/com.whispereverywhere/files/litert_dispatch/libneuron_adapter.so did not load (dlopen failed: library "/data/user/0/com.whispereverywhere/files/litert_dispatch/libneuron_adapter.so" not found)
+09-25 10:08:25.556  7711  8104 I WE-DIAG : apu: driver=libneuronusdk_adapter.mtk.so 8.2.26 want=8 devices=3 device=mtk-gpu+mtk-dsp+mtk-mdla walk=198ms query=0ms pass
+09-25 10:08:25.558  7711  8104 I WE-DIAG : runtime: libLiteRt.so loaded from libLiteRt.so (by SONAME; /data/app/~~bv_FZeHW5j0SmmR48ZQzyw==/com.whispereverywhere-_xqT1YTctwCjTO9UuU9ilg==/lib/arm64/libLiteRt.so did not load); every entry point resolved
+09-25 10:08:25.560  7711  8104 I WE-DIAG : environment: created in 1 ms, dispatch dir /data/user/0/com.whispereverywhere/files/litert_dispatch (process lifetime; never destroyed)
+09-25 10:08:25.560  7711  8104 I WE-DIAG : apu: stamp=MediaTek mt6989 matches the family
+09-25 10:08:25.560  7711  8104 I WE-DIAG : apu: stamp=MediaTek mt6989 matches the family
+09-25 10:08:26.956  7711  8104 I WE-DIAG : encoder: /data/user/0/com.whispereverywhere/files/models/turbo_encoder_qairt_context.bin opened in 1396 ms, signature 'encode' #0, 1 in / 8 out
+09-25 10:08:27.203  7711  8104 I WE-DIAG : decoder: /data/user/0/com.whispereverywhere/files/models/turbo_decoder_qairt_context.bin opened in 247 ms, signature 'decode' #0, 19 in / 9 out
+09-25 10:08:28.620  7711  8104 I WE-DIAG : encoder: compiled with accelerators NPU in 1417 ms (fully accelerated: yes)
+09-25 10:08:29.277  7711  8104 I WE-DIAG : decoder: compiled with accelerators NPU|CPU in 656 ms (fully accelerated: no - the leftover ops run on LiteRT's CPU kernels)
+09-25 10:08:29.293  7711  8104 I WE-DIAG : buffers: 29 made, 16 joins; mel {size=1536000 types=[2,4] strides=3 -> type 2, 1536000 B packed}; cross-KV 0 {size=7680000 types=[2,4] strides=4 -> type 2, 7680000 B packed}; self-KV 0 {size=1018880 types=[2,4] strides=4 -> type 2, 1018880 B packed}; attention_mask {size=800 types=[2,4] strides=4 -> type 2, 800 B packed}; logits {size=207464 types=[2,4] strides=4 -> type 2, 207464 B packed}; input_ids {size=4 types=[1] strides=1 -> type 1, 4 B packed}; position_ids {size=4 types=[1] strides=1 -> type 1, 4 B packed}
+09-25 10:08:29.325  7711  8104 I WE-DIAG : apu: decoder step 28.5 ms on zeroed caches (ceiling 250 ms) pass
+09-25 10:08:29.325  7711  8104 I WE-DIAG : nativeInit OK - encoder 'encode' (1 in / 8 out, accelerators NPU, restore 1417 ms), decoder 'decode' (19 in / 9 out, accelerators NPU|CPU, restore 656 ms), 29 buffers, APU check 28.5 ms, selfKvStrategy=1 (one set, copied back per step - the default), perfmode=-1 (inert on LiteRT 2.1.1 AOT)
+09-25 10:08:29.325  7711  8104 I WE-DIAG : nativeInit: session armed with epoch 1
+09-25 10:08:29.326  7711  8104 I WE-DIAG : npu-debug: instrumentation disabled
+09-25 10:09:17.848  7711  8104 I WE-DIAG : encode: run OK in 1841.3 ms (mel copy-in 2.6 ms)
+09-25 10:09:18.560  7711  8104 I WE-DIAG : decode: 19 tokens in 710.8 ms (37.41 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=nan(unmeasured: 17 text ids, the window needs 33) rung=0 steps=22 step=32.31 ms (run 22.18, io 0.44, kv copy 8.33 ms x21)
+09-25 10:09:18.592  7711  9838 I WE-DIAG : VAD-standalone: 64000 samples -> 1 segments wallMs=21.5
+09-25 10:09:18.909  7711  7711 I WE-DIAG : speaker: seq=1 segs=1 windows=2 embedMs=314 ids=[1,1] best=[-,0.61] dur=[2.0,2.0] confirmed=0 load=1 route=vad pick=0
+09-25 10:09:28.574  7711  8104 I WE-DIAG : encode: run OK in 1752.0 ms (mel copy-in 0.2 ms)
+09-25 10:09:30.072  7711  8104 I WE-DIAG : decode: 45 tokens in 1497.3 ms (33.27 ms/token), terminated by EOT nsp=0.00 lp=-0.24 ent=3.22 rung=0 steps=48 step=31.19 ms (run 21.46, io 0.38, kv copy 7.77 ms x47)
+09-25 10:09:30.156  7711  9838 I WE-DIAG : VAD-standalone: 173056 samples -> 1 segments wallMs=82.3
+09-25 10:09:30.401  7711  7711 I WE-DIAG : speaker: seq=2 segs=1 windows=3 embedMs=242 ids=[1,1,1] best=[0.71,0.81,0.66] dur=[3.6,3.6,3.5] confirmed=0 load=0 route=vad pick=0
+09-25 10:09:43.580  7711  8104 I WE-DIAG : encode: run OK in 1748.4 ms (mel copy-in 0.5 ms)
+09-25 10:09:45.699  7711  8104 I WE-DIAG : decode: 64 tokens in 2118.7 ms (33.11 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=3.15 rung=0 steps=67 step=31.62 ms (run 21.54, io 0.42, kv copy 8.11 ms x66)
+09-25 10:09:45.816  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=115.3
+09-25 10:09:46.161  7711  7711 I WE-DIAG : speaker: seq=3 segs=2 windows=6 embedMs=342 ids=[1,1,1,1,1,1] best=[0.75,0.79,0.79,0.81,0.72,0.79] dur=[2.4,2.7,2.8,2.8,2.0,2.0] confirmed=0 load=0 route=vad pick=2
+09-25 10:09:47.792  7711  8104 I WE-DIAG : encode: run OK in 1741.2 ms (mel copy-in 0.3 ms)
+09-25 10:09:48.557  7711  8104 I WE-DIAG : decode: 22 tokens in 764.2 ms (34.74 ms/token), terminated by EOT nsp=0.00 lp=-0.28 ent=nan(unmeasured: 20 text ids, the window needs 33) rung=0 steps=25 step=30.57 ms (run 21.11, io 0.30, kv copy 7.68 ms x24)
+09-25 10:09:48.592  7711  9838 I WE-DIAG : VAD-standalone: 67584 samples -> 2 segments wallMs=33.0
+09-25 10:09:48.692  7711  7711 I WE-DIAG : speaker: seq=4 segs=2 windows=2 embedMs=97 ids=[1,1] best=[0.68,0.77] dur=[2.1,2.1] confirmed=0 load=0 route=vad pick=0
+09-25 10:09:50.684  7711  8104 I WE-DIAG : encode: run OK in 1747.7 ms (mel copy-in 0.1 ms)
+09-25 10:09:51.225  7711  8104 I WE-DIAG : decode: 14 tokens in 540.3 ms (38.60 ms/token), terminated by EOT nsp=0.00 lp=-0.46 ent=nan(unmeasured: 12 text ids, the window needs 33) rung=0 steps=17 step=31.78 ms (run 21.74, io 0.41, kv copy 8.44 ms x16)
+09-25 10:09:51.248  7711  9838 I WE-DIAG : VAD-standalone: 46080 samples -> 1 segments wallMs=22.0
+09-25 10:09:51.313  7711  7711 I WE-DIAG : speaker: seq=5 segs=1 windows=1 embedMs=64 ids=[1] best=[0.58] dur=[2.9] confirmed=0 load=0 route=vad pick=0
+09-25 10:10:04.597  7711  8104 I WE-DIAG : encode: run OK in 1744.3 ms (mel copy-in 0.2 ms)
+09-25 10:10:06.720  7711  8104 I WE-DIAG : decode: 66 tokens in 2122.7 ms (32.16 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.36 rung=0 steps=69 step=30.76 ms (run 20.79, io 0.36, kv copy 7.97 ms x68)
+09-25 10:10:06.831  7711  9838 I WE-DIAG : VAD-standalone: 222720 samples -> 2 segments wallMs=109.4
+09-25 10:10:07.173  7711  7711 I WE-DIAG : speaker: seq=6 segs=2 windows=4 embedMs=340 ids=[1,1,1,1] best=[0.65,0.71,0.71,0.77] dur=[3.5,3.5,3.5,3.5] confirmed=0 load=0 route=vad pick=0
+09-25 10:10:08.501  7711  8104 I WE-DIAG : encode: run OK in 1751.1 ms (mel copy-in 0.1 ms)
+09-25 10:10:08.848  7711  8104 I WE-DIAG : decode: 9 tokens in 346.4 ms (38.49 ms/token), terminated by EOT nsp=0.00 lp=-0.37 ent=nan(unmeasured: 7 text ids, the window needs 33) rung=0 steps=12 step=28.87 ms (run 20.13, io 0.29, kv copy 7.95 ms x11)
+09-25 10:10:08.871  7711  9838 I WE-DIAG : VAD-standalone: 41984 samples -> 2 segments wallMs=21.9
+09-25 10:10:08.930  7711  7711 I WE-DIAG : speaker: seq=7 segs=2 windows=1 embedMs=58 ids=[1] best=[0.71] dur=[2.6] confirmed=0 load=0 route=vad pick=0
+09-25 10:10:22.229  7711  8104 I WE-DIAG : encode: run OK in 1746.6 ms (mel copy-in 0.2 ms)
+09-25 10:10:24.074  7711  8104 I WE-DIAG : decode: 57 tokens in 1845.0 ms (32.37 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.23 rung=0 steps=60 step=30.75 ms (run 20.91, io 0.37, kv copy 7.97 ms x59)
+09-25 10:10:24.194  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=117.9
+09-25 10:10:24.527  7711  7711 I WE-DIAG : speaker: seq=8 segs=2 windows=5 embedMs=330 ids=[1,1,1,1,1] best=[0.73,0.74,0.75,0.78,0.77] dur=[2.9,2.9,2.9,2.9,3.5] confirmed=0 load=0 route=vad pick=4
+09-25 10:10:34.388  7711  8104 I WE-DIAG : encode: run OK in 1743.8 ms (mel copy-in 0.3 ms)
+09-25 10:10:35.491  7711  8104 I WE-DIAG : decode: 35 tokens in 1103.1 ms (31.52 ms/token), terminated by EOT nsp=0.00 lp=-0.21 ent=3.29 rung=0 steps=38 step=29.03 ms (run 20.16, io 0.32, kv copy 7.36 ms x37)
+09-25 10:10:35.586  7711  9838 I WE-DIAG : VAD-standalone: 194560 samples -> 2 segments wallMs=92.6
+09-25 10:10:35.857  7711  7711 I WE-DIAG : speaker: seq=9 segs=2 windows=4 embedMs=268 ids=[1,1,1,1] best=[0.62,0.79,0.80,0.70] dur=[3.0,3.0,3.0,3.0] confirmed=0 load=0 route=vad pick=1
+09-25 10:10:41.558  7711  8104 I WE-DIAG : encode: run OK in 1745.9 ms (mel copy-in 0.2 ms)
+09-25 10:10:42.351  7711  8104 I WE-DIAG : decode: 25 tokens in 793.1 ms (31.73 ms/token), terminated by EOT nsp=0.00 lp=-0.31 ent=nan(unmeasured: 23 text ids, the window needs 33) rung=0 steps=28 step=28.33 ms (run 19.82, io 0.29, kv copy 7.19 ms x27)
+09-25 10:10:42.408  7711  9838 I WE-DIAG : VAD-standalone: 114688 samples -> 1 segments wallMs=54.4
+09-25 10:10:42.565  7711  7711 I WE-DIAG : speaker: seq=10 segs=1 windows=2 embedMs=155 ids=[1,1] best=[0.81,0.78] dur=[3.5,3.6] confirmed=0 load=0 route=vad pick=1
+09-25 10:10:46.714  7711  8104 I WE-DIAG : encode: run OK in 1750.3 ms (mel copy-in 0.2 ms)
+09-25 10:10:47.460  7711  8104 I WE-DIAG : decode: 22 tokens in 745.7 ms (33.89 ms/token), terminated by EOT nsp=0.00 lp=-0.25 ent=nan(unmeasured: 18 text ids, the window needs 33) rung=0 steps=25 step=29.83 ms (run 20.89, io 0.32, kv copy 7.58 ms x24)
+09-25 10:10:47.501  7711  9838 I WE-DIAG : VAD-standalone: 82432 samples -> 1 segments wallMs=39.1
+09-25 10:10:47.615  7711  7711 I WE-DIAG : speaker: seq=11 segs=1 windows=2 embedMs=111 ids=[1,1] best=[0.83,0.67] dur=[3.9,1.1] confirmed=0 load=0 route=vad pick=0
+09-25 10:10:53.785  7711  8104 I WE-DIAG : encode: run OK in 1750.1 ms (mel copy-in 0.2 ms)
+09-25 10:10:55.146  7711  8104 I WE-DIAG : decode: 42 tokens in 1361.3 ms (32.41 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=3.21 rung=0 steps=45 step=30.25 ms (run 20.84, io 0.33, kv copy 7.80 ms x44)
+09-25 10:10:55.202  7711  9838 I WE-DIAG : VAD-standalone: 113152 samples -> 2 segments wallMs=53.5
+09-25 10:10:55.309  7711  7711 I WE-DIAG : speaker: seq=12 segs=2 windows=4 embedMs=104 ids=[1,1,1,1] best=[0.73,0.57,-,-] dur=[1.9,2.8,0.9,0.8] confirmed=0 load=0 route=vad pick=1
+09-25 10:11:08.793  7711  8104 I WE-DIAG : encode: run OK in 1748.1 ms (mel copy-in 0.2 ms)
+09-25 10:11:10.462  7711  8104 I WE-DIAG : decode: 50 tokens in 1668.3 ms (33.37 ms/token), terminated by EOT nsp=0.00 lp=-0.26 ent=3.04 rung=0 steps=53 step=31.48 ms (run 21.32, io 0.39, kv copy 8.26 ms x52)
+09-25 10:11:10.578  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=113.8
+09-25 10:11:10.827  7711  7711 I WE-DIAG : speaker: seq=13 segs=1 windows=4 embedMs=246 ids=[1,1,2,2] best=[-,0.55,0.20,0.44] dur=[0.1,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-25 10:11:13.668  7711  8104 I WE-DIAG : encode: run OK in 1741.8 ms (mel copy-in 0.1 ms)
+09-25 10:11:14.338  7711  8104 I WE-DIAG : decode: 20 tokens in 669.3 ms (33.47 ms/token), terminated by EOT nsp=0.00 lp=-0.11 ent=nan(unmeasured: 18 text ids, the window needs 33) rung=0 steps=23 step=29.10 ms (run 20.49, io 0.31, kv copy 7.22 ms x22)
+09-25 10:11:14.377  7711  9838 I WE-DIAG : VAD-standalone: 78336 samples -> 1 segments wallMs=37.7
+09-25 10:11:14.487  7711  7711 I WE-DIAG : speaker: seq=14 segs=1 windows=2 embedMs=107 ids=[3,3] best=[0.20,0.37] dur=[2.3,2.4] confirmed=0 load=0 route=vad pick=1
+09-25 10:11:23.370  7711  8104 I WE-DIAG : encode: run OK in 1821.6 ms (mel copy-in 0.1 ms)
+09-25 10:11:24.180  7711  8104 I WE-DIAG : decode: 28 tokens in 809.2 ms (28.90 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=nan(unmeasured: 24 text ids, the window needs 33) rung=0 steps=31 step=26.10 ms (run 19.42, io 0.31, kv copy 5.31 ms x30)
+09-25 10:11:24.268  7711  9838 I WE-DIAG : VAD-standalone: 153600 samples -> 2 segments wallMs=87.7
+09-25 10:11:24.436  7711  7711 I WE-DIAG : speaker: seq=15 segs=2 windows=3 embedMs=166 ids=[3,4,4] best=[-,0.25,0.69] dur=[0.0,2.7,2.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:11:24.445  7711  7711 I WE-DIAG : speaker-labels: confirmed=2 runs=25 relabelled=1
+09-25 10:11:24.445  7711  7711 I WE-DIAG : speaker-recluster: n=41 clusters=2 confirmed=2 changed=5 ms=0
+09-25 10:11:37.209  7711  8104 I WE-DIAG : encode: run OK in 1762.5 ms (mel copy-in 0.6 ms)
+09-25 10:11:39.209  7711  8104 I WE-DIAG : decode: 60 tokens in 1999.9 ms (33.33 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=3.04 rung=0 steps=63 step=31.74 ms (run 21.59, io 0.38, kv copy 8.09 ms x62)
+09-25 10:11:39.318  7711  9838 I WE-DIAG : VAD-standalone: 222208 samples -> 1 segments wallMs=105.8
+09-25 10:11:39.694  7711  7711 I WE-DIAG : speaker: seq=16 segs=1 windows=4 embedMs=374 ids=[3,3,3,3] best=[0.23,0.70,0.84,0.83] dur=[3.5,3.5,3.5,3.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:11:41.006  7711  8104 I WE-DIAG : encode: run OK in 1759.4 ms (mel copy-in 0.2 ms)
+09-25 10:11:41.478  7711  8104 I WE-DIAG : decode: 13 tokens in 471.8 ms (36.29 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=29.49 ms (run 20.67, io 0.29, kv copy 7.48 ms x15)
+09-25 10:11:41.499  7711  9838 I WE-DIAG : VAD-standalone: 39936 samples -> 1 segments wallMs=19.4
+09-25 10:11:41.556  7711  7711 I WE-DIAG : speaker: seq=17 segs=1 windows=1 embedMs=56 ids=[3] best=[0.77] dur=[2.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:11:49.070  7711  8104 I WE-DIAG : encode: run OK in 1744.1 ms (mel copy-in 0.4 ms)
+09-25 10:11:50.475  7711  8104 I WE-DIAG : decode: 43 tokens in 1405.0 ms (32.67 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.17 rung=0 steps=46 step=30.54 ms (run 20.83, io 0.33, kv copy 7.95 ms x45)
+09-25 10:11:50.549  7711  9838 I WE-DIAG : VAD-standalone: 150528 samples -> 1 segments wallMs=71.6
+09-25 10:11:50.773  7711  7711 I WE-DIAG : speaker: seq=18 segs=1 windows=4 embedMs=222 ids=[3,3,3,3] best=[0.77,0.71,0.73,0.69] dur=[2.3,2.3,2.3,2.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:11:52.464  7711  8104 I WE-DIAG : encode: run OK in 1744.4 ms (mel copy-in 0.1 ms)
+09-25 10:11:53.037  7711  8104 I WE-DIAG : decode: 16 tokens in 572.4 ms (35.78 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=nan(unmeasured: 14 text ids, the window needs 33) rung=0 steps=19 step=30.13 ms (run 20.61, io 0.30, kv copy 8.11 ms x18)
+09-25 10:11:53.064  7711  9838 I WE-DIAG : VAD-standalone: 54272 samples -> 1 segments wallMs=25.9
+09-25 10:11:53.143  7711  7711 I WE-DIAG : speaker: seq=19 segs=1 windows=1 embedMs=78 ids=[3] best=[0.76] dur=[3.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:12:03.066  7711  8104 I WE-DIAG : encode: run OK in 1746.4 ms (mel copy-in 0.2 ms)
+09-25 10:12:04.436  7711  8104 I WE-DIAG : decode: 43 tokens in 1369.9 ms (31.86 ms/token), terminated by EOT nsp=0.00 lp=-0.05 ent=3.10 rung=0 steps=46 step=29.78 ms (run 20.59, io 0.32, kv copy 7.71 ms x45)
+09-25 10:12:04.518  7711  9838 I WE-DIAG : VAD-standalone: 169472 samples -> 1 segments wallMs=80.3
+09-25 10:12:04.778  7711  7711 I WE-DIAG : speaker: seq=20 segs=1 windows=4 embedMs=259 ids=[3,3,3,3] best=[0.79,0.72,0.73,0.73] dur=[3.4,2.6,1.9,2.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:12:04.779  7711  7711 I WE-DIAG : speaker-recluster: n=55 clusters=3 confirmed=3 changed=4 ms=0
+09-25 10:12:06.224  7711  8104 I WE-DIAG : encode: run OK in 1751.9 ms (mel copy-in 0.2 ms)
+09-25 10:12:06.680  7711  8104 I WE-DIAG : decode: 13 tokens in 456.0 ms (35.07 ms/token), terminated by EOT nsp=0.00 lp=-0.04 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=28.50 ms (run 20.10, io 0.29, kv copy 7.37 ms x15)
+09-25 10:12:06.705  7711  9838 I WE-DIAG : VAD-standalone: 50176 samples -> 2 segments wallMs=24.1
+09-25 10:12:06.773  7711  7711 I WE-DIAG : speaker: seq=21 segs=2 windows=1 embedMs=66 ids=[3] best=[0.73] dur=[3.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:12:21.213  7711  8104 I WE-DIAG : encode: run OK in 1756.2 ms (mel copy-in 0.2 ms)
+09-25 10:12:23.299  7711  8104 I WE-DIAG : decode: 64 tokens in 2085.6 ms (32.59 ms/token), terminated by EOT nsp=0.00 lp=-0.15 ent=3.28 rung=0 steps=67 step=31.13 ms (run 21.01, io 0.40, kv copy 8.21 ms x66)
+09-25 10:12:23.416  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=114.9
+09-25 10:12:23.747  7711  7711 I WE-DIAG : speaker: seq=22 segs=2 windows=6 embedMs=329 ids=[3,3,1,1,1,1] best=[0.75,0.65,0.68,0.69,0.72,0.71] dur=[2.5,2.5,2.5,2.5,2.5,2.5] confirmed=1 load=0 route=vad pick=4
+09-25 10:12:36.216  7711  8104 I WE-DIAG : encode: run OK in 1749.6 ms (mel copy-in 0.1 ms)
+09-25 10:12:38.666  7711  8104 I WE-DIAG : decode: 77 tokens in 2449.6 ms (31.81 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=3.22 rung=0 steps=80 step=30.62 ms (run 20.55, io 0.39, kv copy 8.18 ms x79)
+09-25 10:12:38.789  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=120.6
+09-25 10:12:39.166  7711  7711 I WE-DIAG : speaker: seq=23 segs=1 windows=6 embedMs=375 ids=[1,1,1,1,1,1] best=[0.76,0.78,0.73,0.72,0.78,0.72] dur=[4.0,2.9,2.0,2.0,1.8,2.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:12:40.454  7711  8104 I WE-DIAG : encode: run OK in 1753.8 ms (mel copy-in 0.2 ms)
+09-25 10:12:40.791  7711  8104 I WE-DIAG : decode: 8 tokens in 336.9 ms (42.11 ms/token), terminated by EOT nsp=0.00 lp=-0.28 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=30.62 ms (run 21.59, io 0.34, kv copy 8.10 ms x10)
+09-25 10:12:40.815  7711  9838 I WE-DIAG : VAD-standalone: 45568 samples -> 1 segments wallMs=22.4
+09-25 10:12:40.879  7711  7711 I WE-DIAG : speaker: seq=24 segs=1 windows=1 embedMs=63 ids=[1] best=[0.72] dur=[2.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:12:54.074  7711  8104 I WE-DIAG : encode: run OK in 1751.2 ms (mel copy-in 0.1 ms)
+09-25 10:12:56.290  7711  8104 I WE-DIAG : decode: 70 tokens in 2215.8 ms (31.65 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=2.91 rung=0 steps=73 step=30.35 ms (run 20.63, io 0.31, kv copy 7.92 ms x72)
+09-25 10:12:56.407  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=114.7
+09-25 10:12:56.745  7711  7711 I WE-DIAG : speaker: seq=25 segs=1 windows=4 embedMs=336 ids=[1,1,1,1] best=[0.61,0.43,0.45,0.40] dur=[3.8,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:12:56.746  7711  7711 I WE-DIAG : speaker-recluster: n=73 clusters=3 confirmed=3 changed=3 ms=0
+09-25 10:12:59.802  7711  8104 I WE-DIAG : encode: run OK in 1749.1 ms (mel copy-in 0.1 ms)
+09-25 10:13:00.557  7711  8104 I WE-DIAG : decode: 21 tokens in 755.2 ms (35.96 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=nan(unmeasured: 17 text ids, the window needs 33) rung=0 steps=24 step=31.47 ms (run 21.37, io 0.36, kv copy 8.47 ms x23)
+09-25 10:13:00.603  7711  9838 I WE-DIAG : VAD-standalone: 91648 samples -> 1 segments wallMs=44.3
+09-25 10:13:00.732  7711  7711 I WE-DIAG : speaker: seq=26 segs=1 windows=2 embedMs=127 ids=[3,3] best=[0.78,0.81] dur=[2.1,3.6] confirmed=1 load=0 route=vad pick=1
+09-25 10:13:14.817  7711  8104 I WE-DIAG : encode: run OK in 1746.6 ms (mel copy-in 0.2 ms)
+09-25 10:13:16.374  7711  8104 I WE-DIAG : decode: 47 tokens in 1556.9 ms (33.13 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.34 rung=0 steps=50 step=31.14 ms (run 21.19, io 0.35, kv copy 8.11 ms x49)
+09-25 10:13:16.491  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 4 segments wallMs=116.0
+09-25 10:13:16.816  7711  7711 I WE-DIAG : speaker: seq=27 segs=4 windows=4 embedMs=324 ids=[3,3,3,3] best=[0.80,0.80,0.78,0.77] dur=[3.4,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:13:29.819  7711  8104 I WE-DIAG : encode: run OK in 1747.4 ms (mel copy-in 0.1 ms)
+09-25 10:13:31.809  7711  8104 I WE-DIAG : decode: 60 tokens in 1990.3 ms (33.17 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=3.34 rung=0 steps=63 step=31.59 ms (run 21.20, io 0.39, kv copy 8.39 ms x62)
+09-25 10:13:31.932  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 3 segments wallMs=120.2
+09-25 10:13:32.299  7711  7711 I WE-DIAG : speaker: seq=28 segs=3 windows=6 embedMs=365 ids=[3,3,3,3,3,3] best=[0.78,0.78,0.73,0.78,0.77,0.74] dur=[2.4,2.4,2.9,3.0,2.1,2.1] confirmed=1 load=0 route=vad pick=3
+09-25 10:13:33.600  7711  8104 I WE-DIAG : encode: run OK in 1753.0 ms (mel copy-in 0.1 ms)
+09-25 10:13:34.083  7711  8104 I WE-DIAG : decode: 14 tokens in 483.8 ms (34.55 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=nan(unmeasured: 12 text ids, the window needs 33) rung=0 steps=17 step=28.46 ms (run 19.85, io 0.30, kv copy 7.55 ms x16)
+09-25 10:13:34.110  7711  9838 I WE-DIAG : VAD-standalone: 53760 samples -> 1 segments wallMs=25.7
+09-25 10:13:34.179  7711  7711 I WE-DIAG : speaker: seq=29 segs=1 windows=1 embedMs=67 ids=[3] best=[0.78] dur=[2.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:13:45.141  7711  8104 I WE-DIAG : encode: run OK in 1748.9 ms (mel copy-in 0.5 ms)
+09-25 10:13:46.417  7711  8104 I WE-DIAG : decode: 42 tokens in 1275.8 ms (30.38 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=3.19 rung=0 steps=45 step=28.35 ms (run 20.09, io 0.29, kv copy 6.89 ms x44)
+09-25 10:13:46.510  7711  9838 I WE-DIAG : VAD-standalone: 191488 samples -> 1 segments wallMs=91.7
+09-25 10:13:46.803  7711  7711 I WE-DIAG : speaker: seq=30 segs=1 windows=4 embedMs=291 ids=[3,3,3,3] best=[0.76,0.77,0.84,0.77] dur=[3.0,3.0,2.9,2.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:13:46.805  7711  7711 I WE-DIAG : speaker-recluster: n=90 clusters=3 confirmed=3 changed=0 ms=1
+09-25 10:13:48.206  7711  8104 I WE-DIAG : encode: run OK in 1755.3 ms (mel copy-in 0.2 ms)
+09-25 10:13:48.457  7711  8104 I WE-DIAG : decode: 6 tokens in 250.7 ms (41.78 ms/token), terminated by EOT nsp=0.00 lp=-0.44 ent=nan(unmeasured: 4 text ids, the window needs 33) rung=0 steps=9 step=27.85 ms (run 19.85, io 0.36, kv copy 7.16 ms x8)
+09-25 10:13:48.476  7711  9838 I WE-DIAG : VAD-standalone: 35840 samples -> 2 segments wallMs=17.6
+09-25 10:13:48.526  7711  7711 I WE-DIAG : speaker: seq=31 segs=2 windows=1 embedMs=49 ids=[3] best=[0.61] dur=[2.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:13:54.899  7711  8104 I WE-DIAG : encode: run OK in 1747.0 ms (mel copy-in 0.2 ms)
+09-25 10:13:56.007  7711  8104 I WE-DIAG : decode: 34 tokens in 1106.9 ms (32.56 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=nan(unmeasured: 26 text ids, the window needs 33) rung=0 steps=37 step=29.92 ms (run 20.61, io 0.39, kv copy 7.80 ms x36)
+09-25 10:13:56.066  7711  9838 I WE-DIAG : VAD-standalone: 120320 samples -> 1 segments wallMs=58.4
+09-25 10:13:56.213  7711  7711 I WE-DIAG : speaker: seq=32 segs=1 windows=4 embedMs=146 ids=[3,3,3,3] best=[0.75,0.82,0.64,-] dur=[2.3,3.0,1.1,0.9] confirmed=1 load=0 route=vad pick=1
+09-25 10:14:04.761  7711  8104 I WE-DIAG : encode: run OK in 1754.1 ms (mel copy-in 0.2 ms)
+09-25 10:14:06.050  7711  8104 I WE-DIAG : decode: 41 tokens in 1287.9 ms (31.41 ms/token), terminated by EOT nsp=0.00 lp=-0.06 ent=3.29 rung=0 steps=44 step=29.27 ms (run 20.17, io 0.37, kv copy 7.62 ms x43)
+09-25 10:14:06.141  7711  9838 I WE-DIAG : VAD-standalone: 157696 samples -> 1 segments wallMs=89.9
+09-25 10:14:06.383  7711  7711 I WE-DIAG : speaker: seq=33 segs=1 windows=4 embedMs=241 ids=[3,3,3,3] best=[0.71,0.80,0.70,0.82] dur=[2.0,3.0,1.4,3.3] confirmed=1 load=0 route=vad pick=3
+09-25 10:14:07.839  7711  8104 I WE-DIAG : encode: run OK in 1752.5 ms (mel copy-in 0.3 ms)
+09-25 10:14:08.165  7711  8104 I WE-DIAG : decode: 8 tokens in 325.4 ms (40.67 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=29.58 ms (run 20.78, io 0.30, kv copy 7.82 ms x10)
+09-25 10:14:08.195  7711  9838 I WE-DIAG : VAD-standalone: 48640 samples -> 1 segments wallMs=24.4
+09-25 10:14:08.263  7711  7711 I WE-DIAG : speaker: seq=34 segs=1 windows=1 embedMs=67 ids=[3] best=[0.76] dur=[3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:14:22.393  7711  8104 I WE-DIAG : encode: run OK in 1753.1 ms (mel copy-in 0.1 ms)
+09-25 10:14:24.275  7711  8104 I WE-DIAG : decode: 59 tokens in 1881.3 ms (31.89 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=3.36 rung=0 steps=62 step=30.34 ms (run 20.77, io 0.35, kv copy 7.90 ms x61)
+09-25 10:14:24.389  7711  9838 I WE-DIAG : VAD-standalone: 233472 samples -> 3 segments wallMs=111.9
+09-25 10:14:24.737  7711  7711 I WE-DIAG : speaker: seq=35 segs=3 windows=4 embedMs=346 ids=[3,4,4,4] best=[0.71,0.19,0.69,0.70] dur=[3.5,3.4,3.8,3.7] confirmed=1 load=0 route=vad pick=2
+09-25 10:14:24.744  7711  7711 I WE-DIAG : speaker-recluster: n=103 clusters=5 confirmed=5 changed=34 ms=1
+09-25 10:14:26.068  7711  8104 I WE-DIAG : encode: run OK in 1754.3 ms (mel copy-in 0.2 ms)
+09-25 10:14:26.552  7711  8104 I WE-DIAG : decode: 13 tokens in 483.8 ms (37.22 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=30.24 ms (run 20.88, io 0.36, kv copy 8.05 ms x15)
+09-25 10:14:26.577  7711  9838 I WE-DIAG : VAD-standalone: 48128 samples -> 1 segments wallMs=23.0
+09-25 10:14:26.642  7711  7711 I WE-DIAG : speaker: seq=36 segs=1 windows=1 embedMs=63 ids=[5] best=[0.74] dur=[2.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:14:40.405  7711  8104 I WE-DIAG : encode: run OK in 1749.2 ms (mel copy-in 0.2 ms)
+09-25 10:14:42.870  7711  8104 I WE-DIAG : decode: 77 tokens in 2465.4 ms (32.02 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.29 rung=0 steps=80 step=30.82 ms (run 20.85, io 0.39, kv copy 8.06 ms x79)
+09-25 10:14:42.988  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=114.9
+09-25 10:14:43.331  7711  7711 I WE-DIAG : speaker: seq=37 segs=1 windows=7 embedMs=341 ids=[5,5,5,1,1,1,5] best=[0.74,0.68,0.72,0.64,0.61,0.55,0.53] dur=[2.5,2.5,3.7,1.4,1.6,1.5,1.7] confirmed=1 load=0 route=vad pick=2
+09-25 10:14:48.516  7711  8104 I WE-DIAG : encode: run OK in 1749.9 ms (mel copy-in 0.2 ms)
+09-25 10:14:49.372  7711  8104 I WE-DIAG : decode: 26 tokens in 856.0 ms (32.92 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=nan(unmeasured: 24 text ids, the window needs 33) rung=0 steps=29 step=29.52 ms (run 20.50, io 0.31, kv copy 7.52 ms x28)
+09-25 10:14:49.438  7711  9838 I WE-DIAG : VAD-standalone: 129536 samples -> 1 segments wallMs=63.6
+09-25 10:14:49.614  7711  7711 I WE-DIAG : speaker: seq=38 segs=1 windows=2 embedMs=175 ids=[5,5] best=[0.75,0.77] dur=[4.0,4.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:15:03.519  7711  8104 I WE-DIAG : encode: run OK in 1751.3 ms (mel copy-in 0.1 ms)
+09-25 10:15:05.647  7711  8104 I WE-DIAG : decode: 67 tokens in 2128.3 ms (31.77 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=3.34 rung=0 steps=70 step=30.40 ms (run 20.62, io 0.36, kv copy 7.90 ms x69)
+09-25 10:15:05.764  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=114.5
+09-25 10:15:06.128  7711  7711 I WE-DIAG : speaker: seq=39 segs=2 windows=4 embedMs=362 ids=[5,5,1,1] best=[0.72,0.78,0.65,0.71] dur=[4.0,4.0,3.5,3.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:15:07.443  7711  8104 I WE-DIAG : encode: run OK in 1759.7 ms (mel copy-in 0.2 ms)
+09-25 10:15:07.853  7711  8104 I WE-DIAG : decode: 11 tokens in 409.9 ms (37.27 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=nan(unmeasured: 9 text ids, the window needs 33) rung=0 steps=14 step=29.28 ms (run 20.52, io 0.38, kv copy 7.45 ms x13)
+09-25 10:15:07.885  7711  9838 I WE-DIAG : VAD-standalone: 59392 samples -> 1 segments wallMs=29.9
+09-25 10:15:07.975  7711  7711 I WE-DIAG : speaker: seq=40 segs=1 windows=1 embedMs=89 ids=[1] best=[0.77] dur=[3.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:15:07.978  7711  7711 I WE-DIAG : speaker-recluster: n=118 clusters=5 confirmed=5 changed=0 ms=3
+09-25 10:15:09.632  7711  8104 I WE-DIAG : encode: run OK in 1747.5 ms (mel copy-in 0.3 ms)
+09-25 10:15:09.918  7711  8104 I WE-DIAG : decode: 7 tokens in 285.7 ms (40.82 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=nan(unmeasured: 5 text ids, the window needs 33) rung=0 steps=10 step=28.57 ms (run 20.68, io 0.35, kv copy 7.11 ms x9)
+09-25 10:15:09.934  7711  9838 I WE-DIAG : VAD-standalone: 32768 samples -> 1 segments wallMs=15.7
+09-25 10:15:09.981  7711  7711 I WE-DIAG : speaker: seq=41 segs=1 windows=1 embedMs=46 ids=[1] best=[0.65] dur=[1.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:15:12.220  7711  8104 I WE-DIAG : encode: run OK in 1755.1 ms (mel copy-in 0.2 ms)
+09-25 10:15:12.440  7711  8104 I WE-DIAG : decode: 6 tokens in 219.7 ms (36.62 ms/token), terminated by EOT nsp=0.00 lp=-0.90 ent=nan(unmeasured: 4 text ids, the window needs 33) rung=0 steps=9 step=24.41 ms (run 19.34, io 0.20, kv copy 4.84 ms x8)
+09-25 10:15:12.465  7711  9838 I WE-DIAG : VAD-standalone: 47104 samples -> 1 segments wallMs=24.3
+09-25 10:15:12.525  7711  7711 I WE-DIAG : speaker: seq=42 segs=1 windows=1 embedMs=57 ids=[1] best=[0.57] dur=[2.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:15:15.343  7711  8104 I WE-DIAG : encode: run OK in 1740.1 ms (mel copy-in 0.2 ms)
+09-25 10:15:15.654  7711  8104 I WE-DIAG : decode: 8 tokens in 310.7 ms (38.84 ms/token), terminated by EOT nsp=0.00 lp=-0.43 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=28.25 ms (run 20.59, io 0.39, kv copy 6.84 ms x10)
+09-25 10:15:15.682  7711  9838 I WE-DIAG : VAD-standalone: 50176 samples -> 2 segments wallMs=27.4
+09-25 10:15:15.751  7711  7711 I WE-DIAG : speaker: seq=43 segs=2 windows=1 embedMs=68 ids=[1] best=[0.63] dur=[2.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:15:22.491  7711  8104 I WE-DIAG : encode: run OK in 1753.0 ms (mel copy-in 0.1 ms)
+09-25 10:15:23.575  7711  8104 I WE-DIAG : decode: 32 tokens in 1083.9 ms (33.87 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 26 text ids, the window needs 33) rung=0 steps=35 step=30.97 ms (run 21.25, io 0.35, kv copy 8.00 ms x34)
+09-25 10:15:23.631  7711  9838 I WE-DIAG : VAD-standalone: 114176 samples -> 2 segments wallMs=54.1
+09-25 10:15:23.760  7711  7711 I WE-DIAG : speaker: seq=44 segs=2 windows=3 embedMs=127 ids=[1,1,1] best=[0.75,-,0.73] dur=[2.5,0.9,3.0] confirmed=1 load=0 route=vad pick=2
+09-25 10:15:37.498  7711  8104 I WE-DIAG : encode: run OK in 1748.2 ms (mel copy-in 0.2 ms)
+09-25 10:15:39.697  7711  8104 I WE-DIAG : decode: 71 tokens in 2198.7 ms (30.97 ms/token), terminated by EOT nsp=0.00 lp=-0.11 ent=3.23 rung=0 steps=74 step=29.71 ms (run 20.35, io 0.37, kv copy 7.62 ms x73)
+09-25 10:15:39.812  7711  9838 I WE-DIAG : VAD-standalone: 235024 samples -> 3 segments wallMs=112.3
+09-25 10:15:40.145  7711  7711 I WE-DIAG : speaker: seq=45 segs=3 windows=7 embedMs=331 ids=[1,4,4,4,4,4,4] best=[0.61,0.76,0.70,0.81,0.76,0.77,0.59] dur=[1.4,2.1,2.1,3.7,2.0,2.0,1.4] confirmed=1 load=0 route=vad pick=3
+09-25 10:15:40.157  7711  7711 I WE-DIAG : speaker-recluster: n=130 clusters=5 confirmed=5 changed=0 ms=2
+09-25 10:15:49.527  7711  8104 I WE-DIAG : encode: run OK in 1751.6 ms (mel copy-in 0.3 ms)
+09-25 10:15:51.450  7711  8104 I WE-DIAG : decode: 60 tokens in 1923.2 ms (32.05 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=3.23 rung=0 steps=63 step=30.53 ms (run 20.99, io 0.36, kv copy 7.91 ms x62)
+09-25 10:15:51.545  7711  9838 I WE-DIAG : VAD-standalone: 197616 samples -> 3 segments wallMs=93.5
+09-25 10:15:51.792  7711  7711 I WE-DIAG : speaker: seq=46 segs=3 windows=8 embedMs=245 ids=[4,4,4,4,4,4,4,4] best=[0.72,0.63,-,-,0.60,0.70,0.79,0.64] dur=[1.2,1.6,0.7,0.8,1.4,1.7,2.3,2.3] confirmed=1 load=0 route=vad pick=6
+09-25 10:16:04.480  7711  8104 I WE-DIAG : encode: run OK in 1751.0 ms (mel copy-in 0.2 ms)
+09-25 10:16:06.093  7711  8104 I WE-DIAG : decode: 51 tokens in 1612.8 ms (31.62 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=3.25 rung=0 steps=54 step=29.87 ms (run 20.70, io 0.36, kv copy 7.37 ms x53)
+09-25 10:16:06.208  7711  9838 I WE-DIAG : VAD-standalone: 239104 samples -> 2 segments wallMs=113.2
+09-25 10:16:06.535  7711  7711 I WE-DIAG : speaker: seq=47 segs=2 windows=4 embedMs=325 ids=[4,4,4,4] best=[0.79,0.77,0.83,0.79] dur=[3.6,3.7,3.7,3.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:16:11.130  7711  8104 I WE-DIAG : encode: run OK in 1752.4 ms (mel copy-in 0.2 ms)
+09-25 10:16:12.055  7711  8104 I WE-DIAG : decode: 27 tokens in 924.2 ms (34.23 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 23 text ids, the window needs 33) rung=0 steps=30 step=30.81 ms (run 20.78, io 0.41, kv copy 8.33 ms x29)
+09-25 10:16:12.108  7711  9838 I WE-DIAG : VAD-standalone: 106496 samples -> 2 segments wallMs=52.4
+09-25 10:16:12.253  7711  7711 I WE-DIAG : speaker: seq=48 segs=2 windows=3 embedMs=143 ids=[4,4,4] best=[0.70,0.80,0.68] dur=[2.3,2.4,1.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:16:15.986  7711  8104 I WE-DIAG : encode: run OK in 1748.4 ms (mel copy-in 0.2 ms)
+09-25 10:16:16.679  7711  8104 I WE-DIAG : decode: 20 tokens in 691.5 ms (34.58 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=nan(unmeasured: 18 text ids, the window needs 33) rung=0 steps=23 step=30.07 ms (run 20.64, io 0.32, kv copy 7.91 ms x22)
+09-25 10:16:16.717  7711  9838 I WE-DIAG : VAD-standalone: 77824 samples -> 1 segments wallMs=37.2
+09-25 10:16:16.830  7711  7711 I WE-DIAG : speaker: seq=49 segs=1 windows=2 embedMs=112 ids=[4,4] best=[0.82,0.84] dur=[2.4,2.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:16:30.574  7711  8104 I WE-DIAG : encode: run OK in 1745.5 ms (mel copy-in 0.1 ms)
+09-25 10:16:32.839  7711  8104 I WE-DIAG : decode: 73 tokens in 2263.2 ms (31.00 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=3.04 rung=0 steps=76 step=29.78 ms (run 20.46, io 0.31, kv copy 7.58 ms x75)
+09-25 10:16:32.952  7711  9838 I WE-DIAG : VAD-standalone: 233472 samples -> 4 segments wallMs=111.4
+09-25 10:16:33.316  7711  7711 I WE-DIAG : speaker: seq=50 segs=4 windows=6 embedMs=362 ids=[4,4,3,3,3,3] best=[0.77,0.80,0.57,0.70,0.74,0.73] dur=[2.4,2.6,2.5,2.5,2.2,2.2] confirmed=1 load=0 route=vad pick=1
+09-25 10:16:33.331  7711  7711 I WE-DIAG : speaker-recluster: n=151 clusters=5 confirmed=5 changed=0 ms=3
+09-25 10:16:34.634  7711  8104 I WE-DIAG : encode: run OK in 1755.1 ms (mel copy-in 0.2 ms)
+09-25 10:16:35.223  7711  8104 I WE-DIAG : decode: 17 tokens in 588.9 ms (34.64 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=nan(unmeasured: 15 text ids, the window needs 33) rung=0 steps=20 step=29.44 ms (run 20.43, io 0.32, kv copy 7.69 ms x19)
+09-25 10:16:35.247  7711  9838 I WE-DIAG : VAD-standalone: 46592 samples -> 1 segments wallMs=22.3
+09-25 10:16:35.310  7711  7711 I WE-DIAG : speaker: seq=51 segs=1 windows=1 embedMs=63 ids=[3] best=[0.80] dur=[2.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:16:37.750  7711  8104 I WE-DIAG : encode: run OK in 1750.2 ms (mel copy-in 0.2 ms)
+09-25 10:16:38.429  7711  8104 I WE-DIAG : decode: 20 tokens in 678.8 ms (33.94 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=nan(unmeasured: 18 text ids, the window needs 33) rung=0 steps=23 step=29.51 ms (run 20.79, io 0.29, kv copy 7.41 ms x22)
+09-25 10:16:38.463  7711  9838 I WE-DIAG : VAD-standalone: 68096 samples -> 2 segments wallMs=32.6
+09-25 10:16:38.562  7711  7711 I WE-DIAG : speaker: seq=52 segs=2 windows=2 embedMs=97 ids=[3,3] best=[0.79,0.82] dur=[2.1,2.1] confirmed=1 load=0 route=vad pick=1
+09-25 10:16:52.765  7711  8104 I WE-DIAG : encode: run OK in 1752.9 ms (mel copy-in 0.2 ms)
+09-25 10:16:54.804  7711  8104 I WE-DIAG : decode: 65 tokens in 2039.1 ms (31.37 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=3.28 rung=0 steps=68 step=29.99 ms (run 20.54, io 0.32, kv copy 7.69 ms x67)
+09-25 10:16:54.927  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=120.6
+09-25 10:16:55.291  7711  7711 I WE-DIAG : speaker: seq=53 segs=1 windows=4 embedMs=362 ids=[3,3,3,3] best=[0.84,0.84,0.86,0.85] dur=[3.6,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:16:56.595  7711  8104 I WE-DIAG : encode: run OK in 1753.9 ms (mel copy-in 0.2 ms)
+09-25 10:16:56.956  7711  8104 I WE-DIAG : decode: 11 tokens in 360.6 ms (32.78 ms/token), terminated by EOT nsp=0.00 lp=-0.06 ent=nan(unmeasured: 9 text ids, the window needs 33) rung=0 steps=14 step=25.75 ms (run 19.49, io 0.23, kv copy 5.65 ms x13)
+09-25 10:16:56.973  7711  9838 I WE-DIAG : VAD-standalone: 32768 samples -> 2 segments wallMs=15.8
+09-25 10:16:57.019  7711  7711 I WE-DIAG : speaker: seq=54 segs=2 windows=1 embedMs=45 ids=[3] best=[0.63] dur=[2.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:16:58.739  7711  8104 I WE-DIAG : encode: run OK in 1748.6 ms (mel copy-in 0.3 ms)
+09-25 10:16:59.316  7711  8104 I WE-DIAG : decode: 17 tokens in 577.2 ms (33.95 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=nan(unmeasured: 15 text ids, the window needs 33) rung=0 steps=20 step=28.86 ms (run 20.34, io 0.32, kv copy 7.17 ms x19)
+09-25 10:16:59.345  7711  9838 I WE-DIAG : VAD-standalone: 56320 samples -> 1 segments wallMs=28.1
+09-25 10:16:59.423  7711  7711 I WE-DIAG : speaker: seq=55 segs=1 windows=1 embedMs=76 ids=[3] best=[0.79] dur=[3.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:16:59.427  7711  7711 I WE-DIAG : speaker-recluster: n=160 clusters=5 confirmed=5 changed=0 ms=4
+09-25 10:17:08.698  7711  8104 I WE-DIAG : encode: run OK in 1750.1 ms (mel copy-in 0.2 ms)
+09-25 10:17:10.074  7711  8104 I WE-DIAG : decode: 41 tokens in 1375.1 ms (33.54 ms/token), terminated by EOT nsp=0.00 lp=-0.30 ent=3.28 rung=0 steps=44 step=31.25 ms (run 21.27, io 0.35, kv copy 8.12 ms x43)
+09-25 10:17:10.154  7711  9838 I WE-DIAG : VAD-standalone: 165888 samples -> 2 segments wallMs=79.1
+09-25 10:17:10.384  7711  7711 I WE-DIAG : speaker: seq=56 segs=2 windows=4 embedMs=228 ids=[3,1,1,1] best=[0.83,0.55,0.76,0.79] dur=[2.6,2.6,2.6,2.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:17:13.403  7711  8104 I WE-DIAG : encode: run OK in 1752.9 ms (mel copy-in 0.2 ms)
+09-25 10:17:14.029  7711  8104 I WE-DIAG : decode: 18 tokens in 626.2 ms (34.79 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=nan(unmeasured: 16 text ids, the window needs 33) rung=0 steps=21 step=29.82 ms (run 20.67, io 0.32, kv copy 7.74 ms x20)
+09-25 10:17:14.066  7711  9838 I WE-DIAG : VAD-standalone: 75264 samples -> 2 segments wallMs=35.9
+09-25 10:17:14.168  7711  7711 I WE-DIAG : speaker: seq=57 segs=2 windows=2 embedMs=100 ids=[1,1] best=[0.65,0.75] dur=[1.8,2.3] confirmed=1 load=0 route=vad pick=1
+09-25 10:17:22.266  7711  8104 I WE-DIAG : encode: run OK in 1752.1 ms (mel copy-in 0.2 ms)
+09-25 10:17:23.670  7711  8104 I WE-DIAG : decode: 45 tokens in 1403.5 ms (31.19 ms/token), terminated by EOT nsp=0.00 lp=-0.21 ent=3.25 rung=0 steps=48 step=29.24 ms (run 20.00, io 0.32, kv copy 7.68 ms x47)
+09-25 10:17:23.738  7711  9838 I WE-DIAG : VAD-standalone: 141824 samples -> 1 segments wallMs=67.1
+09-25 10:17:23.929  7711  7711 I WE-DIAG : speaker: seq=58 segs=1 windows=4 embedMs=190 ids=[1,1,1,1] best=[0.74,0.74,0.67,0.69] dur=[2.1,2.2,2.2,2.2] confirmed=1 load=0 route=vad pick=1
+09-25 10:17:32.983  7711  8104 I WE-DIAG : encode: run OK in 1748.7 ms (mel copy-in 0.2 ms)
+09-25 10:17:34.868  7711  8104 I WE-DIAG : decode: 62 tokens in 1885.0 ms (30.40 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=3.19 rung=0 steps=65 step=29.00 ms (run 20.14, io 0.33, kv copy 7.27 ms x64)
+09-25 10:17:34.951  7711  9838 I WE-DIAG : VAD-standalone: 171520 samples -> 1 segments wallMs=81.5
+09-25 10:17:35.190  7711  7711 I WE-DIAG : speaker: seq=59 segs=1 windows=3 embedMs=237 ids=[5,5,5] best=[0.78,0.79,0.80] dur=[3.8,3.8,3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:17:42.010  7711  8104 I WE-DIAG : encode: run OK in 1748.8 ms (mel copy-in 0.2 ms)
+09-25 10:17:43.310  7711  8104 I WE-DIAG : decode: 40 tokens in 1299.1 ms (32.48 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=3.04 rung=0 steps=43 step=30.21 ms (run 20.42, io 0.38, kv copy 8.02 ms x42)
+09-25 10:17:43.380  7711  9838 I WE-DIAG : VAD-standalone: 144384 samples -> 2 segments wallMs=69.2
+09-25 10:17:43.580  7711  7711 I WE-DIAG : speaker: seq=60 segs=2 windows=3 embedMs=198 ids=[5,1,1] best=[0.78,0.59,0.80] dur=[2.6,2.5,3.7] confirmed=1 load=0 route=vad pick=2
+09-25 10:17:43.589  7711  7711 I WE-DIAG : speaker-recluster: n=176 clusters=5 confirmed=5 changed=0 ms=5
+09-25 10:17:51.908  7711  8104 I WE-DIAG : encode: run OK in 1757.7 ms (mel copy-in 0.2 ms)
+09-25 10:17:53.113  7711  8104 I WE-DIAG : decode: 36 tokens in 1205.4 ms (33.48 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=3.15 rung=0 steps=39 step=30.91 ms (run 20.94, io 0.36, kv copy 8.16 ms x38)
+09-25 10:17:53.192  7711  9838 I WE-DIAG : VAD-standalone: 158208 samples -> 2 segments wallMs=77.1
+09-25 10:17:53.413  7711  7711 I WE-DIAG : speaker: seq=61 segs=2 windows=4 embedMs=219 ids=[1,1,1,1] best=[0.60,0.71,0.65,0.69] dur=[2.3,2.5,2.5,2.5] confirmed=1 load=0 route=vad pick=1
+09-25 10:18:06.912  7711  8104 I WE-DIAG : encode: run OK in 1757.9 ms (mel copy-in 0.2 ms)
+09-25 10:18:09.508  7711  8104 I WE-DIAG : decode: 83 tokens in 2595.5 ms (31.27 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=3.12 rung=0 steps=86 step=30.18 ms (run 20.36, io 0.37, kv copy 7.87 ms x85)
+09-25 10:18:09.623  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=113.2
+09-25 10:18:09.959  7711  7711 I WE-DIAG : speaker: seq=62 segs=1 windows=4 embedMs=334 ids=[1,1,1,1] best=[0.71,0.74,0.84,0.79] dur=[3.7,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:18:16.292  7711  8104 I WE-DIAG : encode: run OK in 1760.2 ms (mel copy-in 0.1 ms)
+09-25 10:18:17.348  7711  8104 I WE-DIAG : decode: 32 tokens in 1056.4 ms (33.01 ms/token), terminated by EOT nsp=0.00 lp=-0.27 ent=nan(unmeasured: 30 text ids, the window needs 33) rung=0 steps=35 step=30.18 ms (run 20.70, io 0.30, kv copy 7.79 ms x34)
+09-25 10:18:17.421  7711  9838 I WE-DIAG : VAD-standalone: 150016 samples -> 2 segments wallMs=71.8
+09-25 10:18:17.633  7711  7711 I WE-DIAG : speaker: seq=63 segs=2 windows=4 embedMs=206 ids=[1,1,1,1] best=[0.69,0.72,0.73,0.80] dur=[2.3,2.3,2.3,2.3] confirmed=1 load=0 route=vad pick=1
+09-25 10:18:20.061  7711  8104 I WE-DIAG : encode: run OK in 1759.4 ms (mel copy-in 0.3 ms)
+09-25 10:18:20.609  7711  8104 I WE-DIAG : decode: 15 tokens in 547.7 ms (36.52 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=18 step=30.43 ms (run 21.05, io 0.36, kv copy 7.82 ms x17)
+09-25 10:18:20.639  7711  9838 I WE-DIAG : VAD-standalone: 60416 samples -> 1 segments wallMs=28.7
+09-25 10:18:20.725  7711  7711 I WE-DIAG : speaker: seq=64 segs=1 windows=1 embedMs=84 ids=[1] best=[0.75] dur=[3.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:18:25.091  7711  8104 I WE-DIAG : encode: run OK in 1759.2 ms (mel copy-in 0.2 ms)
+09-25 10:18:25.817  7711  8104 I WE-DIAG : decode: 22 tokens in 725.6 ms (32.98 ms/token), terminated by EOT nsp=0.00 lp=-0.28 ent=nan(unmeasured: 20 text ids, the window needs 33) rung=0 steps=25 step=29.02 ms (run 20.19, io 0.30, kv copy 7.46 ms x24)
+09-25 10:18:25.856  7711  9838 I WE-DIAG : VAD-standalone: 80384 samples -> 1 segments wallMs=38.1
+09-25 10:18:25.969  7711  7711 I WE-DIAG : speaker: seq=65 segs=1 windows=2 embedMs=111 ids=[1,1] best=[0.75,0.75] dur=[2.2,2.5] confirmed=1 load=0 route=vad pick=1
+09-25 10:18:25.979  7711  7711 I WE-DIAG : speaker-recluster: n=191 clusters=5 confirmed=5 changed=0 ms=6
+09-25 10:18:34.814  7711  8104 I WE-DIAG : encode: run OK in 1755.2 ms (mel copy-in 0.2 ms)
+09-25 10:18:36.327  7711  8104 I WE-DIAG : decode: 47 tokens in 1512.2 ms (32.17 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=3.22 rung=0 steps=50 step=30.24 ms (run 20.31, io 0.36, kv copy 8.10 ms x49)
+09-25 10:18:36.404  7711  9838 I WE-DIAG : VAD-standalone: 155648 samples -> 1 segments wallMs=76.1
+09-25 10:18:36.624  7711  7711 I WE-DIAG : speaker: seq=66 segs=1 windows=4 embedMs=217 ids=[1,1,1,1] best=[0.78,0.71,0.68,0.69] dur=[3.8,1.7,2.1,2.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:18:45.057  7711  8104 I WE-DIAG : encode: run OK in 1758.0 ms (mel copy-in 0.2 ms)
+09-25 10:18:46.390  7711  8104 I WE-DIAG : decode: 42 tokens in 1332.7 ms (31.73 ms/token), terminated by EOT nsp=0.00 lp=-0.06 ent=3.29 rung=0 steps=45 step=29.61 ms (run 20.21, io 0.35, kv copy 7.83 ms x44)
+09-25 10:18:46.469  7711  9838 I WE-DIAG : VAD-standalone: 163840 samples -> 2 segments wallMs=77.8
+09-25 10:18:46.721  7711  7711 I WE-DIAG : speaker: seq=67 segs=2 windows=4 embedMs=250 ids=[1,1,1,3] best=[0.71,0.72,0.59,0.68] dur=[3.1,2.3,2.7,1.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:18:48.182  7711  8104 I WE-DIAG : encode: run OK in 1755.0 ms (mel copy-in 0.2 ms)
+09-25 10:18:48.610  7711  8104 I WE-DIAG : decode: 12 tokens in 427.6 ms (35.63 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=28.50 ms (run 20.09, io 0.31, kv copy 7.47 ms x14)
+09-25 10:18:48.636  7711  9838 I WE-DIAG : VAD-standalone: 45056 samples -> 1 segments wallMs=24.8
+09-25 10:18:48.697  7711  7711 I WE-DIAG : speaker: seq=68 segs=1 windows=1 embedMs=60 ids=[3] best=[0.84] dur=[2.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:18:51.194  7711  8104 I WE-DIAG : encode: run OK in 1752.8 ms (mel copy-in 2.6 ms)
+09-25 10:18:51.662  7711  8104 I WE-DIAG : decode: 13 tokens in 468.5 ms (36.04 ms/token), terminated by EOT nsp=0.00 lp=-0.24 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=29.28 ms (run 20.37, io 0.36, kv copy 7.46 ms x15)
+09-25 10:18:51.689  7711  9838 I WE-DIAG : VAD-standalone: 53248 samples -> 2 segments wallMs=26.0
+09-25 10:18:51.766  7711  7711 I WE-DIAG : speaker: seq=69 segs=2 windows=1 embedMs=75 ids=[3] best=[0.77] dur=[3.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:19:06.203  7711  8104 I WE-DIAG : encode: run OK in 1747.6 ms (mel copy-in 0.1 ms)
+09-25 10:19:08.700  7711  8104 I WE-DIAG : decode: 81 tokens in 2497.0 ms (30.83 ms/token), terminated by EOT nsp=0.00 lp=-0.06 ent=3.17 rung=0 steps=84 step=29.73 ms (run 20.34, io 0.30, kv copy 7.61 ms x83)
+09-25 10:19:08.813  7711  9838 I WE-DIAG : VAD-standalone: 225296 samples -> 1 segments wallMs=110.7
+09-25 10:19:09.132  7711  7711 I WE-DIAG : speaker: seq=70 segs=1 windows=6 embedMs=317 ids=[3,3,3,3,3,3] best=[0.77,0.77,0.78,0.79,0.76,0.81] dur=[2.3,2.3,2.0,2.9,1.7,2.8] confirmed=1 load=0 route=vad pick=3
+09-25 10:19:09.140  7711  7711 I WE-DIAG : speaker-recluster: n=207 clusters=5 confirmed=5 changed=0 ms=7
+09-25 10:19:18.657  7711  8104 I WE-DIAG : encode: run OK in 1757.8 ms (mel copy-in 0.2 ms)
+09-25 10:19:21.175  7711  8104 I WE-DIAG : decode: 80 tokens in 2517.9 ms (31.47 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=3.25 rung=0 steps=83 step=30.34 ms (run 20.49, io 0.34, kv copy 8.04 ms x82)
+09-25 10:19:21.280  7711  9838 I WE-DIAG : VAD-standalone: 214000 samples -> 2 segments wallMs=103.0
+09-25 10:19:21.577  7711  7711 I WE-DIAG : speaker: seq=71 segs=2 windows=6 embedMs=295 ids=[3,6,6,6,6,6] best=[0.46,0.19,0.61,0.71,0.76,0.84] dur=[1.1,2.2,2.2,2.7,2.7,2.1] confirmed=1 load=0 route=vad pick=3
+09-25 10:19:24.838  7711  8104 I WE-DIAG : encode: run OK in 1757.0 ms (mel copy-in 0.2 ms)
+09-25 10:19:25.539  7711  8104 I WE-DIAG : decode: 20 tokens in 700.6 ms (35.03 ms/token), terminated by EOT nsp=0.00 lp=-0.28 ent=nan(unmeasured: 18 text ids, the window needs 33) rung=0 steps=23 step=30.46 ms (run 20.74, io 0.38, kv copy 8.08 ms x22)
+09-25 10:19:25.587  7711  9838 I WE-DIAG : VAD-standalone: 98816 samples -> 2 segments wallMs=47.1
+09-25 10:19:25.700  7711  7711 I WE-DIAG : speaker: seq=72 segs=2 windows=2 embedMs=111 ids=[7,7] best=[0.20,0.67] dur=[1.8,3.1] confirmed=1 load=0 route=vad pick=1
+09-25 10:19:32.900  7711  8104 I WE-DIAG : encode: run OK in 1758.5 ms (mel copy-in 0.1 ms)
+09-25 10:19:33.870  7711  8104 I WE-DIAG : decode: 30 tokens in 970.2 ms (32.34 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=nan(unmeasured: 28 text ids, the window needs 33) rung=0 steps=33 step=29.40 ms (run 20.18, io 0.35, kv copy 7.59 ms x32)
+09-25 10:19:33.933  7711  9838 I WE-DIAG : VAD-standalone: 129024 samples -> 1 segments wallMs=61.2
+09-25 10:19:34.087  7711  7711 I WE-DIAG : speaker: seq=73 segs=1 windows=2 embedMs=152 ids=[1,1] best=[0.72,0.74] dur=[3.1,3.9] confirmed=1 load=0 route=vad pick=1
+09-25 10:19:47.901  7711  8104 I WE-DIAG : encode: run OK in 1752.3 ms (mel copy-in 0.2 ms)
+09-25 10:19:49.515  7711  8104 I WE-DIAG : decode: 49 tokens in 1614.1 ms (32.94 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=3.38 rung=0 steps=52 step=31.04 ms (run 20.89, io 0.40, kv copy 8.24 ms x51)
+09-25 10:19:49.631  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 5 segments wallMs=114.0
+09-25 10:19:49.959  7711  7711 I WE-DIAG : speaker: seq=74 segs=5 windows=4 embedMs=326 ids=[7,7,7,7] best=[0.80,0.81,0.77,0.86] dur=[3.4,3.8,3.7,3.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:19:56.924  7711  8104 I WE-DIAG : encode: run OK in 1755.3 ms (mel copy-in 0.2 ms)
+09-25 10:19:58.201  7711  8104 I WE-DIAG : decode: 38 tokens in 1277.4 ms (33.61 ms/token), terminated by EOT nsp=0.00 lp=-0.26 ent=3.09 rung=0 steps=41 step=31.16 ms (run 21.19, io 0.34, kv copy 8.19 ms x40)
+09-25 10:19:58.272  7711  9838 I WE-DIAG : VAD-standalone: 144384 samples -> 3 segments wallMs=70.6
+09-25 10:19:58.469  7711  7711 I WE-DIAG : speaker: seq=75 segs=3 windows=3 embedMs=194 ids=[7,7,6] best=[0.86,0.84,0.76] dur=[3.3,3.5,1.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:19:58.485  7711  7711 I WE-DIAG : speaker-recluster: n=224 clusters=7 confirmed=7 changed=0 ms=9
+09-25 10:20:02.875  7711  8104 I WE-DIAG : encode: run OK in 1761.2 ms (mel copy-in 0.2 ms)
+09-25 10:20:03.671  7711  8104 I WE-DIAG : decode: 24 tokens in 796.6 ms (33.19 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=nan(unmeasured: 22 text ids, the window needs 33) rung=0 steps=27 step=29.50 ms (run 20.15, io 0.29, kv copy 7.81 ms x26)
+09-25 10:20:03.718  7711  9838 I WE-DIAG : VAD-standalone: 95232 samples -> 2 segments wallMs=45.8
+09-25 10:20:03.847  7711  7711 I WE-DIAG : speaker: seq=76 segs=2 windows=2 embedMs=127 ids=[7,7] best=[0.79,0.73] dur=[2.8,2.9] confirmed=1 load=0 route=vad pick=1
+09-25 10:20:05.726  7711  8104 I WE-DIAG : encode: run OK in 1756.5 ms (mel copy-in 0.1 ms)
+09-25 10:20:06.140  7711  8104 I WE-DIAG : decode: 12 tokens in 413.9 ms (34.49 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=27.59 ms (run 19.71, io 0.27, kv copy 6.91 ms x14)
+09-25 10:20:06.162  7711  9838 I WE-DIAG : VAD-standalone: 45568 samples -> 1 segments wallMs=21.8
+09-25 10:20:06.221  7711  7711 I WE-DIAG : speaker: seq=77 segs=1 windows=1 embedMs=58 ids=[6] best=[0.75] dur=[2.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:20:10.261  7711  8104 I WE-DIAG : encode: run OK in 1749.7 ms (mel copy-in 0.1 ms)
+09-25 10:20:10.725  7711  8104 I WE-DIAG : decode: 13 tokens in 464.3 ms (35.72 ms/token), terminated by EOT nsp=0.00 lp=-0.05 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=29.02 ms (run 20.29, io 0.29, kv copy 7.58 ms x15)
+09-25 10:20:10.761  7711  9838 I WE-DIAG : VAD-standalone: 72704 samples -> 2 segments wallMs=34.5
+09-25 10:20:10.860  7711  7711 I WE-DIAG : speaker: seq=78 segs=2 windows=2 embedMs=98 ids=[6,6] best=[0.60,0.71] dur=[2.2,2.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:20:23.006  7711  8104 I WE-DIAG : encode: run OK in 1752.4 ms (mel copy-in 0.3 ms)
+09-25 10:20:24.925  7711  8104 I WE-DIAG : decode: 63 tokens in 1919.8 ms (30.47 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=3.22 rung=0 steps=66 step=29.09 ms (run 20.09, io 0.35, kv copy 7.47 ms x65)
+09-25 10:20:25.023  7711  9838 I WE-DIAG : VAD-standalone: 203776 samples -> 5 segments wallMs=96.0
+09-25 10:20:25.308  7711  7711 I WE-DIAG : speaker: seq=79 segs=5 windows=6 embedMs=278 ids=[6,6,6,6,6,6] best=[0.68,0.66,0.72,0.57,0.72,0.64] dur=[1.5,2.0,1.8,1.9,2.2,2.5] confirmed=1 load=0 route=vad pick=5
+09-25 10:20:26.998  7711  8104 I WE-DIAG : encode: run OK in 1745.9 ms (mel copy-in 0.6 ms)
+09-25 10:20:27.337  7711  8104 I WE-DIAG : decode: 3 tokens in 338.5 ms (112.83 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=nan(unmeasured: 1 text ids, the window needs 33) rung=1 steps=12 step=28.21 ms (run 19.88, io 0.29, kv copy 8.13 ms x10)
+09-25 10:20:27.371  7711  9838 I WE-DIAG : VAD-standalone: 64000 samples -> 1 segments wallMs=32.4
+09-25 10:20:27.409  7711  7711 I WE-DIAG : speaker: seq=80 segs=1 windows=1 embedMs=36 ids=[6] best=[0.13] dur=[1.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:20:27.417  7711  7711 I WE-DIAG : speaker-recluster: n=236 clusters=7 confirmed=7 changed=0 ms=9
+09-25 10:20:31.465  7711  8104 I WE-DIAG : encode: run OK in 1746.1 ms (mel copy-in 0.2 ms)
+09-25 10:20:31.840  7711  8104 I WE-DIAG : decode: 10 tokens in 375.0 ms (37.50 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=nan(unmeasured: 8 text ids, the window needs 33) rung=0 steps=13 step=28.85 ms (run 20.50, io 0.27, kv copy 7.49 ms x12)
+09-25 10:20:31.876  7711  9838 I WE-DIAG : VAD-standalone: 71680 samples -> 3 segments wallMs=34.7
+09-25 10:20:31.961  7711  7711 I WE-DIAG : speaker: seq=81 segs=3 windows=1 embedMs=83 ids=[6] best=[0.58] dur=[3.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:20:46.499  7711  8104 I WE-DIAG : encode: run OK in 1753.7 ms (mel copy-in 0.1 ms)
+09-25 10:20:48.036  7711  8104 I WE-DIAG : decode: 48 tokens in 1536.6 ms (32.01 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=3.19 rung=0 steps=51 step=30.13 ms (run 20.68, io 0.29, kv copy 7.79 ms x50)
+09-25 10:20:48.132  7711  9838 I WE-DIAG : VAD-standalone: 195120 samples -> 3 segments wallMs=93.7
+09-25 10:20:48.404  7711  7711 I WE-DIAG : speaker: seq=82 segs=3 windows=5 embedMs=270 ids=[6,6,6,6,6] best=[0.55,0.73,0.70,0.63,0.68] dur=[1.9,2.1,2.1,2.1,3.9] confirmed=1 load=0 route=vad pick=4
+09-25 10:20:51.429  7711  8104 I WE-DIAG : encode: run OK in 1755.8 ms (mel copy-in 0.2 ms)
+09-25 10:20:52.573  7711  8104 I WE-DIAG : decode: 36 tokens in 1144.0 ms (31.78 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=3.17 rung=0 steps=39 step=29.33 ms (run 20.18, io 0.32, kv copy 7.49 ms x38)
+09-25 10:20:52.634  7711  9838 I WE-DIAG : VAD-standalone: 123856 samples -> 1 segments wallMs=58.5
+09-25 10:20:52.795  7711  7711 I WE-DIAG : speaker: seq=83 segs=1 windows=2 embedMs=160 ids=[6,6] best=[0.72,0.74] dur=[3.7,3.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:21:00.992  7711  8104 I WE-DIAG : encode: run OK in 1755.9 ms (mel copy-in 0.2 ms)
+09-25 10:21:02.118  7711  8104 I WE-DIAG : decode: 35 tokens in 1126.0 ms (32.17 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=2.93 rung=0 steps=38 step=29.63 ms (run 20.17, io 0.34, kv copy 7.78 ms x37)
+09-25 10:21:02.193  7711  9838 I WE-DIAG : VAD-standalone: 153088 samples -> 1 segments wallMs=72.9
+09-25 10:21:02.412  7711  7711 I WE-DIAG : speaker: seq=84 segs=1 windows=4 embedMs=216 ids=[1,1,1,1] best=[0.71,0.75,0.70,0.65] dur=[2.4,2.4,2.4,2.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:21:05.893  7711  8104 I WE-DIAG : encode: run OK in 1753.2 ms (mel copy-in 0.3 ms)
+09-25 10:21:06.451  7711  8104 I WE-DIAG : decode: 16 tokens in 558.0 ms (34.87 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 14 text ids, the window needs 33) rung=0 steps=19 step=29.37 ms (run 20.12, io 0.29, kv copy 7.89 ms x18)
+09-25 10:21:06.492  7711  9838 I WE-DIAG : VAD-standalone: 78336 samples -> 2 segments wallMs=39.6
+09-25 10:21:06.599  7711  7711 I WE-DIAG : speaker: seq=85 segs=2 windows=2 embedMs=106 ids=[5,5] best=[0.69,0.52] dur=[2.3,2.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:21:06.613  7711  7711 I WE-DIAG : speaker-recluster: n=250 clusters=7 confirmed=7 changed=0 ms=11
+09-25 10:21:20.885  7711  8104 I WE-DIAG : encode: run OK in 1748.0 ms (mel copy-in 0.1 ms)
+09-25 10:21:22.801  7711  8104 I WE-DIAG : decode: 62 tokens in 1916.4 ms (30.91 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=3.16 rung=0 steps=65 step=29.48 ms (run 20.20, io 0.34, kv copy 7.55 ms x64)
+09-25 10:21:22.916  7711  9838 I WE-DIAG : VAD-standalone: 233040 samples -> 3 segments wallMs=112.5
+09-25 10:21:23.243  7711  7711 I WE-DIAG : speaker: seq=86 segs=3 windows=6 embedMs=325 ids=[1,1,3,3,3,3] best=[0.75,0.72,0.73,0.82,0.80,0.75] dur=[2.7,2.9,2.2,2.2,2.2,2.2] confirmed=1 load=0 route=vad pick=1
+09-25 10:21:25.818  7711  8104 I WE-DIAG : encode: run OK in 1754.7 ms (mel copy-in 0.2 ms)
+09-25 10:21:27.008  7711  8104 I WE-DIAG : decode: 37 tokens in 1190.2 ms (32.17 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=3.13 rung=0 steps=40 step=29.76 ms (run 20.28, io 0.34, kv copy 7.90 ms x39)
+09-25 10:21:27.051  7711  9838 I WE-DIAG : VAD-standalone: 85936 samples -> 1 segments wallMs=41.1
+09-25 10:21:27.169  7711  7711 I WE-DIAG : speaker: seq=87 segs=1 windows=2 embedMs=117 ids=[3,3] best=[0.78,0.81] dur=[2.7,2.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:21:30.809  7711  8104 I WE-DIAG : encode: run OK in 1757.7 ms (mel copy-in 0.2 ms)
+09-25 10:21:31.353  7711  8104 I WE-DIAG : decode: 15 tokens in 544.1 ms (36.27 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=18 step=30.23 ms (run 21.04, io 0.36, kv copy 7.80 ms x17)
+09-25 10:21:31.393  7711  9838 I WE-DIAG : VAD-standalone: 79872 samples -> 2 segments wallMs=38.0
+09-25 10:21:31.486  7711  7711 I WE-DIAG : speaker: seq=88 segs=2 windows=2 embedMs=92 ids=[3,4] best=[-,0.78] dur=[0.9,4.0] confirmed=1 load=0 route=vad pick=1
+09-25 10:21:34.398  7711  8104 I WE-DIAG : encode: run OK in 1755.0 ms (mel copy-in 0.2 ms)
+09-25 10:21:34.873  7711  8104 I WE-DIAG : decode: 13 tokens in 475.4 ms (36.57 ms/token), terminated by EOT nsp=0.00 lp=-0.30 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=29.71 ms (run 20.34, io 0.36, kv copy 8.12 ms x15)
+09-25 10:21:34.902  7711  9838 I WE-DIAG : VAD-standalone: 57344 samples -> 2 segments wallMs=27.7
+09-25 10:21:34.980  7711  7711 I WE-DIAG : speaker: seq=89 segs=2 windows=1 embedMs=77 ids=[4] best=[0.68] dur=[3.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:21:38.006  7711  8104 I WE-DIAG : encode: run OK in 1753.5 ms (mel copy-in 0.5 ms)
+09-25 10:21:38.443  7711  8104 I WE-DIAG : decode: 12 tokens in 437.6 ms (36.46 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=29.17 ms (run 20.24, io 0.31, kv copy 7.66 ms x14)
+09-25 10:21:38.476  7711  9838 I WE-DIAG : VAD-standalone: 57856 samples -> 1 segments wallMs=29.9
+09-25 10:21:38.547  7711  7711 I WE-DIAG : speaker: seq=90 segs=1 windows=1 embedMs=70 ids=[4] best=[0.75] dur=[3.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:21:38.560  7711  7711 I WE-DIAG : speaker-recluster: n=261 clusters=7 confirmed=7 changed=0 ms=12
+09-25 10:21:40.730  7711  8104 I WE-DIAG : encode: run OK in 1755.3 ms (mel copy-in 0.1 ms)
+09-25 10:21:41.205  7711  8104 I WE-DIAG : decode: 13 tokens in 474.9 ms (36.53 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=29.68 ms (run 20.20, io 0.38, kv copy 8.16 ms x15)
+09-25 10:21:41.227  7711  9838 I WE-DIAG : VAD-standalone: 43520 samples -> 1 segments wallMs=21.5
+09-25 10:21:41.289  7711  7711 I WE-DIAG : speaker: seq=91 segs=1 windows=1 embedMs=60 ids=[4] best=[0.78] dur=[2.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:21:43.450  7711  8104 I WE-DIAG : encode: run OK in 1755.3 ms (mel copy-in 0.2 ms)
+09-25 10:21:43.695  7711  8104 I WE-DIAG : decode: 6 tokens in 245.2 ms (40.87 ms/token), terminated by EOT nsp=0.00 lp=-0.59 ent=nan(unmeasured: 4 text ids, the window needs 33) rung=0 steps=9 step=27.25 ms (run 19.53, io 0.28, kv copy 7.17 ms x8)
+09-25 10:21:43.717  7711  9838 I WE-DIAG : VAD-standalone: 43520 samples -> 2 segments wallMs=20.8
+09-25 10:21:43.773  7711  7711 I WE-DIAG : speaker: seq=92 segs=2 windows=1 embedMs=55 ids=[4] best=[0.67] dur=[2.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:21:53.534  7711  8104 I WE-DIAG : encode: run OK in 1756.3 ms (mel copy-in 0.2 ms)
+09-25 10:21:54.951  7711  8104 I WE-DIAG : decode: 45 tokens in 1416.0 ms (31.47 ms/token), terminated by EOT nsp=0.00 lp=-0.05 ent=3.03 rung=0 steps=48 step=29.50 ms (run 20.10, io 0.37, kv copy 7.59 ms x47)
+09-25 10:21:55.028  7711  9838 I WE-DIAG : VAD-standalone: 161280 samples -> 1 segments wallMs=76.2
+09-25 10:21:55.257  7711  7711 I WE-DIAG : speaker: seq=93 segs=1 windows=4 embedMs=226 ids=[4,4,4,4] best=[0.80,0.72,0.71,0.73] dur=[2.3,2.3,2.8,2.8] confirmed=1 load=0 route=vad pick=2
+09-25 10:21:57.823  7711  8104 I WE-DIAG : encode: run OK in 1757.4 ms (mel copy-in 0.1 ms)
+09-25 10:21:58.236  7711  8104 I WE-DIAG : decode: 12 tokens in 412.9 ms (34.41 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=27.53 ms (run 19.70, io 0.27, kv copy 6.90 ms x14)
+09-25 10:21:58.270  7711  9838 I WE-DIAG : VAD-standalone: 68608 samples -> 2 segments wallMs=32.5
+09-25 10:21:58.360  7711  7711 I WE-DIAG : speaker: seq=94 segs=2 windows=2 embedMs=88 ids=[4,4] best=[0.66,0.73] dur=[1.7,2.1] confirmed=1 load=0 route=vad pick=1
+09-25 10:22:01.020  7711  8104 I WE-DIAG : encode: run OK in 1755.8 ms (mel copy-in 0.1 ms)
+09-25 10:22:01.302  7711  8104 I WE-DIAG : decode: 7 tokens in 281.1 ms (40.15 ms/token), terminated by EOT nsp=0.00 lp=-0.77 ent=nan(unmeasured: 5 text ids, the window needs 33) rung=0 steps=10 step=28.11 ms (run 19.72, io 0.28, kv copy 7.53 ms x9)
+09-25 10:22:01.327  7711  9838 I WE-DIAG : VAD-standalone: 51200 samples -> 2 segments wallMs=24.8
+09-25 10:22:01.394  7711  7711 I WE-DIAG : speaker: seq=95 segs=2 windows=1 embedMs=66 ids=[4] best=[0.61] dur=[2.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:22:01.408  7711  7711 I WE-DIAG : speaker-recluster: n=270 clusters=7 confirmed=7 changed=0 ms=13
+09-25 10:22:13.119  7711  8104 I WE-DIAG : encode: run OK in 1756.8 ms (mel copy-in 0.2 ms)
+09-25 10:22:14.274  7711  8104 I WE-DIAG : decode: 36 tokens in 1154.7 ms (32.07 ms/token), terminated by EOT nsp=0.00 lp=-0.15 ent=nan(unmeasured: 30 text ids, the window needs 33) rung=0 steps=39 step=29.61 ms (run 20.10, io 0.34, kv copy 7.85 ms x38)
+09-25 10:22:14.369  7711  9838 I WE-DIAG : VAD-standalone: 193536 samples -> 2 segments wallMs=94.1
+09-25 10:22:14.630  7711  7711 I WE-DIAG : speaker: seq=96 segs=2 windows=5 embedMs=258 ids=[4,4,4,4,4] best=[0.70,0.82,0.72,0.76,0.44] dur=[2.2,2.5,2.7,2.7,1.4] confirmed=1 load=0 route=vad pick=2
+09-25 10:22:18.105  7711  8104 I WE-DIAG : encode: run OK in 1759.0 ms (mel copy-in 0.2 ms)
+09-25 10:22:18.564  7711  8104 I WE-DIAG : decode: 13 tokens in 458.9 ms (35.30 ms/token), terminated by EOT nsp=0.00 lp=-0.29 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=28.68 ms (run 20.33, io 0.33, kv copy 7.16 ms x15)
+09-25 10:22:18.604  7711  9838 I WE-DIAG : VAD-standalone: 79872 samples -> 2 segments wallMs=39.0
+09-25 10:22:18.714  7711  7711 I WE-DIAG : speaker: seq=97 segs=2 windows=2 embedMs=108 ids=[4,4] best=[0.70,0.75] dur=[2.1,2.4] confirmed=1 load=0 route=vad pick=1
+09-25 10:22:33.111  7711  8104 I WE-DIAG : encode: run OK in 1751.9 ms (mel copy-in 0.4 ms)
+09-25 10:22:34.817  7711  8104 I WE-DIAG : decode: 54 tokens in 1706.5 ms (31.60 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=3.21 rung=0 steps=57 step=29.94 ms (run 20.21, io 0.34, kv copy 7.90 ms x56)
+09-25 10:22:34.920  7711  9838 I WE-DIAG : VAD-standalone: 214528 samples -> 1 segments wallMs=101.2
+09-25 10:22:35.223  7711  7711 I WE-DIAG : speaker: seq=98 segs=1 windows=4 embedMs=300 ids=[4,4,4,4] best=[0.81,0.80,0.81,0.83] dur=[3.3,3.4,3.4,3.4] confirmed=1 load=0 route=vad pick=1
+09-25 10:22:41.237  7711  8104 I WE-DIAG : encode: run OK in 1752.7 ms (mel copy-in 0.2 ms)
+09-25 10:22:42.633  7711  8104 I WE-DIAG : decode: 45 tokens in 1395.5 ms (31.01 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=3.38 rung=0 steps=48 step=29.07 ms (run 19.84, io 0.30, kv copy 7.64 ms x47)
+09-25 10:22:42.708  7711  9838 I WE-DIAG : VAD-standalone: 155648 samples -> 2 segments wallMs=73.5
+09-25 10:22:42.922  7711  7711 I WE-DIAG : speaker: seq=99 segs=2 windows=3 embedMs=212 ids=[4,4,4] best=[0.86,0.86,0.78] dur=[2.8,2.8,3.9] confirmed=1 load=0 route=vad pick=2
+09-25 10:22:53.443  7711  8104 I WE-DIAG : encode: run OK in 1757.9 ms (mel copy-in 0.2 ms)
+09-25 10:22:55.109  7711  8104 I WE-DIAG : decode: 53 tokens in 1665.6 ms (31.43 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=3.21 rung=0 steps=56 step=29.74 ms (run 20.25, io 0.31, kv copy 7.76 ms x55)
+09-25 10:22:55.204  7711  9838 I WE-DIAG : VAD-standalone: 195072 samples -> 1 segments wallMs=92.9
+09-25 10:22:55.477  7711  7711 I WE-DIAG : speaker: seq=100 segs=1 windows=4 embedMs=270 ids=[4,4,4,4] best=[0.84,0.86,0.85,0.82] dur=[2.9,3.0,3.0,3.0] confirmed=1 load=0 route=vad pick=1
+09-25 10:22:55.493  7711  7711 I WE-DIAG : speaker-recluster: n=288 clusters=7 confirmed=7 changed=0 ms=16
+09-25 10:23:08.449  7711  8104 I WE-DIAG : encode: run OK in 1755.8 ms (mel copy-in 0.2 ms)
+09-25 10:23:10.855  7711  8104 I WE-DIAG : decode: 77 tokens in 2406.0 ms (31.25 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=3.15 rung=0 steps=80 step=30.07 ms (run 20.41, io 0.43, kv copy 7.77 ms x79)
+09-25 10:23:10.971  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=113.5
+09-25 10:23:11.312  7711  7711 I WE-DIAG : speaker: seq=101 segs=1 windows=5 embedMs=338 ids=[4,4,5,5,5] best=[0.77,0.41,0.71,0.77,0.71] dur=[3.2,3.0,3.0,3.0,3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:23:22.746  7711  8104 I WE-DIAG : encode: run OK in 1749.4 ms (mel copy-in 0.1 ms)
+09-25 10:23:24.674  7711  8104 I WE-DIAG : decode: 61 tokens in 1927.7 ms (31.60 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=3.25 rung=0 steps=64 step=30.12 ms (run 20.34, io 0.37, kv copy 8.01 ms x63)
+09-25 10:23:24.787  7711  9838 I WE-DIAG : VAD-standalone: 228864 samples -> 1 segments wallMs=111.4
+09-25 10:23:25.108  7711  7711 I WE-DIAG : speaker: seq=102 segs=1 windows=5 embedMs=318 ids=[5,5,5,5,5] best=[0.66,0.73,0.68,0.67,0.75] dur=[2.1,2.1,3.8,2.9,3.3] confirmed=1 load=0 route=vad pick=2
+09-25 10:23:37.748  7711  8104 I WE-DIAG : encode: run OK in 1750.1 ms (mel copy-in 0.2 ms)
+09-25 10:23:39.852  7711  8104 I WE-DIAG : decode: 67 tokens in 2104.4 ms (31.41 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=3.15 rung=0 steps=70 step=30.06 ms (run 20.32, io 0.33, kv copy 7.92 ms x69)
+09-25 10:23:39.963  7711  9838 I WE-DIAG : VAD-standalone: 222704 samples -> 1 segments wallMs=109.5
+09-25 10:23:40.270  7711  7711 I WE-DIAG : speaker: seq=103 segs=1 windows=4 embedMs=305 ids=[5,5,5,5] best=[0.75,0.78,0.80,0.76] dur=[3.5,3.5,3.5,3.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:23:52.774  7711  8104 I WE-DIAG : encode: run OK in 1760.4 ms (mel copy-in 0.3 ms)
+09-25 10:23:55.049  7711  8104 I WE-DIAG : decode: 72 tokens in 2273.9 ms (31.58 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=3.15 rung=0 steps=75 step=30.32 ms (run 20.55, io 0.39, kv copy 7.98 ms x74)
+09-25 10:23:55.174  7711  9838 I WE-DIAG : VAD-standalone: 257552 samples -> 2 segments wallMs=122.5
+09-25 10:23:55.537  7711  7711 I WE-DIAG : speaker: seq=104 segs=2 windows=7 embedMs=361 ids=[5,5,5,5,5,5,5] best=[0.54,0.70,0.69,0.74,0.67,0.54,0.69] dur=[2.0,2.2,1.2,2.7,3.2,1.1,3.6] confirmed=1 load=0 route=vad pick=6
+09-25 10:24:07.783  7711  8104 I WE-DIAG : encode: run OK in 1758.7 ms (mel copy-in 0.1 ms)
+09-25 10:24:10.430  7711  8104 I WE-DIAG : decode: 83 tokens in 2646.8 ms (31.89 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=2.95 rung=0 steps=86 step=30.78 ms (run 20.77, io 0.37, kv copy 8.16 ms x85)
+09-25 10:24:10.544  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=113.4
+09-25 10:24:10.874  7711  7711 I WE-DIAG : speaker: seq=105 segs=2 windows=6 embedMs=328 ids=[5,5,5,5,5,5] best=[0.73,0.72,0.71,0.71,0.72,0.70] dur=[1.8,2.2,2.2,2.2,3.1,3.2] confirmed=1 load=0 route=vad pick=5
+09-25 10:24:10.895  7711  7711 I WE-DIAG : speaker-recluster: n=315 clusters=7 confirmed=7 changed=1 ms=20
+09-25 10:24:19.479  7711  8104 I WE-DIAG : encode: run OK in 1758.8 ms (mel copy-in 0.2 ms)
+09-25 10:24:21.015  7711  8104 I WE-DIAG : decode: 47 tokens in 1535.5 ms (32.67 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=3.21 rung=0 steps=50 step=30.71 ms (run 20.83, io 0.35, kv copy 8.07 ms x49)
+09-25 10:24:21.106  7711  9838 I WE-DIAG : VAD-standalone: 187392 samples -> 2 segments wallMs=89.1
+09-25 10:24:21.369  7711  7711 I WE-DIAG : speaker: seq=106 segs=2 windows=4 embedMs=262 ids=[5,5,5,5] best=[0.62,0.67,0.77,0.74] dur=[2.4,2.4,3.4,3.4] confirmed=1 load=0 route=vad pick=2
+09-25 10:24:27.298  7711  8104 I WE-DIAG : encode: run OK in 1760.6 ms (mel copy-in 0.2 ms)
+09-25 10:24:28.438  7711  8104 I WE-DIAG : decode: 36 tokens in 1139.9 ms (31.66 ms/token), terminated by EOT nsp=0.00 lp=-0.37 ent=2.85 rung=0 steps=39 step=29.23 ms (run 20.03, io 0.33, kv copy 7.66 ms x38)
+09-25 10:24:28.499  7711  9838 I WE-DIAG : VAD-standalone: 124928 samples -> 1 segments wallMs=59.2
+09-25 10:24:28.676  7711  7711 I WE-DIAG : speaker: seq=107 segs=1 windows=2 embedMs=175 ids=[5,5] best=[0.82,0.79] dur=[3.9,3.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:24:42.307  7711  8104 I WE-DIAG : encode: run OK in 1758.2 ms (mel copy-in 0.1 ms)
+09-25 10:24:44.532  7711  8104 I WE-DIAG : decode: 71 tokens in 2225.7 ms (31.35 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=3.17 rung=0 steps=74 step=30.08 ms (run 20.52, io 0.38, kv copy 7.84 ms x73)
+09-25 10:24:44.654  7711  9838 I WE-DIAG : VAD-standalone: 236560 samples -> 1 segments wallMs=118.4
+09-25 10:24:44.989  7711  7711 I WE-DIAG : speaker: seq=108 segs=1 windows=7 embedMs=332 ids=[5,5,5,5,5,5,5] best=[0.78,0.76,0.71,0.64,0.82,0.76,0.69] dur=[2.6,2.3,1.4,1.8,2.9,2.3,1.5] confirmed=1 load=0 route=vad pick=4
+09-25 10:24:57.309  7711  8104 I WE-DIAG : encode: run OK in 1758.6 ms (mel copy-in 0.1 ms)
+09-25 10:24:58.864  7711  8104 I WE-DIAG : decode: 49 tokens in 1554.7 ms (31.73 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=3.09 rung=0 steps=52 step=29.90 ms (run 20.24, io 0.34, kv copy 7.88 ms x51)
+09-25 10:24:58.983  7711  9838 I WE-DIAG : VAD-standalone: 243696 samples -> 2 segments wallMs=117.1
+09-25 10:24:59.319  7711  7711 I WE-DIAG : speaker: seq=109 segs=2 windows=4 embedMs=334 ids=[5,5,5,5] best=[0.77,0.73,0.81,0.77] dur=[3.4,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:25:12.323  7711  8104 I WE-DIAG : encode: run OK in 1758.2 ms (mel copy-in 0.1 ms)
+09-25 10:25:14.908  7711  8104 I WE-DIAG : decode: 83 tokens in 2585.3 ms (31.15 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.29 rung=0 steps=86 step=30.06 ms (run 20.28, io 0.37, kv copy 8.01 ms x85)
+09-25 10:25:15.024  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=114.7
+09-25 10:25:15.365  7711  7711 I WE-DIAG : speaker: seq=110 segs=2 windows=5 embedMs=337 ids=[5,5,5,5,5] best=[0.66,0.70,0.71,0.81,0.78] dur=[2.9,2.9,3.7,3.7,1.8] confirmed=1 load=0 route=vad pick=3
+09-25 10:25:15.390  7711  7711 I WE-DIAG : speaker-recluster: n=337 clusters=7 confirmed=7 changed=0 ms=24
+09-25 10:25:26.625  7711  8104 I WE-DIAG : encode: run OK in 1758.8 ms (mel copy-in 0.2 ms)
+09-25 10:25:28.257  7711  8104 I WE-DIAG : decode: 52 tokens in 1631.5 ms (31.37 ms/token), terminated by EOT nsp=0.00 lp=-0.21 ent=3.16 rung=0 steps=55 step=29.66 ms (run 20.22, io 0.34, kv copy 7.68 ms x54)
+09-25 10:25:28.367  7711  9838 I WE-DIAG : VAD-standalone: 228864 samples -> 1 segments wallMs=108.8
+09-25 10:25:28.690  7711  7711 I WE-DIAG : speaker: seq=111 segs=1 windows=4 embedMs=321 ids=[5,5,5,5] best=[0.77,0.82,0.69,0.77] dur=[3.6,3.6,3.6,3.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:25:37.190  7711  8104 I WE-DIAG : encode: run OK in 1759.5 ms (mel copy-in 0.1 ms)
+09-25 10:25:38.597  7711  8104 I WE-DIAG : decode: 44 tokens in 1407.3 ms (31.98 ms/token), terminated by EOT nsp=0.00 lp=-0.15 ent=3.10 rung=0 steps=47 step=29.94 ms (run 20.38, io 0.34, kv copy 7.87 ms x46)
+09-25 10:25:38.679  7711  9838 I WE-DIAG : VAD-standalone: 168960 samples -> 2 segments wallMs=80.8
+09-25 10:25:38.915  7711  7711 I WE-DIAG : speaker: seq=112 segs=2 windows=3 embedMs=234 ids=[5,5,5] best=[0.74,0.68,0.79] dur=[3.4,3.4,3.7] confirmed=1 load=0 route=vad pick=2
+09-25 10:25:52.196  7711  8104 I WE-DIAG : encode: run OK in 1758.0 ms (mel copy-in 0.2 ms)
+09-25 10:25:54.287  7711  8104 I WE-DIAG : decode: 67 tokens in 2090.0 ms (31.19 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=3.21 rung=0 steps=70 step=29.86 ms (run 20.37, io 0.31, kv copy 7.65 ms x69)
+09-25 10:25:54.402  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=113.9
+09-25 10:25:54.731  7711  7711 I WE-DIAG : speaker: seq=113 segs=2 windows=4 embedMs=326 ids=[5,5,5,5] best=[0.75,0.75,0.74,0.81] dur=[3.6,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:26:05.760  7711  8104 I WE-DIAG : encode: run OK in 1755.8 ms (mel copy-in 0.2 ms)
+09-25 10:26:07.390  7711  8104 I WE-DIAG : decode: 54 tokens in 1629.8 ms (30.18 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=2.77 rung=0 steps=57 step=28.59 ms (run 19.99, io 0.29, kv copy 6.98 ms x56)
+09-25 10:26:07.496  7711  9838 I WE-DIAG : VAD-standalone: 217088 samples -> 2 segments wallMs=104.0
+09-25 10:26:07.825  7711  7711 I WE-DIAG : speaker: seq=114 segs=2 windows=4 embedMs=327 ids=[5,5,5,5] best=[0.79,0.76,0.74,0.83] dur=[3.1,3.3,3.3,3.3] confirmed=1 load=0 route=vad pick=1
+09-25 10:26:09.190  7711  8104 I WE-DIAG : encode: run OK in 1765.5 ms (mel copy-in 1.2 ms)
+09-25 10:26:09.511  7711  8104 I WE-DIAG : decode: 8 tokens in 320.6 ms (40.08 ms/token), terminated by EOT nsp=0.00 lp=-0.37 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=29.15 ms (run 20.80, io 0.27, kv copy 7.31 ms x10)
+09-25 10:26:09.534  7711  9838 I WE-DIAG : VAD-standalone: 38912 samples -> 2 segments wallMs=21.6
+09-25 10:26:09.585  7711  7711 I WE-DIAG : speaker: seq=115 segs=2 windows=1 embedMs=50 ids=[5] best=[0.62] dur=[2.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:26:09.613  7711  7711 I WE-DIAG : speaker-recluster: n=353 clusters=7 confirmed=7 changed=0 ms=27
+09-25 10:26:12.130  7711  8104 I WE-DIAG : encode: run OK in 1754.9 ms (mel copy-in 0.1 ms)
+09-25 10:26:12.723  7711  8104 I WE-DIAG : decode: 17 tokens in 593.3 ms (34.90 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=20 step=29.67 ms (run 20.55, io 0.34, kv copy 7.69 ms x19)
+09-25 10:26:12.758  7711  9838 I WE-DIAG : VAD-standalone: 62976 samples -> 2 segments wallMs=32.8
+09-25 10:26:12.846  7711  7711 I WE-DIAG : speaker: seq=116 segs=2 windows=2 embedMs=88 ids=[5,5] best=[0.56,0.70] dur=[1.3,2.6] confirmed=1 load=0 route=vad pick=1
+09-25 10:26:27.133  7711  8104 I WE-DIAG : encode: run OK in 1753.2 ms (mel copy-in 0.1 ms)
+09-25 10:26:29.075  7711  8104 I WE-DIAG : decode: 62 tokens in 1941.1 ms (31.31 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=3.28 rung=0 steps=65 step=29.86 ms (run 20.30, io 0.36, kv copy 7.84 ms x64)
+09-25 10:26:29.191  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=115.2
+09-25 10:26:29.523  7711  7711 I WE-DIAG : speaker: seq=117 segs=1 windows=5 embedMs=328 ids=[5,5,5,5,5] best=[0.78,0.76,0.74,0.65,0.55] dur=[3.2,3.2,3.1,1.6,3.9] confirmed=1 load=0 route=vad pick=4
+09-25 10:26:42.144  7711  8104 I WE-DIAG : encode: run OK in 1753.9 ms (mel copy-in 0.1 ms)
+09-25 10:26:44.422  7711  8104 I WE-DIAG : decode: 75 tokens in 2277.8 ms (30.37 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=3.04 rung=0 steps=78 step=29.20 ms (run 20.02, io 0.33, kv copy 7.57 ms x77)
+09-25 10:26:44.528  7711  9838 I WE-DIAG : VAD-standalone: 216576 samples -> 2 segments wallMs=104.7
+09-25 10:26:44.835  7711  7711 I WE-DIAG : speaker: seq=118 segs=2 windows=5 embedMs=305 ids=[1,1,1,1,1] best=[0.70,0.25,0.63,0.76,0.79] dur=[2.7,1.2,2.6,3.8,3.2] confirmed=1 load=0 route=vad pick=3
+09-25 10:26:50.141  7711  8104 I WE-DIAG : encode: run OK in 1759.9 ms (mel copy-in 0.3 ms)
+09-25 10:26:51.495  7711  8104 I WE-DIAG : decode: 42 tokens in 1354.5 ms (32.25 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=3.28 rung=0 steps=45 step=30.10 ms (run 20.49, io 0.34, kv copy 7.92 ms x44)
+09-25 10:26:51.568  7711  9838 I WE-DIAG : VAD-standalone: 151552 samples -> 2 segments wallMs=71.7
+09-25 10:26:51.778  7711  7711 I WE-DIAG : speaker: seq=119 segs=2 windows=3 embedMs=207 ids=[1,1,1] best=[0.80,0.83,0.75] dur=[3.0,3.0,3.5] confirmed=1 load=0 route=vad pick=2
+09-25 10:26:55.230  7711  8104 I WE-DIAG : encode: run OK in 1754.9 ms (mel copy-in 0.1 ms)
+09-25 10:26:55.767  7711  8104 I WE-DIAG : decode: 16 tokens in 536.7 ms (33.54 ms/token), terminated by EOT nsp=0.00 lp=-0.06 ent=nan(unmeasured: 14 text ids, the window needs 33) rung=0 steps=19 step=28.25 ms (run 19.80, io 0.29, kv copy 7.29 ms x18)
+09-25 10:26:55.808  7711  9838 I WE-DIAG : VAD-standalone: 81408 samples -> 2 segments wallMs=40.4
+09-25 10:26:55.927  7711  7711 I WE-DIAG : speaker: seq=120 segs=2 windows=2 embedMs=115 ids=[1,1] best=[0.76,0.68] dur=[2.3,2.5] confirmed=1 load=0 route=vad pick=1
+09-25 10:26:55.957  7711  7711 I WE-DIAG : speaker-recluster: n=370 clusters=7 confirmed=7 changed=0 ms=30
+09-25 10:26:57.552  7711  8104 I WE-DIAG : encode: run OK in 1754.6 ms (mel copy-in 0.1 ms)
+09-25 10:26:57.880  7711  8104 I WE-DIAG : decode: 9 tokens in 327.6 ms (36.39 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=nan(unmeasured: 7 text ids, the window needs 33) rung=0 steps=12 step=27.30 ms (run 19.64, io 0.27, kv copy 6.78 ms x11)
+09-25 10:26:57.897  7711  9838 I WE-DIAG : VAD-standalone: 33792 samples -> 1 segments wallMs=16.1
+09-25 10:26:57.940  7711  7711 I WE-DIAG : speaker: seq=121 segs=1 windows=1 embedMs=43 ids=[1] best=[0.66] dur=[1.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:27:05.665  7711  8104 I WE-DIAG : encode: run OK in 1759.2 ms (mel copy-in 0.1 ms)
+09-25 10:27:06.279  7711  8104 I WE-DIAG : decode: 18 tokens in 613.8 ms (34.10 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=nan(unmeasured: 16 text ids, the window needs 33) rung=0 steps=21 step=29.23 ms (run 20.18, io 0.33, kv copy 7.76 ms x20)
+09-25 10:27:06.344  7711  9838 I WE-DIAG : VAD-standalone: 133120 samples -> 2 segments wallMs=63.7
+09-25 10:27:06.529  7711  7711 I WE-DIAG : speaker: seq=122 segs=2 windows=4 embedMs=184 ids=[1,1,1,1] best=[0.48,0.58,0.46,0.37] dur=[1.5,2.0,2.0,2.0] confirmed=1 load=0 route=vad pick=1
+09-25 10:27:20.670  7711  8104 I WE-DIAG : encode: run OK in 1752.6 ms (mel copy-in 0.2 ms)
+09-25 10:27:22.343  7711  8104 I WE-DIAG : decode: 54 tokens in 1672.3 ms (30.97 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=2.85 rung=0 steps=57 step=29.34 ms (run 20.08, io 0.34, kv copy 7.59 ms x56)
+09-25 10:27:22.447  7711  9838 I WE-DIAG : VAD-standalone: 213984 samples -> 1 segments wallMs=102.5
+09-25 10:27:22.752  7711  7711 I WE-DIAG : speaker: seq=123 segs=1 windows=6 embedMs=302 ids=[1,1,5,5,5,5] best=[0.73,0.67,0.59,0.74,0.75,0.50] dur=[2.1,2.1,2.3,2.3,2.3,2.3] confirmed=1 load=0 route=vad pick=2
+09-25 10:27:27.789  7711  8104 I WE-DIAG : encode: run OK in 1771.5 ms (mel copy-in 0.1 ms)
+09-25 10:27:29.192  7711  8104 I WE-DIAG : decode: 51 tokens in 1403.6 ms (27.52 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=3.42 rung=0 steps=54 step=25.99 ms (run 19.38, io 0.45, kv copy 5.53 ms x53)
+09-25 10:27:29.260  7711  9838 I WE-DIAG : VAD-standalone: 139808 samples -> 1 segments wallMs=66.6
+09-25 10:27:29.452  7711  7711 I WE-DIAG : speaker: seq=124 segs=1 windows=4 embedMs=190 ids=[5,5,5,5] best=[0.65,0.69,0.68,0.71] dur=[2.0,2.2,2.2,2.2] confirmed=1 load=0 route=vad pick=2
+09-25 10:27:31.857  7711  8104 I WE-DIAG : encode: run OK in 1754.1 ms (mel copy-in 0.4 ms)
+09-25 10:27:32.383  7711  8104 I WE-DIAG : decode: 15 tokens in 524.9 ms (35.00 ms/token), terminated by EOT nsp=0.00 lp=-0.25 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=18 step=29.16 ms (run 20.41, io 0.33, kv copy 7.51 ms x17)
+09-25 10:27:32.415  7711  9838 I WE-DIAG : VAD-standalone: 65536 samples -> 1 segments wallMs=31.2
+09-25 10:27:32.509  7711  7711 I WE-DIAG : speaker: seq=125 segs=1 windows=2 embedMs=93 ids=[5,5] best=[0.75,0.70] dur=[2.0,2.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:27:32.543  7711  7711 I WE-DIAG : speaker-recluster: n=387 clusters=7 confirmed=7 changed=1 ms=34
+09-25 10:27:41.125  7711  8104 I WE-DIAG : encode: run OK in 1757.1 ms (mel copy-in 0.2 ms)
+09-25 10:27:42.473  7711  8104 I WE-DIAG : decode: 47 tokens in 1348.0 ms (28.68 ms/token), terminated by EOT nsp=0.00 lp=-0.26 ent=3.38 rung=0 steps=50 step=26.96 ms (run 19.47, io 0.28, kv copy 6.23 ms x49)
+09-25 10:27:42.545  7711  9838 I WE-DIAG : VAD-standalone: 147968 samples -> 1 segments wallMs=70.7
+09-25 10:27:42.752  7711  7711 I WE-DIAG : speaker: seq=126 segs=1 windows=3 embedMs=206 ids=[5,5,5] best=[0.76,0.82,0.68] dur=[3.5,2.9,2.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:27:54.242  7711  8104 I WE-DIAG : encode: run OK in 1756.7 ms (mel copy-in 0.2 ms)
+09-25 10:27:55.978  7711  8104 I WE-DIAG : decode: 56 tokens in 1735.5 ms (30.99 ms/token), terminated by EOT nsp=0.00 lp=-0.41 ent=3.22 rung=0 steps=59 step=29.42 ms (run 20.00, io 0.36, kv copy 7.64 ms x58)
+09-25 10:27:56.080  7711  9838 I WE-DIAG : VAD-standalone: 209920 samples -> 2 segments wallMs=101.0
+09-25 10:27:56.374  7711  7711 I WE-DIAG : speaker: seq=127 segs=2 windows=4 embedMs=292 ids=[5,5,5,5] best=[0.76,0.72,0.78,0.81] dur=[3.3,3.3,3.3,3.3] confirmed=1 load=0 route=vad pick=1
+09-25 10:28:00.018  7711  8104 I WE-DIAG : encode: run OK in 1771.3 ms (mel copy-in 0.2 ms)
+09-25 10:28:00.654  7711  8104 I WE-DIAG : decode: 19 tokens in 636.0 ms (33.48 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 17 text ids, the window needs 33) rung=0 steps=22 step=28.91 ms (run 20.12, io 0.36, kv copy 7.40 ms x21)
+09-25 10:28:00.699  7711  9838 I WE-DIAG : VAD-standalone: 92160 samples -> 1 segments wallMs=43.9
+09-25 10:28:00.827  7711  7711 I WE-DIAG : speaker: seq=128 segs=1 windows=2 embedMs=126 ids=[5,5] best=[0.79,0.73] dur=[2.9,2.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:28:04.698  7711  8104 I WE-DIAG : encode: run OK in 1760.8 ms (mel copy-in 0.2 ms)
+09-25 10:28:05.267  7711  8104 I WE-DIAG : decode: 18 tokens in 568.2 ms (31.57 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 16 text ids, the window needs 33) rung=0 steps=21 step=27.06 ms (run 19.44, io 0.39, kv copy 6.35 ms x20)
+09-25 10:28:05.305  7711  9838 I WE-DIAG : VAD-standalone: 75264 samples -> 1 segments wallMs=36.7
+09-25 10:28:05.413  7711  7711 I WE-DIAG : speaker: seq=129 segs=1 windows=2 embedMs=107 ids=[5,5] best=[0.69,0.73] dur=[2.3,2.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:28:10.080  7711  8104 I WE-DIAG : encode: run OK in 1757.3 ms (mel copy-in 0.3 ms)
+09-25 10:28:10.947  7711  8104 I WE-DIAG : decode: 26 tokens in 867.1 ms (33.35 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 24 text ids, the window needs 33) rung=0 steps=29 step=29.90 ms (run 20.47, io 0.39, kv copy 7.92 ms x28)
+09-25 10:28:10.989  7711  9838 I WE-DIAG : VAD-standalone: 86016 samples -> 1 segments wallMs=41.4
+09-25 10:28:11.103  7711  7711 I WE-DIAG : speaker: seq=130 segs=1 windows=2 embedMs=113 ids=[5,5] best=[0.79,0.75] dur=[2.3,2.6] confirmed=1 load=0 route=vad pick=1
+09-25 10:28:11.142  7711  7711 I WE-DIAG : speaker-recluster: n=400 clusters=7 confirmed=7 changed=0 ms=37
+09-25 10:28:25.084  7711  8104 I WE-DIAG : encode: run OK in 1751.0 ms (mel copy-in 0.1 ms)
+09-25 10:28:27.261  7711  8104 I WE-DIAG : decode: 69 tokens in 2177.6 ms (31.56 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=3.19 rung=0 steps=72 step=30.25 ms (run 20.59, io 0.36, kv copy 7.97 ms x71)
+09-25 10:28:27.378  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=114.8
+09-25 10:28:27.717  7711  7711 I WE-DIAG : speaker: seq=131 segs=1 windows=6 embedMs=336 ids=[5,5,5,5,1,1] best=[0.78,0.65,0.59,0.52,0.52,0.71] dur=[3.8,1.7,1.3,2.0,3.1,3.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:28:37.397  7711  8104 I WE-DIAG : encode: run OK in 1750.4 ms (mel copy-in 0.2 ms)
+09-25 10:28:38.732  7711  8104 I WE-DIAG : decode: 41 tokens in 1335.1 ms (32.56 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=3.42 rung=0 steps=44 step=30.34 ms (run 20.75, io 0.30, kv copy 7.94 ms x43)
+09-25 10:28:38.830  7711  9838 I WE-DIAG : VAD-standalone: 197120 samples -> 1 segments wallMs=96.4
+09-25 10:28:39.105  7711  7711 I WE-DIAG : speaker: seq=132 segs=1 windows=4 embedMs=273 ids=[1,1,1,1] best=[0.75,0.67,0.76,0.79] dur=[2.9,2.9,3.2,3.2] confirmed=1 load=0 route=vad pick=2
+09-25 10:28:52.414  7711  8104 I WE-DIAG : encode: run OK in 1758.1 ms (mel copy-in 0.2 ms)
+09-25 10:28:54.630  7711  8104 I WE-DIAG : decode: 72 tokens in 2216.8 ms (30.79 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=3.04 rung=0 steps=75 step=29.56 ms (run 20.06, io 0.33, kv copy 7.71 ms x74)
+09-25 10:28:54.746  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=114.3
+09-25 10:28:55.080  7711  7711 I WE-DIAG : speaker: seq=133 segs=2 windows=4 embedMs=332 ids=[1,1,5,5] best=[0.79,0.72,0.82,0.75] dur=[3.7,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:29:07.428  7711  8104 I WE-DIAG : encode: run OK in 1747.9 ms (mel copy-in 0.1 ms)
+09-25 10:29:09.169  7711  8104 I WE-DIAG : decode: 54 tokens in 1741.1 ms (32.24 ms/token), terminated by EOT nsp=0.00 lp=-0.24 ent=3.19 rung=0 steps=57 step=30.55 ms (run 20.75, io 0.38, kv copy 7.99 ms x56)
+09-25 10:29:09.273  7711  9838 I WE-DIAG : VAD-standalone: 215456 samples -> 1 segments wallMs=102.2
+09-25 10:29:09.580  7711  7711 I WE-DIAG : speaker: seq=134 segs=1 windows=5 embedMs=300 ids=[5,5,5,1,1] best=[0.74,0.68,0.62,0.63,0.70] dur=[3.4,3.4,2.5,2.0,2.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:29:11.808  7711  8104 I WE-DIAG : encode: run OK in 1749.4 ms (mel copy-in 0.2 ms)
+09-25 10:29:12.477  7711  8104 I WE-DIAG : decode: 20 tokens in 668.6 ms (33.43 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=nan(unmeasured: 18 text ids, the window needs 33) rung=0 steps=23 step=29.07 ms (run 20.00, io 0.38, kv copy 7.66 ms x22)
+09-25 10:29:12.523  7711  9838 I WE-DIAG : VAD-standalone: 94816 samples -> 2 segments wallMs=44.8
+09-25 10:29:12.651  7711  7711 I WE-DIAG : speaker: seq=135 segs=2 windows=2 embedMs=127 ids=[1,1] best=[0.75,0.67] dur=[2.8,2.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:29:12.694  7711  7711 I WE-DIAG : speaker-recluster: n=421 clusters=7 confirmed=7 changed=0 ms=43
+09-25 10:29:19.734  7711  8104 I WE-DIAG : encode: run OK in 1750.9 ms (mel copy-in 0.2 ms)
+09-25 10:29:20.871  7711  8104 I WE-DIAG : decode: 35 tokens in 1136.9 ms (32.48 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=nan(unmeasured: 29 text ids, the window needs 33) rung=0 steps=38 step=29.92 ms (run 20.43, io 0.36, kv copy 7.89 ms x37)
+09-25 10:29:20.934  7711  9838 I WE-DIAG : VAD-standalone: 126976 samples -> 2 segments wallMs=61.0
+09-25 10:29:21.110  7711  7711 I WE-DIAG : speaker: seq=136 segs=2 windows=3 embedMs=175 ids=[1,1,1] best=[0.71,0.78,0.80] dur=[2.2,3.1,2.5] confirmed=1 load=0 route=vad pick=1
+09-25 10:29:24.722  7711  8104 I WE-DIAG : encode: run OK in 1751.7 ms (mel copy-in 0.2 ms)
+09-25 10:29:25.423  7711  8104 I WE-DIAG : decode: 21 tokens in 700.1 ms (33.34 ms/token), terminated by EOT nsp=0.00 lp=-0.11 ent=nan(unmeasured: 19 text ids, the window needs 33) rung=0 steps=24 step=29.17 ms (run 20.51, io 0.32, kv copy 7.20 ms x23)
+09-25 10:29:25.463  7711  9838 I WE-DIAG : VAD-standalone: 79872 samples -> 2 segments wallMs=39.2
+09-25 10:29:25.576  7711  7711 I WE-DIAG : speaker: seq=137 segs=2 windows=2 embedMs=111 ids=[1,1] best=[0.80,0.74] dur=[2.5,2.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:29:30.300  7711  8104 I WE-DIAG : encode: run OK in 1750.7 ms (mel copy-in 0.2 ms)
+09-25 10:29:31.292  7711  8104 I WE-DIAG : decode: 30 tokens in 991.5 ms (33.05 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=nan(unmeasured: 28 text ids, the window needs 33) rung=0 steps=33 step=30.05 ms (run 20.60, io 0.38, kv copy 7.77 ms x32)
+09-25 10:29:31.313  7711  7711 I WE-DIAG : panel: chars=20008 renderMs=0 setTextMs=18
+09-25 10:29:31.335  7711  9838 I WE-DIAG : VAD-standalone: 89088 samples -> 1 segments wallMs=42.2
+09-25 10:29:31.458  7711  7711 I WE-DIAG : speaker: seq=138 segs=1 windows=2 embedMs=120 ids=[1,1] best=[0.75,0.83] dur=[2.7,2.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:29:45.312  7711  8104 I WE-DIAG : encode: run OK in 1754.5 ms (mel copy-in 0.4 ms)
+09-25 10:29:48.020  7711  8104 I WE-DIAG : decode: 87 tokens in 2708.8 ms (31.14 ms/token), terminated by EOT nsp=0.00 lp=-0.15 ent=3.15 rung=0 steps=90 step=30.10 ms (run 20.58, io 0.35, kv copy 7.80 ms x89)
+09-25 10:29:48.041  7711  7711 I WE-DIAG : panel: chars=20320 renderMs=0 setTextMs=16
+09-25 10:29:48.137  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=113.4
+09-25 10:29:48.482  7711  7711 I WE-DIAG : speaker: seq=139 segs=1 windows=8 embedMs=343 ids=[1,1,8,8,8,8,8,8] best=[0.79,0.23,0.18,0.55,0.66,0.65,0.70,0.64] dur=[2.9,1.0,2.0,2.0,2.0,2.0,1.5,1.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:29:48.498  7711  7711 I WE-DIAG : panel: chars=20332 renderMs=0 setTextMs=15
+09-25 10:30:00.315  7711  8104 I WE-DIAG : encode: run OK in 1755.1 ms (mel copy-in 0.1 ms)
+09-25 10:30:02.570  7711  8104 I WE-DIAG : decode: 72 tokens in 2254.4 ms (31.31 ms/token), terminated by EOT nsp=0.00 lp=-0.21 ent=3.28 rung=0 steps=75 step=30.06 ms (run 20.56, io 0.33, kv copy 7.75 ms x74)
+09-25 10:30:02.595  7711  7711 I WE-DIAG : panel: chars=20597 renderMs=0 setTextMs=18
+09-25 10:30:02.684  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=113.6
+09-25 10:30:03.026  7711  7711 I WE-DIAG : speaker: seq=140 segs=1 windows=7 embedMs=339 ids=[8,8,8,8,8,8,8] best=[0.60,0.63,0.63,0.63,0.67,0.70,0.57] dur=[2.0,2.0,2.3,2.3,2.3,2.3,2.0] confirmed=1 load=0 route=vad pick=2
+09-25 10:30:03.077  7711  7711 I WE-DIAG : speaker-recluster: n=443 clusters=8 confirmed=8 changed=0 ms=49
+09-25 10:30:12.633  7711  8104 I WE-DIAG : encode: run OK in 1749.2 ms (mel copy-in 0.1 ms)
+09-25 10:30:14.496  7711  8104 I WE-DIAG : decode: 60 tokens in 1863.6 ms (31.06 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.22 rung=0 steps=63 step=29.58 ms (run 20.22, io 0.32, kv copy 7.63 ms x62)
+09-25 10:30:14.510  7711  7711 I WE-DIAG : panel: chars=20853 renderMs=0 setTextMs=10
+09-25 10:30:14.600  7711  9838 I WE-DIAG : VAD-standalone: 197120 samples -> 1 segments wallMs=97.3
+09-25 10:30:14.865  7711  7711 I WE-DIAG : speaker: seq=141 segs=1 windows=4 embedMs=263 ids=[8,8,8,8] best=[0.72,0.77,0.68,0.79] dur=[3.2,3.2,2.9,2.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:30:17.011  7711  8104 I WE-DIAG : encode: run OK in 1754.0 ms (mel copy-in 0.3 ms)
+09-25 10:30:17.581  7711  8104 I WE-DIAG : decode: 16 tokens in 570.5 ms (35.66 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=nan(unmeasured: 14 text ids, the window needs 33) rung=0 steps=19 step=30.03 ms (run 20.76, io 0.32, kv copy 7.94 ms x18)
+09-25 10:30:17.605  7711  7711 I WE-DIAG : panel: chars=20921 renderMs=0 setTextMs=19
+09-25 10:30:17.617  7711  9838 I WE-DIAG : VAD-standalone: 70144 samples -> 1 segments wallMs=34.6
+09-25 10:30:17.707  7711  7711 I WE-DIAG : speaker: seq=142 segs=1 windows=2 embedMs=88 ids=[8,8] best=[0.78,0.70] dur=[1.6,2.1] confirmed=1 load=0 route=vad pick=1
+09-25 10:30:27.866  7711  8104 I WE-DIAG : encode: run OK in 1749.0 ms (mel copy-in 0.1 ms)
+09-25 10:30:29.171  7711  8104 I WE-DIAG : decode: 41 tokens in 1304.6 ms (31.82 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.25 rung=0 steps=44 step=29.65 ms (run 20.44, io 0.33, kv copy 7.53 ms x43)
+09-25 10:30:29.193  7711  7711 I WE-DIAG : panel: chars=21110 renderMs=0 setTextMs=18
+09-25 10:30:29.255  7711  9838 I WE-DIAG : VAD-standalone: 173568 samples -> 1 segments wallMs=82.3
+09-25 10:30:29.485  7711  7711 I WE-DIAG : speaker: seq=143 segs=1 windows=4 embedMs=229 ids=[8,8,8,8] best=[0.71,0.70,0.69,0.62] dur=[2.9,3.1,2.2,2.2] confirmed=1 load=0 route=vad pick=1
+09-25 10:30:38.681  7711  8104 I WE-DIAG : encode: run OK in 1751.4 ms (mel copy-in 0.2 ms)
+09-25 10:30:40.078  7711  8104 I WE-DIAG : decode: 43 tokens in 1396.1 ms (32.47 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=3.42 rung=0 steps=46 step=30.35 ms (run 20.99, io 0.32, kv copy 7.73 ms x45)
+09-25 10:30:40.088  7711  7711 I WE-DIAG : panel: chars=21320 renderMs=0 setTextMs=8
+09-25 10:30:40.162  7711  9838 I WE-DIAG : VAD-standalone: 173056 samples -> 1 segments wallMs=82.7
+09-25 10:30:40.401  7711  7711 I WE-DIAG : speaker: seq=144 segs=1 windows=4 embedMs=237 ids=[8,1,1,1] best=[0.67,0.76,0.73,0.78] dur=[2.7,2.7,2.7,2.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:30:43.949  7711  8104 I WE-DIAG : encode: run OK in 1747.2 ms (mel copy-in 0.2 ms)
+09-25 10:30:44.914  7711  8104 I WE-DIAG : decode: 30 tokens in 965.2 ms (32.17 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=nan(unmeasured: 26 text ids, the window needs 33) rung=0 steps=33 step=29.25 ms (run 20.20, io 0.35, kv copy 7.54 ms x32)
+09-25 10:30:44.935  7711  7711 I WE-DIAG : panel: chars=21429 renderMs=0 setTextMs=17
+09-25 10:30:44.957  7711  9838 I WE-DIAG : VAD-standalone: 84480 samples -> 2 segments wallMs=42.2
+09-25 10:30:45.076  7711  7711 I WE-DIAG : speaker: seq=145 segs=2 windows=2 embedMs=117 ids=[1,1] best=[0.76,0.78] dur=[2.7,2.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:30:45.097  7711  7711 I WE-DIAG : panel: chars=21441 renderMs=0 setTextMs=20
+09-25 10:30:45.129  7711  7711 I WE-DIAG : speaker-recluster: n=459 clusters=8 confirmed=8 changed=0 ms=53
+09-25 10:30:55.510  7711  8104 I WE-DIAG : encode: run OK in 1745.2 ms (mel copy-in 0.2 ms)
+09-25 10:30:57.486  7711  8104 I WE-DIAG : decode: 63 tokens in 1976.0 ms (31.37 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=3.12 rung=0 steps=66 step=29.94 ms (run 20.43, io 0.38, kv copy 7.78 ms x65)
+09-25 10:30:57.513  7711  7711 I WE-DIAG : panel: chars=21682 renderMs=0 setTextMs=21
+09-25 10:30:57.578  7711  9838 I WE-DIAG : VAD-standalone: 184832 samples -> 1 segments wallMs=88.9
+09-25 10:30:57.837  7711  7711 I WE-DIAG : speaker: seq=146 segs=1 windows=4 embedMs=257 ids=[1,3,3,3] best=[0.78,0.66,0.83,0.83] dur=[3.1,2.3,2.3,3.8] confirmed=1 load=0 route=vad pick=3
+09-25 10:30:57.849  7711  7711 I WE-DIAG : panel: chars=21694 renderMs=0 setTextMs=9
+09-25 10:31:08.706  7711  8104 I WE-DIAG : encode: run OK in 1747.7 ms (mel copy-in 0.2 ms)
+09-25 10:31:11.465  7711  8104 I WE-DIAG : decode: 89 tokens in 2758.4 ms (30.99 ms/token), terminated by EOT nsp=0.00 lp=-0.05 ent=3.00 rung=0 steps=92 step=29.98 ms (run 20.50, io 0.33, kv copy 7.78 ms x91)
+09-25 10:31:11.486  7711  7711 I WE-DIAG : panel: chars=22013 renderMs=0 setTextMs=18
+09-25 10:31:11.566  7711  9838 I WE-DIAG : VAD-standalone: 210944 samples -> 1 segments wallMs=99.3
+09-25 10:31:11.870  7711  7711 I WE-DIAG : speaker: seq=147 segs=1 windows=6 embedMs=303 ids=[3,3,3,3,3,3] best=[0.77,0.73,0.85,-,0.89,0.80] dur=[2.5,2.0,2.0,0.8,2.6,3.2] confirmed=1 load=0 route=vad pick=5
+09-25 10:31:13.255  7711  8104 I WE-DIAG : encode: run OK in 1754.2 ms (mel copy-in 0.1 ms)
+09-25 10:31:14.021  7711  8104 I WE-DIAG : decode: 23 tokens in 765.9 ms (33.30 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=nan(unmeasured: 19 text ids, the window needs 33) rung=0 steps=26 step=29.46 ms (run 20.43, io 0.39, kv copy 7.64 ms x25)
+09-25 10:31:14.047  7711  7711 I WE-DIAG : panel: chars=22090 renderMs=0 setTextMs=20
+09-25 10:31:14.057  7711  9838 I WE-DIAG : VAD-standalone: 71168 samples -> 2 segments wallMs=34.4
+09-25 10:31:14.161  7711  7711 I WE-DIAG : speaker: seq=148 segs=2 windows=2 embedMs=102 ids=[3,1] best=[0.66,0.68] dur=[1.7,2.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:31:14.186  7711  7711 I WE-DIAG : panel: chars=22102 renderMs=0 setTextMs=24
+09-25 10:31:23.142  7711  8104 I WE-DIAG : encode: run OK in 1759.6 ms (mel copy-in 0.1 ms)
+09-25 10:31:24.478  7711  8104 I WE-DIAG : decode: 42 tokens in 1335.7 ms (31.80 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=3.10 rung=0 steps=45 step=29.68 ms (run 20.39, io 0.33, kv copy 7.74 ms x44)
+09-25 10:31:24.506  7711  7711 I WE-DIAG : panel: chars=22233 renderMs=0 setTextMs=21
+09-25 10:31:24.555  7711  9838 I WE-DIAG : VAD-standalone: 159744 samples -> 2 segments wallMs=75.5
+09-25 10:31:24.761  7711  7711 I WE-DIAG : speaker: seq=149 segs=2 windows=5 embedMs=205 ids=[1,3,4,4,4] best=[-,0.53,0.72,0.73,0.73] dur=[0.6,1.8,2.3,2.3,2.3] confirmed=1 load=0 route=vad pick=2
+09-25 10:31:24.785  7711  7711 I WE-DIAG : panel: chars=22257 renderMs=0 setTextMs=22
+09-25 10:31:32.664  7711  8104 I WE-DIAG : encode: run OK in 1751.7 ms (mel copy-in 0.2 ms)
+09-25 10:31:33.760  7711  8104 I WE-DIAG : decode: 35 tokens in 1095.7 ms (31.31 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=nan(unmeasured: 29 text ids, the window needs 33) rung=0 steps=38 step=28.83 ms (run 20.09, io 0.30, kv copy 7.41 ms x37)
+09-25 10:31:33.785  7711  7711 I WE-DIAG : panel: chars=22384 renderMs=0 setTextMs=22
+09-25 10:31:33.847  7711  9838 I WE-DIAG : VAD-standalone: 152576 samples -> 2 segments wallMs=86.3
+09-25 10:31:34.051  7711  7711 I WE-DIAG : speaker: seq=150 segs=2 windows=4 embedMs=202 ids=[4,4,4,4] best=[0.70,0.79,0.73,-] dur=[2.0,3.2,3.2,0.9] confirmed=1 load=0 route=vad pick=1
+09-25 10:31:34.112  7711  7711 I WE-DIAG : speaker-recluster: n=477 clusters=8 confirmed=8 changed=0 ms=60
+09-25 10:31:35.566  7711  8104 I WE-DIAG : encode: run OK in 1745.2 ms (mel copy-in 0.2 ms)
+09-25 10:31:35.851  7711  8104 I WE-DIAG : decode: 7 tokens in 284.3 ms (40.62 ms/token), terminated by EOT nsp=0.00 lp=-0.26 ent=nan(unmeasured: 5 text ids, the window needs 33) rung=0 steps=10 step=28.43 ms (run 20.19, io 0.28, kv copy 7.32 ms x9)
+09-25 10:31:35.876  7711  9838 I WE-DIAG : VAD-standalone: 46592 samples -> 2 segments wallMs=23.6
+09-25 10:31:35.879  7711  7711 I WE-DIAG : panel: chars=22404 renderMs=1 setTextMs=23
+09-25 10:31:35.942  7711  7711 I WE-DIAG : speaker: seq=151 segs=2 windows=1 embedMs=64 ids=[4] best=[0.65] dur=[2.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:31:39.443  7711  8104 I WE-DIAG : encode: run OK in 1749.2 ms (mel copy-in 0.2 ms)
+09-25 10:31:39.908  7711  8104 I WE-DIAG : decode: 13 tokens in 464.4 ms (35.72 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=29.02 ms (run 19.85, io 0.37, kv copy 7.89 ms x15)
+09-25 10:31:39.931  7711  7711 I WE-DIAG : panel: chars=22454 renderMs=0 setTextMs=18
+09-25 10:31:39.939  7711  9838 I WE-DIAG : VAD-standalone: 61952 samples -> 2 segments wallMs=30.5
+09-25 10:31:40.025  7711  7711 I WE-DIAG : speaker: seq=152 segs=2 windows=1 embedMs=84 ids=[4] best=[0.79] dur=[3.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:31:45.146  7711  8104 I WE-DIAG : encode: run OK in 1753.4 ms (mel copy-in 0.2 ms)
+09-25 10:31:45.925  7711  8104 I WE-DIAG : decode: 23 tokens in 778.9 ms (33.87 ms/token), terminated by EOT nsp=0.00 lp=-0.15 ent=nan(unmeasured: 21 text ids, the window needs 33) rung=0 steps=26 step=29.96 ms (run 20.66, io 0.30, kv copy 7.94 ms x25)
+09-25 10:31:45.954  7711  7711 I WE-DIAG : panel: chars=22557 renderMs=1 setTextMs=23
+09-25 10:31:45.971  7711  9838 I WE-DIAG : VAD-standalone: 91136 samples -> 1 segments wallMs=44.2
+09-25 10:31:46.092  7711  7711 I WE-DIAG : speaker: seq=153 segs=1 windows=2 embedMs=120 ids=[4,4] best=[0.70,0.75] dur=[2.7,2.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:31:51.932  7711  8104 I WE-DIAG : encode: run OK in 1751.3 ms (mel copy-in 0.2 ms)
+09-25 10:31:52.677  7711  8104 I WE-DIAG : decode: 22 tokens in 744.5 ms (33.84 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=nan(unmeasured: 20 text ids, the window needs 33) rung=0 steps=25 step=29.78 ms (run 20.23, io 0.33, kv copy 7.97 ms x24)
+09-25 10:31:52.699  7711  7711 I WE-DIAG : panel: chars=22643 renderMs=0 setTextMs=19
+09-25 10:31:52.729  7711  9838 I WE-DIAG : VAD-standalone: 108544 samples -> 4 segments wallMs=51.5
+09-25 10:31:52.875  7711  7711 I WE-DIAG : speaker: seq=154 segs=4 windows=2 embedMs=144 ids=[4,4] best=[0.79,0.76] dur=[2.9,3.3] confirmed=1 load=0 route=vad pick=1
+09-25 10:31:55.451  7711  8104 I WE-DIAG : encode: run OK in 1749.0 ms (mel copy-in 0.2 ms)
+09-25 10:31:56.009  7711  8104 I WE-DIAG : decode: 16 tokens in 558.1 ms (34.88 ms/token), terminated by EOT nsp=0.00 lp=-0.25 ent=nan(unmeasured: 14 text ids, the window needs 33) rung=0 steps=19 step=29.37 ms (run 20.62, io 0.29, kv copy 7.52 ms x18)
+09-25 10:31:56.021  7711  7711 I WE-DIAG : panel: chars=22703 renderMs=0 setTextMs=8
+09-25 10:31:56.038  7711  9838 I WE-DIAG : VAD-standalone: 56320 samples -> 1 segments wallMs=27.2
+09-25 10:31:56.115  7711  7711 I WE-DIAG : speaker: seq=155 segs=1 windows=1 embedMs=76 ids=[4] best=[0.71] dur=[3.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:31:56.178  7711  7711 I WE-DIAG : speaker-recluster: n=484 clusters=8 confirmed=8 changed=0 ms=62
+09-25 10:32:01.284  7711  8104 I WE-DIAG : encode: run OK in 1766.4 ms (mel copy-in 0.2 ms)
+09-25 10:32:02.181  7711  8104 I WE-DIAG : decode: 27 tokens in 896.3 ms (33.20 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 21 text ids, the window needs 33) rung=0 steps=30 step=29.88 ms (run 20.50, io 0.30, kv copy 7.90 ms x29)
+09-25 10:32:02.199  7711  7711 I WE-DIAG : panel: chars=22790 renderMs=0 setTextMs=15
+09-25 10:32:02.235  7711  9838 I WE-DIAG : VAD-standalone: 93184 samples -> 3 segments wallMs=53.1
+09-25 10:32:02.381  7711  7711 I WE-DIAG : speaker: seq=156 segs=3 windows=3 embedMs=145 ids=[4,5,5] best=[0.64,0.55,0.69] dur=[2.1,1.3,2.3] confirmed=1 load=0 route=vad pick=2
+09-25 10:32:02.407  7711  7711 I WE-DIAG : panel: chars=22802 renderMs=0 setTextMs=24
+09-25 10:32:03.967  7711  8104 I WE-DIAG : encode: run OK in 1750.8 ms (mel copy-in 0.2 ms)
+09-25 10:32:04.355  7711  8104 I WE-DIAG : decode: 10 tokens in 388.5 ms (38.85 ms/token), terminated by EOT nsp=0.00 lp=-0.24 ent=nan(unmeasured: 8 text ids, the window needs 33) rung=0 steps=13 step=29.88 ms (run 20.98, io 0.31, kv copy 7.84 ms x12)
+09-25 10:32:04.377  7711  9838 I WE-DIAG : VAD-standalone: 42496 samples -> 1 segments wallMs=20.3
+09-25 10:32:04.381  7711  7711 I WE-DIAG : panel: chars=22836 renderMs=0 setTextMs=22
+09-25 10:32:04.436  7711  7711 I WE-DIAG : speaker: seq=157 segs=1 windows=1 embedMs=58 ids=[5] best=[0.69] dur=[2.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:32:06.230  7711  8104 I WE-DIAG : encode: run OK in 1749.1 ms (mel copy-in 0.1 ms)
+09-25 10:32:06.511  7711  8104 I WE-DIAG : decode: 7 tokens in 281.6 ms (40.22 ms/token), terminated by EOT nsp=0.00 lp=-0.04 ent=nan(unmeasured: 5 text ids, the window needs 33) rung=0 steps=10 step=28.16 ms (run 20.24, io 0.29, kv copy 7.12 ms x9)
+09-25 10:32:06.530  7711  9838 I WE-DIAG : VAD-standalone: 36864 samples -> 1 segments wallMs=17.6
+09-25 10:32:06.545  7711  7711 I WE-DIAG : panel: chars=22866 renderMs=0 setTextMs=29
+09-25 10:32:06.577  7711  7711 I WE-DIAG : speaker: seq=158 segs=1 windows=1 embedMs=46 ids=[5] best=[0.64] dur=[2.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:32:09.903  7711  8104 I WE-DIAG : encode: run OK in 1748.4 ms (mel copy-in 0.2 ms)
+09-25 10:32:10.120  7711  8104 I WE-DIAG : decode: 5 tokens in 216.5 ms (43.30 ms/token), terminated by EOT nsp=0.00 lp=-0.45 ent=nan(unmeasured: 3 text ids, the window needs 33) rung=0 steps=8 step=27.07 ms (run 19.66, io 0.28, kv copy 6.89 ms x7)
+09-25 10:32:10.142  7711  7711 I WE-DIAG : panel: chars=22883 renderMs=0 setTextMs=16
+09-25 10:32:10.151  7711  9838 I WE-DIAG : VAD-standalone: 58880 samples -> 2 segments wallMs=30.0
+09-25 10:32:10.226  7711  7711 I WE-DIAG : speaker: seq=159 segs=2 windows=1 embedMs=74 ids=[5] best=[0.53] dur=[2.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:32:12.150  7711  8104 I WE-DIAG : encode: run OK in 1749.1 ms (mel copy-in 0.2 ms)
+09-25 10:32:12.387  7711  8104 I WE-DIAG : decode: 5 tokens in 237.3 ms (47.46 ms/token), terminated by EOT nsp=0.00 lp=-0.41 ent=nan(unmeasured: 3 text ids, the window needs 33) rung=0 steps=8 step=29.67 ms (run 21.17, io 0.30, kv copy 8.05 ms x7)
+09-25 10:32:12.406  7711  9838 I WE-DIAG : VAD-standalone: 35840 samples -> 1 segments wallMs=17.9
+09-25 10:32:12.411  7711  7711 I WE-DIAG : panel: chars=22895 renderMs=0 setTextMs=18
+09-25 10:32:12.446  7711  7711 I WE-DIAG : speaker: seq=160 segs=1 windows=1 embedMs=39 ids=[5] best=[0.60] dur=[1.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:32:12.511  7711  7711 I WE-DIAG : speaker-recluster: n=491 clusters=8 confirmed=8 changed=0 ms=64
+09-25 10:32:15.287  7711  8104 I WE-DIAG : encode: run OK in 1753.2 ms (mel copy-in 0.2 ms)
+09-25 10:32:15.555  7711  8104 I WE-DIAG : decode: 6 tokens in 268.3 ms (44.72 ms/token), terminated by EOT nsp=0.00 lp=-0.03 ent=nan(unmeasured: 4 text ids, the window needs 33) rung=0 steps=9 step=29.81 ms (run 20.82, io 0.32, kv copy 8.26 ms x8)
+09-25 10:32:15.578  7711  7711 I WE-DIAG : panel: chars=22919 renderMs=0 setTextMs=19
+09-25 10:32:15.580  7711  9838 I WE-DIAG : VAD-standalone: 50176 samples -> 1 segments wallMs=24.1
+09-25 10:32:15.647  7711  7711 I WE-DIAG : speaker: seq=161 segs=1 windows=1 embedMs=66 ids=[5] best=[0.63] dur=[3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:32:20.439  7711  8104 I WE-DIAG : encode: run OK in 1752.7 ms (mel copy-in 0.2 ms)
+09-25 10:32:21.049  7711  8104 I WE-DIAG : decode: 17 tokens in 609.7 ms (35.86 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 15 text ids, the window needs 33) rung=0 steps=20 step=30.48 ms (run 20.90, io 0.34, kv copy 8.15 ms x19)
+09-25 10:32:21.073  7711  7711 I WE-DIAG : panel: chars=22983 renderMs=0 setTextMs=21
+09-25 10:32:21.089  7711  9838 I WE-DIAG : VAD-standalone: 82432 samples -> 2 segments wallMs=39.0
+09-25 10:32:21.202  7711  7711 I WE-DIAG : speaker: seq=162 segs=2 windows=2 embedMs=111 ids=[5,5] best=[0.61,0.61] dur=[2.5,2.6] confirmed=1 load=0 route=vad pick=1
+09-25 10:32:28.182  7711  8104 I WE-DIAG : encode: run OK in 1748.8 ms (mel copy-in 0.2 ms)
+09-25 10:32:29.128  7711  8104 I WE-DIAG : decode: 29 tokens in 945.8 ms (32.61 ms/token), terminated by EOT nsp=0.00 lp=-0.15 ent=nan(unmeasured: 25 text ids, the window needs 33) rung=0 steps=32 step=29.55 ms (run 20.34, io 0.33, kv copy 7.78 ms x31)
+09-25 10:32:29.149  7711  7711 I WE-DIAG : panel: chars=23096 renderMs=0 setTextMs=18
+09-25 10:32:29.188  7711  9838 I WE-DIAG : VAD-standalone: 123904 samples -> 2 segments wallMs=58.9
+09-25 10:32:29.359  7711  7711 I WE-DIAG : speaker: seq=163 segs=2 windows=2 embedMs=169 ids=[5,5] best=[0.77,0.77] dur=[3.7,3.9] confirmed=1 load=0 route=vad pick=1
+09-25 10:32:31.480  7711  8104 I WE-DIAG : encode: run OK in 1747.9 ms (mel copy-in 0.2 ms)
+09-25 10:32:31.906  7711  8104 I WE-DIAG : decode: 12 tokens in 425.8 ms (35.49 ms/token), terminated by EOT nsp=0.00 lp=-0.25 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=28.39 ms (run 19.55, io 0.30, kv copy 7.77 ms x14)
+09-25 10:32:31.931  7711  7711 I WE-DIAG : panel: chars=23136 renderMs=1 setTextMs=20
+09-25 10:32:31.933  7711  9838 I WE-DIAG : VAD-standalone: 52736 samples -> 2 segments wallMs=25.7
+09-25 10:32:32.004  7711  7711 I WE-DIAG : speaker: seq=164 segs=2 windows=1 embedMs=70 ids=[5] best=[0.78] dur=[3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:32:37.175  7711  8104 I WE-DIAG : encode: run OK in 1755.5 ms (mel copy-in 0.2 ms)
+09-25 10:32:37.694  7711  8104 I WE-DIAG : decode: 14 tokens in 518.8 ms (37.06 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=nan(unmeasured: 12 text ids, the window needs 33) rung=0 steps=17 step=30.52 ms (run 20.83, io 0.39, kv copy 8.32 ms x16)
+09-25 10:32:37.718  7711  7711 I WE-DIAG : panel: chars=23194 renderMs=0 setTextMs=20
+09-25 10:32:37.738  7711  9838 I WE-DIAG : VAD-standalone: 91136 samples -> 2 segments wallMs=43.1
+09-25 10:32:37.856  7711  7711 I WE-DIAG : speaker: seq=165 segs=2 windows=2 embedMs=116 ids=[5,5] best=[0.65,0.76] dur=[2.1,2.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:32:37.924  7711  7711 I WE-DIAG : speaker-recluster: n=499 clusters=8 confirmed=8 changed=0 ms=67
+09-25 10:32:40.966  7711  8104 I WE-DIAG : encode: run OK in 1758.4 ms (mel copy-in 0.3 ms)
+09-25 10:32:41.448  7711  8104 I WE-DIAG : decode: 14 tokens in 482.1 ms (34.43 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=nan(unmeasured: 12 text ids, the window needs 33) rung=0 steps=17 step=28.36 ms (run 19.80, io 0.31, kv copy 7.41 ms x16)
+09-25 10:32:41.474  7711  7711 I WE-DIAG : panel: chars=23248 renderMs=0 setTextMs=22
+09-25 10:32:41.478  7711  9838 I WE-DIAG : VAD-standalone: 60416 samples -> 2 segments wallMs=29.1
+09-25 10:32:41.573  7711  7711 I WE-DIAG : speaker: seq=166 segs=2 windows=1 embedMs=92 ids=[5] best=[0.81] dur=[3.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:32:43.263  7711  8104 I WE-DIAG : encode: run OK in 1747.5 ms (mel copy-in 0.1 ms)
+09-25 10:32:43.651  7711  8104 I WE-DIAG : decode: 11 tokens in 387.3 ms (35.21 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=nan(unmeasured: 9 text ids, the window needs 33) rung=0 steps=14 step=27.67 ms (run 19.68, io 0.31, kv copy 7.08 ms x13)
+09-25 10:32:43.669  7711  9838 I WE-DIAG : VAD-standalone: 36864 samples -> 1 segments wallMs=17.5
+09-25 10:32:43.678  7711  7711 I WE-DIAG : panel: chars=23284 renderMs=1 setTextMs=23
+09-25 10:32:43.718  7711  7711 I WE-DIAG : speaker: seq=167 segs=1 windows=1 embedMs=48 ids=[5] best=[0.72] dur=[2.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:32:48.597  7711  8104 I WE-DIAG : encode: run OK in 1752.8 ms (mel copy-in 0.1 ms)
+09-25 10:32:49.057  7711  8104 I WE-DIAG : decode: 12 tokens in 459.1 ms (38.26 ms/token), terminated by EOT nsp=0.00 lp=-0.05 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=30.61 ms (run 21.52, io 0.36, kv copy 7.77 ms x14)
+09-25 10:32:49.079  7711  7711 I WE-DIAG : panel: chars=23331 renderMs=0 setTextMs=19
+09-25 10:32:49.099  7711  9838 I WE-DIAG : VAD-standalone: 85504 samples -> 2 segments wallMs=40.6
+09-25 10:32:49.212  7711  7711 I WE-DIAG : speaker: seq=168 segs=2 windows=2 embedMs=112 ids=[5,5] best=[0.63,0.72] dur=[2.3,2.6] confirmed=1 load=0 route=vad pick=1
+09-25 10:32:52.949  7711  8104 I WE-DIAG : encode: run OK in 1753.1 ms (mel copy-in 0.1 ms)
+09-25 10:32:53.546  7711  8104 I WE-DIAG : decode: 17 tokens in 596.8 ms (35.11 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=nan(unmeasured: 15 text ids, the window needs 33) rung=0 steps=20 step=29.84 ms (run 20.48, io 0.29, kv copy 8.08 ms x19)
+09-25 10:32:53.568  7711  7711 I WE-DIAG : panel: chars=23398 renderMs=0 setTextMs=18
+09-25 10:32:53.581  7711  9838 I WE-DIAG : VAD-standalone: 69632 samples -> 1 segments wallMs=33.9
+09-25 10:32:53.680  7711  7711 I WE-DIAG : speaker: seq=169 segs=1 windows=2 embedMs=97 ids=[5,5] best=[0.81,0.61] dur=[2.1,2.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:33:00.179  7711  8104 I WE-DIAG : encode: run OK in 1750.7 ms (mel copy-in 0.2 ms)
+09-25 10:33:01.114  7711  8104 I WE-DIAG : decode: 28 tokens in 934.6 ms (33.38 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=nan(unmeasured: 26 text ids, the window needs 33) rung=0 steps=31 step=30.15 ms (run 20.75, io 0.35, kv copy 7.77 ms x30)
+09-25 10:33:01.134  7711  7711 I WE-DIAG : panel: chars=23524 renderMs=0 setTextMs=17
+09-25 10:33:01.171  7711  9838 I WE-DIAG : VAD-standalone: 115712 samples -> 2 segments wallMs=55.9
+09-25 10:33:01.346  7711  7711 I WE-DIAG : speaker: seq=170 segs=2 windows=2 embedMs=174 ids=[5,5] best=[0.80,0.74] dur=[3.0,3.6] confirmed=1 load=0 route=vad pick=1
+09-25 10:33:01.418  7711  7711 I WE-DIAG : speaker-recluster: n=507 clusters=8 confirmed=8 changed=0 ms=71
+09-25 10:33:02.895  7711  8104 I WE-DIAG : encode: run OK in 1752.3 ms (mel copy-in 0.1 ms)
+09-25 10:33:03.204  7711  8104 I WE-DIAG : decode: 8 tokens in 308.2 ms (38.52 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=28.01 ms (run 19.67, io 0.32, kv copy 7.40 ms x10)
+09-25 10:33:03.225  7711  9838 I WE-DIAG : VAD-standalone: 38912 samples -> 1 segments wallMs=20.2
+09-25 10:33:03.234  7711  7711 I WE-DIAG : panel: chars=23550 renderMs=0 setTextMs=20
+09-25 10:33:03.270  7711  7711 I WE-DIAG : speaker: seq=171 segs=1 windows=1 embedMs=45 ids=[5] best=[0.73] dur=[2.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:33:09.307  7711  8104 I WE-DIAG : encode: run OK in 1752.5 ms (mel copy-in 0.2 ms)
+09-25 10:33:09.931  7711  8104 I WE-DIAG : decode: 18 tokens in 623.6 ms (34.65 ms/token), terminated by EOT nsp=0.00 lp=-0.27 ent=nan(unmeasured: 16 text ids, the window needs 33) rung=0 steps=21 step=29.70 ms (run 20.68, io 0.30, kv copy 7.62 ms x20)
+09-25 10:33:09.947  7711  7711 I WE-DIAG : panel: chars=23614 renderMs=0 setTextMs=14
+09-25 10:33:09.983  7711  9838 I WE-DIAG : VAD-standalone: 107008 samples -> 2 segments wallMs=51.5
+09-25 10:33:10.116  7711  7711 I WE-DIAG : speaker: seq=172 segs=2 windows=2 embedMs=131 ids=[5,5] best=[0.62,0.69] dur=[2.8,3.2] confirmed=1 load=0 route=vad pick=1
+09-25 10:33:13.334  7711  8104 I WE-DIAG : encode: run OK in 1752.3 ms (mel copy-in 0.2 ms)
+09-25 10:33:13.768  7711  8104 I WE-DIAG : decode: 12 tokens in 433.9 ms (36.16 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=28.93 ms (run 20.65, io 0.41, kv copy 7.03 ms x14)
+09-25 10:33:13.789  7711  7711 I WE-DIAG : panel: chars=23663 renderMs=0 setTextMs=17
+09-25 10:33:13.801  7711  9838 I WE-DIAG : VAD-standalone: 64512 samples -> 2 segments wallMs=31.4
+09-25 10:33:13.900  7711  7711 I WE-DIAG : speaker: seq=173 segs=2 windows=2 embedMs=98 ids=[5,5] best=[0.64,0.69] dur=[2.0,2.0] confirmed=1 load=0 route=vad pick=1
+09-25 10:33:15.553  7711  8104 I WE-DIAG : encode: run OK in 1747.1 ms (mel copy-in 0.2 ms)
+09-25 10:33:15.817  7711  8104 I WE-DIAG : decode: 6 tokens in 264.3 ms (44.06 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=nan(unmeasured: 4 text ids, the window needs 33) rung=0 steps=9 step=29.37 ms (run 21.18, io 0.34, kv copy 7.34 ms x8)
+09-25 10:33:15.834  7711  9838 I WE-DIAG : VAD-standalone: 33792 samples -> 1 segments wallMs=16.3
+09-25 10:33:15.841  7711  7711 I WE-DIAG : panel: chars=23687 renderMs=0 setTextMs=21
+09-25 10:33:15.878  7711  7711 I WE-DIAG : speaker: seq=174 segs=1 windows=1 embedMs=42 ids=[5] best=[0.60] dur=[1.9] confirmed=1 load=0 route=vad pick=0
+09-25 10:33:18.297  7711  8104 I WE-DIAG : encode: run OK in 1750.1 ms (mel copy-in 0.2 ms)
+09-25 10:33:18.691  7711  8104 I WE-DIAG : decode: 11 tokens in 393.6 ms (35.78 ms/token), terminated by EOT nsp=0.00 lp=-0.25 ent=nan(unmeasured: 9 text ids, the window needs 33) rung=0 steps=14 step=28.12 ms (run 19.92, io 0.31, kv copy 7.15 ms x13)
+09-25 10:33:18.715  7711  9838 I WE-DIAG : VAD-standalone: 45568 samples -> 2 segments wallMs=23.3
+09-25 10:33:18.718  7711  7711 I WE-DIAG : panel: chars=23722 renderMs=1 setTextMs=23
+09-25 10:33:18.776  7711  7711 I WE-DIAG : speaker: seq=175 segs=2 windows=1 embedMs=59 ids=[5] best=[0.71] dur=[2.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:33:18.849  7711  7711 I WE-DIAG : speaker-recluster: n=514 clusters=8 confirmed=8 changed=0 ms=72
+09-25 10:33:21.521  7711  8104 I WE-DIAG : encode: run OK in 1746.9 ms (mel copy-in 0.2 ms)
+09-25 10:33:21.807  7711  8104 I WE-DIAG : decode: 7 tokens in 286.4 ms (40.92 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 5 text ids, the window needs 33) rung=0 steps=10 step=28.64 ms (run 20.72, io 0.30, kv copy 7.23 ms x9)
+09-25 10:33:21.831  7711  7711 I WE-DIAG : panel: chars=23752 renderMs=0 setTextMs=20
+09-25 10:33:21.834  7711  9838 I WE-DIAG : VAD-standalone: 51712 samples -> 1 segments wallMs=25.3
+09-25 10:33:21.902  7711  7711 I WE-DIAG : speaker: seq=176 segs=1 windows=1 embedMs=66 ids=[5] best=[0.72] dur=[3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:33:27.033  7711  8104 I WE-DIAG : encode: run OK in 1750.1 ms (mel copy-in 0.2 ms)
+09-25 10:33:27.492  7711  8104 I WE-DIAG : decode: 12 tokens in 458.2 ms (38.18 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=30.54 ms (run 20.65, io 0.43, kv copy 8.46 ms x14)
+09-25 10:33:27.518  7711  7711 I WE-DIAG : panel: chars=23799 renderMs=0 setTextMs=22
+09-25 10:33:27.535  7711  9838 I WE-DIAG : VAD-standalone: 88064 samples -> 3 segments wallMs=42.5
+09-25 10:33:27.662  7711  7711 I WE-DIAG : speaker: seq=177 segs=3 windows=2 embedMs=125 ids=[5,5] best=[0.72,0.70] dur=[2.7,2.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:33:31.992  7711  8104 I WE-DIAG : encode: run OK in 1748.2 ms (mel copy-in 0.1 ms)
+09-25 10:33:32.527  7711  8104 I WE-DIAG : decode: 15 tokens in 534.6 ms (35.64 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=18 step=29.70 ms (run 20.26, io 0.28, kv copy 8.18 ms x17)
+09-25 10:33:32.541  7711  7711 I WE-DIAG : panel: chars=23868 renderMs=0 setTextMs=11
+09-25 10:33:32.567  7711  9838 I WE-DIAG : VAD-standalone: 79360 samples -> 1 segments wallMs=39.9
+09-25 10:33:32.685  7711  7711 I WE-DIAG : speaker: seq=178 segs=1 windows=2 embedMs=116 ids=[5,5] best=[0.73,0.70] dur=[2.3,2.5] confirmed=1 load=0 route=vad pick=1
+09-25 10:33:34.622  7711  8104 I WE-DIAG : encode: run OK in 1751.2 ms (mel copy-in 0.2 ms)
+09-25 10:33:35.003  7711  8104 I WE-DIAG : decode: 10 tokens in 380.7 ms (38.07 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=nan(unmeasured: 8 text ids, the window needs 33) rung=0 steps=13 step=29.28 ms (run 20.28, io 0.34, kv copy 7.86 ms x12)
+09-25 10:33:35.028  7711  9838 I WE-DIAG : VAD-standalone: 41984 samples -> 1 segments wallMs=22.7
+09-25 10:33:35.031  7711  7711 I WE-DIAG : panel: chars=23901 renderMs=0 setTextMs=22
+09-25 10:33:35.077  7711  7711 I WE-DIAG : speaker: seq=179 segs=1 windows=1 embedMs=48 ids=[5] best=[0.69] dur=[2.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:33:40.633  7711  8104 I WE-DIAG : encode: run OK in 1749.5 ms (mel copy-in 0.2 ms)
+09-25 10:33:41.487  7711  8104 I WE-DIAG : decode: 26 tokens in 853.0 ms (32.81 ms/token), terminated by EOT nsp=0.00 lp=-0.11 ent=nan(unmeasured: 24 text ids, the window needs 33) rung=0 steps=29 step=29.41 ms (run 20.12, io 0.32, kv copy 7.71 ms x28)
+09-25 10:33:41.508  7711  7711 I WE-DIAG : panel: chars=24003 renderMs=0 setTextMs=16
+09-25 10:33:41.538  7711  9838 I WE-DIAG : VAD-standalone: 96256 samples -> 2 segments wallMs=50.3
+09-25 10:33:41.687  7711  7711 I WE-DIAG : speaker: seq=180 segs=2 windows=2 embedMs=146 ids=[5,5] best=[0.71,0.68] dur=[2.9,3.0] confirmed=1 load=0 route=vad pick=1
+09-25 10:33:41.773  7711  7711 I WE-DIAG : speaker-recluster: n=522 clusters=8 confirmed=8 changed=0 ms=84
+09-25 10:33:55.643  7711  8104 I WE-DIAG : encode: run OK in 1748.3 ms (mel copy-in 0.1 ms)
+09-25 10:33:57.119  7711  8104 I WE-DIAG : decode: 47 tokens in 1475.8 ms (31.40 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=3.19 rung=0 steps=50 step=29.52 ms (run 20.32, io 0.33, kv copy 7.45 ms x49)
+09-25 10:33:57.143  7711  7711 I WE-DIAG : panel: chars=24216 renderMs=0 setTextMs=19
+09-25 10:33:57.233  7711  9838 I WE-DIAG : VAD-standalone: 217088 samples -> 4 segments wallMs=111.3
+09-25 10:33:57.575  7711  7711 I WE-DIAG : speaker: seq=181 segs=4 windows=4 embedMs=340 ids=[5,5,5,5] best=[0.78,0.76,0.72,0.75] dur=[3.3,3.3,3.0,3.4] confirmed=1 load=0 route=vad pick=3
+09-25 10:33:58.914  7711  8104 I WE-DIAG : encode: run OK in 1756.6 ms (mel copy-in 0.2 ms)
+09-25 10:33:59.532  7711  8104 I WE-DIAG : decode: 18 tokens in 617.6 ms (34.31 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=nan(unmeasured: 16 text ids, the window needs 33) rung=0 steps=21 step=29.41 ms (run 20.20, io 0.34, kv copy 7.90 ms x20)
+09-25 10:33:59.555  7711  7711 I WE-DIAG : panel: chars=24297 renderMs=0 setTextMs=20
+09-25 10:33:59.569  7711  9838 I WE-DIAG : VAD-standalone: 74240 samples -> 1 segments wallMs=36.0
+09-25 10:33:59.669  7711  7711 I WE-DIAG : speaker: seq=182 segs=1 windows=2 embedMs=98 ids=[5,5] best=[0.72,0.71] dur=[2.1,2.2] confirmed=1 load=0 route=vad pick=1
+09-25 10:34:02.295  7711  8104 I WE-DIAG : encode: run OK in 1753.9 ms (mel copy-in 0.2 ms)
+09-25 10:34:02.838  7711  8104 I WE-DIAG : decode: 15 tokens in 542.6 ms (36.17 ms/token), terminated by EOT nsp=0.00 lp=-0.06 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=18 step=30.14 ms (run 21.10, io 0.30, kv copy 7.67 ms x17)
+09-25 10:34:02.863  7711  7711 I WE-DIAG : panel: chars=24343 renderMs=0 setTextMs=20
+09-25 10:34:02.865  7711  9838 I WE-DIAG : VAD-standalone: 55296 samples -> 1 segments wallMs=26.7
+09-25 10:34:02.947  7711  7711 I WE-DIAG : speaker: seq=183 segs=1 windows=1 embedMs=81 ids=[1] best=[0.75] dur=[3.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:34:02.965  7711  7711 I WE-DIAG : panel: chars=24355 renderMs=0 setTextMs=17
+09-25 10:34:04.692  7711  8104 I WE-DIAG : encode: run OK in 1746.6 ms (mel copy-in 0.3 ms)
+09-25 10:34:04.974  7711  8104 I WE-DIAG : decode: 7 tokens in 282.3 ms (40.33 ms/token), terminated by EOT nsp=0.00 lp=-0.11 ent=nan(unmeasured: 5 text ids, the window needs 33) rung=0 steps=10 step=28.23 ms (run 19.90, io 0.32, kv copy 7.41 ms x9)
+09-25 10:34:04.996  7711  9838 I WE-DIAG : VAD-standalone: 38400 samples -> 2 segments wallMs=20.8
+09-25 10:34:05.000  7711  7711 I WE-DIAG : panel: chars=24377 renderMs=0 setTextMs=22
+09-25 10:34:05.051  7711  7711 I WE-DIAG : speaker: seq=184 segs=2 windows=1 embedMs=54 ids=[1] best=[0.59] dur=[2.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:34:13.379  7711  8104 I WE-DIAG : encode: run OK in 1755.3 ms (mel copy-in 0.2 ms)
+09-25 10:34:14.715  7711  8104 I WE-DIAG : decode: 42 tokens in 1336.1 ms (31.81 ms/token), terminated by EOT nsp=0.00 lp=-0.15 ent=3.06 rung=0 steps=45 step=29.69 ms (run 20.16, io 0.35, kv copy 7.90 ms x44)
+09-25 10:34:14.727  7711  7711 I WE-DIAG : panel: chars=24506 renderMs=0 setTextMs=9
+09-25 10:34:14.789  7711  9838 I WE-DIAG : VAD-standalone: 138752 samples -> 3 segments wallMs=72.7
+09-25 10:34:14.996  7711  7711 I WE-DIAG : speaker: seq=185 segs=3 windows=4 embedMs=204 ids=[1,5,5,5] best=[0.34,0.60,0.70,0.62] dur=[1.4,2.1,2.1,2.1] confirmed=1 load=0 route=vad pick=1
+09-25 10:34:15.086  7711  7711 I WE-DIAG : speaker-recluster: n=534 clusters=8 confirmed=8 changed=0 ms=90
+09-25 10:34:28.381  7711  8104 I WE-DIAG : encode: run OK in 1752.3 ms (mel copy-in 0.2 ms)
+09-25 10:34:30.587  7711  8104 I WE-DIAG : decode: 70 tokens in 2205.6 ms (31.51 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=3.10 rung=0 steps=73 step=30.21 ms (run 20.55, io 0.35, kv copy 7.96 ms x72)
+09-25 10:34:30.606  7711  7711 I WE-DIAG : panel: chars=24760 renderMs=0 setTextMs=13
+09-25 10:34:30.705  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=116.8
+09-25 10:34:31.043  7711  7711 I WE-DIAG : speaker: seq=186 segs=1 windows=6 embedMs=335 ids=[5,5,5,5,5,5] best=[0.69,0.67,0.75,0.76,0.76,0.77] dur=[2.0,2.0,3.6,2.2,2.2,3.0] confirmed=1 load=0 route=vad pick=2
+09-25 10:34:31.059  7711  7711 I WE-DIAG : panel: chars=24772 renderMs=0 setTextMs=15
+09-25 10:34:35.381  7711  8104 I WE-DIAG : encode: run OK in 1748.0 ms (mel copy-in 0.2 ms)
+09-25 10:34:35.985  7711  8104 I WE-DIAG : decode: 18 tokens in 604.0 ms (33.55 ms/token), terminated by EOT nsp=0.00 lp=-0.29 ent=nan(unmeasured: 16 text ids, the window needs 33) rung=0 steps=21 step=28.76 ms (run 20.17, io 0.32, kv copy 7.27 ms x20)
+09-25 10:34:36.012  7711  7711 I WE-DIAG : panel: chars=24860 renderMs=0 setTextMs=21
+09-25 10:34:36.041  7711  9838 I WE-DIAG : VAD-standalone: 112128 samples -> 2 segments wallMs=53.8
+09-25 10:34:36.193  7711  7711 I WE-DIAG : speaker: seq=187 segs=2 windows=2 embedMs=150 ids=[5,5] best=[0.80,0.72] dur=[3.5,3.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:34:50.390  7711  8104 I WE-DIAG : encode: run OK in 1746.5 ms (mel copy-in 0.1 ms)
+09-25 10:34:51.827  7711  8104 I WE-DIAG : decode: 44 tokens in 1436.3 ms (32.64 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.32 rung=0 steps=47 step=30.56 ms (run 20.80, io 0.38, kv copy 7.97 ms x46)
+09-25 10:34:51.839  7711  7711 I WE-DIAG : panel: chars=25029 renderMs=0 setTextMs=9
+09-25 10:34:51.931  7711  9838 I WE-DIAG : VAD-standalone: 216592 samples -> 2 segments wallMs=102.9
+09-25 10:34:52.231  7711  7711 I WE-DIAG : speaker: seq=188 segs=2 windows=6 embedMs=297 ids=[5,5,5,5,5,5] best=[0.63,0.71,0.58,0.65,0.69,0.75] dur=[1.8,2.1,2.1,2.1,2.6,2.6] confirmed=1 load=0 route=vad pick=4
+09-25 10:35:05.406  7711  8104 I WE-DIAG : encode: run OK in 1748.5 ms (mel copy-in 0.2 ms)
+09-25 10:35:08.109  7711  8104 I WE-DIAG : decode: 88 tokens in 2702.3 ms (30.71 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=3.15 rung=0 steps=91 step=29.70 ms (run 20.31, io 0.34, kv copy 7.66 ms x90)
+09-25 10:35:08.140  7711  7711 I WE-DIAG : panel: chars=25372 renderMs=2 setTextMs=23
+09-25 10:35:08.237  7711  9838 I WE-DIAG : VAD-standalone: 263664 samples -> 4 segments wallMs=126.7
+09-25 10:35:08.641  7711  7711 I WE-DIAG : speaker: seq=189 segs=4 windows=6 embedMs=401 ids=[5,1,1,1,5,5] best=[0.65,0.72,0.67,0.70,0.51,0.72] dur=[2.9,2.6,3.0,2.6,2.5,2.5] confirmed=1 load=0 route=vad pick=2
+09-25 10:35:08.665  7711  7711 I WE-DIAG : panel: chars=25396 renderMs=0 setTextMs=23
+09-25 10:35:09.902  7711  8104 I WE-DIAG : encode: run OK in 1753.5 ms (mel copy-in 0.2 ms)
+09-25 10:35:10.276  7711  8104 I WE-DIAG : decode: 10 tokens in 374.3 ms (37.43 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=nan(unmeasured: 8 text ids, the window needs 33) rung=0 steps=13 step=28.79 ms (run 20.19, io 0.43, kv copy 7.54 ms x12)
+09-25 10:35:10.298  7711  7711 I WE-DIAG : panel: chars=25440 renderMs=0 setTextMs=19
+09-25 10:35:10.304  7711  9838 I WE-DIAG : VAD-standalone: 57856 samples -> 1 segments wallMs=27.4
+09-25 10:35:10.379  7711  7711 I WE-DIAG : speaker: seq=190 segs=1 windows=1 embedMs=73 ids=[5] best=[0.72] dur=[3.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:35:10.468  7711  7711 I WE-DIAG : speaker-recluster: n=555 clusters=8 confirmed=8 changed=0 ms=89
+09-25 10:35:14.646  7711  8104 I WE-DIAG : encode: run OK in 1753.4 ms (mel copy-in 0.2 ms)
+09-25 10:35:15.583  7711  8104 I WE-DIAG : decode: 29 tokens in 936.4 ms (32.29 ms/token), terminated by EOT nsp=0.00 lp=-0.04 ent=nan(unmeasured: 25 text ids, the window needs 33) rung=0 steps=32 step=29.26 ms (run 20.27, io 0.34, kv copy 7.43 ms x31)
+09-25 10:35:15.605  7711  7711 I WE-DIAG : panel: chars=25551 renderMs=0 setTextMs=20
+09-25 10:35:15.628  7711  9838 I WE-DIAG : VAD-standalone: 90112 samples -> 1 segments wallMs=43.6
+09-25 10:35:15.753  7711  7711 I WE-DIAG : speaker: seq=191 segs=1 windows=2 embedMs=124 ids=[5,5] best=[0.61,0.80] dur=[2.6,3.0] confirmed=1 load=0 route=vad pick=1
+09-25 10:35:29.653  7711  8104 I WE-DIAG : encode: run OK in 1744.7 ms (mel copy-in 0.2 ms)
+09-25 10:35:31.475  7711  8104 I WE-DIAG : decode: 57 tokens in 1821.1 ms (31.95 ms/token), terminated by EOT nsp=0.00 lp=-0.26 ent=3.16 rung=0 steps=60 step=30.35 ms (run 20.69, io 0.37, kv copy 7.82 ms x59)
+09-25 10:35:31.496  7711  7711 I WE-DIAG : panel: chars=25778 renderMs=0 setTextMs=18
+09-25 10:35:31.575  7711  9838 I WE-DIAG : VAD-standalone: 206368 samples -> 2 segments wallMs=98.5
+09-25 10:35:31.856  7711  7711 I WE-DIAG : speaker: seq=192 segs=2 windows=4 embedMs=279 ids=[5,5,5,1] best=[0.74,0.74,0.65,0.80] dur=[3.1,3.2,3.2,3.2] confirmed=1 load=0 route=vad pick=1
+09-25 10:35:40.818  7711  8104 I WE-DIAG : encode: run OK in 1741.8 ms (mel copy-in 0.2 ms)
+09-25 10:35:42.459  7711  8104 I WE-DIAG : decode: 52 tokens in 1640.9 ms (31.56 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=3.19 rung=0 steps=55 step=29.84 ms (run 20.38, io 0.29, kv copy 7.69 ms x54)
+09-25 10:35:42.469  7711  7711 I WE-DIAG : panel: chars=25996 renderMs=0 setTextMs=8
+09-25 10:35:42.562  7711  9838 I WE-DIAG : VAD-standalone: 212448 samples -> 1 segments wallMs=101.9
+09-25 10:35:42.853  7711  7711 I WE-DIAG : speaker: seq=193 segs=1 windows=4 embedMs=289 ids=[1,1,1,1] best=[0.80,0.78,0.79,0.72] dur=[3.3,3.3,3.3,3.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:35:42.882  7711  7711 I WE-DIAG : panel: chars=26008 renderMs=0 setTextMs=27
+09-25 10:35:45.176  7711  8104 I WE-DIAG : encode: run OK in 1748.9 ms (mel copy-in 0.2 ms)
+09-25 10:35:45.698  7711  8104 I WE-DIAG : decode: 15 tokens in 521.6 ms (34.77 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=18 step=28.98 ms (run 20.20, io 0.32, kv copy 7.42 ms x17)
+09-25 10:35:45.727  7711  7711 I WE-DIAG : panel: chars=26077 renderMs=0 setTextMs=25
+09-25 10:35:45.732  7711  9838 I WE-DIAG : VAD-standalone: 69632 samples -> 2 segments wallMs=33.0
+09-25 10:35:45.836  7711  7711 I WE-DIAG : speaker: seq=194 segs=2 windows=2 embedMs=103 ids=[1,1] best=[0.68,0.72] dur=[2.1,2.2] confirmed=1 load=0 route=vad pick=1
+09-25 10:35:47.476  7711  8104 I WE-DIAG : encode: run OK in 1745.2 ms (mel copy-in 0.2 ms)
+09-25 10:35:47.733  7711  8104 I WE-DIAG : decode: 6 tokens in 257.0 ms (42.84 ms/token), terminated by EOT nsp=0.00 lp=-0.32 ent=nan(unmeasured: 4 text ids, the window needs 33) rung=0 steps=9 step=28.56 ms (run 20.75, io 0.36, kv copy 7.11 ms x8)
+09-25 10:35:47.751  7711  9838 I WE-DIAG : VAD-standalone: 35328 samples -> 1 segments wallMs=16.9
+09-25 10:35:47.760  7711  7711 I WE-DIAG : panel: chars=26096 renderMs=0 setTextMs=22
+09-25 10:35:47.792  7711  7711 I WE-DIAG : speaker: seq=195 segs=1 windows=1 embedMs=40 ids=[1] best=[0.65] dur=[1.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:35:47.887  7711  7711 I WE-DIAG : speaker-recluster: n=568 clusters=8 confirmed=8 changed=0 ms=95
+09-25 10:35:50.858  7711  8104 I WE-DIAG : encode: run OK in 1744.0 ms (mel copy-in 0.2 ms)
+09-25 10:35:51.401  7711  8104 I WE-DIAG : decode: 16 tokens in 542.0 ms (33.87 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=nan(unmeasured: 14 text ids, the window needs 33) rung=0 steps=19 step=28.52 ms (run 19.82, io 0.30, kv copy 7.48 ms x18)
+09-25 10:35:51.427  7711  7711 I WE-DIAG : panel: chars=26150 renderMs=0 setTextMs=22
+09-25 10:35:51.430  7711  9838 I WE-DIAG : VAD-standalone: 55808 samples -> 1 segments wallMs=28.5
+09-25 10:35:51.508  7711  7711 I WE-DIAG : speaker: seq=196 segs=1 windows=1 embedMs=73 ids=[1] best=[0.73] dur=[3.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:36:05.878  7711  8104 I WE-DIAG : encode: run OK in 1747.9 ms (mel copy-in 0.2 ms)
+09-25 10:36:07.717  7711  8104 I WE-DIAG : decode: 57 tokens in 1838.6 ms (32.26 ms/token), terminated by EOT nsp=0.00 lp=-0.33 ent=3.34 rung=0 steps=60 step=30.64 ms (run 20.56, io 0.38, kv copy 8.28 ms x59)
+09-25 10:36:07.744  7711  7711 I WE-DIAG : panel: chars=26374 renderMs=0 setTextMs=22
+09-25 10:36:07.836  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=116.5
+09-25 10:36:08.163  7711  7711 I WE-DIAG : speaker: seq=197 segs=2 windows=4 embedMs=324 ids=[1,1,1,1] best=[0.70,0.44,0.78,0.83] dur=[2.9,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:36:13.497  7711  8104 I WE-DIAG : encode: run OK in 1751.5 ms (mel copy-in 0.2 ms)
+09-25 10:36:14.757  7711  8104 I WE-DIAG : decode: 38 tokens in 1260.1 ms (33.16 ms/token), terminated by EOT nsp=0.00 lp=-0.39 ent=3.29 rung=0 steps=41 step=30.73 ms (run 20.88, io 0.38, kv copy 8.16 ms x40)
+09-25 10:36:14.781  7711  7711 I WE-DIAG : panel: chars=26524 renderMs=0 setTextMs=22
+09-25 10:36:14.815  7711  9838 I WE-DIAG : VAD-standalone: 121856 samples -> 1 segments wallMs=57.4
+09-25 10:36:14.982  7711  7711 I WE-DIAG : speaker: seq=198 segs=1 windows=3 embedMs=166 ids=[1,1,1] best=[0.80,0.82,0.77] dur=[2.4,2.4,2.6] confirmed=1 load=0 route=vad pick=2
+09-25 10:36:24.760  7711  8104 I WE-DIAG : encode: run OK in 1749.7 ms (mel copy-in 0.1 ms)
+09-25 10:36:26.685  7711  8104 I WE-DIAG : decode: 61 tokens in 1924.3 ms (31.55 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=3.25 rung=0 steps=64 step=30.07 ms (run 20.61, io 0.33, kv copy 7.74 ms x63)
+09-25 10:36:26.712  7711  7711 I WE-DIAG : panel: chars=26738 renderMs=0 setTextMs=23
+09-25 10:36:26.770  7711  9838 I WE-DIAG : VAD-standalone: 180224 samples -> 1 segments wallMs=85.0
+09-25 10:36:27.017  7711  7711 I WE-DIAG : speaker: seq=199 segs=1 windows=5 embedMs=244 ids=[1,1,4,4,4] best=[0.75,0.77,0.80,0.78,-] dur=[2.3,2.3,3.2,3.2,0.3] confirmed=1 load=0 route=vad pick=2
+09-25 10:36:27.040  7711  7711 I WE-DIAG : panel: chars=26750 renderMs=0 setTextMs=22
+09-25 10:36:32.159  7711  8104 I WE-DIAG : encode: run OK in 1750.1 ms (mel copy-in 0.2 ms)
+09-25 10:36:32.910  7711  8104 I WE-DIAG : decode: 22 tokens in 750.2 ms (34.10 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=nan(unmeasured: 20 text ids, the window needs 33) rung=0 steps=25 step=30.01 ms (run 20.17, io 0.35, kv copy 8.13 ms x24)
+09-25 10:36:32.921  7711  7711 I WE-DIAG : panel: chars=26838 renderMs=0 setTextMs=9
+09-25 10:36:32.968  7711  9838 I WE-DIAG : VAD-standalone: 118272 samples -> 2 segments wallMs=57.3
+09-25 10:36:33.132  7711  7711 I WE-DIAG : speaker: seq=200 segs=2 windows=2 embedMs=162 ids=[4,4] best=[0.77,0.79] dur=[3.5,3.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:36:33.235  7711  7711 I WE-DIAG : speaker-recluster: n=582 clusters=8 confirmed=8 changed=1 ms=103
+09-25 10:36:42.976  7711  8104 I WE-DIAG : encode: run OK in 1754.4 ms (mel copy-in 0.2 ms)
+09-25 10:36:44.213  7711  8104 I WE-DIAG : decode: 38 tokens in 1236.8 ms (32.55 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=3.34 rung=0 steps=41 step=30.17 ms (run 20.53, io 0.35, kv copy 8.00 ms x40)
+09-25 10:36:44.234  7711  7711 I WE-DIAG : panel: chars=26997 renderMs=0 setTextMs=16
+09-25 10:36:44.297  7711  9838 I WE-DIAG : VAD-standalone: 173056 samples -> 2 segments wallMs=82.1
+09-25 10:36:44.531  7711  7711 I WE-DIAG : speaker: seq=201 segs=2 windows=4 embedMs=233 ids=[4,4,4,4] best=[0.76,0.77,0.68,0.74] dur=[2.9,2.9,2.1,2.4] confirmed=1 load=0 route=vad pick=1
+09-25 10:36:50.585  7711  8104 I WE-DIAG : encode: run OK in 1754.0 ms (mel copy-in 0.2 ms)
+09-25 10:36:51.420  7711  8104 I WE-DIAG : decode: 25 tokens in 835.1 ms (33.40 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=nan(unmeasured: 23 text ids, the window needs 33) rung=0 steps=28 step=29.82 ms (run 20.31, io 0.34, kv copy 8.01 ms x27)
+09-25 10:36:51.448  7711  7711 I WE-DIAG : panel: chars=27080 renderMs=1 setTextMs=21
+09-25 10:36:51.480  7711  9838 I WE-DIAG : VAD-standalone: 121856 samples -> 2 segments wallMs=58.3
+09-25 10:36:51.642  7711  7711 I WE-DIAG : speaker: seq=202 segs=2 windows=2 embedMs=161 ids=[4,4] best=[0.78,0.80] dur=[3.2,3.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:36:54.551  7711  8104 I WE-DIAG : encode: run OK in 1751.8 ms (mel copy-in 0.1 ms)
+09-25 10:36:55.073  7711  8104 I WE-DIAG : decode: 15 tokens in 521.3 ms (34.76 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=18 step=28.96 ms (run 20.16, io 0.27, kv copy 7.55 ms x17)
+09-25 10:36:55.090  7711  7711 I WE-DIAG : panel: chars=27140 renderMs=0 setTextMs=11
+09-25 10:36:55.105  7711  9838 I WE-DIAG : VAD-standalone: 63488 samples -> 1 segments wallMs=30.3
+09-25 10:36:55.190  7711  7711 I WE-DIAG : speaker: seq=203 segs=1 windows=1 embedMs=85 ids=[4] best=[0.84] dur=[3.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:36:59.734  7711  8104 I WE-DIAG : encode: run OK in 1750.4 ms (mel copy-in 0.2 ms)
+09-25 10:37:00.681  7711  8104 I WE-DIAG : decode: 29 tokens in 946.9 ms (32.65 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=nan(unmeasured: 23 text ids, the window needs 33) rung=0 steps=32 step=29.59 ms (run 20.55, io 0.33, kv copy 7.61 ms x31)
+09-25 10:37:00.701  7711  7711 I WE-DIAG : panel: chars=27241 renderMs=0 setTextMs=18
+09-25 10:37:00.722  7711  9838 I WE-DIAG : VAD-standalone: 82944 samples -> 1 segments wallMs=40.1
+09-25 10:37:00.842  7711  7711 I WE-DIAG : speaker: seq=204 segs=1 windows=3 embedMs=113 ids=[4,4,4] best=[0.77,0.77,0.80] dur=[1.2,2.1,1.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:37:08.312  7711  8104 I WE-DIAG : encode: run OK in 1749.7 ms (mel copy-in 0.2 ms)
+09-25 10:37:09.371  7711  8104 I WE-DIAG : decode: 33 tokens in 1058.4 ms (32.07 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 27 text ids, the window needs 33) rung=0 steps=36 step=29.40 ms (run 20.58, io 0.32, kv copy 7.44 ms x35)
+09-25 10:37:09.393  7711  7711 I WE-DIAG : panel: chars=27386 renderMs=0 setTextMs=19
+09-25 10:37:09.438  7711  9838 I WE-DIAG : VAD-standalone: 137216 samples -> 2 segments wallMs=65.0
+09-25 10:37:09.636  7711  7711 I WE-DIAG : speaker: seq=205 segs=2 windows=4 embedMs=196 ids=[4,4,4,4] best=[0.74,0.78,0.78,0.83] dur=[1.5,2.2,2.2,2.6] confirmed=1 load=0 route=vad pick=3
+09-25 10:37:09.746  7711  7711 I WE-DIAG : speaker-recluster: n=596 clusters=8 confirmed=8 changed=0 ms=110
+09-25 10:37:16.149  7711  8104 I WE-DIAG : encode: run OK in 1747.7 ms (mel copy-in 0.1 ms)
+09-25 10:37:16.908  7711  8104 I WE-DIAG : decode: 22 tokens in 758.5 ms (34.48 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=nan(unmeasured: 20 text ids, the window needs 33) rung=0 steps=25 step=30.34 ms (run 20.72, io 0.33, kv copy 8.11 ms x24)
+09-25 10:37:16.933  7711  7711 I WE-DIAG : panel: chars=27475 renderMs=0 setTextMs=21
+09-25 10:37:16.969  7711  9838 I WE-DIAG : VAD-standalone: 125440 samples -> 4 segments wallMs=59.6
+09-25 10:37:17.146  7711  7711 I WE-DIAG : speaker: seq=206 segs=4 windows=2 embedMs=175 ids=[4,4] best=[0.77,0.80] dur=[3.4,3.9] confirmed=1 load=0 route=vad pick=1
+09-25 10:37:19.796  7711  8104 I WE-DIAG : encode: run OK in 1747.9 ms (mel copy-in 0.4 ms)
+09-25 10:37:20.195  7711  8104 I WE-DIAG : decode: 10 tokens in 398.7 ms (39.87 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=nan(unmeasured: 8 text ids, the window needs 33) rung=0 steps=13 step=30.67 ms (run 21.33, io 0.37, kv copy 7.99 ms x12)
+09-25 10:37:20.220  7711  7711 I WE-DIAG : panel: chars=27517 renderMs=0 setTextMs=21
+09-25 10:37:20.227  7711  9838 I WE-DIAG : VAD-standalone: 58368 samples -> 1 segments wallMs=30.4
+09-25 10:37:20.299  7711  7711 I WE-DIAG : speaker: seq=207 segs=1 windows=1 embedMs=71 ids=[4] best=[0.78] dur=[3.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:37:28.855  7711  8104 I WE-DIAG : encode: run OK in 1747.9 ms (mel copy-in 0.2 ms)
+09-25 10:37:29.851  7711  8104 I WE-DIAG : decode: 32 tokens in 994.9 ms (31.09 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=nan(unmeasured: 30 text ids, the window needs 33) rung=0 steps=35 step=28.42 ms (run 19.93, io 0.31, kv copy 7.10 ms x34)
+09-25 10:37:29.876  7711  7711 I WE-DIAG : panel: chars=27664 renderMs=0 setTextMs=22
+09-25 10:37:29.921  7711  9838 I WE-DIAG : VAD-standalone: 144896 samples -> 1 segments wallMs=68.7
+09-25 10:37:30.122  7711  7711 I WE-DIAG : speaker: seq=208 segs=1 windows=4 embedMs=199 ids=[4,4,4,4] best=[0.75,0.75,0.77,0.68] dur=[2.2,2.2,2.2,2.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:37:33.145  7711  8104 I WE-DIAG : encode: run OK in 1754.7 ms (mel copy-in 0.4 ms)
+09-25 10:37:33.551  7711  8104 I WE-DIAG : decode: 11 tokens in 404.9 ms (36.81 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=nan(unmeasured: 9 text ids, the window needs 33) rung=0 steps=14 step=28.92 ms (run 20.07, io 0.45, kv copy 7.50 ms x13)
+09-25 10:37:33.577  7711  7711 I WE-DIAG : panel: chars=27713 renderMs=1 setTextMs=22
+09-25 10:37:33.586  7711  9838 I WE-DIAG : VAD-standalone: 68608 samples -> 1 segments wallMs=33.5
+09-25 10:37:33.683  7711  7711 I WE-DIAG : speaker: seq=209 segs=1 windows=2 embedMs=96 ids=[4,4] best=[0.77,0.74] dur=[2.0,2.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:37:37.880  7711  8104 I WE-DIAG : encode: run OK in 1751.3 ms (mel copy-in 0.2 ms)
+09-25 10:37:38.551  7711  8104 I WE-DIAG : decode: 21 tokens in 670.3 ms (31.92 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=nan(unmeasured: 19 text ids, the window needs 33) rung=0 steps=24 step=27.93 ms (run 19.47, io 0.30, kv copy 7.17 ms x23)
+09-25 10:37:38.575  7711  7711 I WE-DIAG : panel: chars=27791 renderMs=0 setTextMs=21
+09-25 10:37:38.588  7711  9838 I WE-DIAG : VAD-standalone: 75776 samples -> 1 segments wallMs=36.3
+09-25 10:37:38.691  7711  7711 I WE-DIAG : speaker: seq=210 segs=1 windows=2 embedMs=100 ids=[4,4] best=[0.77,0.66] dur=[2.3,2.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:37:38.805  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=8 confirmed=8 changed=0 ms=113
+09-25 10:37:44.148  7711  8104 I WE-DIAG : encode: run OK in 1753.4 ms (mel copy-in 0.2 ms)
+09-25 10:37:45.078  7711  8104 I WE-DIAG : decode: 29 tokens in 929.9 ms (32.07 ms/token), terminated by EOT nsp=0.00 lp=-0.27 ent=nan(unmeasured: 27 text ids, the window needs 33) rung=0 steps=32 step=29.06 ms (run 20.12, io 0.31, kv copy 7.41 ms x31)
+09-25 10:37:45.102  7711  7711 I WE-DIAG : panel: chars=27903 renderMs=0 setTextMs=22
+09-25 10:37:45.138  7711  9838 I WE-DIAG : VAD-standalone: 100352 samples -> 1 segments wallMs=59.3
+09-25 10:37:45.279  7711  7711 I WE-DIAG : speaker: seq=211 segs=1 windows=2 embedMs=139 ids=[4,4] best=[0.81,0.79] dur=[2.9,3.0] confirmed=1 load=0 route=vad pick=1
+09-25 10:37:46.870  7711  8104 I WE-DIAG : encode: run OK in 1748.5 ms (mel copy-in 0.4 ms)
+09-25 10:37:47.337  7711  8104 I WE-DIAG : decode: 14 tokens in 466.6 ms (33.33 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=nan(unmeasured: 12 text ids, the window needs 33) rung=0 steps=17 step=27.45 ms (run 19.51, io 0.26, kv copy 6.86 ms x16)
+09-25 10:37:47.358  7711  9838 I WE-DIAG : VAD-standalone: 43008 samples -> 1 segments wallMs=20.6
+09-25 10:37:47.360  7711  7711 I WE-DIAG : panel: chars=27945 renderMs=0 setTextMs=19
+09-25 10:37:47.414  7711  7711 I WE-DIAG : speaker: seq=212 segs=1 windows=1 embedMs=55 ids=[4] best=[0.85] dur=[2.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:37:49.773  7711  8104 I WE-DIAG : encode: run OK in 1749.9 ms (mel copy-in 0.2 ms)
+09-25 10:37:50.205  7711  8104 I WE-DIAG : decode: 12 tokens in 431.7 ms (35.98 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=28.78 ms (run 20.24, io 0.31, kv copy 7.48 ms x14)
+09-25 10:37:50.229  7711  7711 I WE-DIAG : panel: chars=27992 renderMs=0 setTextMs=20
+09-25 10:37:50.229  7711  9838 I WE-DIAG : VAD-standalone: 47104 samples -> 1 segments wallMs=23.5
+09-25 10:37:50.291  7711  7711 I WE-DIAG : speaker: seq=213 segs=1 windows=1 embedMs=60 ids=[4] best=[0.85] dur=[2.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:37:54.586  7711  8104 I WE-DIAG : encode: run OK in 1751.9 ms (mel copy-in 0.3 ms)
+09-25 10:37:55.250  7711  8104 I WE-DIAG : decode: 20 tokens in 664.1 ms (33.20 ms/token), terminated by EOT nsp=0.00 lp=-0.06 ent=nan(unmeasured: 18 text ids, the window needs 33) rung=0 steps=23 step=28.87 ms (run 19.92, io 0.38, kv copy 7.45 ms x22)
+09-25 10:37:55.272  7711  7711 I WE-DIAG : panel: chars=28077 renderMs=0 setTextMs=21
+09-25 10:37:55.287  7711  9838 I WE-DIAG : VAD-standalone: 76800 samples -> 1 segments wallMs=36.0
+09-25 10:37:55.396  7711  7711 I WE-DIAG : speaker: seq=214 segs=1 windows=2 embedMs=108 ids=[4,4] best=[0.82,0.75] dur=[2.1,2.4] confirmed=1 load=0 route=vad pick=1
+09-25 10:37:57.029  7711  8104 I WE-DIAG : encode: run OK in 1747.7 ms (mel copy-in 0.2 ms)
+09-25 10:37:57.274  7711  8104 I WE-DIAG : decode: 6 tokens in 244.3 ms (40.71 ms/token), terminated by EOT nsp=0.00 lp=-0.31 ent=nan(unmeasured: 4 text ids, the window needs 33) rung=0 steps=9 step=27.14 ms (run 19.40, io 0.27, kv copy 7.27 ms x8)
+09-25 10:37:57.293  7711  9838 I WE-DIAG : VAD-standalone: 38912 samples -> 1 segments wallMs=18.5
+09-25 10:37:57.296  7711  7711 I WE-DIAG : panel: chars=28095 renderMs=0 setTextMs=19
+09-25 10:37:57.329  7711  7711 I WE-DIAG : speaker: seq=215 segs=1 windows=1 embedMs=35 ids=[4] best=[0.73] dur=[1.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:37:57.442  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=8 confirmed=8 changed=0 ms=113
+09-25 10:38:05.786  7711  8104 I WE-DIAG : encode: run OK in 1751.5 ms (mel copy-in 0.2 ms)
+09-25 10:38:06.759  7711  8104 I WE-DIAG : decode: 30 tokens in 972.4 ms (32.41 ms/token), terminated by EOT nsp=0.00 lp=-0.27 ent=nan(unmeasured: 26 text ids, the window needs 33) rung=0 steps=33 step=29.47 ms (run 20.43, io 0.35, kv copy 7.46 ms x32)
+09-25 10:38:06.784  7711  7711 I WE-DIAG : panel: chars=28214 renderMs=0 setTextMs=22
+09-25 10:38:06.833  7711  9838 I WE-DIAG : VAD-standalone: 140288 samples -> 1 segments wallMs=73.4
+09-25 10:38:07.020  7711  7711 I WE-DIAG : speaker: seq=216 segs=1 windows=3 embedMs=185 ids=[4,4,4] best=[0.73,0.77,-] dur=[3.8,3.8,1.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:38:10.300  7711  8104 I WE-DIAG : encode: run OK in 1745.9 ms (mel copy-in 0.2 ms)
+09-25 10:38:10.657  7711  8104 I WE-DIAG : decode: 9 tokens in 357.2 ms (39.69 ms/token), terminated by EOT nsp=0.00 lp=-0.04 ent=nan(unmeasured: 7 text ids, the window needs 33) rung=0 steps=12 step=29.77 ms (run 20.62, io 0.36, kv copy 7.95 ms x11)
+09-25 10:38:10.683  7711  7711 I WE-DIAG : panel: chars=28247 renderMs=1 setTextMs=22
+09-25 10:38:10.696  7711  9838 I WE-DIAG : VAD-standalone: 72192 samples -> 1 segments wallMs=36.8
+09-25 10:38:10.804  7711  7711 I WE-DIAG : speaker: seq=217 segs=1 windows=2 embedMs=106 ids=[4,4] best=[0.80,0.78] dur=[2.2,2.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:38:20.669  7711  8104 I WE-DIAG : encode: run OK in 1748.5 ms (mel copy-in 0.2 ms)
+09-25 10:38:22.386  7711  8104 I WE-DIAG : decode: 55 tokens in 1716.0 ms (31.20 ms/token), terminated by EOT nsp=0.00 lp=-0.11 ent=3.23 rung=0 steps=58 step=29.59 ms (run 20.10, io 0.37, kv copy 7.83 ms x57)
+09-25 10:38:22.416  7711  7711 I WE-DIAG : panel: chars=28424 renderMs=0 setTextMs=21
+09-25 10:38:22.471  7711  9838 I WE-DIAG : VAD-standalone: 165888 samples -> 2 segments wallMs=82.8
+09-25 10:38:22.699  7711  7711 I WE-DIAG : speaker: seq=218 segs=2 windows=5 embedMs=226 ids=[4,4,4,4,4] best=[0.89,0.80,0.59,0.83,-] dur=[3.2,2.7,1.4,2.0,1.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:38:26.753  7711  8104 I WE-DIAG : encode: run OK in 1754.0 ms (mel copy-in 0.2 ms)
+09-25 10:38:27.459  7711  8104 I WE-DIAG : decode: 21 tokens in 705.4 ms (33.59 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=nan(unmeasured: 19 text ids, the window needs 33) rung=0 steps=24 step=29.39 ms (run 20.01, io 0.41, kv copy 7.82 ms x23)
+09-25 10:38:27.484  7711  7711 I WE-DIAG : panel: chars=28510 renderMs=0 setTextMs=21
+09-25 10:38:27.510  7711  9838 I WE-DIAG : VAD-standalone: 97280 samples -> 2 segments wallMs=50.0
+09-25 10:38:27.650  7711  7711 I WE-DIAG : speaker: seq=219 segs=2 windows=2 embedMs=138 ids=[4,4] best=[0.81,0.75] dur=[2.9,3.0] confirmed=1 load=0 route=vad pick=1
+09-25 10:38:41.753  7711  8104 I WE-DIAG : encode: run OK in 1745.4 ms (mel copy-in 0.2 ms)
+09-25 10:38:43.286  7711  8104 I WE-DIAG : decode: 48 tokens in 1532.9 ms (31.93 ms/token), terminated by EOT nsp=0.00 lp=-0.17 ent=3.01 rung=0 steps=51 step=30.06 ms (run 20.34, io 0.36, kv copy 7.99 ms x50)
+09-25 10:38:43.314  7711  7711 I WE-DIAG : panel: chars=28707 renderMs=0 setTextMs=17
+09-25 10:38:43.387  7711  9838 I WE-DIAG : VAD-standalone: 205824 samples -> 2 segments wallMs=98.5
+09-25 10:38:43.675  7711  7711 I WE-DIAG : speaker: seq=220 segs=2 windows=4 embedMs=285 ids=[4,4,4,4] best=[0.78,0.77,0.81,0.83] dur=[3.6,3.3,3.3,2.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:38:43.789  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=8 confirmed=8 changed=0 ms=113
+09-25 10:38:47.634  7711  8104 I WE-DIAG : encode: run OK in 1749.9 ms (mel copy-in 0.2 ms)
+09-25 10:38:48.386  7711  8104 I WE-DIAG : decode: 24 tokens in 752.2 ms (31.34 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=nan(unmeasured: 22 text ids, the window needs 33) rung=0 steps=27 step=27.86 ms (run 19.55, io 0.28, kv copy 6.89 ms x26)
+09-25 10:38:48.413  7711  7711 I WE-DIAG : panel: chars=28819 renderMs=0 setTextMs=19
+09-25 10:38:48.450  7711  9838 I WE-DIAG : VAD-standalone: 128512 samples -> 2 segments wallMs=62.6
+09-25 10:38:48.624  7711  7711 I WE-DIAG : speaker: seq=221 segs=2 windows=2 embedMs=172 ids=[4,4] best=[0.78,0.83] dur=[3.8,3.9] confirmed=1 load=0 route=vad pick=1
+09-25 10:38:51.418  7711  8104 I WE-DIAG : encode: run OK in 1752.8 ms (mel copy-in 0.4 ms)
+09-25 10:38:51.973  7711  8104 I WE-DIAG : decode: 16 tokens in 554.6 ms (34.66 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=nan(unmeasured: 12 text ids, the window needs 33) rung=0 steps=19 step=29.19 ms (run 20.42, io 0.33, kv copy 7.56 ms x18)
+09-25 10:38:52.003  7711  7711 I WE-DIAG : panel: chars=28874 renderMs=0 setTextMs=23
+09-25 10:38:52.003  7711  9838 I WE-DIAG : VAD-standalone: 60416 samples -> 1 segments wallMs=29.1
+09-25 10:38:52.092  7711  7711 I WE-DIAG : speaker: seq=222 segs=1 windows=2 embedMs=88 ids=[4,4] best=[0.67,0.72] dur=[2.0,1.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:38:55.117  7711  8104 I WE-DIAG : encode: run OK in 1765.2 ms (mel copy-in 0.2 ms)
+09-25 10:38:55.611  7711  8104 I WE-DIAG : decode: 14 tokens in 493.6 ms (35.26 ms/token), terminated by EOT nsp=0.00 lp=-0.03 ent=nan(unmeasured: 12 text ids, the window needs 33) rung=0 steps=17 step=29.03 ms (run 20.09, io 0.32, kv copy 7.53 ms x16)
+09-25 10:38:55.636  7711  7711 I WE-DIAG : panel: chars=28927 renderMs=0 setTextMs=22
+09-25 10:38:55.640  7711  9838 I WE-DIAG : VAD-standalone: 58880 samples -> 1 segments wallMs=28.7
+09-25 10:38:55.715  7711  7711 I WE-DIAG : speaker: seq=223 segs=1 windows=1 embedMs=73 ids=[4] best=[0.80] dur=[3.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:01.478  7711  8104 I WE-DIAG : encode: run OK in 1761.2 ms (mel copy-in 0.2 ms)
+09-25 10:39:02.207  7711  8104 I WE-DIAG : decode: 21 tokens in 728.4 ms (34.69 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=nan(unmeasured: 19 text ids, the window needs 33) rung=0 steps=24 step=30.35 ms (run 20.45, io 0.36, kv copy 8.08 ms x23)
+09-25 10:39:02.233  7711  7711 I WE-DIAG : panel: chars=29018 renderMs=2 setTextMs=20
+09-25 10:39:02.260  7711  9838 I WE-DIAG : VAD-standalone: 101888 samples -> 2 segments wallMs=52.1
+09-25 10:39:02.415  7711  7711 I WE-DIAG : speaker: seq=224 segs=2 windows=2 embedMs=153 ids=[4,4] best=[0.81,0.79] dur=[3.2,3.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:12.794  7711  8104 I WE-DIAG : encode: run OK in 1752.3 ms (mel copy-in 0.3 ms)
+09-25 10:39:14.450  7711  8104 I WE-DIAG : decode: 53 tokens in 1655.6 ms (31.24 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=3.23 rung=0 steps=56 step=29.56 ms (run 20.26, io 0.33, kv copy 7.69 ms x55)
+09-25 10:39:14.466  7711  7711 I WE-DIAG : panel: chars=29212 renderMs=0 setTextMs=13
+09-25 10:39:14.552  7711  9838 I WE-DIAG : VAD-standalone: 181248 samples -> 2 segments wallMs=101.0
+09-25 10:39:14.818  7711  7711 I WE-DIAG : speaker: seq=225 segs=2 windows=5 embedMs=265 ids=[4,4,5,5,5] best=[0.84,-,0.62,0.69,0.70] dur=[3.4,0.8,1.9,2.6,2.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:14.831  7711  7711 I WE-DIAG : panel: chars=29224 renderMs=0 setTextMs=12
+09-25 10:39:14.941  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=7 confirmed=7 changed=253 ms=122
+09-25 10:39:14.956  7711  7711 I WE-DIAG : panel: chars=29224 renderMs=0 setTextMs=14
+09-25 10:39:16.239  7711  8104 I WE-DIAG : encode: run OK in 1754.6 ms (mel copy-in 0.2 ms)
+09-25 10:39:16.536  7711  8104 I WE-DIAG : decode: 8 tokens in 296.4 ms (37.05 ms/token), terminated by EOT nsp=0.00 lp=-0.05 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=26.95 ms (run 19.50, io 0.26, kv copy 6.72 ms x10)
+09-25 10:39:16.561  7711  9838 I WE-DIAG : VAD-standalone: 48640 samples -> 1 segments wallMs=24.3
+09-25 10:39:16.565  7711  7711 I WE-DIAG : panel: chars=29260 renderMs=0 setTextMs=24
+09-25 10:39:16.633  7711  7711 I WE-DIAG : speaker: seq=226 segs=1 windows=1 embedMs=71 ids=[2] best=[0.71] dur=[3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:24.759  7711  8104 I WE-DIAG : encode: run OK in 1752.8 ms (mel copy-in 0.2 ms)
+09-25 10:39:25.682  7711  8104 I WE-DIAG : decode: 28 tokens in 923.4 ms (32.98 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=nan(unmeasured: 22 text ids, the window needs 33) rung=0 steps=31 step=29.79 ms (run 20.49, io 0.32, kv copy 7.85 ms x30)
+09-25 10:39:25.714  7711  7711 I WE-DIAG : panel: chars=29380 renderMs=0 setTextMs=28
+09-25 10:39:25.757  7711  9838 I WE-DIAG : VAD-standalone: 142848 samples -> 1 segments wallMs=73.7
+09-25 10:39:25.964  7711  7711 I WE-DIAG : speaker: seq=227 segs=1 windows=3 embedMs=205 ids=[2,2,2] best=[0.85,0.79,0.60] dur=[3.5,3.5,1.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:30.299  7711  8104 I WE-DIAG : encode: run OK in 1750.0 ms (mel copy-in 0.1 ms)
+09-25 10:39:30.854  7711  8104 I WE-DIAG : decode: 16 tokens in 554.9 ms (34.68 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 14 text ids, the window needs 33) rung=0 steps=19 step=29.21 ms (run 20.19, io 0.30, kv copy 7.68 ms x18)
+09-25 10:39:30.880  7711  7711 I WE-DIAG : panel: chars=29445 renderMs=0 setTextMs=21
+09-25 10:39:30.901  7711  9838 I WE-DIAG : VAD-standalone: 88576 samples -> 2 segments wallMs=45.9
+09-25 10:39:31.025  7711  7711 I WE-DIAG : speaker: seq=228 segs=2 windows=2 embedMs=123 ids=[2,2] best=[0.69,0.72] dur=[2.1,2.7] confirmed=1 load=0 route=vad pick=1
+09-25 10:39:44.194  7711  8104 I WE-DIAG : encode: run OK in 1751.0 ms (mel copy-in 0.2 ms)
+09-25 10:39:45.620  7711  8104 I WE-DIAG : decode: 45 tokens in 1426.4 ms (31.70 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=3.07 rung=0 steps=48 step=29.72 ms (run 20.40, io 0.35, kv copy 7.73 ms x47)
+09-25 10:39:45.643  7711  7711 I WE-DIAG : panel: chars=29636 renderMs=0 setTextMs=21
+09-25 10:39:45.744  7711  9838 I WE-DIAG : VAD-standalone: 222208 samples -> 2 segments wallMs=122.4
+09-25 10:39:46.105  7711  7711 I WE-DIAG : speaker: seq=229 segs=2 windows=6 embedMs=359 ids=[2,2,2,2,2,2] best=[0.78,0.71,0.67,0.64,0.66,0.68] dur=[2.6,2.6,2.1,2.1,2.1,2.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:47.437  7711  8104 I WE-DIAG : encode: run OK in 1762.8 ms (mel copy-in 0.2 ms)
+09-25 10:39:47.848  7711  8104 I WE-DIAG : decode: 11 tokens in 410.7 ms (37.34 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 9 text ids, the window needs 33) rung=0 steps=14 step=29.34 ms (run 20.52, io 0.33, kv copy 7.77 ms x13)
+09-25 10:39:47.874  7711  7711 I WE-DIAG : panel: chars=29674 renderMs=0 setTextMs=22
+09-25 10:39:47.875  7711  9838 I WE-DIAG : VAD-standalone: 51200 samples -> 1 segments wallMs=26.2
+09-25 10:39:47.948  7711  7711 I WE-DIAG : speaker: seq=230 segs=1 windows=1 embedMs=72 ids=[2] best=[0.63] dur=[3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:48.070  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=7 confirmed=7 changed=0 ms=121
+09-25 10:39:50.396  7711  8104 I WE-DIAG : encode: run OK in 1751.8 ms (mel copy-in 0.2 ms)
+09-25 10:39:50.718  7711  8104 I WE-DIAG : decode: 8 tokens in 321.1 ms (40.14 ms/token), terminated by EOT nsp=0.00 lp=-0.44 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=29.19 ms (run 20.55, io 0.30, kv copy 7.66 ms x10)
+09-25 10:39:50.742  7711  9838 I WE-DIAG : VAD-standalone: 48128 samples -> 2 segments wallMs=24.1
+09-25 10:39:50.744  7711  7711 I WE-DIAG : panel: chars=29706 renderMs=0 setTextMs=22
+09-25 10:39:50.809  7711  7711 I WE-DIAG : speaker: seq=231 segs=2 windows=1 embedMs=66 ids=[2] best=[0.70] dur=[2.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:54.258  7711  8104 I WE-DIAG : encode: run OK in 1750.1 ms (mel copy-in 0.2 ms)
+09-25 10:39:54.732  7711  8104 I WE-DIAG : decode: 13 tokens in 473.5 ms (36.42 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=29.59 ms (run 20.32, io 0.38, kv copy 7.84 ms x15)
+09-25 10:39:54.752  7711  7711 I WE-DIAG : panel: chars=29748 renderMs=0 setTextMs=18
+09-25 10:39:54.777  7711  9838 I WE-DIAG : VAD-standalone: 61952 samples -> 1 segments wallMs=44.1
+09-25 10:39:54.870  7711  7711 I WE-DIAG : speaker: seq=232 segs=1 windows=1 embedMs=91 ids=[2] best=[0.79] dur=[3.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:56.535  7711  8104 I WE-DIAG : encode: run OK in 1751.3 ms (mel copy-in 0.2 ms)
+09-25 10:39:56.796  7711  8104 I WE-DIAG : decode: 6 tokens in 261.2 ms (43.53 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=nan(unmeasured: 4 text ids, the window needs 33) rung=0 steps=9 step=29.02 ms (run 20.68, io 0.30, kv copy 7.74 ms x8)
+09-25 10:39:56.815  7711  9838 I WE-DIAG : VAD-standalone: 35840 samples -> 1 segments wallMs=18.0
+09-25 10:39:56.819  7711  7711 I WE-DIAG : panel: chars=29772 renderMs=0 setTextMs=20
+09-25 10:39:56.869  7711  7711 I WE-DIAG : speaker: seq=233 segs=1 windows=1 embedMs=53 ids=[2] best=[0.76] dur=[2.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:39:59.674  7711  8104 I WE-DIAG : encode: run OK in 1751.4 ms (mel copy-in 0.1 ms)
+09-25 10:40:00.149  7711  8104 I WE-DIAG : decode: 13 tokens in 474.7 ms (36.51 ms/token), terminated by EOT nsp=0.00 lp=-0.38 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=29.67 ms (run 20.52, io 0.30, kv copy 7.82 ms x15)
+09-25 10:40:00.170  7711  7711 I WE-DIAG : panel: chars=29812 renderMs=0 setTextMs=18
+09-25 10:40:00.176  7711  9838 I WE-DIAG : VAD-standalone: 50688 samples -> 1 segments wallMs=25.7
+09-25 10:40:00.250  7711  7711 I WE-DIAG : speaker: seq=234 segs=1 windows=1 embedMs=73 ids=[2] best=[0.73] dur=[3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:06.263  7711  8104 I WE-DIAG : encode: run OK in 1756.4 ms (mel copy-in 0.2 ms)
+09-25 10:40:07.034  7711  8104 I WE-DIAG : decode: 22 tokens in 770.3 ms (35.01 ms/token), terminated by EOT nsp=0.00 lp=-0.15 ent=nan(unmeasured: 20 text ids, the window needs 33) rung=0 steps=25 step=30.81 ms (run 21.12, io 0.33, kv copy 8.05 ms x24)
+09-25 10:40:07.060  7711  7711 I WE-DIAG : panel: chars=29917 renderMs=1 setTextMs=22
+09-25 10:40:07.094  7711  9838 I WE-DIAG : VAD-standalone: 105472 samples -> 1 segments wallMs=59.7
+09-25 10:40:07.260  7711  7711 I WE-DIAG : speaker: seq=235 segs=1 windows=2 embedMs=164 ids=[2,2] best=[0.77,0.77] dur=[3.0,3.2] confirmed=1 load=0 route=vad pick=1
+09-25 10:40:07.398  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=7 confirmed=7 changed=0 ms=136
+09-25 10:40:09.504  7711  8104 I WE-DIAG : encode: run OK in 1754.8 ms (mel copy-in 0.4 ms)
+09-25 10:40:09.821  7711  8104 I WE-DIAG : decode: 8 tokens in 316.0 ms (39.50 ms/token), terminated by EOT nsp=0.00 lp=-0.14 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=28.73 ms (run 20.80, io 0.29, kv copy 7.13 ms x10)
+09-25 10:40:09.842  7711  7711 I WE-DIAG : panel: chars=29946 renderMs=0 setTextMs=19
+09-25 10:40:09.851  7711  9838 I WE-DIAG : VAD-standalone: 51712 samples -> 2 segments wallMs=29.5
+09-25 10:40:09.935  7711  7711 I WE-DIAG : speaker: seq=236 segs=2 windows=1 embedMs=83 ids=[2] best=[0.73] dur=[3.2] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:11.843  7711  8104 I WE-DIAG : encode: run OK in 1754.5 ms (mel copy-in 0.2 ms)
+09-25 10:40:12.184  7711  8104 I WE-DIAG : decode: 9 tokens in 341.0 ms (37.88 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=nan(unmeasured: 7 text ids, the window needs 33) rung=0 steps=12 step=28.41 ms (run 19.88, io 0.37, kv copy 7.40 ms x11)
+09-25 10:40:12.207  7711  7711 I WE-DIAG : panel: chars=29976 renderMs=0 setTextMs=19
+09-25 10:40:12.207  7711  9838 I WE-DIAG : VAD-standalone: 37376 samples -> 1 segments wallMs=22.2
+09-25 10:40:12.270  7711  7711 I WE-DIAG : speaker: seq=237 segs=1 windows=1 embedMs=61 ids=[2] best=[0.69] dur=[2.3] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:14.874  7711  8104 I WE-DIAG : encode: run OK in 1747.9 ms (mel copy-in 0.2 ms)
+09-25 10:40:15.183  7711  8104 I WE-DIAG : decode: 8 tokens in 309.0 ms (38.62 ms/token), terminated by EOT nsp=0.00 lp=-0.18 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=28.09 ms (run 20.30, io 0.25, kv copy 7.22 ms x10)
+09-25 10:40:15.207  7711  7711 I WE-DIAG : panel: chars=30002 renderMs=0 setTextMs=21
+09-25 10:40:15.223  7711  9838 I WE-DIAG : VAD-standalone: 48640 samples -> 2 segments wallMs=37.7
+09-25 10:40:15.307  7711  7711 I WE-DIAG : speaker: seq=238 segs=2 windows=1 embedMs=83 ids=[2] best=[0.71] dur=[3.0] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:16.976  7711  8104 I WE-DIAG : encode: run OK in 1751.0 ms (mel copy-in 0.2 ms)
+09-25 10:40:17.208  7711  8104 I WE-DIAG : decode: 5 tokens in 232.2 ms (46.44 ms/token), terminated by EOT nsp=0.00 lp=-0.55 ent=nan(unmeasured: 3 text ids, the window needs 33) rung=0 steps=8 step=29.02 ms (run 20.85, io 0.30, kv copy 7.63 ms x7)
+09-25 10:40:17.227  7711  9838 I WE-DIAG : VAD-standalone: 32768 samples -> 1 segments wallMs=18.5
+09-25 10:40:17.240  7711  7711 I WE-DIAG : panel: chars=30022 renderMs=0 setTextMs=28
+09-25 10:40:17.267  7711  7711 I WE-DIAG : speaker: seq=239 segs=1 windows=1 embedMs=38 ids=[2] best=[0.55] dur=[1.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:20.673  7711  8104 I WE-DIAG : encode: run OK in 1756.1 ms (mel copy-in 0.2 ms)
+09-25 10:40:21.095  7711  8104 I WE-DIAG : decode: 12 tokens in 421.7 ms (35.14 ms/token), terminated by EOT nsp=0.00 lp=-0.15 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=28.11 ms (run 19.95, io 0.26, kv copy 7.18 ms x14)
+09-25 10:40:21.124  7711  7711 I WE-DIAG : panel: chars=30076 renderMs=1 setTextMs=22
+09-25 10:40:21.129  7711  9838 I WE-DIAG : VAD-standalone: 59904 samples -> 1 segments wallMs=33.7
+09-25 10:40:21.223  7711  7711 I WE-DIAG : speaker: seq=240 segs=1 windows=1 embedMs=93 ids=[2] best=[0.75] dur=[3.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:21.360  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=7 confirmed=7 changed=0 ms=136
+09-25 10:40:29.223  7711  8104 I WE-DIAG : encode: run OK in 1756.4 ms (mel copy-in 0.4 ms)
+09-25 10:40:30.544  7711  8104 I WE-DIAG : decode: 41 tokens in 1320.5 ms (32.21 ms/token), terminated by EOT nsp=0.00 lp=-0.20 ent=3.23 rung=0 steps=44 step=30.01 ms (run 20.44, io 0.30, kv copy 7.94 ms x43)
+09-25 10:40:30.580  7711  7711 I WE-DIAG : panel: chars=30235 renderMs=1 setTextMs=24
+09-25 10:40:30.622  7711  9838 I WE-DIAG : VAD-standalone: 136704 samples -> 1 segments wallMs=76.6
+09-25 10:40:30.857  7711  7711 I WE-DIAG : speaker: seq=241 segs=1 windows=4 embedMs=233 ids=[2,2,2,2] best=[0.72,0.65,0.60,0.52] dur=[2.1,2.1,2.1,2.1] confirmed=1 load=0 route=vad pick=1
+09-25 10:40:35.273  7711  8104 I WE-DIAG : encode: run OK in 1752.0 ms (mel copy-in 0.2 ms)
+09-25 10:40:36.708  7711  8104 I WE-DIAG : decode: 47 tokens in 1434.6 ms (30.52 ms/token), terminated by EOT nsp=0.00 lp=-0.47 ent=3.17 rung=0 steps=50 step=28.69 ms (run 19.85, io 0.30, kv copy 7.35 ms x49)
+09-25 10:40:36.738  7711  7711 I WE-DIAG : panel: chars=30393 renderMs=0 setTextMs=24
+09-25 10:40:36.767  7711  9838 I WE-DIAG : VAD-standalone: 96768 samples -> 1 segments wallMs=56.9
+09-25 10:40:36.931  7711  7711 I WE-DIAG : speaker: seq=242 segs=1 windows=2 embedMs=161 ids=[2,2] best=[0.70,0.68] dur=[3.9,2.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:39.259  7711  8104 I WE-DIAG : encode: run OK in 1748.5 ms (mel copy-in 0.4 ms)
+09-25 10:40:39.752  7711  8104 I WE-DIAG : decode: 14 tokens in 493.1 ms (35.22 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 12 text ids, the window needs 33) rung=0 steps=17 step=29.01 ms (run 20.20, io 0.28, kv copy 7.56 ms x16)
+09-25 10:40:39.769  7711  7711 I WE-DIAG : panel: chars=30436 renderMs=0 setTextMs=13
+09-25 10:40:39.790  7711  9838 I WE-DIAG : VAD-standalone: 64000 samples -> 1 segments wallMs=36.7
+09-25 10:40:39.885  7711  7711 I WE-DIAG : speaker: seq=243 segs=1 windows=1 embedMs=94 ids=[2] best=[0.60] dur=[3.6] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:46.819  7711  8104 I WE-DIAG : encode: run OK in 1753.1 ms (mel copy-in 0.2 ms)
+09-25 10:40:47.880  7711  8104 I WE-DIAG : decode: 34 tokens in 1061.1 ms (31.21 ms/token), terminated by EOT nsp=0.00 lp=-0.12 ent=nan(unmeasured: 28 text ids, the window needs 33) rung=0 steps=37 step=28.68 ms (run 19.86, io 0.29, kv copy 7.42 ms x36)
+09-25 10:40:47.909  7711  7711 I WE-DIAG : panel: chars=30560 renderMs=0 setTextMs=24
+09-25 10:40:47.954  7711  9838 I WE-DIAG : VAD-standalone: 120832 samples -> 1 segments wallMs=72.8
+09-25 10:40:48.171  7711  7711 I WE-DIAG : speaker: seq=244 segs=1 windows=3 embedMs=215 ids=[2,2,2] best=[0.69,0.77,0.59] dur=[2.3,3.5,1.8] confirmed=1 load=0 route=vad pick=1
+09-25 10:40:49.676  7711  8104 I WE-DIAG : encode: run OK in 1756.7 ms (mel copy-in 0.2 ms)
+09-25 10:40:50.036  7711  8104 I WE-DIAG : decode: 10 tokens in 359.9 ms (35.99 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=nan(unmeasured: 8 text ids, the window needs 33) rung=0 steps=13 step=27.69 ms (run 19.63, io 0.29, kv copy 7.12 ms x12)
+09-25 10:40:50.060  7711  7711 I WE-DIAG : panel: chars=30601 renderMs=0 setTextMs=21
+09-25 10:40:50.061  7711  9838 I WE-DIAG : VAD-standalone: 44032 samples -> 1 segments wallMs=24.8
+09-25 10:40:50.126  7711  7711 I WE-DIAG : speaker: seq=245 segs=1 windows=1 embedMs=64 ids=[3] best=[0.65] dur=[2.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:50.159  7711  7711 I WE-DIAG : panel: chars=30613 renderMs=0 setTextMs=31
+09-25 10:40:50.264  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=7 confirmed=7 changed=0 ms=137
+09-25 10:40:53.838  7711  8104 I WE-DIAG : encode: run OK in 1750.4 ms (mel copy-in 0.2 ms)
+09-25 10:40:54.386  7711  8104 I WE-DIAG : decode: 16 tokens in 548.6 ms (34.28 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 14 text ids, the window needs 33) rung=0 steps=19 step=28.87 ms (run 19.86, io 0.31, kv copy 7.69 ms x18)
+09-25 10:40:54.411  7711  7711 I WE-DIAG : panel: chars=30688 renderMs=0 setTextMs=22
+09-25 10:40:54.427  7711  9838 I WE-DIAG : VAD-standalone: 68608 samples -> 2 segments wallMs=39.5
+09-25 10:40:54.546  7711  7711 I WE-DIAG : speaker: seq=246 segs=2 windows=2 embedMs=117 ids=[3,3] best=[0.76,0.74] dur=[2.1,2.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:40:57.459  7711  8104 I WE-DIAG : encode: run OK in 1748.2 ms (mel copy-in 0.2 ms)
+09-25 10:40:58.102  7711  8104 I WE-DIAG : decode: 19 tokens in 642.5 ms (33.81 ms/token), terminated by EOT nsp=0.00 lp=-0.08 ent=nan(unmeasured: 17 text ids, the window needs 33) rung=0 steps=22 step=29.20 ms (run 20.13, io 0.31, kv copy 7.73 ms x21)
+09-25 10:40:58.123  7711  7711 I WE-DIAG : panel: chars=30756 renderMs=0 setTextMs=18
+09-25 10:40:58.136  7711  9838 I WE-DIAG : VAD-standalone: 57856 samples -> 1 segments wallMs=33.2
+09-25 10:40:58.227  7711  7711 I WE-DIAG : speaker: seq=247 segs=1 windows=1 embedMs=89 ids=[3] best=[0.77] dur=[3.4] confirmed=1 load=0 route=vad pick=0
+09-25 10:41:01.394  7711  8104 I WE-DIAG : encode: run OK in 1749.3 ms (mel copy-in 0.2 ms)
+09-25 10:41:01.991  7711  8104 I WE-DIAG : decode: 17 tokens in 596.9 ms (35.11 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=nan(unmeasured: 15 text ids, the window needs 33) rung=0 steps=20 step=29.84 ms (run 20.81, io 0.30, kv copy 7.77 ms x19)
+09-25 10:41:02.017  7711  7711 I WE-DIAG : panel: chars=30825 renderMs=0 setTextMs=20
+09-25 10:41:02.037  7711  9838 I WE-DIAG : VAD-standalone: 62976 samples -> 2 segments wallMs=44.7
+09-25 10:41:02.139  7711  7711 I WE-DIAG : speaker: seq=248 segs=2 windows=1 embedMs=100 ids=[3] best=[0.82] dur=[3.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:41:03.783  7711  8104 I WE-DIAG : encode: run OK in 1757.1 ms (mel copy-in 0.3 ms)
+09-25 10:41:04.066  7711  8104 I WE-DIAG : decode: 7 tokens in 282.8 ms (40.40 ms/token), terminated by EOT nsp=0.00 lp=-0.25 ent=nan(unmeasured: 5 text ids, the window needs 33) rung=0 steps=10 step=28.28 ms (run 19.95, io 0.30, kv copy 7.48 ms x9)
+09-25 10:41:04.085  7711  9838 I WE-DIAG : VAD-standalone: 33280 samples -> 1 segments wallMs=18.8
+09-25 10:41:04.093  7711  7711 I WE-DIAG : panel: chars=30844 renderMs=2 setTextMs=22
+09-25 10:41:04.127  7711  7711 I WE-DIAG : speaker: seq=249 segs=1 windows=1 embedMs=41 ids=[3] best=[0.48] dur=[1.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:41:05.866  7711  8104 I WE-DIAG : encode: run OK in 1758.0 ms (mel copy-in 0.2 ms)
+09-25 10:41:06.299  7711  8104 I WE-DIAG : decode: 12 tokens in 432.6 ms (36.05 ms/token), terminated by EOT nsp=0.00 lp=-0.10 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=28.84 ms (run 19.87, io 0.31, kv copy 7.82 ms x14)
+09-25 10:41:06.318  7711  9838 I WE-DIAG : VAD-standalone: 32256 samples -> 1 segments wallMs=18.2
+09-25 10:41:06.326  7711  7711 I WE-DIAG : panel: chars=30880 renderMs=0 setTextMs=24
+09-25 10:41:06.365  7711  7711 I WE-DIAG : speaker: seq=250 segs=1 windows=1 embedMs=46 ids=[3] best=[0.79] dur=[1.7] confirmed=1 load=0 route=vad pick=0
+09-25 10:41:06.505  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=7 confirmed=7 changed=0 ms=139
+09-25 10:41:09.700  7711  8104 I WE-DIAG : encode: run OK in 1753.8 ms (mel copy-in 0.2 ms)
+09-25 10:41:10.227  7711  8104 I WE-DIAG : decode: 15 tokens in 526.7 ms (35.12 ms/token), terminated by EOT nsp=0.00 lp=-0.13 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=18 step=29.26 ms (run 20.53, io 0.28, kv copy 7.51 ms x17)
+09-25 10:41:10.259  7711  7711 I WE-DIAG : panel: chars=30945 renderMs=1 setTextMs=26
+09-25 10:41:10.266  7711  9838 I WE-DIAG : VAD-standalone: 67072 samples -> 1 segments wallMs=37.6
+09-25 10:41:10.381  7711  7711 I WE-DIAG : speaker: seq=251 segs=1 windows=2 embedMs=113 ids=[3,3] best=[0.78,0.76] dur=[2.1,2.1] confirmed=1 load=0 route=vad pick=0
+09-25 10:41:24.712  7711  8104 I WE-DIAG : encode: run OK in 1755.5 ms (mel copy-in 0.3 ms)
+09-25 10:41:26.709  7711  8104 I WE-DIAG : decode: 65 tokens in 1996.2 ms (30.71 ms/token), terminated by EOT nsp=0.00 lp=-0.26 ent=3.15 rung=0 steps=68 step=29.36 ms (run 20.07, io 0.33, kv copy 7.61 ms x67)
+09-25 10:41:26.736  7711  7711 I WE-DIAG : panel: chars=31187 renderMs=0 setTextMs=23
+09-25 10:41:26.838  7711  9838 I WE-DIAG : VAD-standalone: 240128 samples -> 3 segments wallMs=128.1
+09-25 10:41:27.220  7711  7711 I WE-DIAG : speaker: seq=252 segs=3 windows=4 embedMs=380 ids=[3,2,2,2] best=[0.41,0.68,0.80,0.73] dur=[3.8,3.8,3.8,3.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:41:29.054  7711  8104 I WE-DIAG : encode: run OK in 1784.7 ms (mel copy-in 0.2 ms)
+09-25 10:41:29.454  7711  8104 I WE-DIAG : decode: 11 tokens in 400.1 ms (36.37 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 9 text ids, the window needs 33) rung=0 steps=14 step=28.58 ms (run 20.18, io 0.49, kv copy 7.26 ms x13)
+09-25 10:41:29.481  7711  7711 I WE-DIAG : panel: chars=31229 renderMs=0 setTextMs=24
+09-25 10:41:29.494  7711  9838 I WE-DIAG : VAD-standalone: 69120 samples -> 3 segments wallMs=39.5
+09-25 10:41:29.613  7711  7711 I WE-DIAG : speaker: seq=253 segs=3 windows=2 embedMs=116 ids=[2,2] best=[0.69,0.66] dur=[1.8,2.1] confirmed=1 load=0 route=vad pick=1
+09-25 10:41:29.639  7711  7711 I WE-DIAG : panel: chars=31241 renderMs=0 setTextMs=24
+09-25 10:41:31.282  7711  8104 I WE-DIAG : encode: run OK in 1783.9 ms (mel copy-in 0.2 ms)
+09-25 10:41:31.490  7711  8104 I WE-DIAG : decode: 5 tokens in 207.2 ms (41.43 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=nan(unmeasured: 3 text ids, the window needs 33) rung=0 steps=8 step=25.89 ms (run 19.29, io 0.25, kv copy 6.28 ms x7)
+09-25 10:41:31.508  7711  9838 I WE-DIAG : VAD-standalone: 33280 samples -> 1 segments wallMs=18.0
+09-25 10:41:31.514  7711  7711 I WE-DIAG : panel: chars=31255 renderMs=0 setTextMs=22
+09-25 10:41:31.557  7711  7711 I WE-DIAG : speaker: seq=254 segs=1 windows=1 embedMs=47 ids=[2] best=[0.61] dur=[1.8] confirmed=1 load=0 route=vad pick=0
+09-25 10:41:33.830  7711  8104 I WE-DIAG : encode: run OK in 1800.8 ms (mel copy-in 0.2 ms)
+09-25 10:41:34.276  7711  8104 I WE-DIAG : decode: 12 tokens in 445.5 ms (37.12 ms/token), terminated by EOT nsp=0.00 lp=-0.29 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=29.70 ms (run 20.01, io 0.34, kv copy 8.45 ms x14)
+09-25 10:41:34.299  7711  7711 I WE-DIAG : panel: chars=31303 renderMs=0 setTextMs=20
+09-25 10:41:34.300  7711  9838 I WE-DIAG : VAD-standalone: 42496 samples -> 1 segments wallMs=23.7
+09-25 10:41:34.365  7711  7711 I WE-DIAG : speaker: seq=255 segs=1 windows=1 embedMs=64 ids=[2] best=[0.75] dur=[2.5] confirmed=1 load=0 route=vad pick=0
+09-25 10:41:34.494  7711  7711 I WE-DIAG : speaker-recluster: n=600 clusters=8 confirmed=8 changed=27 ms=128
+09-25 10:41:34.495  7711  7711 I WE-DIAG : finalize-timing: speaker-drain=217ms settled=true
+09-25 10:41:34.527  7711  7711 I WE-DIAG : panel: chars=31327 renderMs=0 setTextMs=28
+09-25 10:47:39.822  7711  8104 I WE-DIAG : encode: run OK in 1951.0 ms (mel copy-in 3.7 ms)
+09-25 10:47:40.024  7711  8104 I WE-DIAG : decode: 4 tokens in 202.3 ms (50.58 ms/token), terminated by EOT nsp=0.00 lp=-0.29 ent=nan(unmeasured: 2 text ids, the window needs 33) rung=0 steps=7 step=28.90 ms (run 22.04, io 0.58, kv copy 5.63 ms x6)
+09-25 10:47:40.035  7711 17387 I WE-DIAG : VAD-standalone: 6656 samples -> 0 segments wallMs=5.8
+09-25 10:47:43.580  7711  8104 I WE-DIAG : encode: run OK in 1748.3 ms (mel copy-in 0.1 ms)
+09-25 10:47:43.820  7711  8104 I WE-DIAG : decode: 5 tokens in 239.4 ms (47.88 ms/token), terminated by EOT nsp=0.00 lp=-0.52 ent=nan(unmeasured: 3 text ids, the window needs 33) rung=0 steps=8 step=29.93 ms (run 21.39, io 0.32, kv copy 7.98 ms x7)
+09-25 10:47:43.855  7711 17387 I WE-DIAG : VAD-standalone: 64000 samples -> 1 segments wallMs=33.4
+09-25 10:47:44.128  7711  7711 I WE-DIAG : speaker: seq=1 segs=1 windows=1 embedMs=270 ids=[1] best=[-] dur=[1.6] confirmed=0 load=1 route=vad pick=0
+09-25 10:48:10.667  7711  8104 I WE-DIAG : encode: run OK in 1761.9 ms (mel copy-in 0.7 ms)
+09-25 10:48:11.051  7711  8104 I WE-DIAG : decode: 9 tokens in 383.6 ms (42.62 ms/token), terminated by EOT nsp=0.00 lp=-0.24 ent=nan(unmeasured: 7 text ids, the window needs 33) rung=0 steps=12 step=31.96 ms (run 21.77, io 0.45, kv copy 8.35 ms x11)
+09-25 10:48:11.085  7711 17387 I WE-DIAG : VAD-standalone: 61872 samples -> 1 segments wallMs=30.5
+09-25 10:48:11.171  7711  7711 I WE-DIAG : speaker: seq=5 segs=1 windows=1 embedMs=85 ids=[2] best=[0.03] dur=[2.1] confirmed=0 load=0 route=vad pick=0
+09-25 10:48:12.963  7711  8104 I WE-DIAG : encode: run OK in 1744.8 ms (mel copy-in 0.3 ms)
+09-25 10:48:13.197  7711  8104 I WE-DIAG : decode: 5 tokens in 234.2 ms (46.83 ms/token), terminated by EOT nsp=0.00 lp=-0.41 ent=nan(unmeasured: 3 text ids, the window needs 33) rung=0 steps=8 step=29.27 ms (run 20.84, io 0.31, kv copy 7.74 ms x7)
+09-25 10:48:13.219  7711 17387 I WE-DIAG : VAD-standalone: 39504 samples -> 2 segments wallMs=19.6
+09-25 10:48:13.253  7711  7711 I WE-DIAG : speaker: seq=6 segs=2 windows=1 embedMs=33 ids=[2] best=[0.42] dur=[1.3] confirmed=0 load=0 route=vad pick=0
+09-25 10:48:16.290  7711  8104 I WE-DIAG : encode: run OK in 1741.9 ms (mel copy-in 0.2 ms)
+09-25 10:48:16.694  7711  8104 I WE-DIAG : decode: 10 tokens in 403.4 ms (40.34 ms/token), terminated by EOT nsp=0.00 lp=-0.16 ent=nan(unmeasured: 8 text ids, the window needs 33) rung=0 steps=13 step=31.03 ms (run 21.64, io 0.30, kv copy 8.21 ms x12)
+09-25 10:48:16.720  7711 17387 I WE-DIAG : VAD-standalone: 53248 samples -> 1 segments wallMs=25.6
+09-25 10:48:16.777  7711  7711 I WE-DIAG : speaker: seq=7 segs=1 windows=1 embedMs=55 ids=[2] best=[0.57] dur=[2.5] confirmed=0 load=0 route=vad pick=0
+09-25 10:48:19.231  7711  8104 I WE-DIAG : encode: run OK in 1740.5 ms (mel copy-in 0.2 ms)
+09-25 10:48:19.602  7711  8104 I WE-DIAG : decode: 11 tokens in 370.0 ms (33.63 ms/token), terminated by EOT nsp=0.00 lp=-0.04 ent=nan(unmeasured: 9 text ids, the window needs 33) rung=0 steps=14 step=26.43 ms (run 18.91, io 0.24, kv copy 6.77 ms x13)
+09-25 10:48:19.626  7711 17387 I WE-DIAG : VAD-standalone: 47104 samples -> 1 segments wallMs=22.6
+09-25 10:48:19.686  7711  7711 I WE-DIAG : speaker: seq=8 segs=1 windows=1 embedMs=59 ids=[2] best=[0.74] dur=[2.7] confirmed=0 load=0 route=vad pick=0
+09-25 10:48:34.243  7711  8104 I WE-DIAG : encode: run OK in 1736.1 ms (mel copy-in 0.2 ms)
+09-25 10:48:34.701  7711  8104 I WE-DIAG : decode: 12 tokens in 458.1 ms (38.17 ms/token), terminated by EOT nsp=0.00 lp=-0.07 ent=nan(unmeasured: 10 text ids, the window needs 33) rung=0 steps=15 step=30.54 ms (run 21.33, io 0.40, kv copy 7.96 ms x14)
+09-25 10:48:34.815  7711 17387 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=113.1
+09-25 10:48:34.871  7711  7711 I WE-DIAG : speaker: seq=9 segs=1 windows=1 embedMs=54 ids=[3] best=[0.12] dur=[2.5] confirmed=0 load=0 route=vad pick=0
+09-25 10:50:23.125  7711  7711 I WE-DIAG : finalize-timing: speaker-drain=1ms settled=true
+09-25 10:50:38.992  7711  8104 I WE-DIAG : nativeRelease complete (epoch 1); the environment and the adapter stay loaded
+09-25 10:51:27.255  7711 19408 I WE-DIAG : npu: offer soc=MT6989:pass probe=pass installed=npu-turbo offered=npu-turbo
+09-25 10:51:33.249  7711 19467 I WE-DIAG : initMelOnly: mel-only context ready (128 bands, no weights)
+09-25 10:51:33.278  7711 19467 I WE-DIAG : nativeInit spec: melBins=128 decLayers=4 heads=20 vocab=51866 maxPositions=200 socStamp=mt6989 wantMajor=8 selfKvStrategy=1 perfmode=-1 (inert on LiteRT 2.1.1 AOT); language band 50259..50358
+09-25 10:51:33.278  7711 19467 I WE-DIAG : apu: driver=libneuronusdk_adapter.mtk.so 8.2.26 want=8 devices=3 device=mtk-gpu+mtk-dsp+mtk-mdla walk=198ms query=0ms pass
+09-25 10:51:33.278  7711 19467 I WE-DIAG : apu: stamp=MediaTek mt6989 matches the family
+09-25 10:51:33.278  7711 19467 I WE-DIAG : apu: stamp=MediaTek mt6989 matches the family
+09-25 10:51:34.065  7711 19467 I WE-DIAG : encoder: /data/user/0/com.whispereverywhere/files/models/turbo_encoder_qairt_context.bin opened in 787 ms, signature 'encode' #0, 1 in / 8 out
+09-25 10:51:34.375  7711 19467 I WE-DIAG : decoder: /data/user/0/com.whispereverywhere/files/models/turbo_decoder_qairt_context.bin opened in 310 ms, signature 'decode' #0, 19 in / 9 out
+09-25 10:51:35.575  7711 19467 I WE-DIAG : encoder: compiled with accelerators NPU in 1200 ms (fully accelerated: yes)
+09-25 10:51:35.972  7711 19467 I WE-DIAG : decoder: compiled with accelerators NPU|CPU in 397 ms (fully accelerated: no - the leftover ops run on LiteRT's CPU kernels)
+09-25 10:51:35.992  7711 19467 I WE-DIAG : buffers: 29 made, 16 joins; mel {size=1536000 types=[2,4] strides=3 -> type 2, 1536000 B packed}; cross-KV 0 {size=7680000 types=[2,4] strides=4 -> type 2, 7680000 B packed}; self-KV 0 {size=1018880 types=[2,4] strides=4 -> type 2, 1018880 B packed}; attention_mask {size=800 types=[2,4] strides=4 -> type 2, 800 B packed}; logits {size=207464 types=[2,4] strides=4 -> type 2, 207464 B packed}; input_ids {size=4 types=[1] strides=1 -> type 1, 4 B packed}; position_ids {size=4 types=[1] strides=1 -> type 1, 4 B packed}
+09-25 10:51:36.032  7711 19467 I WE-DIAG : apu: decoder step 35.9 ms on zeroed caches (ceiling 250 ms) pass
+09-25 10:51:36.032  7711 19467 I WE-DIAG : nativeInit OK - encoder 'encode' (1 in / 8 out, accelerators NPU, restore 1200 ms), decoder 'decode' (19 in / 9 out, accelerators NPU|CPU, restore 397 ms), 29 buffers, APU check 35.9 ms, selfKvStrategy=1 (one set, copied back per step - the default), perfmode=-1 (inert on LiteRT 2.1.1 AOT)
+09-25 10:51:36.032  7711 19467 I WE-DIAG : nativeInit: session armed with epoch 2
+09-25 10:51:36.034  7711 19467 I WE-DIAG : npu-debug: instrumentation disabled
+09-25 10:52:02.914  7711 19467 I WE-DIAG : encode: run OK in 1782.3 ms (mel copy-in 2.1 ms)
+09-25 10:52:03.235  7711 19467 I WE-DIAG : decode: 7 tokens in 320.4 ms (45.77 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=nan(unmeasured: 5 text ids, the window needs 33) rung=0 steps=10 step=32.04 ms (run 21.93, io 0.43, kv copy 8.76 ms x9)
+09-25 10:52:03.276  7711 20955 I WE-DIAG : VAD-standalone: 54784 samples -> 1 segments wallMs=38.0
+09-25 10:52:03.531  7711  7711 I WE-DIAG : speaker: seq=1 segs=1 windows=1 embedMs=253 ids=[1] best=[-] dur=[1.7] confirmed=0 load=1 route=vad pick=0
+09-25 10:52:06.429  7711 19467 I WE-DIAG : encode: run OK in 1723.7 ms (mel copy-in 0.2 ms)
+09-25 10:52:06.785  7711 19467 I WE-DIAG : decode: 9 tokens in 356.2 ms (39.57 ms/token), terminated by EOT nsp=0.00 lp=-0.41 ent=nan(unmeasured: 7 text ids, the window needs 33) rung=0 steps=12 step=29.68 ms (run 20.69, io 0.43, kv copy 7.55 ms x11)
+09-25 10:52:06.815  7711 20955 I WE-DIAG : VAD-standalone: 57344 samples -> 2 segments wallMs=27.3
+09-25 10:52:06.893  7711  7711 I WE-DIAG : speaker: seq=2 segs=2 windows=1 embedMs=77 ids=[1] best=[0.57] dur=[2.3] confirmed=0 load=0 route=vad pick=0
+09-25 10:52:08.729  7711 19467 I WE-DIAG : encode: run OK in 1723.8 ms (mel copy-in 0.1 ms)
+09-25 10:52:09.043  7711 19467 I WE-DIAG : decode: 8 tokens in 313.9 ms (39.24 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=28.54 ms (run 20.11, io 0.30, kv copy 7.48 ms x10)
+09-25 10:52:09.063  7711 20955 I WE-DIAG : VAD-standalone: 36864 samples -> 1 segments wallMs=19.0
+09-25 10:52:09.097  7711  7711 I WE-DIAG : speaker: seq=3 segs=1 windows=1 embedMs=33 ids=[1] best=[0.45] dur=[1.5] confirmed=0 load=0 route=vad pick=0
+09-25 10:52:13.946  7711 19467 I WE-DIAG : encode: run OK in 1722.2 ms (mel copy-in 0.2 ms)
+09-25 10:52:14.262  7711 19467 I WE-DIAG : decode: 8 tokens in 315.9 ms (39.49 ms/token), terminated by EOT nsp=0.00 lp=-0.22 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=28.72 ms (run 20.23, io 0.30, kv copy 7.59 ms x10)
+09-25 10:52:14.305  7711 20955 I WE-DIAG : VAD-standalone: 83456 samples -> 2 segments wallMs=41.3
+09-25 10:52:14.379  7711  7711 I WE-DIAG : speaker: seq=4 segs=2 windows=2 embedMs=73 ids=[1,1] best=[0.53,0.61] dur=[1.1,2.1] confirmed=0 load=0 route=vad pick=1
+09-25 10:52:19.177  7711 19467 I WE-DIAG : encode: run OK in 1721.7 ms (mel copy-in 0.3 ms)
+09-25 10:52:19.699  7711 19467 I WE-DIAG : decode: 15 tokens in 522.2 ms (34.81 ms/token), terminated by EOT nsp=0.00 lp=-0.11 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=18 step=29.01 ms (run 20.19, io 0.30, kv copy 7.34 ms x17)
+09-25 10:52:19.739  7711 20955 I WE-DIAG : VAD-standalone: 83456 samples -> 1 segments wallMs=39.5
+09-25 10:52:19.830  7711  7711 I WE-DIAG : speaker: seq=5 segs=1 windows=2 embedMs=89 ids=[1,1] best=[0.61,0.61] dur=[1.5,2.5] confirmed=0 load=0 route=vad pick=1
+09-25 10:52:24.410  7711  7711 I WE-DIAG : finalize-timing: speaker-drain=1ms settled=true
+09-25 10:52:37.016  7711 19467 I WE-DIAG : encode: run OK in 1723.0 ms (mel copy-in 0.2 ms)
+09-25 10:52:37.515  7711 19467 I WE-DIAG : decode: 15 tokens in 499.1 ms (33.28 ms/token), terminated by EOT nsp=0.00 lp=-0.09 ent=nan(unmeasured: 13 text ids, the window needs 33) rung=0 steps=18 step=27.73 ms (run 19.40, io 0.34, kv copy 6.98 ms x17)
+09-25 10:52:37.549  7711 21352 I WE-DIAG : VAD-standalone: 64000 samples -> 1 segments wallMs=32.0
+09-25 10:52:37.851  7711  7711 I WE-DIAG : speaker: seq=1 segs=1 windows=2 embedMs=300 ids=[1,1] best=[-,0.75] dur=[2.0,2.0] confirmed=0 load=1 route=vad pick=1
+09-25 10:52:39.280  7711 19467 I WE-DIAG : encode: run OK in 1733.1 ms (mel copy-in 0.2 ms)
+09-25 10:52:39.536  7711 19467 I WE-DIAG : decode: 6 tokens in 255.2 ms (42.54 ms/token), terminated by EOT nsp=0.00 lp=-0.33 ent=nan(unmeasured: 4 text ids, the window needs 33) rung=0 steps=9 step=28.36 ms (run 20.29, io 0.29, kv copy 7.37 ms x8)
+09-25 10:52:39.553  7711 21352 I WE-DIAG : VAD-standalone: 34816 samples -> 1 segments wallMs=16.8
+09-25 10:52:39.594  7711  7711 I WE-DIAG : speaker: seq=2 segs=1 windows=1 embedMs=40 ids=[1] best=[0.59] dur=[1.7] confirmed=0 load=0 route=vad pick=0
+09-25 10:52:40.655  7711  7711 I WE-DIAG : finalize-timing: speaker-drain=0ms settled=true
+09-25 10:52:52.073  7711 19467 I WE-DIAG : encode: run OK in 1725.2 ms (mel copy-in 0.1 ms)
+09-25 10:52:52.545  7711 19467 I WE-DIAG : decode: 13 tokens in 471.9 ms (36.30 ms/token), terminated by EOT nsp=0.00 lp=-0.19 ent=nan(unmeasured: 11 text ids, the window needs 33) rung=0 steps=16 step=29.50 ms (run 19.87, io 0.49, kv copy 8.08 ms x15)
+09-25 10:52:52.584  7711 21513 I WE-DIAG : VAD-standalone: 64000 samples -> 1 segments wallMs=38.0
+09-25 10:52:52.820  7711  7711 I WE-DIAG : speaker: seq=1 segs=1 windows=1 embedMs=235 ids=[1] best=[-] dur=[3.1] confirmed=0 load=1 route=vad pick=0
+09-25 10:52:56.079  7711 19467 I WE-DIAG : encode: run OK in 1738.9 ms (mel copy-in 0.3 ms)
+09-25 10:52:56.399  7711 19467 I WE-DIAG : decode: 8 tokens in 318.8 ms (39.85 ms/token), terminated by EOT nsp=0.00 lp=-0.23 ent=nan(unmeasured: 6 text ids, the window needs 33) rung=0 steps=11 step=28.98 ms (run 19.95, io 0.36, kv copy 8.06 ms x10)
+09-25 10:52:56.430  7711 21513 I WE-DIAG : VAD-standalone: 62464 samples -> 1 segments wallMs=29.8
+09-25 10:52:56.470  7711  7711 I WE-DIAG : speaker: seq=2 segs=1 windows=1 embedMs=39 ids=[1] best=[0.75] dur=[1.6] confirmed=0 load=0 route=vad pick=0
+09-25 10:52:56.470  7711  7711 I WE-DIAG : finalize-timing: speaker-drain=70ms settled=true
