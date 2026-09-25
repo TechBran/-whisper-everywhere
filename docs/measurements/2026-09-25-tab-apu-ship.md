@@ -94,4 +94,13 @@ NPU card, because they are INSTALLED on this tablet (the 2026-09-17 ladder sessi
 keeps installed cards (`pickableFor`'s non-disturbance producer). The owner: "if the NPU multilingual is here,
 then we hide all of the other CPU models so users don't get confused about which model to download". So: on a
 device offered the one tier, installed CPU rungs no longer render a card (they are not deleted; the delivery-failure
-escape and the decline recovery are untouched). Built into 113 before its upload.
+escape and the decline recovery are untouched). Built into 113 before its upload — the final build
+(9,162,582,027 B, sha256 `25400c8f…`, `feat/mediatek-apu-tier` @ adaf8eab, suite 263/3,561/0) was reinstalled in place
+at 12:29 (the app re-probed the driver on the new build as the verdict key requires: `walk=284ms … pass`, `source=probe`,
+and armed on its own in 3.6 s); the owner, in the chooser: "the chip is right" — the AI-chip card alone. PASS.
+
+**Row 8, a second observation on the final build (12:3x):** with the engine ALREADY ARMED by the boot prewarm
+(12:29:20, before any tap), the owner reports "now the audio correctly picks up the first bytes of my audio". So
+the loss of F3 is specific to a tap that lands DURING an arm (the first tap after an install, a verdict, a trim
+or a process start), which is what row 8's re-Get exercised; a pre-armed engine keeps the first words. The 4.16.1
+item stands as written (make the ring's evidence visible, then reproduce the in-session arm).
