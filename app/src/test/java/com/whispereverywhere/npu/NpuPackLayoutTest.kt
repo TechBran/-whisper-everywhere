@@ -786,4 +786,117 @@ class NpuPackLayoutTest {
             untargetedParts.sumOf { (_, part) -> count(appGradle, "listOf(\"${part.packName}\", \"soc_") }
         )
     }
+
+    // ------------------------------------------------------------------ the LOCAL source (P2-5)
+
+    /** The census's MediaTek (LOCAL) rows with their LiteRT needs. */
+    private val localFamilies: List<Pair<NpuSocFamily, NpuRuntimeNeeds.LiteRtMediatek>> =
+        families.mapNotNull { f -> (f.runtime as? NpuRuntimeNeeds.LiteRtMediatek)?.let { f to it } }
+
+    @Test
+    fun theScriptsLocalTableIsTheCensusRowAndItsPartsInOrder() {
+        assertTrue("the census has LOCAL rows for the script to fill", localFamilies.isNotEmpty())
+        for ((family, needs) in localFamilies) {
+            assertEquals(
+                "LOCAL_FAMILIES carries ${family.id}'s pack group — the one its metadata names",
+                1, count(script, "\"pack_group\": \"${family.packGroup}\",")
+            )
+            assertEquals(
+                "…the stamp its files' own LiteRtStamp must carry — the vendor LiteRT writes and " +
+                    "the row's socStamp, the chip the engine's init checks",
+                1, count(script, "\"stamp\": (\"MediaTek\", \"${needs.socStamp}\"),")
+            )
+            assertEquals(
+                "…and the Neuron major the bytecode's compiler must be, the row's own",
+                1, count(script, "\"neuron_major\": ${needs.neuronMajor},")
+            )
+            for (a in NpuFleetCensus.artifacts.filter { it.familyId == family.id }) {
+                val tuples = a.parts.map { part ->
+                    "(\"${part.packName}\", \"${part.entries.single().fileName}\", \""
+                }
+                for (tuple in tuples) {
+                    assertEquals("the script's part row <<$tuple>>, exactly once", 1, count(script, tuple))
+                }
+                assertTrue(
+                    "…in the census's part order — part 1 (metadata.json's) first",
+                    tuples.map { script.indexOf(it) }.zipWithNext().all { (x, y) -> x < y }
+                )
+                // The source names the script copies from are the compile's own, the ones the
+                // row's provenance record names.
+                for (source in Regex("\"(turbo_[a-z]+_[a-z0-9_]+_MediaTek_MT6989_apply_plugin\\.tflite)\"")
+                    .findAll(script).map { it.groupValues[1] }.toSet()) {
+                    assertTrue("the provenance record names $source", a.evidence.contains(source))
+                }
+            }
+        }
+        // The compiler string is READ out of each file (the bytecode's own {"Compiler": ...}
+        // trailer) and held to this literal before a byte is copied; its major is the family's.
+        assertEquals(1, count(script, "\"compiler\": \"adapter 8.2.30\","))
+        assertEquals(
+            "…and 'adapter 8.2.30' is Neuron major 8, the mt6989 row's",
+            8, requireNotNull(localFamilies.firstOrNull { it.first.id == "mt6989" }).second.neuronMajor
+        )
+    }
+
+    @Test
+    fun theScriptsLocalIoSpecIsNpuModelSpecTurbo() {
+        val turbo = NpuModelSpec.TURBO
+        for ((key, value) in listOf(
+            "mel_bins" to turbo.melBins, "mel_frames" to turbo.melFrames,
+            "dec_layers" to turbo.decLayers, "heads" to turbo.heads, "head_dim" to turbo.headDim,
+            "audio_ctx" to turbo.audioCtx, "vocab" to turbo.tokens.vocab,
+            "max_positions" to turbo.maxPositions,
+        )) {
+            assertEquals(
+                "LOCAL_IO_SPEC's $key is NpuModelSpec.TURBO's ($value) — the IO gate refuses at " +
+                    "build time exactly what derivePairCensus would refuse at init",
+                1, count(script, "\"$key\": $value")
+            )
+        }
+        assertEquals("one spec row, turbo's", 1, count(script, "LOCAL_IO_SPEC = {\n    \"npu-turbo\": {"))
+    }
+
+    @Test
+    fun theLocalSourceGatesEveryFileWritesVersionTwoAndSharesTheOneVerification() {
+        for (gate in listOf(
+            "sums = local_sums(src_dir)", "stamp = head.litert_stamp()",
+            "compiler = head.bytecode_compiler()", "ins, outs = io_gate(tier, head, key)",
+        )) {
+            assertEquals("local_gate runs <<$gate>> before any copy", 1, count(script, gate))
+        }
+        assertTrue(
+            "…and every gate runs BEFORE the copy",
+            script.indexOf("ins, outs = io_gate(tier, head, key)") <
+                script.indexOf("stream_pinned(open(source, \"rb\")")
+        )
+        assertEquals("the copy streams through the pinned-digest helper", 1, count(script, "stream_pinned(open(source, \"rb\")"))
+        assertEquals(
+            "into the UNTARGETED module's one payload directory",
+            1, count(script, "out_dir = untargeted_payload_dir(module)")
+        )
+        assertEquals(
+            "version 2 is written for LOCAL rows, version 1 stays the vendor rows' — one of each",
+            listOf(1, 1), listOf(count(script, "\"version\": 2,"), count(script, "\"version\": 1,"))
+        )
+        for (field in listOf(
+            "\"neuronMajor\": local[\"neuron_major\"],", "\"socStamp\": local[\"stamp\"][1],",
+            "\"compiler\": local[\"compiler\"],",
+        )) {
+            assertEquals("the version-2 writer's <<$field>>", 1, count(script, field))
+        }
+        assertEquals(
+            "both builds end in the ONE shared finish (metadata into part 0, then the verification " +
+                "whose failure is the one named FATAL)",
+            listOf(1, 1),
+            listOf(
+                count(script, "finish_variant(tier, family, out_dir)\n"),
+                count(script, "finish_variant(tier, family, out_dir, index)"),
+            )
+        )
+        assertEquals("build fills the LOCAL parts too", 1, count(script, "build_local(local_root)"))
+        assertEquals(
+            "and build-local has its dry run: every head-and-tail gate, a listing, nothing written",
+            1, count(script, "dry_run = \"--dry-run\" in rest")
+        )
+    }
 }
