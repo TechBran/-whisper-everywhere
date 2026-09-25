@@ -199,6 +199,7 @@ class NpuStageTest {
         val gradle = source("build.gradle.kts")
         listOf(
             "\"src/main/java/com/whispereverywhere/npu/NpuStage.kt\",",
+            "\"src/main/java/com/whispereverywhere/transcription/NpuAsrEngine.kt\",",
         ).forEach {
             assertEquals(
                 "app/build.gradle.kts must list $it among sourcePinnedInputs",

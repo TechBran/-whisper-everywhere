@@ -612,6 +612,11 @@ tasks.withType<Test>().configureEach {
         // anyway — the entry is here because the rule is about what the tests READ, and the next
         // needle added there is not required to remember the distinction.
         "src/main/java/com/whispereverywhere/npu/NpuStage.kt",
+        // NpuAsrEngineSeamTest reads NpuAsrEngine.kt for properties of the DECLARATIONS that no
+        // call can observe — no default on any parameter, no member beyond design 2.4's ten, no
+        // vendor's name on a live line — and a default argument is precisely the one-token edit
+        // every existing caller compiles straight past.
+        "src/main/java/com/whispereverywhere/transcription/NpuAsrEngine.kt",
         // (4.1 L7) LocalWhisperEngine.kt joins because PerUtteranceLanguageTest now READS it:
         // the languageFor-exactly-once-inside-the-conditional claim is what stops a second,
         // unconditional pin consult from reinstating the 3.7 latch under a per-utterance
