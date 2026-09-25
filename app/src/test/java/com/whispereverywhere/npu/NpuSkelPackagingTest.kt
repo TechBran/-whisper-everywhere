@@ -18,14 +18,16 @@ import java.security.MessageDigest
  * provably unopenable by the FastRPC loader — and is re-materialised from the RESOLVED
  * `qnn-runtime` AAR into generated assets at build time. At arm, `NpuWhisperBackend` stages
  * exactly ONE of them — the row `NpuGate.familyFor` resolved this device to — into `filesDir`,
- * which is already first on `ADSP_LIBRARY_PATH`.
+ * which is already first on `ADSP_LIBRARY_PATH`; since P1a it does so through its engine, whose
+ * QNN implementation (`QnnAsrEngine.prepare`) is the stage, moved verbatim.
  *
  * Two halves, two instruments:
  *
- *  - **The build and runtime contract is SOURCE-pinned** over `app/build.gradle.kts` and
- *    `NpuWhisperBackend.kt`, and EXECUTED against `NpuFleetCensus` where the census object can
- *    carry the claim. No JVM test can run a Gradle task or dlopen a QNN stack, but the whole
- *    mechanism is a handful of spellings that must agree — the per-family excludes, the extract
+ *  - **The build and runtime contract is SOURCE-pinned** over `app/build.gradle.kts`,
+ *    `NpuWhisperBackend.kt` and `QnnAsrEngine.kt`, and EXECUTED against `NpuFleetCensus` where
+ *    the census object can carry the claim. No JVM test can run a Gradle task or dlopen a QNN
+ *    stack, but the whole mechanism is a handful of spellings that must agree — the per-family
+ *    excludes, the extract
  *    task's per-row (bytes, sha256) asserts, the srcDir registration, and the family-row staging
  *    call — and any one drifting silently is a tier that dies on a device a month later with
  *    nothing naming why.
@@ -61,6 +63,29 @@ class NpuSkelPackagingTest {
 
     private val backend: String by lazy {
         read("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+    }
+
+    /**
+     * The QNN engine (P1a, the engine seam), which the skel stage moved into VERBATIM — the
+     * staging call, its three family fields and its refusal text — as `QnnAsrEngine.prepare`.
+     * Every pin below that used to scope to the backend's `load` now scopes to that member, and
+     * the backend is held to calling it exactly where the stage used to sit.
+     */
+    private val engine: String by lazy {
+        read("src/main/java/com/whispereverywhere/transcription/QnnAsrEngine.kt")
+    }
+
+    private val prepareBody: String by lazy {
+        kotlinMemberBody(
+            engine, "override fun prepare(appContext: Context, family: NpuSocFamily): Refusal? {"
+        )
+    }
+
+    private val engineInitBody: String by lazy {
+        kotlinMemberBody(
+            engine,
+            "override fun init(spec: NpuModelSpec, files: NpuEngineFiles, dirs: NpuEngineDirs): Refusal? {"
+        )
     }
 
     private fun count(haystack: String, needle: String) = haystack.split(needle).size - 1
@@ -442,12 +467,19 @@ class NpuSkelPackagingTest {
             // The BACKEND carries NONE of these spellings: the census row travels as an object
             // and the stage call reads its fields. Whole-file and comment-inclusive, the same
             // instrument as the WhisperNative.init( residency pin — a KDoc that re-teaches a
-            // literal is how a fifth spelling comes back.
+            // literal is how a fifth spelling comes back. (P1a) And NEITHER DOES THE ENGINE the
+            // stage moved into: the row still travels as an object, into prepare.
             assertEquals(
                 "the backend must not spell family `${family.id}`'s sha256 anywhere — not in " +
                     "code, not in a comment",
                 0,
                 count(backend, family.skelSha256),
+            )
+            assertEquals(
+                "nor must QnnAsrEngine, where the skel stage lives now — not in code, not in a " +
+                    "comment",
+                0,
+                count(engine, family.skelSha256),
             )
         }
     }
@@ -494,30 +526,54 @@ class NpuSkelPackagingTest {
                 0,
                 count(backend, ghost),
             )
+            assertEquals(
+                "…nor in QnnAsrEngine.kt, where the stage lives since P1a — the row is the only " +
+                    "spelling of a skel's identity the ENGINE may hold, too",
+                0,
+                count(engine, ghost),
+            )
         }
     }
 
+    /**
+     * ORDER, not presence — the statements all survive any permutation. RE-POINTED AT P1a
+     * across the two files the order now spans: in the backend's `load`, the engine's prepare
+     * (the skel stage) sits after the companion refusal and every cheaper stage and before the
+     * engine's init; in the engine, prepare IS the staging call and init IS nativeInit. So the
+     * skel is still staged after the companion refusal and before the dlopen that makes FastRPC
+     * go looking for it.
+     */
     @Test
     fun theSkelIsStagedBeforeNativeInitAndAfterTheCompanionRefusal() {
-        // ORDER, not presence — the statements all survive any permutation. Before nativeInit
-        // because that is the dlopen that makes FastRPC go looking for the skel; after the
-        // companion refusal (and every cheaper stage) because load's whole shape is
-        // cheapest-refusal-first and the first arm of this stage writes ~18 MB.
+        // Before nativeInit because that is the dlopen that makes FastRPC go looking for the
+        // skel; after the companion refusal (and every cheaper stage) because load's whole
+        // shape is cheapest-refusal-first and the first arm of this stage writes ~18 MB.
         val companion = liveOffsets(loadBody, "if (companionPath.isNullOrBlank())")
         val mel = liveOffsets(loadBody, "melCtx = WhisperNative.initMelOnly(")
         val vocab = liveOffsets(loadBody, "WhisperBpeDecoder.fromJson(")
-        val skel = liveOffsets(loadBody, "NpuAssetStage.stagedPathWithMarker(")
-        val init = liveOffsets(loadBody, "QnnAsrNative.nativeInit(")
-        assertTrue("the skel stage must run on a live line of load()", skel.isNotEmpty())
-        assertTrue("nativeInit must run on a live line", init.isNotEmpty())
+        val skel = liveOffsets(loadBody, "engine.prepare(appContext, family)")
+        val init = liveOffsets(loadBody, "engine.init(")
+        assertTrue("the skel stage (the engine's prepare) must run on a live line of load()", skel.isNotEmpty())
+        assertTrue("the engine's init must run on a live line", init.isNotEmpty())
         assertTrue(
             "ORDER: companion (${companion.first()}) -> mel (${mel.first()}) -> vocab " +
-                "(${vocab.first()}) -> skel (${skel.first()}) -> nativeInit (${init.first()}). " +
+                "(${vocab.first()}) -> skel (${skel.first()}) -> init (${init.first()}). " +
                 "The skel BELOW nativeInit is a session that dlopens the HTP with no skel to " +
                 "find; the skel ABOVE the companion refusal pays an ~18 MB first-arm write on a " +
                 "tier that was never installed.",
             companion.first() < mel.first() && mel.first() < vocab.first() &&
                 vocab.first() < skel.first() && skel.first() < init.first(),
+        )
+        assertEquals(
+            "exactly one prepare call in load — one staging per arm",
+            1,
+            skel.size,
+        )
+        assertTrue(
+            "and in the engine the two members are what those calls stand for: prepare stages " +
+                "the skel and init runs nativeInit — so the backend's order is the skel's order",
+            liveLineCount(prepareBody, "NpuAssetStage.stagedPathWithMarker(") == 1 &&
+                liveLineCount(engineInitBody, "QnnAsrNative.nativeInit(") == 1,
         )
     }
 
@@ -525,24 +581,55 @@ class NpuSkelPackagingTest {
     fun aSkelThatCannotBeStagedIsARefusalUnderItsOwnStageName() {
         // A null from the stage is a stage refusal like any other: without it the HTP backend
         // would come up and then fail somewhere far less legible — inside FastRPC, as a dlopen
-        // that "succeeds" with an HTP that never arrives.
+        // that "succeeds" with an HTP that never arrives. (P1a) The refusal is now a value —
+        // Refusal(NpuStage.SKEL, …) — which the backend routes through fallBackToCpuTier under
+        // the stage's wire word, `skel`, exactly the word the funnel printed before the seam.
         assertEquals(
-            "the null return leaves through fallBackToCpuTier under stage name `skel`",
+            "the null return leaves prepare as a SKEL refusal, on the staging call's own elvis",
             1,
             count(
-                loadBody,
+                prepareBody,
                 lines(
-                    "            ) ?: return@serialized fallBackToCpuTier(",
-                    "                \"skel\",",
+                    "        ) ?: return Refusal(",
+                    "            NpuStage.SKEL,",
                 ),
             ),
         )
         assertEquals(
-            "and `skel` is a stage name exactly once — the card and the WE-DIAG line name the " +
-                "stage, and two spellings would be two stories",
+            "and SKEL is the stage exactly once — the card and the WE-DIAG line name the stage, " +
+                "and two spellings would be two stories",
             1,
-            liveLineCount(loadBody, "\"skel\","),
+            liveLineCount(engine, "NpuStage.SKEL"),
         )
+        // RESTORED AND EXTENDED (P1a review): at 4a7c126 this pin held `"skel",` to exactly one
+        // live line of load — the whole of the stage's spelling. The count of NpuStage.SKEL above
+        // is the engine's half only, and NpuStageTest's derivation merges duplicates, so a
+        // `fallBackToCpuTier("skel", …)` added back to the backend passed both. The word's one
+        // home is NpuStage.kt's `SKEL("skel"),` (NpuStageTest pins that line); a quoted `"skel"`
+        // anywhere in the backend or the engine is the second story.
+        assertEquals(
+            "the quoted stage word `\"skel\"` appears on NO live line of the backend — the stage is " +
+                "the engine's now, spelled NpuStage.SKEL",
+            0,
+            liveLineCount(backend, "\"skel\""),
+        )
+        assertEquals(
+            "…nor of the engine, which names the stage by its constant",
+            0,
+            liveLineCount(engine, "\"skel\""),
+        )
+        assertEquals(
+            "the backend routes the prepare refusal through the one funnel, printing its wire word",
+            1,
+            count(
+                loadBody,
+                lines(
+                    "            engine.prepare(appContext, family)?.let { refusal ->",
+                    "                return@serialized fallBackToCpuTier(refusal.stage.wire, refusal.detail)",
+                ),
+            ),
+        )
+        assertEquals("NpuStage.SKEL's wire word is the one the funnel always printed", "skel", NpuStage.SKEL.wire)
     }
 
     /**
@@ -555,7 +642,19 @@ class NpuSkelPackagingTest {
         assertEquals(
             "the skel refusal detail interpolates the family's own asset name and its census id",
             1,
-            liveLineCount(loadBody, "\${family.skelAsset} (family \${family.id})"),
+            liveLineCount(prepareBody, "\${family.skelAsset} (family \${family.id})"),
+        )
+        assertEquals(
+            "…in the moved text, verbatim — the detail a device prints did not change by a " +
+                "character when the stage moved into the engine",
+            1,
+            count(
+                prepareBody,
+                lines(
+                    "            \"\${family.skelAsset} (family \${family.id}) could not be staged from the APK \" +",
+                    "                \"into filesDir — the FastRPC loader would find no DSP-side skel to open\"",
+                ),
+            ),
         )
     }
 
@@ -564,11 +663,19 @@ class NpuSkelPackagingTest {
         // The L3 handoff's explicit warning to this stage: stagedPath full-hashes the
         // destination on EVERY arm — free at the melbank's 103 KB, a per-session ~18 MiB flash
         // read here. The skel therefore takes the marker entry point; the mel arm keeps the
-        // original.
+        // original. (P1a) The two arms now sit in two files, and each is held in its own.
         assertEquals(
-            "the skel stages through stagedPathWithMarker",
+            "the skel stages through stagedPathWithMarker, in the engine's prepare",
             1,
-            liveLineCount(loadBody, "NpuAssetStage.stagedPathWithMarker("),
+            liveLineCount(prepareBody, "NpuAssetStage.stagedPathWithMarker("),
+        )
+        assertEquals(
+            "…exactly once in the whole engine, and never in the backend: one staging site",
+            listOf(1, 0),
+            listOf(
+                liveLineCount(engine, "NpuAssetStage.stagedPathWithMarker("),
+                liveLineCount(backend, "NpuAssetStage.stagedPathWithMarker("),
+            ),
         )
         assertEquals(
             "the mel arm keeps the plain stagedPath — 103 KB per arm is free and its full hash " +
@@ -580,14 +687,40 @@ class NpuSkelPackagingTest {
         // off the census row this device resolved to — the same three values extractQnnSkel
         // asserted into assets at build time. A literal here is a fifth spelling, and a
         // DIFFERENT family's fields here is the wrong-skel stage the required parameter exists
-        // to prevent.
+        // to prevent. (P1a) The row reaches the call as prepare's own `family` parameter, which
+        // the backend hands its constructor's required one.
         listOf("family.skelAsset,", "family.skelBytes,", "family.skelSha256,").forEach { field ->
             assertEquals(
                 "the stage call reads `$field` from the family row — exactly once",
                 1,
-                liveLineCount(loadBody, field),
+                liveLineCount(prepareBody, field),
             )
         }
+        assertEquals(
+            "the family prepare reads is the backend's own required row, passed by name",
+            1,
+            liveLineCount(loadBody, "engine.prepare(appContext, family)"),
+        )
+    }
+
+    /**
+     * The seam's half of the no-default doctrine: the engine's prepare takes the family as a
+     * REQUIRED parameter too. A default there would stage the default row's skel under another
+     * family's silicon exactly as a defaulted constructor parameter would, one call further in.
+     */
+    @Test
+    fun theEnginesPrepareTakesTheFamilyWithNoDefault() {
+        val seam = read("src/main/java/com/whispereverywhere/transcription/NpuAsrEngine.kt")
+        assertEquals(
+            "the interface declares `fun prepare(appContext: Context, family: NpuSocFamily): Refusal?`",
+            1,
+            liveLineCount(seam, "fun prepare(appContext: Context, family: NpuSocFamily): Refusal?"),
+        )
+        assertEquals(
+            "and no live line of the seam or the QNN engine spells a defaulted family",
+            0,
+            liveLineCount(seam, "family: NpuSocFamily =") + liveLineCount(engine, "family: NpuSocFamily ="),
+        )
     }
 
     // ------------------------------------------------------------------ the marker, executed

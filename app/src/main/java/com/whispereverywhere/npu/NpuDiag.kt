@@ -190,13 +190,17 @@ object NpuDiag {
      * fallback is not allowed to be quiet: the stage is named, the native detail is carried
      * verbatim from `nativeLastError()`, and Q8's card reads the same fact.
      *
-     * @param stage which step declined. One word, greppable, never a sentence. The full
-     *        enumeration, in decline-site order, RE-DERIVED from the backend's own
-     *        `fallBackToCpuTier`/`fallBackAndRun` call sites (4.2 F5, folding 4.1 L1 m5 — the
-     *        previous list here was stale by six stages and still named a retired one, and
-     *        `NpuDiagTest` now derives this list from the source so it cannot rot again):
-     *        `companion`, `mel-donor`, `mel-asset`, `mel-init`, `vocab`, `skel`, `init`,
-     *        `epoch`, `session`, `mel`, `quant`, `encode`, `lang`, `decode`.
+     * @param stage which step declined. One word, greppable, never a sentence: an [NpuStage]'s
+     *        wire word. The full enumeration IS that enum, in its declaration order, which is
+     *        decline order (P1a — `NpuStageTest` re-derives the enum from the decline sites on
+     *        both sides of the engine seam, and `NpuDiagTest` holds this list equal to the enum,
+     *        so it cannot rot again; 4.2 F5, folding 4.1 L1 m5, is why: the list here was once
+     *        stale by six stages and still named a retired one):
+     *        `companion`, `mel-donor`, `mel-asset`, `mel-init`, `vocab`, `skel`, `dispatch`,
+     *        `init`, `quant`, `epoch`, `session`, `mel`, `encode`, `lang`, `decode`. The seventh
+     *        is the LiteRT engine's prepare stage and is reserved: no Qualcomm session produces
+     *        it. The ninth declines at arm since the seam (the QNN engine reads the quant pair
+     *        once, right after nativeInit); before it, it declined on a segment, after mel.
      * @param detail `QnnAsrNative.nativeLastError()` or an equivalent one-line reason. Never
      *        transcript content: every producer of this string is a stage name and a native error.
      */

@@ -27,8 +27,10 @@ with P1a.
    (stage `QUANT`); `encode` = `melToU16` + the DEBUG `melProbe` (`:633-671`) + `nativeEncode(quantised)`; the
    rest delegates. `qnn_asr.cpp` untouched.
 4. **`NpuWhisperBackend` on the seam.** Constructor takes `engine: NpuAsrEngine`; every `QnnAsrNative.` call and
-   the three QNN-shaped blocks leave the file; `fallBackToCpuTier(stage.name, detail)` keeps its literal shape
-   for the diag readers. `NpuBackendSelector.backendFor` constructs `QnnAsrEngine` for every family (the vendor
+   the three QNN-shaped blocks leave the file; `fallBackToCpuTier(stage.wire, detail)` keeps its literal shape
+   for the diag readers (each `NpuStage` constant carries its wire word, `MEL_DONOR("mel-donor")`; `Enum.name` is
+   the identifier `MEL_DONOR`, and printing it would change every decline line — corrected at P1a, where the
+   first spelling here met the code). `NpuBackendSelector.backendFor` constructs `QnnAsrEngine` for every family (the vendor
    switch arrives in P2). Files: `NpuWhisperBackend.kt`, `NpuBackendSelector.kt`.
 5. **Pins re-pointed, in the same commit:** `NpuDiagTest.kt:314-424` (mel → melToU16 → melProbe order, now in
    `QnnAsrEngine`), `NpuDiagTest.kt:853-878` (stage derivation → the enum), `NpuSkelPackagingTest.kt:505-585`

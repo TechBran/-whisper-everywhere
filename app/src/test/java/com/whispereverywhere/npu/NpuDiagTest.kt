@@ -220,6 +220,20 @@ class NpuDiagTest {
             1,
             liveLineCount(backend, "tokens = written,"),
         )
+        // ACROSS THE SEAM (P1a): "exactly once" is a claim about the TIER, and since the seam the
+        // tier is two files. An engine that printed its own decline line would double-report a
+        // stage the backend's funnel already names; one that printed a segment line would double
+        // the population Q10a's timings are read off. The engine answers values; the backend
+        // prints.
+        val engine = source("src/main/java/com/whispereverywhere/transcription/QnnAsrEngine.kt")
+        listOf("NpuDiag.line(", "NpuDiag.unavailable(").forEach { emitter ->
+            assertEquals(
+                "the QNN engine emits no `$emitter` line — its refusals come back as values the " +
+                    "backend's one funnel prints",
+                0,
+                liveLineCount(engine, emitter),
+            )
+        }
     }
 
     // ---------------------------------------- 4.0 Q9 fix round (I2): the mel stride bisector
@@ -311,7 +325,7 @@ class NpuDiagTest {
         )
         assertEquals(
             "the view is taken fresh and read absolutely, so the shared direct buffer handed on to " +
-                "melToU16 and then nativeEncode keeps its position untouched",
+                "the engine (for QNN: melToU16, then nativeEncode) keeps its position untouched",
             1,
             liveLineCount(backend, "val melView = mel.asFloatBuffer()"),
         )
@@ -324,17 +338,41 @@ class NpuDiagTest {
         val pcmToMel =
             offsetOfLive(backend, "if (!WhisperNative.pcmToMel(melCtx, samples, mel, spec.melBins)) {")
         val melLine = offsetOfLive(backend, "NpuDiag.mel(")
-        val quantise = offsetOfLive(backend, "NpuQuantize.melToU16(")
         assertTrue(
             "the mel line ($melLine) must be emitted AFTER pcmToMel's success guard ($pcmToMel). " +
                 "The mel buffer is reused across segments, so a line above that guard prints the " +
                 "PREVIOUS segment's spectrogram and attributes it to one whose mel never ran.",
             pcmToMel in 0 until melLine,
         )
+        // AND BEFORE THE QUANTISER — re-pointed at P1a, when melToU16 moved into the QNN engine's
+        // encode. The claim is the same claim across two files, so it is held in both: in the
+        // backend the mel line precedes the engine's encode, the one call the mel buffer is handed
+        // to after it, and no quantiser runs in the backend at all; in the engine, melToU16 is
+        // inside encode — so nothing can quantise the spectrogram before the bisector has read it.
+        val encode = offsetOfLive(backend, "engine.encode(mel)")
         assertTrue(
-            "and BEFORE melToU16 ($quantise): a bisector that cannot separate the spectrogram from " +
-                "the quantisation is not a bisector",
-            melLine < quantise,
+            "and BEFORE the engine's encode ($encode), which is where the quantiser runs now: a " +
+                "bisector that cannot separate the spectrogram from the quantisation is not a " +
+                "bisector",
+            melLine in 0 until encode,
+        )
+        assertEquals(
+            "no live line of the backend quantises — melToU16 lives in the QNN engine's encode, " +
+                "downstream of the mel line by construction",
+            0,
+            liveLineCount(backend, "melToU16("),
+        )
+        val engine = source("src/main/java/com/whispereverywhere/transcription/QnnAsrEngine.kt")
+        assertEquals(
+            "…and the QNN engine quantises on exactly one live line, inside encode",
+            1,
+            liveLineCount(engine, "NpuQuantize.melToU16("),
+        )
+        assertTrue(
+            "that line is in `override fun encode(melF32: ByteBuffer)` — the member the backend " +
+                "calls after its mel line — and nowhere earlier in the arm",
+            memberBody(engine, "override fun encode(melF32: ByteBuffer): Refusal? {")
+                .contains("NpuQuantize.melToU16("),
         )
     }
 
@@ -412,22 +450,34 @@ class NpuDiagTest {
             }
         }
 
-        // EMISSION, and its gate.
+        // EMISSION, and its gate — RE-POINTED AT P1a with the block it guards: the melprobe line
+        // is QNN-shaped (it describes the ufixed16 block the DSP is bound to), so it moved into
+        // QnnAsrEngine.encode beside melToU16 and nativeEncode. Same needles, same order, one file
+        // over — and the backend, which no longer quantises, emits it nowhere.
         val backend =
             source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
         assertEquals(
-            "the backend emits the melprobe line exactly once per segment",
-            1,
+            "the backend emits no melprobe line of its own — a second emitter would double the " +
+                "Kotlin half of a comparison that has exactly one native half",
+            0,
             liveLineCount(backend, "NpuDiag.melProbe("),
         )
-        val quantise = offsetOfLive(backend, "NpuQuantize.melToU16(")
-        val probe = offsetOfLive(backend, "NpuDiag.melProbe(")
-        val encode = offsetOfLive(backend, "QnnAsrNative.nativeEncode(quantised)")
+        val engine = source("src/main/java/com/whispereverywhere/transcription/QnnAsrEngine.kt")
+        assertEquals(
+            "the QNN engine emits the melprobe line exactly once per segment",
+            1,
+            liveLineCount(engine, "NpuDiag.melProbe("),
+        )
+        val encodeBody = memberBody(engine, "override fun encode(melF32: ByteBuffer): Refusal? {")
+        val quantise = offsetOfLive(encodeBody, "NpuQuantize.melToU16(")
+        val probe = offsetOfLive(encodeBody, "NpuDiag.melProbe(")
+        val encode = offsetOfLive(encodeBody, "QnnAsrNative.nativeEncode(quantised)")
         assertTrue(
-            "the melprobe line ($probe) must be emitted BEFORE nativeEncode ($encode), so the two " +
-                "halves of the comparison land adjacent in one capture instead of straddling a " +
-                "405 ms encode and everything else that logs during it",
-            probe in (quantise + 1) until encode,
+            "the melprobe line ($probe) must be emitted AFTER melToU16 ($quantise) and BEFORE " +
+                "nativeEncode ($encode), all inside the engine's encode, so the two halves of the " +
+                "comparison land adjacent in one capture instead of straddling a 405 ms encode " +
+                "and everything else that logs during it",
+            quantise >= 0 && probe in (quantise + 1) until encode,
         )
     }
 
@@ -442,6 +492,31 @@ class NpuDiagTest {
             at += line.length + 1
         }
         return -1
+    }
+
+    /**
+     * One Kotlin member's body, bounded by the anchor's own indent — `NpuNativeContractTest`'s
+     * `kotlinMemberBody` rule (4.1 L1): the body ends at the first following non-blank line
+     * indented no further than the anchor's. Loud when the anchor is missing, because
+     * `indexOf() == -1` would otherwise rebase the scope silently onto the top of the file.
+     */
+    private fun memberBody(kt: String, anchor: String): String {
+        val start = kt.indexOf(anchor)
+        assertTrue("anchor \"$anchor\" is missing", start >= 0)
+        val lineStart = kt.lastIndexOf('\n', start - 1) + 1
+        val indent = kt.substring(lineStart, start).takeWhile { it == ' ' }.length
+        val lines = kt.substring(start).split("\n")
+        val body = StringBuilder(lines.first())
+        var closed = false
+        for (line in lines.drop(1)) {
+            if (line.isNotBlank() && line.takeWhile { it == ' ' }.length <= indent) {
+                closed = true
+                break
+            }
+            body.append("\n").append(line)
+        }
+        assertTrue("nothing at or left of \"$anchor\"'s own indent follows it", closed)
+        return body.toString()
     }
 
     // ---------------------------------------- 4.0 Q7b fix round (I3): the offer line
@@ -843,26 +918,20 @@ class NpuDiagTest {
     /**
      * FOLDED 4.1 ITEM (L1 m5), closed the way the finding demanded: [NpuDiag.unavailable]'s
      * KDoc stage enumeration had rotted — eight stages listed, six missing, one RETIRED stage
-     * (`assets`) still named — so the list is now RE-DERIVED from the backend's own decline
-     * sites and this test holds the KDoc equal to the derivation. A new stage, a renamed
-     * stage or a retired one now fails here by name instead of rotting silently. (The
+     * (`assets`) still named — so the list is RE-DERIVED from source, never retyped. (The
      * re-derivation itself caught the rot's true size: the stale list was off by SEVEN — the
      * brief's six plus the unlisted `session` — which is exactly why the rule is "derive from
      * source, never retype from memory".)
+     *
+     * RE-POINTED AT P1a, and made one link longer rather than looser. The stage names' one home
+     * is now [NpuStage], a closed enum, and the regex derivation over the decline sites moved
+     * with it to `NpuStageTest`, which holds the enum equal to the sites — in decline order,
+     * across the engine seam. This test holds the KDoc equal to the ENUM, reserved member
+     * included. So: KDoc == enum == decline sites; a new, renamed or retired stage still fails
+     * by name, now in whichever of the three it was changed without the others.
      */
     @Test
-    fun theUnavailableStageEnumerationIsReDerivedFromTheBackendsOwnDeclineSites() {
-        val backend =
-            source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
-        // Every decline funnels through fallBackToCpuTier/fallBackAndRun with a literal stage
-        // as its first argument (the one-funnel pin above proves the funnel); collect them in
-        // source order, first occurrence wins.
-        val declineSite = Regex("fallBack(?:ToCpuTier|AndRun)\\(\\s*\"([a-z-]+)\"")
-        val derived = declineSite.findAll(backend).map { it.groupValues[1] }.distinct().toList()
-        assertTrue(
-            "the derivation found a real population (got $derived)",
-            derived.size >= 10 && "encode" in derived && "decode" in derived,
-        )
+    fun theUnavailableStageEnumerationIsTheClosedStageEnumInDeclineOrder() {
         // The KDoc's own enumeration: the backticked lowercase tokens between @param stage and
         // @param detail. (CamelCase references in the same block don't match [a-z-]+.)
         val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
@@ -870,9 +939,10 @@ class NpuDiagTest {
         val documented = Regex("`([a-z-]+)`").findAll(stageBlock)
             .map { it.groupValues[1] }.toList()
         assertEquals(
-            "the KDoc enumerates exactly the stages the backend can produce, in decline-site " +
-                "order — re-derived, never retyped",
-            derived,
+            "the KDoc enumerates exactly NpuStage's wire words, in the enum's declaration order — " +
+                "which NpuStageTest holds equal to the decline sites, so this is still re-derived, " +
+                "never retyped",
+            NpuStage.entries.map { it.wire },
             documented,
         )
     }
