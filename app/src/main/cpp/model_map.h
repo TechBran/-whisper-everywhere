@@ -17,7 +17,10 @@
 // caller must keep: the mapping outlives the model, and the model the compiled model.
 //
 // THE ADVICE, in two phases. The compile pass reads the file once, front to back (the verifier, the
-// unpack, the dispatch handing the bytecode to Neuron): SEQUENTIAL, then WILLNEED. After the restore the run
+// unpack, the dispatch handing the bytecode to Neuron): SEQUENTIAL, whose readahead carries that read, then
+// WILLNEED, which only starts the first window early - the kernel caps it at max(io_pages, ra_pages) of the
+// range (measured: 8,192 KB of a 256 MB file under read_ahead_kb 8192, WSL2's 6.18), so it never pulls a
+// whole 1.3 GB file in ahead of its reader. After the restore the run
 // phase reads almost none of it - the encoder nothing, the decoder a row of its CPU-side embedding tables
 // per step: NORMAL (the pass is over, and SEQUENTIAL's readahead and its "read once" reclaim bias end with
 // it), then COLD, which deactivates the pages so reclaim takes them first. Never DONTNEED or PAGEOUT: the
@@ -92,8 +95,9 @@ inline std::string mapReadOnly(const std::string &path, Mapping *out) {
 }
 
 /// THE COMPILE PASS'S ADVICE: SEQUENTIAL (aggressive readahead; a page read once is not held as referenced),
-/// then WILLNEED (start reading the whole file now, ahead of the verifier and the restore). Advice only - a
-/// refusal changes speed, never correctness - so it answers the first errno, or 0. An empty mapping is 0.
+/// then WILLNEED (the first readahead window now - one window, not the file: see the top of this file).
+/// Advice only - a refusal changes speed, never correctness - so it answers the first errno, or 0. An empty
+/// mapping is 0.
 inline int adviseCompilePass(const Mapping &m) {
     if (isEmpty(m)) return 0;
     int err = 0;
