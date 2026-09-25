@@ -903,4 +903,62 @@ class NpuPackFetchTest {
             assertFalse("never the sideload family's sentence", sentence.contains("it wasn't installed from Play"))
         }
     }
+
+    // ------------------------------------------------ P3a review, small 1: no import on a MediaTek row
+
+    /**
+     * A REFUSAL NEVER NAMES AN IMPORT THE DEVICE IS NOT OFFERED (the P3a review, small 1). The
+     * machine's sentences name "'Import model pair…' below" — true on the Settings picker of a
+     * Qualcomm row, where that control is below, and false on a MediaTek row, which is offered no
+     * import at all (no zip is published for its pair; `NpuAssetImport.panelOfferedOn`). The pack
+     * controller publishes every refusal through [NpuPackFetch.reasonFor] with the device's rule.
+     * This holds, over EVERY code the library declares and both empty-delivery shapes: with the
+     * route, the reason is verbatim; without it, it names no import — and the four twins are
+     * pinned exactly, each still stating the fact and the one path forward that exists.
+     */
+    @Test
+    fun aRefusalWordedForADeviceWithoutTheImportRouteNeverNamesIt() {
+        val gen3 = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("8gen3")))
+        val mt6989 = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("mt6989")))
+        val every = intConstants(AssetPackErrorCode::class.java).values
+            .map { NpuPackFetch.failureReason(it, total) } +
+            NpuPackFetch.failureReason(NpuPackFetch.ERROR_PLAY_STORE_NOT_FOUND, total) +
+            NpuPackFetch.failureReason(NpuPackFetch.ERROR_INSUFFICIENT_STORAGE, 0L) +
+            listOf(NpuPackFetch.emptyDeliveryRefusal(gen3), NpuPackFetch.emptyDeliveryRefusal(mt6989))
+        assertTrue("the import-naming family is still there to be worded", every.any { it.contains("Import model pair") })
+        for (reason in every) {
+            assertEquals("with the route, verbatim: <<$reason>>", reason, NpuPackFetch.reasonFor(reason, importRoute = true))
+            val without = NpuPackFetch.reasonFor(reason, importRoute = false)
+            assertFalse("without the route, <<$without>> still names the import", without.lowercase().contains("import"))
+            assertTrue("…and still says something: <<$without>>", without.isNotBlank())
+            // …and the onboarding surface renders it verbatim: it carries no adjacency marker, so
+            // it is never turned into "import from Settings later" there either.
+            assertEquals(without, com.whispereverywhere.ui.onboarding.OnboardingLogic.onboardingFetchRefusal(without))
+        }
+        assertEquals(
+            "Google Play can't deliver the model to this install — it wasn't installed from Play, " +
+                "and on this device the model comes from Google Play only.",
+            NpuPackFetch.reasonFor(NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_NOT_OWNED, total), importRoute = false),
+        )
+        assertEquals(
+            "Google Play says this app is currently unavailable, so it can't deliver the model right " +
+                "now. Try again later.",
+            NpuPackFetch.reasonFor(NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_UNAVAILABLE, total), importRoute = false),
+        )
+        assertEquals(
+            "This version of the app doesn't offer that model pack on Google Play. Update the app " +
+                "from Play.",
+            NpuPackFetch.reasonFor(NpuPackFetch.failureReason(NpuPackFetch.ERROR_PACK_UNAVAILABLE, total), importRoute = false),
+        )
+        assertEquals(
+            "Google Play delivered no model for this device — the model's pack was not delivered. " +
+                "Retry the download. Nothing was installed.",
+            NpuPackFetch.reasonFor(NpuPackFetch.emptyDeliveryRefusal(mt6989), importRoute = false),
+        )
+        assertTrue(
+            "the sideload twin keeps the sideload family's own sentence",
+            NpuPackFetch.reasonFor(NpuPackFetch.failureReason(NpuPackFetch.ERROR_API_NOT_AVAILABLE, total), importRoute = false)
+                .contains("it wasn't installed from Play"),
+        )
+    }
 }

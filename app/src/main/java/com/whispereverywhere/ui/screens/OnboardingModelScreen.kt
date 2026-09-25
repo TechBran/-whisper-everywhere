@@ -428,6 +428,10 @@ fun OnboardingModelScreen(
                     pairBytes = censusPairBytes[model.id],
                     // (P3a) The card this device's family reads, and its family-sized badge.
                     family = npuFamily,
+                    // (The P3a review, small 1) Whether this device is offered the import route at
+                    // all — the panel's own rule. A MediaTek row is not (no zip is published for
+                    // its pair), so its card neither shows the import control nor names it.
+                    importOffered = NpuAssetImport.panelOfferedOn(npuFamily),
                     // 4.2 F7: a fetchable card's body tap FETCHES — the same one start site as
                     // the Get button — never the URL download, whose sink refuses gated tiers.
                     // Every other card keeps today's select.
@@ -663,6 +667,10 @@ private fun NpuImportPanel(
  * @param family the device's census family, or null off the census (P3a) — the card copy is
  *        `ModelTierCopy.forIdOn(model.id, family)`: the family's own card (a MediaTek family's
  *        turbo card carries no speed claim) with the family's own pair on its size chip.
+ * @param importOffered `NpuAssetImport.panelOfferedOn(family)` — whether this device is offered
+ *        the SAF import route at all (the P3a review, small 1). No default: assumed true, a
+ *        MediaTek card would offer an import no published zip can satisfy. False, the card shows
+ *        no "Import model pair…" / "Re-import model pair…" control and no sentence naming one.
  * @param onFetch starts (or retries) the Play fetch of this tier's pack (4.2 F7).
  * @param recovery the decline's CPU-recovery tap (4.3), or null when this card does not need one.
  *        Non-null EXACTLY when [unavailableNote] is the no-fallback arm — both come from
@@ -686,6 +694,7 @@ private fun ModelTierCard(
     refusal: String?,
     pairBytes: Long?,
     family: NpuSocFamily?,
+    importOffered: Boolean,
     onSelect: () -> Unit,
     onRetry: () -> Unit,
     onImport: () -> Unit = {},
@@ -978,12 +987,16 @@ private fun ModelTierCard(
                         Text("Use this model")
                     }
                     // Repair stays reachable, and it is named for what it actually does on this
-                    // tier: re-fetch for a URL tier, re-import for the paired one.
-                    TextButton(
-                        onClick = if (downloadable) onSelect else onImport,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(if (downloadable) "Download again" else "Re-import model pair…")
+                    // tier: re-fetch for a URL tier, re-import for the paired one — where the
+                    // device is offered an import at all (the P3a review, small 1: a MediaTek row
+                    // is not, and a Re-import there would open a picker no published zip fills).
+                    if (downloadable || importOffered) {
+                        TextButton(
+                            onClick = if (downloadable) onSelect else onImport,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (downloadable) "Download again" else "Re-import model pair…")
+                        }
                     }
                 }
 
@@ -994,7 +1007,10 @@ private fun ModelTierCard(
                 // failed branch names it in one sentence.
                 !downloadable -> {
                     Spacer(modifier = Modifier.height(12.dp))
-                    FetchActionArea(fetch = fetch, refusal = refusal, onFetch = onFetch, onImport = onImport)
+                    FetchActionArea(
+                        fetch = fetch, refusal = refusal, importOffered = importOffered,
+                        onFetch = onFetch, onImport = onImport,
+                    )
                 }
 
                 else -> {
@@ -1110,7 +1126,10 @@ private fun CpuRecoveryAction(state: DownloadState, onDownload: () -> Unit) {
  * fetch state while the controller says this tier's fetch is in flight, and on failure the
  * machine's own words — [NpuPackFetch.FetchState.Failed]'s reason VERBATIM, the F5 carrier
  * rule, which holds on THIS surface because the import affordance the ruled copy points at
- * ("below") really is below: the SAF panel sits under the lineup on this screen.
+ * ("below") really is below: the SAF panel sits under the lineup on this screen. (The P3a
+ * review, small 1: on a device offered no import at all — a MediaTek row — the controller words
+ * the reason without it, `NpuPackFetch.reasonFor`, and [importOffered] keeps the control and its
+ * bridge sentence off the card, so the reason is still rendered verbatim and still true.)
  *
  * Installed deliberately renders nothing special: `notifyModelInstalled()` bumps the install
  * generation, the producers re-run, and the card becomes the installed card — the existing
@@ -1122,6 +1141,7 @@ private fun CpuRecoveryAction(state: DownloadState, onDownload: () -> Unit) {
 private fun FetchActionArea(
     fetch: NpuPackFetch.FetchState?,
     refusal: String?,
+    importOffered: Boolean,
     onFetch: () -> Unit,
     onImport: () -> Unit,
 ) {
@@ -1149,16 +1169,17 @@ private fun FetchActionArea(
             }
             Spacer(modifier = Modifier.height(8.dp))
             FetchGetButton(onFetch)
-            FetchImportRoute(onImport)
+            if (importOffered) FetchImportRoute(onImport)
         }
 
-        else -> FetchStateArea(fetch = fetch, onFetch = onFetch, onImport = onImport)
+        else -> FetchStateArea(fetch = fetch, importOffered = importOffered, onFetch = onFetch, onImport = onImport)
     }
 }
 
 @Composable
 private fun FetchStateArea(
     fetch: NpuPackFetch.FetchState?,
+    importOffered: Boolean,
     onFetch: () -> Unit,
     onImport: () -> Unit,
 ) {
@@ -1219,18 +1240,23 @@ private fun FetchStateArea(
                     Text("Retry")
                 }
             }
-            Spacer(modifier = Modifier.height(4.dp))
             // The honest bridge — and since F7 fix round 1 (I-2) the control it promises is
             // directly below it, carrying THIS card's tier id. Before that fix this sentence
             // and the ruled adjacency copy above it both pointed at the panel below, which
             // hardcodes npu: for turbo — the tier the steer puts at the HEAD of the lineup —
-            // every failure named a route that could not install it.
-            Text(
-                text = "You can also import the model pair from a zip below.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            FetchImportRoute(onImport)
+            // every failure named a route that could not install it. (The P3a review, small 1)
+            // Only where the device is offered the import at all: on a MediaTek row no zip is
+            // published, so neither the sentence nor the control renders — and the reason above
+            // was worded without it by the controller (NpuPackFetch.reasonFor).
+            if (importOffered) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "You can also import the model pair from a zip below.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FetchImportRoute(onImport)
+            }
         }
 
         // F7 fix round 1 (m-2): Installed is its own INERT arm. It falls in the window between
@@ -1245,7 +1271,7 @@ private fun FetchStateArea(
         // for turbo too, and Settings' picker IS this screen).
         else -> {
             FetchGetButton(onFetch)
-            FetchImportRoute(onImport)
+            if (importOffered) FetchImportRoute(onImport)
         }
     }
 }

@@ -1620,4 +1620,29 @@ class NpuAssetImportTest {
         assertFalse("mt6989 — the Tab S10+ — is shown no small-pair import", NpuAssetImport.panelOfferedOn(NpuFleetCensus.familyById("mt6989")))
         assertFalse("off the census, nothing", NpuAssetImport.panelOfferedOn(null))
     }
+
+    /**
+     * THE PANEL'S RULE IS THE DEVICE'S WHOLE IMPORT RULE (the P3a review, small 1) — the card's
+     * "Import model pair…" / "Re-import model pair…" control, the sentence above it and every
+     * refusal that names it follow it too. That is right only while its proxy holds: a family
+     * offers the small tier exactly when every one of its pairs is a VENDOR package (a census row
+     * with a vendor zip, `sourceBytes`), whose delivery zips are published beside every release;
+     * a LOCAL pair (compiled here — the mt6989 one) has no published zip. Held row by row, so a
+     * census change that breaks the coincidence — a published MediaTek zip, a vendor family
+     * without small — fails HERE rather than silently offering an import nothing can fill, or
+     * hiding one a published zip could.
+     */
+    @Test
+    fun theImportRuleIsExactlyTheFamiliesWhosePairsAreVendorPackages() {
+        for (family in NpuFleetCensus.families) {
+            val pairs = NpuFleetCensus.artifacts.filter { it.familyId == family.id }
+            assertTrue("${family.id} has pairs", pairs.isNotEmpty())
+            assertEquals(
+                "${family.id}: the import is offered exactly where every pair is a vendor package " +
+                    "(${pairs.map { "${it.tierId}=${it.sourceBytes}" }})",
+                pairs.all { it.sourceBytes != null },
+                NpuAssetImport.panelOfferedOn(family),
+            )
+        }
+    }
 }

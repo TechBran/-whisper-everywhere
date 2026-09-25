@@ -79,6 +79,18 @@ object NpuAssetImport {
      * ruling). The tier is simply not offered there, so neither is its import — the QNN
      * behaviour for a tier a device cannot take. Null (off the census) answers false; the
      * capability gate beside it answers false there too.
+     *
+     * **THE ONE IMPORT RULE FOR THE DEVICE (the P3a review, small 1).** The same answer decides
+     * every import route the device is shown or told about: this panel, a gated card's
+     * "Import model pair…" / "Re-import model pair…" control and the sentence above it, and every
+     * fetch refusal that names the control (`NpuPackFetch.reasonFor`, which the pack controller
+     * publishes through). One rule, because the reason is one fact: a family that offers the small
+     * tier is a vendor family whose pairs — both tiers — are published as delivery zips beside
+     * every release, and the one family that does not, `mt6989` (turbo only), is a LOCAL compile
+     * with no published zip at all. `NpuAssetImportTest` holds that coincidence row by row
+     * (offers small ⟺ every pair is a vendor package), so a census change that breaks it —
+     * a published MediaTek zip, a vendor family without small — fails there rather than silently
+     * offering or hiding an import.
      */
     fun panelOfferedOn(family: NpuSocFamily?): Boolean = family != null && TIER_ID in family.tiers
 

@@ -297,7 +297,16 @@ object NpuPackController {
      */
     private fun publish(tierId: String, packName: String, next: NpuPackFetch.FetchState) {
         val previousWord = NpuPackFetch.statusWord(_state.value)
-        _state.value = next
+        // (The P3a review, small 1) Every refusal is worded for THIS device's import route: the
+        // machine's sentences name "'Import model pair…' below", which is true where the device is
+        // offered the import and false on a MediaTek row, which is offered none (no zip is
+        // published for its pair). This is the one funnel every published state passes, so the
+        // picker's card and the onboarding row both read the device's truth.
+        _state.value = if (next is NpuPackFetch.FetchState.Failed) {
+            NpuPackFetch.FetchState.Failed(NpuPackFetch.reasonFor(next.reason, importRouteOffered()))
+        } else {
+            next
+        }
         val word = NpuPackFetch.statusWord(next)
         val soFar: Long
         val total: Long
@@ -317,6 +326,15 @@ object NpuPackController {
         }
         Log.i(NpuDiag.TAG, NpuDiag.packLine(tierId, packName, word, soFar, total))
     }
+
+    /**
+     * Is THIS device offered the SAF import route at all? `NpuAssetImport.panelOfferedOn` for its
+     * census family — the one rule the Settings picker's panel, the gated card's import control
+     * and every refusal that names the import all follow (the P3a review, small 1). Read off the
+     * app's family memo, a table lookup.
+     */
+    private fun importRouteOffered(): Boolean =
+        NpuAssetImport.panelOfferedOn((appContext as? WhisperEverywhereApp)?.npuSocFamily)
 
     /** Launch the install exactly once per delivery, joining a cancelled predecessor first —
      *  the import controller's N4 lesson, kept: two installs write the same staging paths. */
