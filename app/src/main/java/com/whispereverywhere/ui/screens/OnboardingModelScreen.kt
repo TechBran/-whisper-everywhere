@@ -388,9 +388,13 @@ fun OnboardingModelScreen(
                     // again" after the recovery has moved the selection to the recovery tier — a restart
                     // that routesToNpu sends straight to the CPU, printed inches below the green
                     // note carrying the correct way back.
+                    // (P3a) The fourth input is WHOSE CHIP declined: "It is slower" is measured on
+                    // Qualcomm silicon and false on a MediaTek family, so the note states the
+                    // speed half only where it was measured.
                     unavailableNote = NpuTierStatus.cardNote(
                         npuTierReasons[model.id], cpuFallbackInstalled,
                         stillSelected = model.id == selectedTierId,
+                        vendor = npuFamily?.vendor,
                     ),
                     // 4.3 — the decline's one-tap recovery, on the card that declined. Non-null
                     // from the SAME rule the note's arm split uses, so the button and the sentence
@@ -456,7 +460,12 @@ fun OnboardingModelScreen(
             // gate-passing device with no assets there is no npu card in the lineup above, so this
             // panel is the only route the pair has onto the device, and it must not depend on the
             // pair being on the device.
-            if (npuCapable) {
+            // (P3a) AND only where the family offers the tier this panel imports. On a MediaTek
+            // row (turbo only) the panel promised a 338 MB small pair that does not exist for it,
+            // "much faster than the CPU" (false on the Tab S10+) and a release-page zip that is
+            // not published — a card that promises something. The tier is not offered there, so
+            // neither is its import (NpuAssetImport.panelOfferedOn; the census, not the disk).
+            if (npuCapable && NpuAssetImport.panelOfferedOn(npuFamily)) {
                 NpuImportPanel(
                     // The panel imports the npu (small) pair, so what it SAYS keys on that
                     // tier being ON DISK — not on lineup membership, which since the F7 union

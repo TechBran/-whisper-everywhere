@@ -306,6 +306,8 @@ class NpuImportWiringPinTest {
                     "                    unavailableNote = NpuTierStatus.cardNote(",
                     "                        npuTierReasons[model.id], cpuFallbackInstalled,",
                     "                        stillSelected = model.id == selectedTierId,",
+                    // (P3a) whose chip declined decides the note's speed clause.
+                    "                        vendor = npuFamily?.vendor,",
                     "                    ),",
                 ),
             ),

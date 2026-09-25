@@ -1592,4 +1592,32 @@ class NpuAssetImportTest {
             bounded.contains("Nothing was installed"),
         )
     }
+
+    /**
+     * THE IMPORT PANEL ONLY WHERE THE FAMILY OFFERS THE TIER IT IMPORTS (P3a). The Settings
+     * picker's panel imports the npu (small) pair and says so — "about 338 MB once installed",
+     * "much faster than the CPU", a zip from the release page. A MediaTek family is turbo only
+     * (the owner's ruling, on the census row): no small pair exists for it, the AI chip is not
+     * faster than the Tab S10+'s CPU rungs, and no MediaTek zip is published. So the panel is
+     * offered exactly on the families whose `tiers` carry the tier — every Qualcomm row — and on
+     * no MediaTek row and no off-census device. The picker's gate is pinned to this predicate by
+     * `ChooserSteerWiringPinTest`.
+     */
+    @Test
+    fun theImportPanelIsOfferedExactlyWhereTheFamilyOffersTheTierItImports() {
+        for (family in NpuFleetCensus.families) {
+            assertEquals(
+                "${family.id} (${family.vendor}): the panel follows the family's own tiers",
+                NpuAssetImport.TIER_ID in family.tiers,
+                NpuAssetImport.panelOfferedOn(family),
+            )
+            assertEquals(
+                "${family.id}: every Qualcomm row offers it and no MediaTek row does",
+                family.vendor == NpuVendor.QUALCOMM,
+                NpuAssetImport.panelOfferedOn(family),
+            )
+        }
+        assertFalse("mt6989 — the Tab S10+ — is shown no small-pair import", NpuAssetImport.panelOfferedOn(NpuFleetCensus.familyById("mt6989")))
+        assertFalse("off the census, nothing", NpuAssetImport.panelOfferedOn(null))
+    }
 }

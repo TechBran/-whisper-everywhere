@@ -69,6 +69,20 @@ object NpuAssetImport {
     const val TIER_ID: String = "npu"
 
     /**
+     * Does the IMPORT PANEL — the Settings picker's "This device has an AI chip (NPU)" card, which
+     * imports [TIER_ID]'s pair — belong on a device of [family] at all? (P3a.) Only where the
+     * family OFFERS that tier. Every Qualcomm row does. A MediaTek row is turbo only (the owner's
+     * ruling of 2026-09-24, on the census row), and there the panel promised a pair that does not
+     * exist for it: "about 338 MB once installed", "much faster than the CPU" (false on the Tab
+     * S10+, whose AI-chip commit is slower than its small and medium CPU rungs), and a model pair
+     * zip from the release page (none is published for MediaTek — Play only, until the licence
+     * ruling). The tier is simply not offered there, so neither is its import — the QNN
+     * behaviour for a tier a device cannot take. Null (off the census) answers false; the
+     * capability gate beside it answers false there too.
+     */
+    fun panelOfferedOn(family: NpuSocFamily?): Boolean = family != null && TIER_ID in family.tiers
+
+    /**
      * Every catalog tier this importer can serve — STRUCTURAL, not a literal list: any tier with
      * a [WhisperModel.pairedArtifact] imports through the same transaction, so the next npu-class
      * tier joins by the clause that already admits these two rather than by a string somebody has
