@@ -413,16 +413,23 @@ class NpuPackFetchTest {
      * `P` Pending, `I` Idle, `D` Downloading (the pair's summed bytes), `T` Transferring, `V`
      * Verifying (the pair's summed total — delivery complete, the install begins), `N`
      * NeedsConfirmation, `C` Cancelled, `F1`/`F2` Failed with part 1's / part 2's own reason.
-     * Written out, not derived: the worst status wins — Failed > Cancelled > NeedsConfirmation >
-     * Idle > Pending > Downloading > Transferring > Verifying — and the first failing part names it.
+     * Written out, not derived: the worst status wins and the first failing part names it — by
+     * Failed > Cancelled > NeedsConfirmation > Idle > Pending > Downloading > Transferring >
+     * Verifying while either part is unanswered (the `-` row and column), and, RE-SPECCED by the
+     * P2b review's small 1, by Failed > Cancelled > NeedsConfirmation > Downloading > Transferring
+     * > Pending > Idle > Verifying once BOTH have answered: a part moving bytes outranks one queued
+     * or idle, so sequential downloads show the pair's bar (the DOWN+PEND cell was a bar-less `P`
+     * for the whole 1.3 GB encoder) and a part downloading beside an idle one is never the Get
+     * button (IDLE+DOWN was `I`). Only cells inside the IDLE/PEND/DOWN/XFER square moved — ten of
+     * its sixteen; every other row and column, the DONE ones included, is what P2-4 wrote.
      */
     private val pairTable: List<String> = listOf(
         //       -    IDLE PEND DOWN XFER DONE FAIL CANC WIFI CONF UNKN    <- part 2
         /* -    */ "P    I    P    P    P    P    F2   C    N    N    F2",
-        /* IDLE */ "I    I    I    I    I    I    F2   C    N    N    F2",
-        /* PEND */ "P    I    P    P    P    P    F2   C    N    N    F2",
-        /* DOWN */ "P    I    P    D    D    D    F2   C    N    N    F2",
-        /* XFER */ "P    I    P    D    T    T    F2   C    N    N    F2",
+        /* IDLE */ "I    I    P    D    T    I    F2   C    N    N    F2",
+        /* PEND */ "P    P    P    D    T    P    F2   C    N    N    F2",
+        /* DOWN */ "P    D    D    D    D    D    F2   C    N    N    F2",
+        /* XFER */ "P    T    T    D    T    T    F2   C    N    N    F2",
         /* DONE */ "P    I    P    D    T    V    F2   C    N    N    F2",
         /* FAIL */ "F1   F1   F1   F1   F1   F1   F1   F1   F1   F1   F1",
         /* CANC */ "C    C    C    C    C    C    F2   C    C    C    F2",
@@ -471,6 +478,36 @@ class NpuPackFetchTest {
             }
         }
         assertEquals("all 121 combinations were executed", 121, cells)
+    }
+
+    /**
+     * The P2b review's small 1, as the two cells it named: Play downloading the parts one after
+     * another must show the pair's bar, not a bar-less Pending for the whole encoder; and a part
+     * downloading beside one Play reports idle must never show the Get button. Both only once
+     * every part has answered — an unanswered part keeps the pair Pending.
+     */
+    @Test
+    fun onceEveryPartHasAnsweredAPartMovingBytesNamesThePairsState() {
+        assertEquals(
+            "DOWN + PEND: the pair's bar, both parts' bytes",
+            NpuPackFetch.FetchState.Downloading(400_000_000L + 100_000_000L, 1_900_000_000L),
+            NpuPackFetch.advance(listOf(readingOf(0, "DOWN"), readingOf(1, "PEND"))),
+        )
+        assertEquals(
+            "IDLE + DOWN: busy, never the Get button",
+            NpuPackFetch.FetchState.Downloading(400_000_000L + 100_000_000L, 1_900_000_000L),
+            NpuPackFetch.advance(listOf(readingOf(0, "IDLE"), readingOf(1, "DOWN"))),
+        )
+        assertEquals(
+            "…but with part 2 unanswered the pair stays Pending — no bar over half its bytes",
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.advance(listOf(readingOf(0, "DOWN"), null)),
+        )
+        assertEquals(
+            "and the gating is unchanged: one part delivered, the other queued, is not delivered",
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.advance(listOf(readingOf(0, "DONE"), readingOf(1, "PEND"))),
+        )
     }
 
     @Test

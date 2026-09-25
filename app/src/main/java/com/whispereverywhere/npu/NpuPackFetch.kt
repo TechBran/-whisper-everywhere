@@ -278,7 +278,21 @@ object NpuPackFetch {
      * which is "furthest from delivered", with the three that need the USER on top: a failure the
      * card must name (the first failing part's, in part order), the user's own stop, and Play's
      * consent dialog — which covers every pack waiting on it, so one confirmation serves all
-     * parts. What the order buys, as rules:
+     * parts.
+     *
+     * **Once EVERY part has a reading, bytes moving outrank waiting** (the P2b review's small 1):
+     *
+     * ```
+     *   Failed > Cancelled > NeedsConfirmation > Downloading > Transferring > Pending > Idle > Verifying
+     * ```
+     *
+     * Play may download the parts one after another, and under the first order a part still queued
+     * (Pending) or not started (Idle) beside a part downloading showed a bar-less Pending for the
+     * whole 1.3 GB encoder — or, for Idle, the card's Get button while bytes were moving. With every
+     * part answered the summed total covers the pair, so the bar is honest; while ANY part is
+     * unanswered the first order holds, and the pair stays Pending (never a bar over half its
+     * bytes, never a second Get). Delivery gating is the same in both: Verifying is the best rank,
+     * answered only when every part is COMPLETED. What the order buys, as rules:
      *
      *  - **Install begins only when EVERY part is delivered.** [FetchState.Verifying] — the state
      *    the controller launches the install on — is the best rank, so the fold answers it only
@@ -312,8 +326,9 @@ object NpuPackFetch {
             if (reading == null) FetchState.Pending
             else advance(reading.status, reading.errorCode, reading.soFar, total)
         }
+        val everyPartAnswered = parts.all { it != null }
         // maxBy keeps the FIRST element of the highest rank: the first failing part, in part order.
-        return when (val worst = each.maxBy { rank(it) }) {
+        return when (val worst = each.maxBy { rank(it, everyPartAnswered) }) {
             is FetchState.Downloading -> FetchState.Downloading(soFar, total)
             is FetchState.Verifying -> FetchState.Verifying(0, total)
             else -> worst
@@ -343,15 +358,19 @@ object NpuPackFetch {
             .filter { (i, part) -> i < readings.size && readings[i] == null && part.packName in answered }
             .map { it.value.packName }
 
-    /** The fold's order (see the list [advance]): higher is worse. */
-    private fun rank(state: FetchState): Int = when (state) {
+    /**
+     * The fold's order (see the list [advance]): higher is worse. The top three and the bottom one
+     * never move; the four in-flight states reorder once [everyPartAnswered] — activity outranks
+     * waiting, so a part moving bytes names the pair's state.
+     */
+    private fun rank(state: FetchState, everyPartAnswered: Boolean): Int = when (state) {
         // Installed is never produced by a Play status (NpuPackFetchTest proves it for every
         // one), so it cannot reach the fold; ranked with Verifying for totality.
         is FetchState.Verifying, is FetchState.Installed -> 0
-        is FetchState.Transferring -> 1
-        is FetchState.Downloading -> 2
-        is FetchState.Pending -> 3
-        is FetchState.Idle -> 4
+        is FetchState.Transferring -> if (everyPartAnswered) 3 else 1
+        is FetchState.Downloading -> if (everyPartAnswered) 4 else 2
+        is FetchState.Pending -> if (everyPartAnswered) 2 else 3
+        is FetchState.Idle -> if (everyPartAnswered) 1 else 4
         is FetchState.NeedsConfirmation -> 5
         is FetchState.Cancelled -> 6
         is FetchState.Failed -> 7
