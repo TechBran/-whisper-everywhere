@@ -185,7 +185,24 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
- * **versionCode 114 — the plain successor to 113, and the NAME stays 4.16.0.** 113 went to the
+ * **versionCode 114 = 4.16.1 — the NAME moves and the CODE does not, and this paragraph is why
+ * that is not the silent mismatch this test exists to catch.** 114 was named 4.16.0 at 13:56 on
+ * 2026-09-25 for the licences-page notice (the paragraph below) and never left this machine: not
+ * uploaded to any track, not installed anywhere. A versionCode is spent by an UPLOAD or by an
+ * install the next build must replace; 114 is neither, so the same integer carries the new name —
+ * exactly as 98 carried 4.9.0 over the never-shipped 4.8.1. And the name moves by one in the last
+ * place because what a user sees changes, twice: on the AI-chip tiers speech with no breaks commits
+ * every 5 s instead of the 15 s wall (`SegmentCapPolicy.NPU_SUSTAINED_WALL_MS`, the owner's ruling
+ * of that evening — *"a fair compromise would be five seconds to start… straight across the board
+ * for all of the NPU accelerator tiers"*; CPU tiers and cloud sessions keep 15 s), and Play's
+ * `PACK_UNAVAILABLE` sentence says the pack is not available for this version YET. It also carries
+ * the MediaTek engine's mapped models (Native Heap PSS 3,193 → 1,604 MB and a 957 ms cold arm on
+ * the tablet, transcripts unchanged) and the ring's and the cap's diag lines routed to the native
+ * logger so a track build shows them. 113 on the internal track remains the 4.16.0 candidate; if
+ * it is promoted, 4.16.1 follows it as this build. Every bump — and this is not one — re-arms
+ * GpuPolicy's canary latches only when the CODE moves, so 114's latches are 114's (below).
+ *
+ * **versionCode 114 (as first named, 4.16.0) — the plain successor to 113.** 113 went to the
  * INTERNAL TRACK on 2026-09-25 — the owner's upload, after the Tab S10+ ship session
  * (`docs/measurements/2026-09-25-tab-apu-ship.md`: thirteen of fifteen rows pass, and after 32
  * minutes on the APU the owner said the tier "works fantastic") — so it is spent on the track
@@ -528,22 +545,22 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_16_0_at_version_code_114() {
+    fun release_identity_is_4_16_1_at_version_code_114() {
         assertEquals(
-            "versionName must be 4.16.0 for this release (app/build.gradle.kts defaultConfig): " +
-                "the MediaTek APU tier is a MINOR, because a whole silicon VENDOR gains the best tier " +
-                "(the Galaxy Tab S10+ / S10 Ultra, MT6989) — as whole Qualcomm generations did at " +
-                "4.12.0, 4.13.0 and 4.15.0. 114 keeps the name because a name is spent by a RELEASE " +
-                "and 113 was not promoted; if 113 is promoted before 114 uploads, 114 becomes 4.16.1",
-            "4.16.0",
+            "versionName must be 4.16.1 for this release (app/build.gradle.kts defaultConfig): " +
+                "a PATCH on 4.16.0 (113, the MediaTek APU tier, on the internal track) because what " +
+                "a user sees changes — the AI-chip tiers commit every 5 s under unbroken speech by " +
+                "the owner's ruling of 2026-09-25, and Play's not-available-yet wording — plus the " +
+                "mapped models and the diag routing, which change nothing a user sees",
+            "4.16.1",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
             "versionCode must be 114 for this release (app/build.gradle.kts defaultConfig). " +
-                "113 = 4.16.0 went to the internal track on 2026-09-25 (the owner's upload, after " +
-                "the Tab S10+ ship session), so its code is spent — Play refuses a second upload at " +
-                "a spent code; 112 = 4.15.1 was built for the internal track; 105 = 4.11.3 is in " +
-                "production",
+                "114 was named 4.16.0 at 13:56 on 2026-09-25 and never left this machine (not " +
+                "uploaded, not installed), so the same integer carries the new name — as 98 carried " +
+                "4.9.0; 113 = 4.16.0 went to the internal track on 2026-09-25 and is spent; " +
+                "105 = 4.11.3 is in production",
             114,
             BuildConfig.VERSION_CODE,
         )
