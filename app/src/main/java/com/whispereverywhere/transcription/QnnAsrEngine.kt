@@ -5,6 +5,7 @@ import com.whispereverywhere.npu.NpuAssetStage
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuModelSpec
 import com.whispereverywhere.npu.NpuQuantize
+import com.whispereverywhere.npu.NpuRuntimeNeeds
 import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.npu.NpuStage
 import com.whispereverywhere.npu.QnnAsrNative
@@ -57,6 +58,24 @@ class QnnAsrEngine : NpuAsrEngine {
     override fun probe(dispatchOrLibDir: String): String = QnnAsrNative.nativeProbe(dispatchOrLibDir)
 
     override fun prepare(appContext: Context, family: NpuSocFamily): Refusal? {
+        // THE ROW'S QNN NEEDS, or no stage at all (P2 — the census reshape moved the HTP
+        // version and the skel off the row and into its sealed `runtime`). A row of another
+        // vendor carries no DSP-side skel, and handing one to THIS engine is a wiring fault —
+        // yet the selector builds the QNN engine for every family until P2-7's vendor switch,
+        // so whatever keeps such a row from routing here is a property of other objects. Safe
+        // by a property of a different object is the shape this stack has paid for twice, so
+        // the engine refuses it by name, at the stage it is — its own staging — before
+        // anything QNN is touched: no skel is written and libQnnHtp.so is never dlopened on a
+        // chip that is not a Hexagon. The `when` is exhaustive on purpose: a third runtime
+        // variant fails to compile HERE rather than falling through to a cast.
+        val qnn = when (val needs = family.runtime) {
+            is NpuRuntimeNeeds.Qnn -> needs
+            is NpuRuntimeNeeds.LiteRtMediatek -> return Refusal(
+                NpuStage.SKEL,
+                "family ${family.id} is a ${family.vendor} row (LiteRT, Neuron " +
+                    "${needs.neuronMajor}) with no DSP-side skel — the QNN engine cannot arm it"
+            )
+        }
         // THE DSP-SIDE SKEL — THIS FAMILY'S ROW, staged from the APK's assets into
         // filesDir (4.1 L6 — the I5 answer; fleet-wide at 4.2 F2). packaging.jniLibs
         // EXCLUDES every census family's skel: under extractNativeLibs="false" a lib/ copy
@@ -67,10 +86,10 @@ class QnnAsrEngine : NpuAsrEngine {
         // census-pinned (bytes, sha256) pairs at build time, and this stage copies exactly
         // ONE of them, the row this device resolved to, into filesDir, the FIRST
         // ADSP_LIBRARY_PATH entry, where nativeInit's dlopen of libQnnHtp.so will have
-        // FastRPC find it. The three values are the family row's — the census is their one
-        // home, and a skel staged under another family's values is precisely the FastRPC
-        // mystery the required `family` parameter exists to prevent. The RETURN PATH IS
-        // DELIBERATELY UNUSED: FastRPC searches the environment, never Kotlin, so the
+        // FastRPC find it. The three values are the family row's QNN needs — the census is
+        // their one home, and a skel staged under another family's values is precisely the
+        // FastRPC mystery the required `family` parameter exists to prevent. The RETURN PATH
+        // IS DELIBERATELY UNUSED: FastRPC searches the environment, never Kotlin, so the
         // call's value is its refusal gate.
         //
         // stagedPathWithMarker, NOT stagedPath — the L3 handoff's explicit warning to this
@@ -82,12 +101,12 @@ class QnnAsrEngine : NpuAsrEngine {
         // up and then fail somewhere far less legible, inside FastRPC.
         NpuAssetStage.stagedPathWithMarker(
             appContext,
-            family.skelAsset,
-            family.skelBytes,
-            family.skelSha256,
+            qnn.skelAsset,
+            qnn.skelBytes,
+            qnn.skelSha256,
         ) ?: return Refusal(
             NpuStage.SKEL,
-            "${family.skelAsset} (family ${family.id}) could not be staged from the APK " +
+            "${qnn.skelAsset} (family ${family.id}) could not be staged from the APK " +
                 "into filesDir — the FastRPC loader would find no DSP-side skel to open"
         )
         return null

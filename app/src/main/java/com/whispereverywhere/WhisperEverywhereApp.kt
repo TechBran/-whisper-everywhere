@@ -13,10 +13,14 @@ import com.whispereverywhere.data.local.UsageTracker
 import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModelManager
+import com.whispereverywhere.npu.LiteRtAsrNative
+import com.whispereverywhere.npu.NpuApuDriverCheck
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuGate
+import com.whispereverywhere.npu.NpuRuntimeNeeds
 import com.whispereverywhere.npu.NpuSocFamily
+import com.whispereverywhere.npu.NpuVendor
 import com.whispereverywhere.transcription.NpuWhisperBackend
 import com.whispereverywhere.transcription.speakers.SpeakerSpikeStore
 
@@ -59,13 +63,24 @@ class WhisperEverywhereApp : Application() {
     }
 
     /**
-     * Whether this device's HARDWARE can run the 4.0 `npu` tier: the SoC gate, then the QNN probe.
+     * Whether this device's HARDWARE can run the NPU tiers: the SoC gate, then the runtime's own
+     * check — VENDOR-DISPATCHED since P2 (the MediaTek APU tier, design §2.2–2.3).
      *
-     * **`by lazy` because the probe dlopens `libQnnSystem.so` and `libQnnHtp.so`** — a real load
-     * the first time, and a chooser that recomposes must not repeat it. Computed at most once per
-     * process, and on the overwhelming majority of devices not at all past the first branch: the
-     * SoC gate is checked first inside [NpuWhisperBackend.isTierAvailable] and a Tensor, an Exynos
-     * or a MediaTek never reaches the dlopen.
+     * **Qualcomm: the QNN probe, memoised in [qnnCapableDevice], exactly as before P2.** `by lazy`
+     * because the probe dlopens `libQnnSystem.so` and `libQnnHtp.so` — a real load the first time,
+     * and a chooser that recomposes must not repeat it. Computed at most once per process, and on
+     * the overwhelming majority of devices not at all past the first branch: the SoC gate is
+     * checked first inside [NpuWhisperBackend.isTierAvailable] and a Tensor or an Exynos never
+     * reaches a dlopen. Every device that is not a MediaTek row — Qualcomm and off-census alike —
+     * reads that memo, so their answer is the 4.15 answer by construction.
+     *
+     * **MediaTek: the driver check's STORED verdict, re-read on every call.** Its answer is filled
+     * at process start, off Main, by [settleApuDriverVerdict] (design §2.3), and it moves exactly
+     * once — from unknown to a verdict — so a memo would freeze "unknown" for the life of the
+     * process. Re-reading costs a table lookup and a StateFlow read: [isTierAvailable]'s MediaTek
+     * arm never dlopens. The 4.0 note that this "cannot change within a process" holds for
+     * Qualcomm and is amended for MediaTek, whose choosers key their producers on
+     * [NpuApuDriverCheck.verdict] to re-read when it lands.
      *
      * **Not Main-safe** — `QnnAsrNative`'s threading contract forbids Main for every entry point,
      * so every reader forces this off the main thread. [offeredNpuTierIds] is the reader that
@@ -94,22 +109,31 @@ class WhisperEverywhereApp : Application() {
     private val npuSocManufacturer: String?
         get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MANUFACTURER else null
 
-    val npuCapableDevice: Boolean by lazy {
-        NpuWhisperBackend.isTierAvailable(
-            socModel = npuSocModel,
-            socManufacturer = npuSocManufacturer,
-            libDir = applicationInfo.nativeLibraryDir,
-        )
-    }
+    val npuCapableDevice: Boolean
+        get() = if (npuSocFamily?.vendor == NpuVendor.MEDIATEK) npuTierAvailable() else qnnCapableDevice
+
+    /**
+     * The QNN answer's memo — [npuCapableDevice] for every device that is not a MediaTek row,
+     * computed at most once per process because its first read dlopens two QNN libraries.
+     */
+    private val qnnCapableDevice: Boolean by lazy { npuTierAvailable() }
+
+    /** The gate's one call site: both arms of [npuCapableDevice] ask it, one memoised, one fresh. */
+    private fun npuTierAvailable(): Boolean = NpuWhisperBackend.isTierAvailable(
+        socModel = npuSocModel,
+        socManufacturer = npuSocManufacturer,
+        libDir = applicationInfo.nativeLibraryDir,
+    )
 
     /**
      * The census row this device's silicon resolves to, or null off the census (4.2 F2).
      *
      * Memoised for IDENTITY, not for cost — `NpuGate.familyFor` is a pure table lookup and
      * cannot dlopen, so unlike [npuCapableDevice] this is Main-safe. Everything per-family
-     * downstream reads THIS one resolution: `NpuBackendSelector` hands it to the backend, which
-     * stages the row's own `skelAsset`/`skelBytes`/`skelSha256` — so the skel a session stages
-     * and the gate that offered the session can never come from two readings of the census.
+     * downstream reads THIS one resolution: `NpuBackendSelector` hands it to the backend, whose
+     * engine stages the row's own runtime needs (for QNN, the skel in its `runtime`) — so the
+     * skel a session stages and the gate that offered the session can never come from two
+     * readings of the census.
      *
      * It reads the two guarded getters above and adds NO new SOC read site — the API-31 guard
      * keeps exactly one site per field, and `ChooserSteerWiringPinTest` proves it by the same
@@ -166,9 +190,10 @@ class WhisperEverywhereApp : Application() {
      * cannot yet arrive is the one thing this gate exists to prevent.
      *
      * Re-read on every call rather than memoised: [npuCapableDevice] is a fact about the silicon
-     * and cannot change within a process, but the files can — Q8's importer creates them while the
-     * app is running, and a chooser that cached "not installed" would keep hiding the card the
-     * import just earned. It is a few `File` stats, then a memoised read.
+     * and cannot change within a process on Qualcomm (on MediaTek it moves once, from unknown to
+     * the driver check's verdict — see its KDoc), but the files can — Q8's importer creates them
+     * while the app is running, and a chooser that cached "not installed" would keep hiding the
+     * card the import just earned. It is a few `File` stats, then a memoised (or stored) read.
      *
      * **Never call from Main** — with anything installed it forces [npuCapableDevice], which
      * dlopens.
@@ -231,8 +256,10 @@ class WhisperEverywhereApp : Application() {
      * zero live reads of this set.
      *
      * **Never call from Main** — the same contract as [offeredNpuTierIds], pinned the same
-     * way: on a census device the `capable` argument forces [npuCapableDevice], whose first
-     * read dlopens two QNN libraries. The family conjunct is evaluated FIRST, so the whole
+     * way: on a Qualcomm census device the `capable` argument forces [npuCapableDevice], whose
+     * first read dlopens two QNN libraries (a MediaTek device reads its stored driver verdict
+     * instead, and since P2 [NpuFleetCensus.fetchableTierIds] offers only the family's own
+     * `tiers` — turbo alone on a MediaTek row). The family conjunct is evaluated FIRST, so the whole
      * off-census fleet answers empty without ever paying the probe — the same cost shape the
      * offer gate's installed-first ordering bought.
      *
@@ -276,6 +303,14 @@ class WhisperEverywhereApp : Application() {
         runCatching { whisperModelManager.reconcileNpuStagingDebris() }
             .onFailure { Log.w(NpuDiag.TAG, "npu: launch staging sweep failed", it) }
 
+        // (P2, the MediaTek APU tier) THE DRIVER CHECK, settled once per process — on MediaTek
+        // families only; every other device returns on its first line and never touches the
+        // LiteRT seam. Here because npuCapableDevice's MediaTek half READS this verdict and must
+        // never produce it on a chooser's path (design §2.3). Wrapped for the launch promise the
+        // sweep above makes: losing the tier may never cost the app its launch.
+        runCatching { settleApuDriverVerdict() }
+            .onFailure { Log.w(NpuDiag.TAG, "apu: the driver check could not be started", it) }
+
         // (4.10.0) THE SPEAKER SPIKE'S DUMP IS PURGED AT EVERY LAUNCH, and this call is gated on
         // NOTHING — see SpeakerSpike.purge for the whole argument. The 4.10 spike wrote
         // per-segment fingerprints, and behind a flag file the controller touched with `adb` the
@@ -295,6 +330,79 @@ class WhisperEverywhereApp : Application() {
 
         // Create notification channel for foreground service
         createNotificationChannel()
+    }
+
+    /**
+     * THE MEDIATEK DRIVER CHECK'S VERDICT FOR THIS PROCESS (P2; design §2.3 items 1–3) — what
+     * [npuCapableDevice]'s MediaTek half reads.
+     *
+     *  1. **Not a MediaTek row → nothing.** The first two lines return on every Qualcomm and
+     *     off-census device, so their launch is exactly 4.15's: no thread, no LiteRT.
+     *  2. **A stored verdict that still answers → published now.** Taken on this ROM
+     *     (`Build.FINGERPRINT`), by this build, against this family's Neuron major — the
+     *     [NpuApuDriverCheck.reusableOrNull] rule, whose keys say why each is one. The read is
+     *     the device-local store `PreferencesManager` loaded at construction, so this is Main-safe
+     *     and a later launch's chooser never sees "unknown" at all.
+     *  3. **Otherwise one probe, on a daemon thread of its own** — `LiteRtAsrNative.nativeProbe`,
+     *     whose first walk holds bionic's loader lock for 169–239 ms, so never Main — then the
+     *     verdict is published (every chooser keyed on it re-reads) and persisted device-locally.
+     *     Until it lands the verdict is unknown, which [NpuGate.runtimeAvailable] answers as
+     *     not-yet-capable.
+     *
+     * The dispatch directory it hands the probe is [NpuApuDriverCheck.dispatchDir] — the name's one
+     * home, which the dispatch staging and the LiteRT engine reuse. At P2-2 nothing is staged there
+     * and the manifest does not yet declare the adapter, so on a MediaTek device the answer is a
+     * refusal (`adapter-missing`, or `runtime: …`): the correct answer for a build that cannot run
+     * the tier, and one this build's successor re-probes rather than inherits (the verdict is keyed
+     * on the build as well as the ROM).
+     *
+     * The service's boot prewarm running the probe when this has not (design §2.3 item 1) is
+     * P2-7's; the `apu:` driver line is the native probe's own, and this adds one
+     * [NpuDiag.apuVerdict] line saying which verdict the process holds and where it came from.
+     */
+    private fun settleApuDriverVerdict() {
+        val family = npuSocFamily ?: return
+        val needs = family.runtime as? NpuRuntimeNeeds.LiteRtMediatek ?: return
+        val fingerprint = Build.FINGERPRINT
+        val build = BuildConfig.VERSION_CODE
+        val stored = NpuApuDriverCheck.reusableOrNull(
+            preferencesManager.npuApuVerdict, fingerprint, build, needs.neuronMajor,
+        )
+        if (stored != null) {
+            NpuApuDriverCheck.publish(stored)
+            Log.i(NpuDiag.TAG, NpuDiag.apuVerdict(stored, reused = true))
+            return
+        }
+        val files = filesDir
+        val libDir = applicationInfo.nativeLibraryDir
+        val prefs = preferencesManager
+        val thread = Thread(
+            {
+                // Wrapped whole: an uncaught throw on this thread would take the PROCESS down
+                // (Android's default handler), and the tier may never cost the app its life.
+                // probeNow already turns anything the probe throws into a named refusal.
+                runCatching {
+                    val verdict = NpuApuDriverCheck.probeNow(
+                        probe = { dispatchDir, lib, wantMajor ->
+                            LiteRtAsrNative.nativeProbe(dispatchDir, lib, wantMajor)
+                        },
+                        filesDir = files,
+                        libDir = libDir,
+                        fingerprint = fingerprint,
+                        appBuild = build,
+                        wantMajor = needs.neuronMajor,
+                        clock = System::currentTimeMillis,
+                    )
+                    NpuApuDriverCheck.publish(verdict)
+                    Log.i(NpuDiag.TAG, NpuDiag.apuVerdict(verdict, reused = false))
+                    runCatching { prefs.recordNpuApuVerdict(verdict) }
+                        .onFailure { Log.w(NpuDiag.TAG, "apu: the verdict could not be stored", it) }
+                }.onFailure { Log.w(NpuDiag.TAG, "apu: the driver check failed", it) }
+            },
+            "npu-apu-driver-check",
+        )
+        thread.isDaemon = true
+        thread.start()
     }
 
     /**

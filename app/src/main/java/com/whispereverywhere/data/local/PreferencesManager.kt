@@ -3,6 +3,7 @@ package com.whispereverywhere.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import com.whispereverywhere.model.ModelInstallSignal
+import com.whispereverywhere.npu.NpuApuVerdict
 import com.whispereverywhere.npu.NpuRedownload
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.BubbleColours
@@ -405,6 +406,22 @@ class PreferencesManager(private val context: Context) {
             .apply()
         _npuRedownload.value = null
         return true
+    }
+
+    /**
+     * THE MEDIATEK DRIVER CHECK'S STORED VERDICT (P2; design §2.3 item 3), or null when none is
+     * stored or the stored one is unreadable — both of which mean "probe again". Device-local by
+     * this store's rule: it is a fact about THIS device's driver, and restored onto another it
+     * would answer for a ROM it was never taken on (its fingerprint would refuse it anyway — two
+     * walls, not one). Read once per process by `WhisperEverywhereApp.settleApuDriverVerdict`,
+     * which decides whether it still answers (`NpuApuDriverCheck.reusableOrNull`).
+     */
+    val npuApuVerdict: NpuApuVerdict?
+        get() = readNpuApuVerdict { key, default -> deviceLocal.getString(key, default) }
+
+    /** Store the driver check's verdict — one key, one JSON document, so it cannot tear. */
+    fun recordNpuApuVerdict(verdict: NpuApuVerdict) {
+        deviceLocal.edit().putString(KEY_NPU_APU_VERDICT, verdict.encode()).apply()
     }
 
     /**
@@ -978,6 +995,18 @@ class PreferencesManager(private val context: Context) {
             val census = getString(KEY_NPU_REDOWNLOAD_CENSUS, null) ?: return null
             return NpuRedownload(tier, census)
         }
+
+        /** The driver check's stored verdict (P2) — device-local, like the re-download record. */
+        internal const val KEY_NPU_APU_VERDICT = "npu_apu_verdict"
+
+        /**
+         * The one production read of the stored driver verdict, as a pure function of a
+         * `getString(key, default)` accessor — the [readNpuRedownload] seam, so a map stands in for
+         * the store in the round-trip test. Anything `NpuApuVerdict.decode` refuses reads as no
+         * record, which is the safe answer: probe again.
+         */
+        internal fun readNpuApuVerdict(getString: (String, String?) -> String?): NpuApuVerdict? =
+            NpuApuVerdict.decode(getString(KEY_NPU_APU_VERDICT, null))
         private const val KEY_STT_PROVIDER = "stt_provider_id"
         private const val KEY_STT_LIVE_MODE = "stt_live_mode"
         /** Gemini's own live flag (4.3.4, default on); the shared key above never applies to Gemini. */

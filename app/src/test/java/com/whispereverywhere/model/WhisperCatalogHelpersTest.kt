@@ -3,6 +3,7 @@ package com.whispereverywhere.model
 import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuModelSpec
+import com.whispereverywhere.npu.NpuVendor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -1204,13 +1205,35 @@ class WhisperCatalogHelpersTest {
         assertNotNull("the streaming arc's spec row", NpuModelSpec.forTier("npu"))
         assertNotNull("a hidden tier still needs its card copy", ModelTierCopy.forId("npu"))
         assertTrue("the importer still knows the pair", NpuAssetImport.PAIRED_TIER_IDS.contains("npu"))
+        // VENDOR-SCOPED AT P2-3 (design §1, non-goals — an amendment to the census contract,
+        // stated as such): every QUALCOMM family keeps its npu pack, exactly as 4.3 left them,
+        // because hiding is not deleting. A MediaTek family has turbo only — not a hidden small
+        // pack but none ever built, by the owner's ruling for the tablets (2026-09-24): "Don't
+        // necessarily need small for the tablets."
         NpuFleetCensus.families.forEach { family ->
-            assertNotNull(
-                "the census lost ${family.id}'s npu artifact — the pack machinery is untouched " +
-                    "by 4.3, which hides a tier from the chooser and nothing else",
-                NpuFleetCensus.artifactFor(family.id, "npu"),
-            )
+            when (family.vendor) {
+                NpuVendor.QUALCOMM -> assertNotNull(
+                    "the census lost ${family.id}'s npu artifact — the pack machinery is untouched " +
+                        "by 4.3, which hides a tier from the chooser and nothing else",
+                    NpuFleetCensus.artifactFor(family.id, "npu"),
+                )
+                NpuVendor.MEDIATEK -> {
+                    assertNull(
+                        "${family.id} is a MediaTek family: turbo only, no small pack to keep",
+                        NpuFleetCensus.artifactFor(family.id, "npu"),
+                    )
+                    assertEquals(
+                        "…and it offers exactly turbo",
+                        setOf("npu-turbo"),
+                        family.tiers,
+                    )
+                }
+            }
         }
+        assertTrue(
+            "the Qualcomm half is the six families it was",
+            NpuFleetCensus.families.count { it.vendor == NpuVendor.QUALCOMM } == 6,
+        )
     }
 
     // ------------------------------------------------------- 4.6: the catalog records mel width

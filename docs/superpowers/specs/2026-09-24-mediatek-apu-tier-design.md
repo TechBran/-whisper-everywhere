@@ -141,6 +141,13 @@ What, therefore:
    finishes it reads "unknown", which the chooser treats as not-yet-capable and re-reads when the probe
    completes (a flow, not a lazy val — the lazy `npuCapableDevice` KDoc's "cannot change within a process"
    holds for Qualcomm and is amended for MediaTek).
+   *Corrected at P2-2, where this met the code:* `nativeProbe` answers only `""` or `"probe: <reason>"` —
+   the driver's name and version are printed natively on its `apu:` line — so the stored record
+   (`NpuApuVerdict`, device-local) keeps the fingerprint, the app's versionCode, the family's wanted major,
+   the verdict and the timestamp; and it is re-probed when the fingerprint OR the app build OR the major
+   changes, because the answer depends on the build too (the adapter declaration and `libLiteRt.so`
+   packaging arrive at P2-6, and a refusal stored by a build without them must not be inherited by one
+   with them).
 4. **The chip check** (the half of the owner's ask the driver version does not answer): at `init`, the model's
    `LiteRtStamp` (`MediaTek` / `mt6989`, read from the file's metadata) must equal `family.runtime.socStamp`;
    the bytecode's compiler stamp is recorded at build time in the pack metadata (§2.7, provenance "host

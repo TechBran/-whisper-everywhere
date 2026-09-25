@@ -52,11 +52,19 @@ class NpuRefreshNoticeTest {
         for (a in NpuFleetCensus.artifacts) {
             val family = NpuFleetCensus.familyById(a.familyId)!!
             val bytes = NpuRefreshNotice.downloadBytesFor(family, a.tierId)
-            assertEquals("${a.familyId}/${a.tierId}: the size is the row's vendor zip", a.vendorZipBytes, bytes)
+            // (P2) The census field is `sourceBytes`: the vendor zip's length on a vendor row, and
+            // null on a LOCAL row, which has no vendor zip and was never part of the refresh this
+            // notice announces — so it answers null here too, the "nothing to get" answer.
+            val zip = a.sourceBytes
+            if (zip == null) {
+                assertNull("${a.familyId}/${a.tierId}: a row with no vendor zip names no download", bytes)
+                continue
+            }
+            assertEquals("${a.familyId}/${a.tierId}: the size is the row's vendor zip", zip, bytes)
             val mb = NpuRefreshNotice.downloadMb(bytes!!)
             assertTrue(
-                "${a.familyId}/${a.tierId}: $mb MB is the nearest whole SI megabyte to ${a.vendorZipBytes} B",
-                kotlin.math.abs(mb * 1_000_000.0 - a.vendorZipBytes) <= 500_000.0,
+                "${a.familyId}/${a.tierId}: $mb MB is the nearest whole SI megabyte to $zip B",
+                kotlin.math.abs(mb * 1_000_000.0 - zip) <= 500_000.0,
             )
             assertTrue(
                 "${a.familyId}/${a.tierId}: the text states that number",

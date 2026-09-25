@@ -216,13 +216,20 @@ class NpuPackMetadataTest {
     @Test
     fun crossCheckAnswersNullForEveryMatchingFamilyAndTier() {
         // The whole fleet: a metadata document built FROM each artifact row cross-checks
-        // silently against its own family and tier — all eight, so no row's pack is refused
-        // by the peek that exists to protect it.
-        for (a in NpuFleetCensus.artifacts) {
+        // silently against its own family and tier — every QNN row's, so no row's pack is
+        // refused by the peek that exists to protect it. (P2: a version-1 document carries an
+        // HTP version, which is the row's QNN needs since the census reshape — so the loop is
+        // over the rows whose runtime is QNN, which is every Qualcomm row by construction.)
+        val qnnArtifacts = NpuFleetCensus.artifacts.filter {
+            NpuFleetCensus.familyById(it.familyId)!!.runtime is NpuRuntimeNeeds.Qnn
+        }
+        assertTrue("the QNN rows' artifacts were found", qnnArtifacts.isNotEmpty())
+        for (a in qnnArtifacts) {
             val f = NpuFleetCensus.familyById(a.familyId)!!
+            val htp = (f.runtime as NpuRuntimeNeeds.Qnn).htpVersion
             val meta = NpuPackMetadata.parse(
                 "{\"version\": 1, \"tierId\": \"${a.tierId}\", \"familyId\": \"${a.familyId}\"," +
-                    "\"htpVersion\": ${f.htpVersion}, \"packGroup\": \"${f.packGroup}\"," +
+                    "\"htpVersion\": $htp, \"packGroup\": \"${f.packGroup}\"," +
                     "\"entries\": [" +
                     "{\"fileName\": \"${a.encoder.fileName}\", \"bytes\": ${a.encoder.bytes}, " +
                     "\"sha256\": \"${a.encoder.sha256}\"}," +
@@ -234,6 +241,35 @@ class NpuPackMetadataTest {
                 NpuPackMetadata.crossCheckRefusal(meta, f, a, a.tierId)
             )
         }
+    }
+
+    @Test
+    fun aVersionOneDocumentCanNeverDescribeAMediatekFamilysPack() {
+        // (P2-3) Version 1 carries an HTP version — a Hexagon — so it is a Qualcomm pack's shape.
+        // On the mt6989 row the HTP arm refuses it WHATEVER its number, even with every other
+        // field matching that row: the MediaTek twin of this check is metadata version 2's (a
+        // later P2 task), and until it exists no v1 document may install a MediaTek pair.
+        val mt6989 = NpuFleetCensus.familyById("mt6989")!!
+        val pair = NpuFleetCensus.artifactFor("mt6989", "npu-turbo")!!
+        val meta = NpuPackMetadata.parse(metaJson(
+            familyId = "\"mt6989\"", htpVersion = "75", packGroup = "\"soc_mt6989\"",
+            entries = entriesJson(
+                encoderName = pair.encoder.fileName, encoderBytes = pair.encoder.bytes,
+                encoderSha = pair.encoder.sha256, decoderName = pair.decoder.fileName,
+                decoderBytes = pair.decoder.bytes, decoderSha = pair.decoder.sha256,
+            ),
+        ))
+        val refusal = NpuPackMetadata.crossCheckRefusal(meta, mt6989, pair, "npu-turbo")
+        assertNotNull("a v1 document on a MediaTek row refuses", refusal)
+        assertTrue(
+            "and says why in the pack's own terms — a Qualcomm pack on MediaTek's APU: $refusal",
+            refusal!!.contains("HTP v75") && refusal.contains("MediaTek's APU") &&
+                refusal.contains("Nothing was installed")
+        )
+        assertNull(
+            "while the same shape of document still passes on the Qualcomm row it describes",
+            NpuPackMetadata.crossCheckRefusal(NpuPackMetadata.parse(metaJson()), family, artifact, "npu-turbo")
+        )
     }
 
     @Test

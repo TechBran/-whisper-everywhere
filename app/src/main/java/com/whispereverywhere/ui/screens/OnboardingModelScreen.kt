@@ -28,6 +28,7 @@ import com.whispereverywhere.model.ModelScope
 import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModel
+import com.whispereverywhere.npu.NpuApuDriverCheck
 import com.whispereverywhere.npu.NpuAssetImport
 import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuImportController
@@ -85,8 +86,15 @@ fun OnboardingModelScreen(
     // those renders a card whose action is the Play fetch (below). Routing never reads the
     // union: everything that routes a session keeps reading the offered set alone, because a
     // fetchable tier has nothing on disk to run.
+    //
+    // (P2) KEYED ON THE MEDIATEK DRIVER CHECK'S VERDICT TOO — both device producers here. On a
+    // MediaTek family the capability half is the verdict Application.onCreate settles off Main,
+    // UNKNOWN until its probe lands; unknown answers not-yet-capable, and this key re-reads both
+    // producers the moment it arrives. On every other device the verdict never leaves null, the
+    // key never moves, and both producers are exactly 4.15's.
     val installGeneration by ModelInstallSignal.generation.collectAsState()
-    val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {
+    val apuVerdict by NpuApuDriverCheck.verdict.collectAsState()
+    val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration, key2 = apuVerdict) {
         value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() + app.fetchableNpuTierIds() }
     }
     // THE SECOND PRODUCER, and it is a different question from the first (4.0, Q8).
@@ -94,10 +102,11 @@ fun OnboardingModelScreen(
     // assets the set is empty — and no gated tier is in the lineup at all. That is correct for
     // the CHOOSER and fatal for the IMPORT: an import entry gated on the offer gate could only
     // ever appear after the files it exists to fetch had already arrived. So the import's gate is
-    // the capability half alone, read here. `npuCapableDevice` is `by lazy`, so this costs one
-    // memo read after the first; it is keyed identically anyway, because what the panel below
-    // renders depends on the installed half and must re-read when an import lands.
-    val npuCapable by produceState(initialValue = false, key1 = installGeneration) {
+    // the capability half alone, read here. On Qualcomm `npuCapableDevice` is a memo, so this
+    // costs one memo read after the first; on MediaTek it is the driver check's stored verdict,
+    // re-read on the verdict key. It is keyed on the install generation as well, because what
+    // the panel below renders depends on the installed half and must re-read when an import lands.
+    val npuCapable by produceState(initialValue = false, key1 = installGeneration, key2 = apuVerdict) {
         value = withContext(Dispatchers.IO) { app.npuCapableDevice }
     }
     // Which tiers are actually on disk. Off Main — `isInstalled` stats one or two files per tier —

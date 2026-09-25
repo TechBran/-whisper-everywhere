@@ -51,7 +51,7 @@ class NpuStalePairSweepTest {
         return PackArtifact(
             familyId = familyId,
             tierId = tierId,
-            vendorZipBytes = 1_234L,
+            sourceBytes = 1_234L,
             encoder = PackEntry(model.fileName, encoderBytes, "e".repeat(64)),
             decoder = PackEntry(model.pairedArtifact!!.fileName, decoderBytes, "d".repeat(64)),
             evidence = "constructed in NpuStalePairSweepTest",
