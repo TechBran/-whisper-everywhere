@@ -87,9 +87,12 @@ object NpuAssetStage {
         "$expectedSha256 $bytes $mtime"
 
     /** Does the marker vouch for [dest] as it is RIGHT NOW, against THIS expectation? */
-    fun markerVouches(dest: File, expectedBytes: Long, expectedSha256: String): Boolean {
+    fun markerVouches(dest: File, expectedBytes: Long, expectedSha256: String): Boolean =
+        vouches(dest, markerFile(dest), expectedBytes, expectedSha256)
+
+    /** [markerVouches] against a marker kept wherever the stage keeps it ([stageIntoDir]'s). */
+    private fun vouches(dest: File, marker: File, expectedBytes: Long, expectedSha256: String): Boolean {
         if (!dest.isFile || dest.length() != expectedBytes) return false
-        val marker = markerFile(dest)
         if (!marker.isFile) return false
         val recorded = try {
             marker.readText()
@@ -113,15 +116,31 @@ object NpuAssetStage {
         expectedBytes: Long,
         expectedSha256: String,
         open: () -> InputStream,
+    ): StageResult = stageMarked(
+        dest, File(dest.parentFile, dest.name + PART_SUFFIX), markerFile(dest),
+        assetName, expectedBytes, expectedSha256, open,
+    )
+
+    /**
+     * The marker arm with its two working files wherever the caller keeps them — beside [dest]
+     * for [stageWithMarker], outside the scanned directory for [stageIntoDir].
+     */
+    private fun stageMarked(
+        dest: File,
+        part: File,
+        marker: File,
+        assetName: String,
+        expectedBytes: Long,
+        expectedSha256: String,
+        open: () -> InputStream,
     ): StageResult {
-        if (markerVouches(dest, expectedBytes, expectedSha256)) {
+        if (vouches(dest, marker, expectedBytes, expectedSha256)) {
             return StageResult.Staged(dest)
         }
         // The marker did not vouch, so it must not survive a failed re-stage to vouch later:
         // delete FIRST, re-create only after a full verification has passed again.
-        val marker = markerFile(dest)
         deleteMarker(marker, "it did not vouch and must not survive the re-stage")
-        val outcome = stage(dest, assetName, expectedBytes, expectedSha256, open)
+        val outcome = stageVia(dest, part, assetName, expectedBytes, expectedSha256, open)
         if (outcome is StageResult.Staged) {
             try {
                 marker.writeText(
@@ -186,6 +205,19 @@ object NpuAssetStage {
         expectedBytes: Long,
         expectedSha256: String,
         open: () -> InputStream,
+    ): StageResult = stageVia(
+        dest, File(dest.parentFile, dest.name + PART_SUFFIX),
+        assetName, expectedBytes, expectedSha256, open,
+    )
+
+    /** [stage] with its `.part` wherever the caller keeps it; see [stage] for the contract. */
+    private fun stageVia(
+        dest: File,
+        part: File,
+        assetName: String,
+        expectedBytes: Long,
+        expectedSha256: String,
+        open: () -> InputStream,
     ): StageResult {
         // THE IDEMPOTENT ARM, and it is first because it is the common one: `load` runs on every
         // session and the asset changes only when the APK does. One stat and one hash of 103 KB.
@@ -193,7 +225,6 @@ object NpuAssetStage {
             return StageResult.Staged(dest)
         }
 
-        val part = File(dest.parentFile, dest.name + PART_SUFFIX)
         val digest = MessageDigest.getInstance("SHA-256")
         var written = 0L
         try {
@@ -303,7 +334,99 @@ object NpuAssetStage {
         return pathOrRefusal(outcome)
     }
 
-    /** One rendering of an outcome, so both `Context` entry points refuse identically. */
+    /**
+     * The sibling directory a staged DIRECTORY keeps its working files in — `<dir>.staged/`
+     * beside `<dir>/` (`filesDir/litert_dispatch.staged/` for the dispatch; P2-6, design §2.6).
+     */
+    fun markerDirFor(dir: File): File = File(dir.parentFile, dir.name + MARKER_SUFFIX)
+
+    /**
+     * THE SUBDIRECTORY-AWARE STAGE (P2-6, the MediaTek APU tier; design §2.6): [assetName] into
+     * [dir] as the ONLY file there, through the marker fast path, with both working files — the
+     * `.part` in flight and the `.staged` marker — kept OUTSIDE [dir], in [markerDir].
+     *
+     * **Why a second shape.** LiteRT scans its dispatch directory for the vendor library it
+     * loads, and the Neuron adapter walk's fourth candidate is `<dir>/libneuron_adapter.so` — so
+     * whatever sits in that directory is something the runtime reads. [stageWithMarker] writes
+     * `<name>.part` and `<name>.staged` BESIDE its destination, which inside a scanned directory
+     * would be two more files in it. Here the directory holds exactly the asset: anything else
+     * found in it is removed before the stage runs (a stray that will not go is a refusal), the
+     * copy is written into [markerDir] and renamed across into [dir] — two sibling directories on
+     * ONE filesystem, where the rename is still atomic — and the marker never enters [dir] at
+     * all. Every other decision is [stageWithMarker]'s, unchanged: the fast arm vouches by stat,
+     * anything else is the full verification, and a refusal leaves no marker, no `.part`, no
+     * destination.
+     *
+     * Not concurrency-guarded itself; [stagedDirWithMarker], the one `Context` entry point, holds
+     * a lock across it, and its production caller — the LiteRT engine's prepare (P2-7; through
+     * [LiteRtRuntime.stagedDispatchDir]) — stages inside `load`, which is serialised by
+     * `NativeComputeGate`: the gate the engine's init, and so LiteRT's scan of this directory,
+     * runs under too. Staging and the scan therefore never interleave.
+     */
+    fun stageIntoDir(
+        dir: File,
+        markerDir: File,
+        assetName: String,
+        expectedBytes: Long,
+        expectedSha256: String,
+        open: () -> InputStream,
+    ): StageResult {
+        for (d in listOf(dir, markerDir)) {
+            if (!d.isDirectory && !d.mkdirs()) {
+                return StageResult.Refused(
+                    "$assetName could not be staged: ${d.absolutePath} is not a directory and " +
+                        "could not be made one"
+                )
+            }
+        }
+        val listing = dir.listFiles() ?: return StageResult.Refused(
+            "$assetName could not be staged: ${dir.absolutePath} could not be listed, so it " +
+                "cannot be shown to hold only $assetName"
+        )
+        // THE SCANNED DIRECTORY HOLDS EXACTLY THE ASSET — every other entry goes first, before a
+        // byte is written: a leftover here is a file the runtime would scan or dlopen.
+        for (stray in listing) {
+            if (stray.name == assetName) continue
+            if (!stray.deleteRecursively() && stray.exists()) {
+                return StageResult.Refused(
+                    "${dir.name}/ must hold exactly $assetName, and ${stray.name} could not be " +
+                        "removed from it"
+                )
+            }
+        }
+        return stageMarked(
+            File(dir, assetName),
+            File(markerDir, assetName + PART_SUFFIX),
+            File(markerDir, assetName + MARKER_SUFFIX),
+            assetName, expectedBytes, expectedSha256, open,
+        )
+    }
+
+    /** Held across every directory stage in the process — see [stagedDirWithMarker]. */
+    private val dirStageLock = Any()
+
+    /**
+     * [stageIntoDir] from the APK's assets into [dir] under `filesDir` — the dispatch's entry point
+     * (P2-6) — answering the DIRECTORY's path (what LiteRT's dispatch-library-dir option takes),
+     * or **null** when it could not be staged, with the same one refusal line as the other entry
+     * points. Serialised on one lock, so two stages can never interleave their renames and
+     * deletes in the scanned directory whoever calls; the working files live in
+     * [markerDirFor]`(dir)`.
+     */
+    fun stagedDirWithMarker(
+        context: Context,
+        dir: File,
+        assetName: String,
+        expectedBytes: Long,
+        expectedSha256: String,
+    ): String? = synchronized(dirStageLock) {
+        val outcome = stageIntoDir(dir, markerDirFor(dir), assetName, expectedBytes, expectedSha256) {
+            context.assets.open(assetName)
+        }
+        pathOrRefusal(outcome)?.let { dir.absolutePath }
+    }
+
+    /** One rendering of an outcome, so every `Context` entry point refuses identically. */
     private fun pathOrRefusal(outcome: StageResult): String? = when (outcome) {
         is StageResult.Staged -> outcome.file.absolutePath
         is StageResult.Refused -> {

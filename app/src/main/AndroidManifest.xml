@@ -81,6 +81,21 @@
             android:name="libadsprpc.so"
             android:required="false" />
 
+        <!-- The Neuron adapter, for the MediaTek APU tier (P2-6; design §2.3): liblitertasr.so's
+             driver probe and LiteRT's MediaTek dispatch reach the APU through it, and on Android 12+
+             the platform refuses to resolve a vendor native library the manifest does not name.
+             It is the ONLY library of the MediaTek set this app declares, deliberately: the adapter
+             loads its own apuware dependencies from the system namespace with this one declaration
+             (P0(c), runs t10/t11), and the three others the litert AAR's manifest would add are
+             each a cost with no use. The system utility library's NeuroPilot magic-number read is a
+             5 s binder wait on every cold arm (sheet §4b), and the v9 and mgvi adapters are not the
+             driver the tier was measured on. app/build.gradle.kts's verifyMediatekNativeLibraries
+             holds the MERGED manifest - what ships - to exactly this one. required="false": this
+             APK installs on every device. -->
+        <uses-native-library
+            android:name="libneuronusdk_adapter.mtk.so"
+            android:required="false" />
+
         <!-- Main Activity -->
         <activity
             android:name=".MainActivity"

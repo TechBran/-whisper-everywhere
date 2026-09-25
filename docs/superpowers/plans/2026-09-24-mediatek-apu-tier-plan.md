@@ -106,7 +106,8 @@ with P1a.
    {npu-turbo}, evidence …)`; `PackArtifact(npu-turbo, mt6989)` with the AOT pair's digests/lengths, `parts`,
    `sourceBytes = null`; the turbo-only amendment written into the census KDoc with the owner's quote; the
    cross-product pins (`WhisperCatalogHelpersTest.kt:1203-1209`, `NpuFleetCensusTest.kt:313-320`) become
-   vendor-scoped; `device_targeting_config.xml` gains the group; the reproducibility check (recompile →
+   vendor-scoped; `device_targeting_config.xml` gains the group (removed again at P2-5: the pair's modules
+   are untargeted, task 5); the reproducibility check (recompile →
    sha256 equal?) recorded in the sheet and the artefacts mirrored to the private store.
 4. **Parts.** `PackArtifact.parts: List<PackPart>`; `NpuPackFetch.PACK_BY_TIER` → `packsFor(tier, family)`;
    the pure pack machine aggregates across parts (worst status wins, bytes summed, install only when every
@@ -119,6 +120,11 @@ with P1a.
    compiler stamp read from the file, CENSUS rows; `verifyNpuPacks` and `npuPackCensusRows` learn both modules;
    `NpuPackLayoutTest` learns two-module families; metadata v2 written for MediaTek rows only, readers accept
    1 and 2 (`NpuPackMetadata` tests for both).
+   *Amended at P2-5 (design §2.7 "Modules"):* bundletool's `DeviceGroupParityValidator` refuses
+   group-targeted modules whose group sets differ, so the two modules are UNTARGETED and per family —
+   `npu_turbo_mt6989_enc` / `npu_turbo_mt6989_dec`, one payload directory each (`assets/<module>/`), no
+   `#group_` folder — and `soc_mt6989` leaves `device_targeting_config.xml` (P2-3's group); the gate and the
+   layout test learn the untargeted shape as a second rule beside the Qualcomm one, which is unchanged.
 6. **Runtime packaging.** `litertRuntime` configuration → generated jniLibs dir ordered before
    `merge*JniLibFolders`, sha256 pin, "coordinates agree" pin; the dispatch as an asset with
    `NpuAssetStage.stageIntoDir` (markers outside the scanned directory, own test); manifest

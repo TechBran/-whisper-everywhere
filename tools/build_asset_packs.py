@@ -54,6 +54,21 @@ the ``verifyNpuPacks`` Gradle gate re-proves before every bundle build. (F8: the
 names the implicit ``other`` group instead of being an unsuffixed sibling, which bundletool
 refuses -- "must have exactly one device group, but found []".)
 
+``build`` then assembles every LOCAL family's parts too (P2-5): see ``build-local``.
+
+``build-local [--dry-run] [local-root]`` (P2-5, the MediaTek APU tier) assembles the LOCAL
+families' parts alone -- no vendor bucket, no network: the mt6989 turbo pair, compiled on the
+MS-02 and held in the private artefact store (``<local-root>/mtk-artefacts-2026-09-24/
+aot_mt6989/`` with its SHA256SUMS), into the two UNTARGETED modules ``npu_turbo_mt6989_enc``
+(the encoder + OUR version-2 ``metadata.json``) and ``npu_turbo_mt6989_dec`` (the decoder), each
+one payload directory ``<module>/src/main/assets/<module>/`` with no ``#group_`` folder
+(bundletool's DeviceGroupParityValidator). Before a byte moves, every file passes the LOCAL gate
+(LOCAL_FAMILIES): the store's SHA256SUMS, the census length, its own LiteRtStamp, the bytecode's
+compiler self-description and its Neuron major, and the IO gate -- the tflite signatures' names,
+shapes and dtypes against LOCAL_IO_SPEC (NpuModelSpec.TURBO). The digest rides the copy, and
+every part is re-verified from disk. ``--dry-run`` runs every gate that reads only the files'
+heads and tails, lists each copy with the digest it would verify, and writes nothing.
+
 ``delivery-zip <familyId> <tierId>`` (F4) writes the per-family SAF sideload zip: OUR
 ``metadata.json`` FIRST -- and with its size DECLARED in the local header (``writestr``), plus
 a data-descriptor refusal on every entry, because the app's import peek triggers on
@@ -78,11 +93,14 @@ default to keep empty.
 
 Usage:
     python build_asset_packs.py measure [workspace]
-    python build_asset_packs.py build [workspace]
+    python build_asset_packs.py build [workspace] [local-root]
+    python build_asset_packs.py build-local [--dry-run] [local-root]
     python build_asset_packs.py delivery-zip <familyId> <tierId> [workspace]
     python build_asset_packs.py preview [mirror-root]
 
     workspace   defaults to C:\\Users\\bastr\\.androidbuild\\fleet-packs
+    local-root  defaults to ~/.androidbuild, which holds the private artefact store on the MS-02
+                and on the PC alike
     mirror-root defaults to C:\\Users\\bastr\\.androidbuild\\streaming-models, with one
                 subdirectory per pack named after that row's own catalogue `dirName`
                 (en-2023-06-26, fr-2023-04-14, de-cv17-epoch-30, ru-vosk-2025-08-16,
@@ -204,6 +222,69 @@ FAMILIES = {
 # tier in the app's UI).
 PACK_MODULE_BY_TIER = {"npu": "npu_small", "npu-turbo": "npu_turbo"}
 
+# ---------------------------------------------------------------------------- LOCAL families (P2-5)
+# census family id -> where its pair comes from and what the files must say about themselves.
+#
+# A LOCAL family (P2, the MediaTek APU tier -- design section 2.1, maintenance rule 2 as amended)
+# has no vendor manifest and no zip: its pair was compiled on the MS-02 by the recipe in
+# tools/mtk-apu/ and is held in the PRIVATE ARTEFACT STORE (the compile's output dir, mirrored with
+# a SHA256SUMS; the PC holds a second copy). The store is a directory under LOCAL_ROOT; `build`
+# and `build-local` copy each file out of it under the tier's CATALOG name (design 2.7 "Names": the
+# engine picks its loader by vendor, and LiteRT does not care about the extension), gated first on
+# what the vendor rows get from their metadata gate -- here read out of the FILES themselves:
+#
+#   1. the store's own SHA256SUMS names both files with the CENSUS digests (a third reading);
+#   2. each file's exact length is the CENSUS length (its digest rides the copy, as every copy's);
+#   3. its LiteRtStamp -- the vendor and chip LiteRT's compiler writes into the flatbuffer's
+#      metadata, the format app/src/main/cpp/litert_stamp.h parses at init -- names "stamp";
+#   4. the bytecode's own compiler self-description ({"Compiler": "adapter 8.2.30", ...}, which
+#      MediaTek's compiler closes the DLA bytecode with, at the end of the file) names "compiler",
+#      and its major is "neuron_major" -- the Neuron major the bytecode restores on, which the
+#      driver check holds the device to;
+#   5. the LOCAL IO GATE: the tflite signature's names, shapes and dtypes equal LOCAL_IO_SPEC's
+#      derivation -- the same census litert_asr.cpp's derivePairCensus holds the files to at init,
+#      and the "same model" proof the vendor rows get from their metadata's io-census.
+#
+# THE UNTARGETED LAYOUT (P2-5, design 2.7 "Modules"): each part is its own on-demand module with
+# ONE payload directory named after the pack (<module>/src/main/assets/<module>/) and no #group_
+# folder -- bundletool's DeviceGroupParityValidator requires every group-targeted module to carry
+# the same set of groups, so a MediaTek pair cannot be a variant beside npu_small/npu_turbo's. The
+# modules are named per FAMILY for the same reason. metadata.json (version 2) rides in part 1.
+#
+# Every value here is a census value restated for the build side: NpuPackLayoutTest pins the
+# pack group, the stamp's chip, the Neuron major and each part's (module, delivery name) equal to
+# NpuFleetCensus, and the source names to the row's provenance record.
+DEFAULT_LOCAL_ROOT = os.path.join(os.path.expanduser("~"), ".androidbuild")
+
+LOCAL_FAMILIES = {
+    "mt6989": {
+        "pack_group": "soc_mt6989",
+        # Relative to LOCAL_ROOT: the store the 2026-09-24 compile was mirrored into, on the MS-02
+        # and on the PC alike (docs/measurements/2026-09-24-tab-apu-turbo-encoder.md section 7).
+        "artefact_dir": os.path.join("mtk-artefacts-2026-09-24", "aot_mt6989"),
+        "stamp": ("MediaTek", "mt6989"),
+        "compiler": "adapter 8.2.30",
+        "neuron_major": 8,
+        # tier -> its parts, in part order: (module, delivery name, source file, signature key).
+        "tiers": {
+            "npu-turbo": (
+                ("npu_turbo_mt6989_enc", "turbo_encoder_qairt_context.bin", "turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite", "encode"),
+                ("npu_turbo_mt6989_dec", "turbo_decoder_qairt_context.bin", "turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite", "decode"),
+            ),
+        },
+    },
+}
+
+# NpuModelSpec.TURBO's scalars, and its token family's vocabulary and window (WhisperTokens
+# .LARGE_V3), restated for the LOCAL IO gate -- what local_io_census derives the float pair's IO
+# from, exactly as derivePairCensus does in the engine. NpuPackLayoutTest pins each value equal to
+# the Kotlin row, so a spec change that forgets the build side is a red test, not a pack that
+# passes here and is refused at init.
+LOCAL_IO_SPEC = {
+    "npu-turbo": {"mel_bins": 128, "mel_frames": 3000, "dec_layers": 4, "heads": 20,
+                  "head_dim": 64, "audio_ctx": 1500, "vocab": 51866, "max_positions": 200},
+}
+
 # Vendor zip Content-Length, asserted at HEAD for every row the census has measured. HISTORY: the
 # 0.61.0 table carried only five (the four turbo zips from research section 7 and the 8gen3 small
 # zip) because three small zips had never been measured; the 0.62.2 re-measurement pinned all
@@ -244,9 +325,9 @@ EXPECTED_ZIP_BYTES = {
 # in tools/mtk-apu/, so there is no vendor zip to measure, and the five-slot shape holds a row
 # without one by leaving that one slot empty -- the smallest honest change to the table. Its
 # family is in no FAMILIES entry (those are the VENDOR families, with a chipset key and an HTP),
-# so measure, build and delivery-zip never visit it; its digests are the private artefact
-# store's SHA256SUMS, pinned here so the LOCAL source that will fill its two pack modules (P2-5)
-# builds against the same literals the app verifies.
+# so measure and delivery-zip never visit it; its digests are the private artefact store's
+# SHA256SUMS, pinned here so the LOCAL source (LOCAL_FAMILIES; build and build-local, P2-5) that
+# fills its two untargeted pack modules builds against the same literals the app verifies.
 CENSUS = {
     # Measured 2026-09-24 against manifest v0.63.0 (Last-Modified 23 Sep 2026), every row by
     # the instrument and pasted from its own printed line. THE FINDING: nothing reproduces.
@@ -618,23 +699,39 @@ def sha256_file(path: str) -> str:
 
 def expected_metadata(tier: str, family: str) -> dict:
     """OUR metadata.json for one variant, values FROM the census -- the exact document
-    NpuPackMetadata.parse reads strictly (version 1; entries encoder then decoder) and
-    crossCheckRefusal answers null for. One builder for the writer AND the verifier, so the
-    two cannot disagree about what a variant's metadata says."""
-    _, htp, pack_group, _ = FAMILIES[family]
+    NpuPackMetadata.parse reads strictly (entries encoder then decoder) and crossCheckRefusal
+    answers null for. One builder for the writer AND the verifier, so the two cannot disagree
+    about what a variant's metadata says.
+
+    Version 1 for a vendor (Qualcomm) family -- byte-identical to every pack before P2 -- and
+    version 2 for a LOCAL (MediaTek) one (P2-5, design 2.7 "Metadata"): no HTP version, and the
+    Neuron major, the chip stamp and the compiler the LOCAL gate read out of the files and held
+    to LOCAL_FAMILIES' literals before a byte was copied."""
     _, enc_bytes, enc_sha, dec_bytes, dec_sha = CENSUS[(tier, family)]
+    entries = [
+        {"fileName": MODELS[tier]["delivery_encoder"], "bytes": enc_bytes, "sha256": enc_sha},
+        {"fileName": MODELS[tier]["delivery_decoder"], "bytes": dec_bytes, "sha256": dec_sha},
+    ]
+    if family in LOCAL_FAMILIES:
+        local = LOCAL_FAMILIES[family]
+        return {
+            "version": 2,
+            "tierId": tier,
+            "familyId": family,
+            "packGroup": local["pack_group"],
+            "neuronMajor": local["neuron_major"],
+            "socStamp": local["stamp"][1],
+            "compiler": local["compiler"],
+            "entries": entries,
+        }
+    _, htp, pack_group, _ = FAMILIES[family]
     return {
         "version": 1,
         "tierId": tier,
         "familyId": family,
         "htpVersion": htp,
         "packGroup": pack_group,
-        "entries": [
-            {"fileName": MODELS[tier]["delivery_encoder"], "bytes": enc_bytes,
-             "sha256": enc_sha},
-            {"fileName": MODELS[tier]["delivery_decoder"], "bytes": dec_bytes,
-             "sha256": dec_sha},
-        ],
+        "entries": entries,
     }
 
 
@@ -644,25 +741,39 @@ def pack_metadata_text(tier: str, family: str) -> str:
     return json.dumps(expected_metadata(tier, family), indent=2) + "\n"
 
 
-def verify_variant_dir(tier: str, family: str, out_dir: str) -> "str | None":
-    """The importer's own logic re-applied to what LANDED: exactly three files, both bins
-    re-read and re-hashed to the census literals, the metadata parsed and compared EQUAL to
+def verify_variant_dir(tier: str, family: str, out_dir: str, part: int = 0) -> "str | None":
+    """The importer's own logic re-applied to what LANDED: exactly the variant's files, every
+    bin re-read and re-hashed to the census literals, the metadata parsed and compared EQUAL to
     the census document (stricter than the app's parse-then-cross-check -- this script wrote
     the file, so any difference at all is a build fault). None when green, else the first
-    problem as one sentence."""
+    problem as one sentence.
+
+    TWO RULES since P2-5, the second beside the first and weakening nothing of it. A vendor
+    family's variant is a #group_ directory of exactly three files: metadata.json and both
+    bins. A LOCAL family's [part] is an UNTARGETED module's one payload directory: exactly that
+    part's bin, metadata.json in part 0 only, and the tracked .gitkeep anchor."""
     import json
 
     _, enc_bytes, enc_sha, dec_bytes, dec_sha = CENSUS[(tier, family)]
     enc_name = MODELS[tier]["delivery_encoder"]
     dec_name = MODELS[tier]["delivery_decoder"]
+    census = {enc_name: (enc_bytes, enc_sha), dec_name: (dec_bytes, dec_sha)}
     if not os.path.isdir(out_dir):
         return f"{out_dir} does not exist"
     names = sorted(os.listdir(out_dir))
-    want = sorted([VENDOR_METADATA, enc_name, dec_name])
-    if names != want:
-        return f"carries {names}; a pack variant is exactly {want}"
-    for name, want_bytes, want_sha in ((enc_name, enc_bytes, enc_sha),
-                                       (dec_name, dec_bytes, dec_sha)):
+    if family in LOCAL_FAMILIES:
+        _, delivery, _, _ = LOCAL_FAMILIES[family]["tiers"][tier][part]
+        carried = [delivery]
+        want = sorted(carried + ([VENDOR_METADATA] if part == 0 else []) + [PREVIEW_ANCHOR])
+        if names != want:
+            return f"carries {names}; this untargeted part is exactly {want}"
+    else:
+        carried = [enc_name, dec_name]
+        want = sorted([VENDOR_METADATA, enc_name, dec_name])
+        if names != want:
+            return f"carries {names}; a pack variant is exactly {want}"
+    for name in carried:
+        want_bytes, want_sha = census[name]
         path = os.path.join(out_dir, name)
         got = os.path.getsize(path)
         if got != want_bytes:
@@ -670,6 +781,8 @@ def verify_variant_dir(tier: str, family: str, out_dir: str) -> "str | None":
         got_sha = sha256_file(path)
         if got_sha != want_sha:
             return f"{name} sha256 {got_sha} != the census {want_sha}"
+    if part != 0:
+        return None   # metadata.json rides in part 0 only, and lists both entries there
     try:
         with open(os.path.join(out_dir, VENDOR_METADATA), "r", encoding="utf-8") as f:
             md = json.load(f)
@@ -678,6 +791,20 @@ def verify_variant_dir(tier: str, family: str, out_dir: str) -> "str | None":
     if md != expected_metadata(tier, family):
         return f"metadata.json disagrees with the census: {md}"
     return None
+
+
+def finish_variant(tier: str, family: str, out_dir: str, part: int = 0) -> None:
+    """The ONE ending every built variant or part shares: OUR metadata.json written into the
+    part that carries it (part 0), then what landed held to verify_variant_dir -- and a failure
+    is a named FATAL, never a warning."""
+    if part == 0:
+        with open(os.path.join(out_dir, VENDOR_METADATA), "w", encoding="utf-8",
+                  newline="\n") as f:
+            f.write(pack_metadata_text(tier, family))
+    problem = verify_variant_dir(tier, family, out_dir, part)
+    if problem is not None:
+        raise fail(f"{tier}/{family}: built variant failed its own verification: "
+                   f"{problem}")
 
 
 def extract_pair_to(tier: str, family: str, zip_path: str, out_dir: str) -> None:
@@ -714,12 +841,13 @@ def extract_pair_to(tier: str, family: str, zip_path: str, out_dir: str) -> None
             print(f"  {delivery}: {copied} B, census digest reproduced")
 
 
-def build_packs(workspace: str) -> None:
-    """Assemble all twelve pack variants (six families x two tiers) into the two module trees.
-    The count is FAMILIES x MODELS, never spelled in the loop. Measure runs FIRST (the F3
-    handoff: packs are always built from gate-verified bytes; idempotent and cheap on a warm
-    workspace), so every zip this reads has just passed the HEAD, length, CRC and vendor
-    metadata gates."""
+def build_packs(workspace: str, local_root: str) -> None:
+    """Assemble all twelve vendor pack variants (six families x two tiers) into the two module
+    trees, then every LOCAL family's parts into their untargeted modules (build_local) -- the
+    whole payload a bundle carries. The vendor count is FAMILIES x MODELS, never spelled in the
+    loop. Measure runs FIRST (the F3 handoff: packs are always built from gate-verified bytes;
+    idempotent and cheap on a warm workspace), so every zip this reads has just passed the HEAD,
+    length, CRC and vendor metadata gates."""
     paths = measure(workspace)
     root = repo_root()
     built = 0
@@ -740,16 +868,15 @@ def build_packs(workspace: str) -> None:
                 for stale in os.listdir(out_dir):
                     os.remove(os.path.join(out_dir, stale))
             extract_pair_to(tier, family, paths[(tier, family)], out_dir)
-            with open(os.path.join(out_dir, VENDOR_METADATA), "w", encoding="utf-8",
-                      newline="\n") as f:
-                f.write(pack_metadata_text(tier, family))
-            problem = verify_variant_dir(tier, family, out_dir)
-            if problem is not None:
-                raise fail(f"{tier}/{family}: built variant failed its own verification: "
-                           f"{problem}")
+            finish_variant(tier, family, out_dir)
             print("  verified: three files, census bytes, census digests, metadata equal "
                   "to the census")
             built += 1
+    # (P2-5) The LOCAL families' parts, into their UNTARGETED modules -- the same ending
+    # (finish_variant), the untargeted rule of verify_variant_dir.
+    local_built, local_current = build_local(local_root)
+    built += local_built
+    current += local_current
     # The empty-default rule, checked at build time too so the fault is caught where it was
     # made rather than at the next bundle's verifyNpuPacks run.
     for module in PACK_MODULE_BY_TIER.values():
@@ -760,8 +887,350 @@ def build_packs(workspace: str) -> None:
             raise fail(f"{module}: the DEFAULT variant (assets/{module}#group_other/) must "
                        f"stay EMPTY -- an unmatched device can never be prevented from "
                        f"receiving it -- but it carries {extras}")
-    print(f"build OK: {built} variant(s) written+verified, {current} already current; both "
-          f"default variants are empty")
+    print(f"build OK: {built} variant(s) or part(s) written+verified, {current} already "
+          f"current; both default variants are empty")
+
+
+# ---------------------------------------------------------------------------- the LOCAL source (P2-5)
+
+TFLITE_DTYPES = {0: "float32", 1: "float16", 2: "int32", 3: "uint8", 4: "int64", 5: "string",
+                 6: "bool", 7: "int16", 9: "int8", 10: "float64"}
+
+
+class TfliteHead:
+    """A bounded, read-only walk of a TFLite flatbuffer -- the three things the LOCAL gate reads
+    out of a compiled file: a signature's IO, the LiteRtStamp, the bytecode's compiler line.
+
+    Memory-mapped, never read whole (the encoder is 1.3 GB and the flatbuffer head a few KB), and
+    every accessor is bounds-checked: a truncated or foreign file is a named FATAL, never an
+    out-of-range read. The schema offsets are TFLite's own -- Model { operator_codes 1,
+    subgraphs 2, buffers 4, metadata 6, signature_defs 7 }, SubGraph { tensors 0 }, Tensor {
+    shape 0, type 1 }, SignatureDef { inputs 0, outputs 1, signature_key 2, subgraph_index 4 },
+    TensorMap { name 0, tensor_index 1 }, Metadata { name 0, buffer 1 }, Buffer { data 0 } --
+    the same walk app/src/main/cpp/litert_stamp.h makes for the stamp."""
+
+    def __init__(self, path: str):
+        import mmap
+
+        self.path = path
+        self.label = os.path.basename(path)
+        self._file = open(path, "rb")
+        try:
+            self.b = mmap.mmap(self._file.fileno(), 0, access=mmap.ACCESS_READ)
+        except ValueError:
+            self._file.close()
+            raise fail(f"{self.label} is empty -- not a TFLite model")
+        self.n = len(self.b)
+        if self.n < 8 or self.b[4:8] != b"TFL3":
+            self.close()
+            raise fail(f"{self.label} carries no TFL3 identifier -- not a TFLite model")
+
+    def close(self) -> None:
+        self.b.close()
+        self._file.close()
+
+    def __enter__(self) -> "TfliteHead":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+    def _read(self, fmt: str, at: int, what: str):
+        import struct
+
+        size = struct.calcsize(fmt)
+        if at < 0 or at + size > self.n:
+            raise fail(f"{self.label} is not a readable TFLite flatbuffer ({what})")
+        return struct.unpack_from(fmt, self.b, at)[0]
+
+    def _field(self, table: int, index: int) -> int:
+        vtable = table - self._read("<i", table, "vtable offset")
+        size = self._read("<H", vtable, "vtable size")
+        slot = 4 + 2 * index
+        if slot + 2 > size:
+            return 0
+        rel = self._read("<H", vtable + slot, "field offset")
+        return table + rel if rel else 0
+
+    def _deref(self, at: int) -> int:
+        return at + self._read("<I", at, "offset")
+
+    def _u32(self, table: int, index: int) -> int:
+        at = self._field(table, index)
+        return self._read("<I", at, "u32 field") if at else 0
+
+    def _string(self, table: int, index: int) -> "str | None":
+        at = self._field(table, index)
+        if not at:
+            return None
+        s = self._deref(at)
+        length = self._read("<I", s, "string length")
+        if s + 4 + length > self.n:
+            raise fail(f"{self.label} is not a readable TFLite flatbuffer (string)")
+        return bytes(self.b[s + 4:s + 4 + length]).decode("utf-8")
+
+    def _vector(self, table: int, index: int) -> tuple:
+        at = self._field(table, index)
+        if not at:
+            return 0, 0
+        v = self._deref(at)
+        return v + 4, self._read("<I", v, "vector length")
+
+    def _tables(self, table: int, index: int) -> list:
+        start, count = self._vector(table, index)
+        return [self._deref(start + 4 * i) for i in range(count)]
+
+    def signature(self, key: str) -> tuple:
+        """([(name, dtype, shape)] inputs, [...] outputs) of signature [key], in its own order."""
+        model = self._deref(0)
+        subgraphs = self._tables(model, 2)
+        found = {self._string(sd, 2): sd for sd in self._tables(model, 7)}
+        if key not in found:
+            raise fail(f"{self.label} has no signature '{key}' (it has: "
+                       f"{sorted(k for k in found if k is not None)})")
+        sd = found[key]
+        index = self._u32(sd, 4)
+        if index >= len(subgraphs):
+            raise fail(f"{self.label}: signature '{key}' names subgraph {index} of {len(subgraphs)}")
+        tensors = self._tables(subgraphs[index], 0)
+        sides = []
+        for side in (0, 1):
+            entries = []
+            for tm in self._tables(sd, side):
+                name = self._string(tm, 0)
+                t = self._u32(tm, 1)
+                if name is None or t >= len(tensors):
+                    raise fail(f"{self.label}: signature '{key}' has an unreadable tensor map")
+                at = self._field(tensors[t], 1)
+                code = self._read("<B", at, "tensor type") if at else 0
+                start, count = self._vector(tensors[t], 0)
+                shape = [self._read("<i", start + 4 * k, "tensor shape") for k in range(count)]
+                entries.append((name, TFLITE_DTYPES.get(code, f"type{code}"), shape))
+            sides.append(entries)
+        return sides[0], sides[1]
+
+    def litert_stamp(self) -> tuple:
+        """(vendor, soc) out of the LiteRtStamp metadata: two NUL-padded 125-byte fields, 250 B
+        -- litert_stamp.h's parse, the one the engine's chip check makes at init."""
+        model = self._deref(0)
+        buffers = self._tables(model, 4)
+        for md in self._tables(model, 6):
+            if self._string(md, 0) != "LiteRtStamp":
+                continue
+            index = self._u32(md, 1)
+            if index >= len(buffers):
+                raise fail(f"{self.label}: the LiteRtStamp names buffer {index} of {len(buffers)}")
+            start, length = self._vector(buffers[index], 0)
+            if not start or start + length > self.n:
+                raise fail(f"{self.label}: the LiteRtStamp's buffer carries no inline data")
+            stamp = bytes(self.b[start:start + length])
+            if len(stamp) != 250:
+                raise fail(f"{self.label}: the LiteRtStamp is {len(stamp)} B; LiteRT 2.1.1 writes "
+                           f"250 (two NUL-padded 125-byte fields)")
+            vendor, soc = stamp[:125], stamp[125:]
+            if b"\0" not in vendor or b"\0" not in soc:
+                raise fail(f"{self.label}: a LiteRtStamp field has no NUL terminator")
+            return (vendor.split(b"\0", 1)[0].decode("ascii"),
+                    soc.split(b"\0", 1)[0].decode("ascii"))
+        raise fail(f"{self.label} carries no LiteRtStamp -- not an AOT-compiled model")
+
+    def bytecode_compiler(self) -> str:
+        """The "Compiler" value of the JSON self-description MediaTek's compiler closes its DLA
+        bytecode with. The bytecode is stored outside the flatbuffer, at the END of the file (the
+        DISPATCH_OP's options give its offset and size, which run to EOF on both of the pair's
+        files), so the description is in the file's last 64 KiB -- exactly once, or refused."""
+        import json
+        import re
+
+        tail = bytes(self.b[max(0, self.n - 65_536):self.n])
+        hits = re.findall(rb'\{"Compiler": "[^"{}]*"[^{}]*\}', tail)
+        if len(hits) != 1:
+            raise fail(f"{self.label}: {len(hits)} compiler self-descriptions in the bytecode's "
+                       f"last 64 KiB, where MediaTek's compiler writes exactly one")
+        return json.loads(hits[0].decode("ascii"))["Compiler"]
+
+
+def local_io_census(tier: str) -> dict:
+    """signature key -> (inputs, outputs) the LOCAL pair must carry, each [(name, alias, dtype,
+    shape)] -- derived from LOCAL_IO_SPEC exactly as litert_asr.cpp's derivePairCensus derives
+    it from nativeInit's scalars: Qualcomm's HfWhisper IO, which the MediaTek pair was exported
+    in so that one NpuModelSpec row describes both vendors' files. Inputs are held BY NAME;
+    outputs BY POSITION, under their semantic name or litert-torch's positional alias (output_i),
+    because the encoder's cross-KV reaches the decoder by export order alone."""
+    s = LOCAL_IO_SPEC[tier]
+    h, hd, ac, window = s["heads"], s["head_dim"], s["audio_ctx"], s["max_positions"]
+    depth = window - 1
+    enc_in = [("input_features", "", "float32", [1, s["mel_bins"], s["mel_frames"]])]
+    enc_out = []
+    dec_in = [("input_ids", "", "int32", [1, 1]),
+              ("attention_mask", "", "float32", [1, 1, 1, window])]
+    dec_out = [("logits", "output_0", "float32", [1, s["vocab"], 1, 1])]
+    for i in range(s["dec_layers"]):
+        enc_out += [(f"k_cache_cross_{i}", f"output_{2 * i}", "float32", [h, 1, hd, ac]),
+                    (f"v_cache_cross_{i}", f"output_{2 * i + 1}", "float32", [h, 1, ac, hd])]
+        dec_in += [(f"k_cache_self_{i}_in", "", "float32", [h, 1, hd, depth]),
+                   (f"v_cache_self_{i}_in", "", "float32", [h, 1, depth, hd]),
+                   (f"k_cache_cross_{i}", "", "float32", [h, 1, hd, ac]),
+                   (f"v_cache_cross_{i}", "", "float32", [h, 1, ac, hd])]
+        dec_out += [(f"k_cache_self_{i}_out", f"output_{1 + 2 * i}", "float32", [h, 1, hd, depth]),
+                    (f"v_cache_self_{i}_out", f"output_{2 + 2 * i}", "float32", [h, 1, depth, hd])]
+    dec_in.append(("position_ids", "", "int32", [1]))
+    return {"encode": (enc_in, enc_out), "decode": (dec_in, dec_out)}
+
+
+def io_gate(tier: str, head: "TfliteHead", key: str) -> tuple:
+    """THE LOCAL IO GATE: signature [key]'s names, shapes and dtypes against local_io_census --
+    the "same model" proof, read out of the compiled file. Returns (inputs, outputs) counts."""
+    want_in, want_out = local_io_census(tier)[key]
+    got_in, got_out = head.signature(key)
+    label = f"{head.label} '{key}'"
+    if len(got_in) != len(want_in):
+        raise fail(f"{label} has {len(got_in)} inputs; the {tier} spec expects {len(want_in)}")
+    by_name = {name: (dtype, shape) for name, dtype, shape in got_in}
+    if len(by_name) != len(got_in):
+        raise fail(f"{label} names an input twice")
+    for name, _, dtype, shape in want_in:
+        if name not in by_name:
+            raise fail(f"{label} has no input named '{name}'")
+        if by_name[name] != (dtype, shape):
+            raise fail(f"{label} input '{name}' is {by_name[name]}; the {tier} spec expects "
+                       f"{(dtype, shape)}")
+    if len(got_out) != len(want_out):
+        raise fail(f"{label} has {len(got_out)} outputs; the {tier} spec expects {len(want_out)}")
+    for i, ((name, dtype, shape), (want, alias, want_dtype, want_shape)) in enumerate(
+            zip(got_out, want_out)):
+        if name not in (want, alias):
+            raise fail(f"{label} output {i} is named '{name}'; the pair's order puts '{want}' "
+                       f"(or '{alias}') there")
+        if (dtype, shape) != (want_dtype, want_shape):
+            raise fail(f"{label} output {i} ('{name}', meaning {want}) is {(dtype, shape)}; the "
+                       f"{tier} spec expects {(want_dtype, want_shape)}")
+    return len(got_in), len(got_out)
+
+
+def local_sums(src_dir: str) -> dict:
+    """The artefact store's own SHA256SUMS, name -> digest (`sha256sum`'s text and binary forms)."""
+    path = os.path.join(src_dir, "SHA256SUMS")
+    if not os.path.isfile(path):
+        raise fail(f"{path} is missing -- the private artefact store keeps its digests beside "
+                   f"its files, and a store without them is not the checksummed mirror rule 2 "
+                   f"asks for")
+    sums = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) == 2:
+                sums[parts[1].lstrip("*")] = parts[0].lower()
+    return sums
+
+
+def local_gate(tier: str, family: str, src_dir: str) -> list:
+    """Every gate a LOCAL part passes BEFORE a byte is copied (see LOCAL_FAMILIES): the store's
+    SHA256SUMS, the exact length, the LiteRtStamp, the compiler and its Neuron major, the IO
+    census. Reads only the files' flatbuffer heads and bytecode tails -- the full hash rides the
+    copy. Returns [(module, delivery, source path, bytes, sha256)] in part order."""
+    local = LOCAL_FAMILIES[family]
+    if not os.path.isdir(src_dir):
+        raise fail(f"{tier}/{family}: the artefact store {src_dir} does not exist -- pass the "
+                   f"directory holding {local['artefact_dir']} (default {DEFAULT_LOCAL_ROOT})")
+    _, enc_bytes, enc_sha, dec_bytes, dec_sha = CENSUS[(tier, family)]
+    census = {MODELS[tier]["delivery_encoder"]: (enc_bytes, enc_sha),
+              MODELS[tier]["delivery_decoder"]: (dec_bytes, dec_sha)}
+    sums = local_sums(src_dir)
+    plan = []
+    for module, delivery, source, key in local["tiers"][tier]:
+        want_bytes, want_sha = census[delivery]
+        path = os.path.join(src_dir, source)
+        if sums.get(source) != want_sha:
+            raise fail(f"{tier}/{family}: the store's SHA256SUMS lists {source} as "
+                       f"{sums.get(source)}, the census pins {want_sha} -- a rebuilt pair is a NEW "
+                       f"artefact: re-pin, re-measure, re-mirror")
+        if not os.path.isfile(path):
+            raise fail(f"{tier}/{family}: {path} is missing from the artefact store")
+        got = os.path.getsize(path)
+        if got != want_bytes:
+            raise fail(f"{tier}/{family}: {source} is {got} B, the census says {want_bytes}")
+        with TfliteHead(path) as head:
+            stamp = head.litert_stamp()
+            if stamp != local["stamp"]:
+                raise fail(f"{tier}/{family}: {source}'s LiteRtStamp is {stamp[0]}/{stamp[1]}, the "
+                           f"family's is {local['stamp'][0]}/{local['stamp'][1]} -- bytecode "
+                           f"compiled for another chip does not restore on this one")
+            compiler = head.bytecode_compiler()
+            if compiler != local["compiler"]:
+                raise fail(f"{tier}/{family}: {source} was compiled by '{compiler}', the census "
+                           f"records '{local['compiler']}'")
+            major = compiler.rsplit(" ", 1)[-1].split(".", 1)[0]
+            if not major.isdigit() or int(major) != local["neuron_major"]:
+                raise fail(f"{tier}/{family}: {source}'s compiler '{compiler}' is Neuron major "
+                           f"{major}, the family's driver check admits {local['neuron_major']}")
+            ins, outs = io_gate(tier, head, key)
+        print(f"  {source}: {got:,} B (census length), SHA256SUMS agrees; stamp "
+              f"{stamp[0]}/{stamp[1]}, compiler '{compiler}' (Neuron {major}); signature '{key}' "
+              f"{ins} in / {outs} out EQUAL to the {tier} spec")
+        plan.append((module, delivery, path, want_bytes, want_sha))
+    return plan
+
+
+def untargeted_payload_dir(module: str) -> str:
+    """An UNTARGETED module's one payload directory, named after the pack -- the preview packs'
+    layout (preview_payload_dir), which the LOCAL families' modules share since P2-5."""
+    return preview_payload_dir(module)
+
+
+def build_local(local_root: str, dry_run: bool = False) -> tuple:
+    """Every LOCAL family's parts into their untargeted modules, from the private artefact store
+    under [local_root]: every gate of local_gate first, then each part streamed in with its
+    sha256 riding the copy and asserted, metadata.json (version 2) written into part 1, and the
+    part re-verified from disk (finish_variant). A part already the census is skipped.
+
+    [dry_run] runs every gate that reads no more than the files' heads and tails and then
+    LISTS what it would copy, with the digest it would verify each copy against, and writes
+    nothing. Returns (written, already current)."""
+    written = 0
+    current = 0
+    for family, local in LOCAL_FAMILIES.items():
+        src_dir = os.path.join(local_root, local["artefact_dir"])
+        for tier in local["tiers"]:
+            print(f"LOCAL tier={tier} family={family} <- {src_dir}")
+            for index, (module, delivery, source, want_bytes, want_sha) in enumerate(
+                    local_gate(tier, family, src_dir)):
+                out_dir = untargeted_payload_dir(module)
+                rel = f"{module}/src/main/assets/{module}"
+                if dry_run:
+                    print(f"  would copy {os.path.basename(source)} -> {rel}/{delivery}")
+                    print(f"      {want_bytes:,} B, verifying sha256 {want_sha} on the way in and "
+                          f"again from disk")
+                    if index == 0:
+                        print(f"  would write {rel}/{VENDOR_METADATA}: version 2, both entries, "
+                              f"neuronMajor {local['neuron_major']}, socStamp "
+                              f"{local['stamp'][1]}, compiler '{local['compiler']}'")
+                    continue
+                print(f"BUILD tier={tier} family={family} part {index + 1} -> {rel}")
+                os.makedirs(out_dir, exist_ok=True)
+                anchor = os.path.join(out_dir, PREVIEW_ANCHOR)
+                if not os.path.isfile(anchor):
+                    with open(anchor, "w", encoding="utf-8"):
+                        pass
+                if verify_variant_dir(tier, family, out_dir, index) is None:
+                    print("  already the census (re-hashed from disk), rewrite skipped")
+                    current += 1
+                    continue
+                # Anything but the anchor would ride into the AAB: cleared, not kept.
+                for stale in os.listdir(out_dir):
+                    if stale != PREVIEW_ANCHOR:
+                        os.remove(os.path.join(out_dir, stale))
+                stream_pinned(open(source, "rb"), os.path.join(out_dir, delivery), delivery,
+                              want_bytes, want_sha, "artefact store")
+                print(f"  {delivery}: {want_bytes:,} B from the artefact store, census digest "
+                      f"reproduced")
+                finish_variant(tier, family, out_dir, index)
+                print(f"  verified: the untargeted part, census bytes, census digest"
+                      + (", metadata (version 2) equal to the census" if index == 0 else ""))
+                written += 1
+    if dry_run:
+        print("dry-run OK: every LOCAL gate passed; nothing was written")
+    return written, current
 
 
 # ---------------------------------------------------------------------------- delivery-zip (F4)
@@ -1249,12 +1718,14 @@ def place_tts_pack(mirror: str) -> None:
 def main(argv: list) -> None:
     usage = (
         f"usage: python {os.path.basename(argv[0])} measure [workspace]\n"
-        f"       python {os.path.basename(argv[0])} build [workspace]\n"
+        f"       python {os.path.basename(argv[0])} build [workspace] [local-root]\n"
+        f"       python {os.path.basename(argv[0])} build-local [--dry-run] [local-root]\n"
         f"       python {os.path.basename(argv[0])} delivery-zip <familyId> <tierId> [workspace]\n"
         f"       python {os.path.basename(argv[0])} preview [mirror-root]\n"
         f"       python {os.path.basename(argv[0])} tts [mirror]"
     )
-    if len(argv) < 2 or argv[1] not in ("measure", "build", "delivery-zip", "preview", "tts"):
+    commands = ("measure", "build", "build-local", "delivery-zip", "preview", "tts")
+    if len(argv) < 2 or argv[1] not in commands:
         raise SystemExit(usage)
     if argv[1] == "preview":
         place_preview_packs(argv[2] if len(argv) > 2 else DEFAULT_PREVIEW_MIRROR_ROOT)
@@ -1262,12 +1733,22 @@ def main(argv: list) -> None:
     if argv[1] == "tts":
         place_tts_pack(argv[2] if len(argv) > 2 else DEFAULT_TTS_MIRROR)
         return
+    if argv[1] == "build-local":
+        rest = argv[2:]
+        dry_run = "--dry-run" in rest
+        rest = [a for a in rest if a != "--dry-run"]
+        if len(rest) > 1 or any(a.startswith("--") for a in rest):
+            raise SystemExit(usage)
+        written, current = build_local(rest[0] if rest else DEFAULT_LOCAL_ROOT, dry_run)
+        if not dry_run:
+            print(f"build-local OK: {written} part(s) written+verified, {current} already current")
+        return
     if argv[1] == "measure":
         workspace = argv[2] if len(argv) > 2 else DEFAULT_WORKSPACE
         measure(workspace)
     elif argv[1] == "build":
         workspace = argv[2] if len(argv) > 2 else DEFAULT_WORKSPACE
-        build_packs(workspace)
+        build_packs(workspace, argv[3] if len(argv) > 3 else DEFAULT_LOCAL_ROOT)
     else:
         if len(argv) < 4:
             raise SystemExit(usage)

@@ -53,10 +53,11 @@ object NpuGate {
      * Every `Build.SOC_MANUFACTURER` spelling some census row admits — DERIVED, the union of the
      * rows' own [NpuSocFamily.manufacturers], never a hand-typed list (P2). It was the Qualcomm
      * pair `{QTI, Qualcomm}` typed here until the manufacturer moved onto the row, and it
-     * survives only for the one reader that needs the fleet-wide set: the device-group XML's
-     * equality pin, which holds every spelling the XML names equal to this. [familyFor] never
-     * reads it — it asks the ROW, because a spelling one vendor ships says nothing about another
-     * vendor's silicon.
+     * survives as the fleet-wide derived set `NpuGateTest` pins. The device-group XML no longer
+     * reads it (P2-5): the XML renders only the device-TARGETED families, whose spellings are the
+     * Qualcomm pair, while this union also carries the MediaTek row's `Mediatek`. [familyFor]
+     * never reads it — it asks the ROW, because a spelling one vendor ships says nothing about
+     * another vendor's silicon.
      */
     val SUPPORTED_SOC_MANUFACTURERS: Set<String> =
         NpuFleetCensus.families.flatMap { it.manufacturers }.toSet()

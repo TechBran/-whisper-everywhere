@@ -1,0 +1,11 @@
+# The pack payload is a BUILD artifact (P2-5): `python tools/build_asset_packs.py build-local`
+# copies the mt6989 decoder here from the private artefact store, every byte checked against the
+# census's own literals on the way in and re-hashed out of the directory afterwards.
+# NeuroPilot-compiled bytecode must never enter a repo with a public remote, and the root
+# .gitignore's blob walls do not cover .bin — so this pattern IS the wall.
+#
+# "Everything in the payload directory EXCEPT the anchor", for the reasons the encoder module's
+# .gitignore states: the tracked .gitkeep proves the directory exists in a clean clone, and a
+# negation can only re-include a direct child.
+src/main/assets/npu_turbo_mt6989_dec/*
+!src/main/assets/npu_turbo_mt6989_dec/.gitkeep

@@ -56,6 +56,18 @@ import kotlinx.coroutines.launch
  *    `showConfirmationDialog`, and there is deliberately no custom re-ask anywhere in this
  *    flow — Play already knows the download's size and the user's setting, and a second dialog
  *    of ours would be a second copy of a consent Play owns.
+ *
+ * ### A pair may be more than one pack (P2-4; design §2.7)
+ *
+ * The packs are the device family's census parts ([NpuPackFetch.packsFor]): one for a Qualcomm
+ * pair, two for a MediaTek one (the encoder's module and the decoder's — 1.88 GB is over Play's
+ * 1.5 GB per-pack cap). Every rule above applies to ALL of them: [start] fetches every part, which
+ * after process death is what re-queries each one; every `AssetPackState` updates its part's
+ * reading and the pair's state is re-folded from all of them ([NpuPackFetch.advance]'s list
+ * overload — the one pure mapping, applied to every part), so the install begins only when EVERY
+ * part is delivered; [cancel] cancels every part; Play's one confirmation dialog covers every
+ * part waiting on it; and every part is given back strictly after the finalise, never before and
+ * never on a refusal. For one part each of those is exactly what the single-pack shell did.
  */
 object NpuPackController {
 
@@ -91,8 +103,19 @@ object NpuPackController {
      */
     val activeTier: StateFlow<String?> = _activeTier.asStateFlow()
 
+    /**
+     * The packs the current (or most recent) fetch is for — the device family's census parts, in
+     * order (P2-4). Written at [start], read by every other member.
+     */
     @Volatile
-    private var activePackName: String? = null
+    private var activeParts: List<PackPart> = emptyList()
+
+    /**
+     * Each part's latest `AssetPackState`, index-aligned with [activeParts]; null = Play has said
+     * nothing about that part yet in this fetch. Reset at every [start], so a new fetch — and a
+     * re-attach after process death — re-queries every part. Guarded by this object's monitor.
+     */
+    private val readings: MutableList<NpuPackFetch.PartReading?> = mutableListOf()
 
     /** The last progress percentage a `pack:` line carried; negative = none this phase. */
     @Volatile
@@ -122,24 +145,35 @@ object NpuPackController {
         // "another model is downloading", burying the controller's own words. Still exactly one
         // write site (pinned == 1) — it simply moved above the early return.
         _activeTier.value = tierId
-        val packName = NpuPackFetch.PACK_BY_TIER[tierId]
-        if (packName == null) {
-            // A tier without a pack is a caller bug, refused loudly rather than crashed on.
+        val appCtx = context.applicationContext
+        // (P2-4) The packs are the device family's own census parts — the Main-safe family memo,
+        // never a dlopen — so a Qualcomm pair is its tier's one pack and a MediaTek pair the
+        // encoder's module and the decoder's.
+        val parts = NpuPackFetch.packsFor(tierId, (appCtx as? WhisperEverywhereApp)?.npuSocFamily)
+        if (parts.isEmpty()) {
+            // A tier without a pack for this device (no pair measured for its family, or no
+            // family at all, which no fetch card is ever shown for) is a caller bug, refused
+            // loudly rather than crashed on.
             _state.value = NpuPackFetch.FetchState.Failed(
                 "This build has no Google Play pack for the '$tierId' tier."
             )
             return false
         }
-        val appCtx = context.applicationContext
         appContext = appCtx
-        activePackName = packName
+        activeParts = parts
+        // Every part unanswered: this fetch — or the re-attach after a process death — re-queries
+        // each one, and Play replays each part's status (a delivered part answers COMPLETED at
+        // once, so a retry moves only the bytes still missing).
+        readings.clear()
+        repeat(parts.size) { readings += null }
+        val packName = NpuPackFetch.packLabel(parts)
         lastLoggedPct = -1
         val mgr = manager ?: AssetPackManagerFactory.getInstance(appCtx).also {
             it.registerListener(listener)
             manager = it
         }
         publish(tierId, packName, NpuPackFetch.FetchState.Pending)
-        mgr.fetch(listOf(packName)).addOnFailureListener { failure ->
+        mgr.fetch(parts.map { it.packName }).addOnFailureListener { failure ->
             // The Task can fail before any AssetPackState update exists (a sideloaded install
             // fails HERE). The error code flows through the same table as everything else.
             val code = (failure as? AssetPackException)?.errorCode
@@ -153,18 +187,19 @@ object NpuPackController {
     }
 
     /**
-     * Abandon the fetch: Play's download is cancelled through the manager, the install
-     * coroutine (if any) is cancelled — `installFromPack`'s own finally clears its `.part`
-     * files — and the card reads Cancelled at once, because from the user's point of view the
-     * fetch they cancelled is over the moment they say so.
+     * Abandon the fetch: Play's download of EVERY part is cancelled through the manager (a part
+     * already delivered keeps its bytes for the retry), the install coroutine (if any) is
+     * cancelled — `installFromPack`'s own finally clears its `.part` files — and the card reads
+     * Cancelled at once, because from the user's point of view the fetch they cancelled is over
+     * the moment they say so.
      */
     fun cancel() {
         val tierId = _activeTier.value
-        val packName = activePackName
-        if (packName != null) runCatching { manager?.cancel(listOf(packName)) }
+        val parts = activeParts
+        if (parts.isNotEmpty()) runCatching { manager?.cancel(parts.map { it.packName }) }
         job?.cancel()
-        if (tierId != null && packName != null) {
-            publish(tierId, packName, NpuPackFetch.FetchState.Cancelled)
+        if (tierId != null && parts.isNotEmpty()) {
+            publish(tierId, NpuPackFetch.packLabel(parts), NpuPackFetch.FetchState.Cancelled)
         } else {
             _state.value = NpuPackFetch.FetchState.Cancelled
         }
@@ -183,18 +218,26 @@ object NpuPackController {
 
     private fun onPackState(packState: AssetPackState) {
         val tierId = _activeTier.value ?: return
-        val packName = activePackName ?: return
-        if (packState.name() != packName) return
-        // EVERY AssetPackState goes through the one pure mapping — no status is interpreted
-        // here, which is what keeps the shell too boring to be wrong.
-        val next = NpuPackFetch.advance(
-            packState.status(),
-            packState.errorCode(),
-            packState.bytesDownloaded(),
-            packState.totalBytesToDownload(),
-        )
+        // Read under the monitor start writes under: this fetch's parts and its readings, together.
+        val (parts, next) = synchronized(this) {
+            val parts = activeParts
+            val part = parts.indexOfFirst { it.packName == packState.name() }
+            if (part < 0 || part >= readings.size) return
+            readings[part] = NpuPackFetch.PartReading(
+                packState.status(),
+                packState.errorCode(),
+                packState.bytesDownloaded(),
+                packState.totalBytesToDownload(),
+            )
+            // EVERY AssetPackState goes through the one pure mapping — no status is interpreted
+            // here, which is what keeps the shell too boring to be wrong. (P2-4) The list
+            // overload folds every part's latest reading, whichever part this update was about.
+            parts to NpuPackFetch.advance(readings.toList())
+        }
+        val packName = NpuPackFetch.packLabel(parts)
         publish(tierId, packName, next)
-        // COMPLETED means DELIVERED: Verifying is where OUR work begins.
+        // COMPLETED means DELIVERED: Verifying is where OUR work begins — and the fold answers it
+        // only once EVERY part is delivered, so a partial pair never installs.
         if (next is NpuPackFetch.FetchState.Verifying) beginInstall(tierId, packName)
     }
 
@@ -243,6 +286,7 @@ object NpuPackController {
         val mgr = manager ?: return
         val app = appContext as? WhisperEverywhereApp
         val family = app?.npuSocFamily
+        val parts = activeParts
         val outcome = if (family == null) {
             // Unreachable behind the F6/F7 capability gates (no fetch card without a resolved
             // family) — refused anyway, by name: an unverifiable pack must never install.
@@ -256,15 +300,19 @@ object NpuPackController {
             // registered its listener on — same instance, same call, same nullability. The
             // previewer's pack (and the voice's) read their delivered assets through the very
             // same function, so there is exactly one spelling of "where a delivered pack is".
-            val assetsPath = PlayPacks.assetsPath(mgr, packName)
-            if (assetsPath == null) {
-                // Delivered, but Play answers no location: treat as the empty delivery — the
-                // fail-safe reading, with the import path named.
+            // (P2-4) Every PART's location, by pack name: the install reads each entry out of the
+            // part that carries it.
+            val assetsPaths = parts.mapNotNull { part ->
+                PlayPacks.assetsPath(mgr, part.packName)?.let { part.packName to it }
+            }.toMap()
+            if (assetsPaths.size != parts.size) {
+                // Delivered, but Play answers no location for a part: treat as the empty
+                // delivery — the fail-safe reading, with the import path named.
                 NpuAssetImport.ImportState.Refused(NpuPackFetch.emptyDeliveryRefusal())
             } else {
                 try {
                     app.whisperModelManager.installFromPack(
-                        tierId, family, assetsPath,
+                        tierId, family, assetsPaths,
                     ) { soFar, total ->
                         publish(tierId, packName, NpuPackFetch.FetchState.Verifying(soFar, total))
                     }
@@ -289,13 +337,15 @@ object NpuPackController {
                 // STRICTLY AFTER the staged pair is verified and renamed into place (ORDER
                 // pin — the 10th+ instance of the remove-after-land rule on this branch): the
                 // delivered pack is the ONLY copy of those bytes until the finalise commits,
-                // so a remove that runs early deletes the source mid-verify.
-                mgr.removePack(packName)
+                // so a remove that runs early deletes the source mid-verify. (P2-4) EVERY part,
+                // all of them after the finalise — the pair landed as one, so it is given back
+                // as one.
+                parts.forEach { mgr.removePack(it.packName) }
             }
             is NpuAssetImport.ImportState.Refused -> {
                 publish(tierId, packName, NpuPackFetch.FetchState.Failed(outcome.reason))
                 Log.w(NpuDiag.TAG, NpuDiag.packRefused(tierId, outcome.reason))
-                // NO removePack on this path: a failed verify leaves the delivered pack in
+                // NO removePack on this path: a failed verify leaves every delivered part in
                 // place, so the retry costs nothing — Play redelivers from disk.
             }
             else -> Unit // installFromPack's terminal states are exactly the two above.

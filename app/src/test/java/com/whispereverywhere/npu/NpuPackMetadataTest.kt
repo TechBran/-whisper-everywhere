@@ -91,21 +91,170 @@ class NpuPackMetadataTest {
     }
 
     @Test
-    fun theVersionMustBeExactlyOne() {
+    fun theVersionMustBeOneOrTwo() {
+        // RE-SPECCED AT P2-5 (was theVersionMustBeExactlyOne): version 2 is the MediaTek packs'
+        // document now (design §2.7), so it is READ — and the refusal-by-number moves to the
+        // first version this reader cannot know. What the old assertion guarded still holds, one
+        // number up: an unknown format is refused by its number, never guessed at.
         assertTrue(
             "a missing version is named",
             refusalOf(metaJson(version = null)).contains("version")
         )
-        val two = refusalOf(metaJson(version = "2"))
+        val three = refusalOf(metaJson(version = "3"))
         assertTrue(
-            "a version-2 file is refused BY ITS NUMBER — this reader cannot know what " +
-                "version 2 means, and guessing is how a wrong pack installs: $two",
-            two.contains("2") && two.contains("version 1")
+            "a version-3 file is refused BY ITS NUMBER, naming the two this build reads — this " +
+                "reader cannot know what version 3 means, and guessing is how a wrong pack " +
+                "installs: $three",
+            three.contains("3") && three.contains("versions 1 and 2")
+        )
+        val twoShapedAsOne = refusalOf(metaJson(version = "2"))
+        assertTrue(
+            "a version-2 document is held to version 2's own fields — the first one a version-1 " +
+                "body lacks is named: $twoShapedAsOne",
+            twoShapedAsOne.contains("neuronMajor")
         )
         assertTrue(
             "a string '1' is not the number 1 — strict about types, because lenient parsing " +
                 "is how a half-written file becomes 'a pack with defaults'",
             refusalOf(metaJson(version = "\"1\"")).contains("version")
+        )
+    }
+
+    // ------------------------------------------------------------------ version 2 (P2-5)
+
+    private val mt6989 = NpuFleetCensus.familyById("mt6989")!!
+    private val mt6989Pair = NpuFleetCensus.artifactFor("mt6989", "npu-turbo")!!
+
+    /**
+     * The mt6989 pack's version-2 document, as `tools/build_asset_packs.py` writes it for a LOCAL
+     * row (field order and all); a null field is OMITTED, a non-null [htpVersion] is added.
+     */
+    private fun v2Json(
+        socStamp: String? = "\"mt6989\"",
+        neuronMajor: String? = "8",
+        compiler: String? = "\"adapter 8.2.30\"",
+        familyId: String = "\"mt6989\"",
+        packGroup: String = "\"soc_mt6989\"",
+        htpVersion: String? = null,
+    ): String {
+        val fields = listOfNotNull(
+            "\"version\": 2",
+            "\"tierId\": \"npu-turbo\"",
+            "\"familyId\": $familyId",
+            htpVersion?.let { "\"htpVersion\": $it" },
+            "\"packGroup\": $packGroup",
+            neuronMajor?.let { "\"neuronMajor\": $it" },
+            socStamp?.let { "\"socStamp\": $it" },
+            compiler?.let { "\"compiler\": $it" },
+            "\"entries\": " + entriesJson(
+                encoderName = mt6989Pair.encoder.fileName, encoderBytes = mt6989Pair.encoder.bytes,
+                encoderSha = mt6989Pair.encoder.sha256, decoderName = mt6989Pair.decoder.fileName,
+                decoderBytes = mt6989Pair.decoder.bytes, decoderSha = mt6989Pair.decoder.sha256,
+            ),
+        )
+        return "{" + fields.joinToString(",") + "}"
+    }
+
+    @Test
+    fun aGoldenVersionTwoDocumentParsesItsThreeFieldsAndNeedsNoHtp() {
+        val meta = NpuPackMetadata.parse(v2Json())
+        assertEquals(NpuPackMetadata.VERSION_2, meta.version)
+        assertEquals("mt6989", meta.familyId)
+        assertEquals("soc_mt6989", meta.packGroup)
+        assertNull("no Hexagon to name: the HTP version is optional at version 2, and absent", meta.htpVersion)
+        assertEquals("the Neuron major the bytecode restores on", 8, meta.neuronMajor)
+        assertEquals("the chip the files' own LiteRtStamp names", "mt6989", meta.socStamp)
+        assertEquals("the bytecode's own compiler self-description", "adapter 8.2.30", meta.compiler)
+        assertEquals(
+            "and still EXACTLY two entries, encoder then decoder — metadata.json rides in part 1 " +
+                "and lists both, so the parser's rule does not move",
+            listOf(
+                NpuPackMetadata.MetaEntry(mt6989Pair.encoder.fileName, mt6989Pair.encoder.bytes, mt6989Pair.encoder.sha256),
+                NpuPackMetadata.MetaEntry(mt6989Pair.decoder.fileName, mt6989Pair.decoder.bytes, mt6989Pair.decoder.sha256),
+            ),
+            meta.entries,
+        )
+        // A version-1 document is never read for version 2's fields, even if it carries them.
+        val one = NpuPackMetadata.parse(metaJson().dropLast(1) + ",\"socStamp\": \"mt6989\"}")
+        assertEquals(1, one.version)
+        assertNull("a version-1 reader never knew socStamp", one.socStamp)
+        assertNull(one.neuronMajor)
+        assertNull(one.compiler)
+        assertEquals("and its HTP version is required and read, as ever", 79, one.htpVersion)
+    }
+
+    @Test
+    fun aVersionTwoDocumentMissingOrMistypingAnyOfItsThreeFieldsIsRefusedByName() {
+        assertTrue(refusalOf(v2Json(neuronMajor = null)).contains("neuronMajor"))
+        assertTrue(refusalOf(v2Json(socStamp = null)).contains("socStamp"))
+        assertTrue(refusalOf(v2Json(compiler = null)).contains("compiler"))
+        assertTrue("a major written as a string is a type fault", refusalOf(v2Json(neuronMajor = "\"8\"")).contains("neuronMajor"))
+        assertTrue("a blank stamp is a decision nobody made", refusalOf(v2Json(socStamp = "\"\"")).contains("socStamp"))
+        assertTrue("a blank compiler likewise", refusalOf(v2Json(compiler = "\" \"")).contains("compiler"))
+        assertTrue(
+            "an HTP version a version-2 document DOES carry must still be an integer",
+            refusalOf(v2Json(htpVersion = "\"75\"")).contains("htpVersion")
+        )
+    }
+
+    @Test
+    fun theMt6989PairsOwnVersionTwoDocumentPassesItsFamilysCrossCheck() {
+        assertNull(
+            "the pack build writes exactly this document for mt6989, and it is that family's pack",
+            NpuPackMetadata.crossCheckRefusal(NpuPackMetadata.parse(v2Json()), mt6989, mt6989Pair, "npu-turbo")
+        )
+    }
+
+    @Test
+    fun theMediatekTwinRefusesAnotherChipsStampAndAnotherNeuronMajorByName() {
+        // THE TWIN of the HTP arm (design §2.3 item 4): socStamp against family.runtime.socStamp,
+        // then neuronMajor against family.runtime.neuronMajor — the two values the row's driver
+        // check and the engine's init read too.
+        val otherChip = NpuPackMetadata.crossCheckRefusal(
+            NpuPackMetadata.parse(v2Json(socStamp = "\"mt6991\"")), mt6989, mt6989Pair, "npu-turbo"
+        )
+        assertNotNull("an MT6991-stamped pack on the MT6989 row refuses", otherChip)
+        assertTrue(
+            "naming both chips, and why it matters: $otherChip",
+            otherChip!!.contains("mt6991") && otherChip.contains("mt6989") &&
+                otherChip.contains("would not restore") && otherChip.contains("Nothing was installed")
+        )
+        val otherMajor = NpuPackMetadata.crossCheckRefusal(
+            NpuPackMetadata.parse(v2Json(neuronMajor = "9")), mt6989, mt6989Pair, "npu-turbo"
+        )
+        assertNotNull("bytecode compiled for Neuron 9 on a Neuron-8 row refuses", otherMajor)
+        assertTrue(
+            "naming both majors: $otherMajor",
+            otherMajor!!.contains("Neuron 9") && otherMajor.contains("Neuron 8") &&
+                otherMajor.contains("Nothing was installed")
+        )
+        val withHtp = NpuPackMetadata.crossCheckRefusal(
+            NpuPackMetadata.parse(v2Json(htpVersion = "75")), mt6989, mt6989Pair, "npu-turbo"
+        )
+        assertTrue(
+            "and a version-2 document that names a Hexagon is a Qualcomm pack's claim on the APU " +
+                "row, refused in the v1 arm's own words: $withHtp",
+            withHtp!!.contains("HTP v75") && withHtp.contains("MediaTek's APU")
+        )
+        assertTrue(
+            "no twin sentence blames a corrupted download — identity, not integrity",
+            listOf(otherChip, otherMajor, withHtp).none { it.contains("corrupt") }
+        )
+    }
+
+    @Test
+    fun aVersionTwoDocumentCanNeverDescribeAQualcommFamilysPack() {
+        // The mirror of aVersionOneDocumentCanNeverDescribeAMediatekFamilysPack: a Qualcomm row
+        // takes only the version-1 document, whatever else a version-2 one says.
+        val onQualcomm = NpuPackMetadata.crossCheckRefusal(
+            NpuPackMetadata.parse(v2Json(familyId = "\"8elite_galaxy\"", packGroup = "\"soc_8elite_galaxy\"", htpVersion = "79")),
+            family, artifact, "npu-turbo",
+        )
+        assertNotNull("a version-2 document on a Qualcomm row refuses", onQualcomm)
+        assertTrue(
+            "in the pack's own terms — a MediaTek pack on Qualcomm's Hexagon: $onQualcomm",
+            onQualcomm!!.contains("MediaTek AI-chip pack") && onQualcomm.contains("version 2") &&
+                onQualcomm.contains("Hexagon") && onQualcomm.contains("Nothing was installed")
         )
     }
 

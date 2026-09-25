@@ -21,6 +21,13 @@ include(":app")
 // zips — so each committed module tree carries only its build file, the EMPTY default variant
 // (model/.gitkeep) and the .gitignore that keeps the payload dirs out.
 include(":npu_turbo", ":npu_small")
+// The MediaTek turbo pair's two on-demand packs (P2-5, the MediaTek APU tier; design §2.7): the
+// mt6989 encoder with the pair's metadata.json, and its decoder — 1.88 GB is over Play's 1.5 GB
+// per-pack cap. Their own statement, so the Qualcomm pair's line above stays exactly what it was.
+// UNTARGETED and per FAMILY — one payload directory each, no #group_ folder, because bundletool's
+// DeviceGroupParityValidator requires every group-targeted module to carry the same set of groups
+// — so a later MediaTek family adds two modules of its own here rather than a variant to these.
+include(":npu_turbo_mt6989_enc", ":npu_turbo_mt6989_dec")
 // The streaming previewer's on-demand pack (4.4.0, the 2026-09-10 amendment) — its own statement
 // so the NPU pair's line above stays exactly what it was: a rewritten include list is how a pack
 // silently stops shipping. Same payload discipline (tools/build_asset_packs.py preview places the

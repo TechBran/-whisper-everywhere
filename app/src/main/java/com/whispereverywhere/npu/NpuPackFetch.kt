@@ -1,5 +1,7 @@
 package com.whispereverywhere.npu
 
+import java.io.File
+
 /**
  * The Play fetch flow's PURE state machine (4.2 F5) — every decision `NpuPackController` makes,
  * as executable functions, so a JVM test can prove them while the Android shell is pinned as
@@ -31,18 +33,86 @@ package com.whispereverywhere.npu
  * [FetchState.Failed] carrying its number, and [failureReason] names every error code the
  * library declares in user words with the honest next action — a sideloaded install is told the
  * import path, never shown a dead end. Silence is not a state anywhere in this machine.
+ *
+ * ### A pair may arrive in more than one pack (P2-4)
+ *
+ * A MediaTek pair is 1.88 GB against Play's 1.5 GB per-pack cap, so it is TWO packs — the census
+ * row's [PackArtifact.parts], read through [packsFor]. The fetch is still ONE state: the
+ * list overload of [advance] folds every part's reading into it — the worst status wins, bytes
+ * are summed, and delivery is complete only when EVERY part is. A Qualcomm pair is one part, and
+ * for one part the fold IS the per-part mapping, status for status (executed in
+ * `NpuPackFetchTest`), so nothing about the Qualcomm flow moved.
  */
 object NpuPackFetch {
 
     /**
-     * Which committed pack module serves which paired tier — spelled through the tier ids' own
-     * HOMES (the npu constant, the turbo spec) so the map cannot drift from the catalog side,
-     * and pinned against F4's `packName.set(…)` facts from the module side.
+     * Which committed pack module serves which paired tier ON THE QUALCOMM FLEET — spelled through
+     * the tier ids' own HOMES (the npu constant, the turbo spec) so the map cannot drift from the
+     * catalog side, and pinned against F4's `packName.set(…)` facts from the module side.
+     *
+     * Since P2-4 nothing fetches THROUGH this map: the machinery asks [packsFor], which answers the
+     * device family's own [PackArtifact.parts]. It stays because it is what those parts default to
+     * on a Qualcomm row — one part, this tier's pack, both entries — and `NpuFleetCensusTest` holds
+     * every Qualcomm row's parts equal to it, so the two spellings cannot part company.
      */
     val PACK_BY_TIER: Map<String, String> = mapOf(
         NpuAssetImport.TIER_ID to "npu_small",
         NpuModelSpec.TURBO.tierId to "npu_turbo",
     )
+
+    /**
+     * The asset packs [tierId]'s pair arrives in on [family] — the census row's own
+     * [PackArtifact.parts], in order, the encoder's part first (P2-4; design §2.7) — or EMPTY when
+     * this build has nothing to fetch there: no family resolved, or no measured pair for the tier
+     * on it. The ONE answer to "which packs": `NpuPackController` fetches, cancels and gives back
+     * exactly these, and `WhisperModelManager.installFromPack` reads each entry out of the part
+     * that carries it ([deliveredEntryDirs]). A Qualcomm row answers one part, [PACK_BY_TIER]'s
+     * pack carrying both entries — what the single-pack machinery fetched before parts existed.
+     */
+    fun packsFor(tierId: String, family: NpuSocFamily?): List<PackPart> =
+        family?.let { NpuFleetCensus.artifactFor(it.id, tierId) }?.parts.orEmpty()
+
+    /**
+     * The `pack=` field of the `pack:` lines for a fetch of [parts]: the one pack's name for a
+     * one-part pair — `npu_turbo`, the line every Qualcomm fetch has always printed, byte for
+     * byte — and the parts' names joined by `+` for more
+     * (`npu_turbo_mt6989_enc+npu_turbo_mt6989_dec`), one token either way, so the line still
+     * parses on spaces.
+     */
+    fun packLabel(parts: List<PackPart>): String = parts.joinToString("+") { it.packName }
+
+    /**
+     * Where each entry of a delivered pair is (P2-4): the directory Play delivered the PART that
+     * carries it into — `<that part's assetsPath>/<that part's pack name>/`, which is where a
+     * device-targeted variant lands once Play strips its `#group_<g>` suffix (4.2 F8) and where
+     * an untargeted module's one directory already is — keyed by the entry's delivery name. So
+     * the encoder of a two-part pair is read out of part 1's directory and its decoder out of
+     * part 2's, and both
+     * entries of a one-part pair out of the one pack's, as they always were. A part Play gave no
+     * location for contributes nothing: its entries are simply absent, and the install's
+     * both-present check refuses them by name.
+     *
+     * @param assetsPaths each delivered part's `AssetPackLocation.assetsPath()`, by pack name.
+     */
+    fun deliveredEntryDirs(parts: List<PackPart>, assetsPaths: Map<String, String>): Map<String, File> {
+        val dirs = LinkedHashMap<String, File>()
+        for (part in parts) {
+            val partDir = assetsPaths[part.packName]?.let { File(it, part.packName) } ?: continue
+            for (entry in part.entries) dirs[entry.fileName] = partDir
+        }
+        return dirs
+    }
+
+    /**
+     * The delivered directory holding the pair's `metadata.json` — PART 1's (P2-4; design §2.7:
+     * the metadata sits in part 1 and lists BOTH entries, so `NpuPackMetadata.parse` stays
+     * "exactly two") — or null when Play gave part 1 no location, which the install reads as the
+     * empty delivery it is.
+     */
+    fun deliveredMetadataDir(parts: List<PackPart>, assetsPaths: Map<String, String>): File? {
+        val first = parts.firstOrNull() ?: return null
+        return assetsPaths[first.packName]?.let { File(it, first.packName) }
+    }
 
     // ---------------------------------------------------------------- AssetPackStatus mirror
     // All TEN documented statuses (asset-delivery 2.3.0), asserted equal to the library's own
@@ -184,6 +254,78 @@ object NpuPackFetch {
         STATUS_REQUIRES_USER_CONFIRMATION -> FetchState.NeedsConfirmation
         STATUS_NOT_INSTALLED -> FetchState.Idle
         else -> FetchState.Failed("Google Play reported status $status")
+    }
+
+    /**
+     * ONE part's latest `AssetPackState` — the four numbers the per-part [advance] has always
+     * taken, kept per part (P2-4) so the pair's state can be re-folded from all of them on every
+     * update, whichever part the update was about.
+     */
+    data class PartReading(val status: Int, val errorCode: Int, val soFar: Long, val total: Long)
+
+    /**
+     * THE PARTS MACHINE (P2-4; design §2.7): the pair's ONE [FetchState], folded from every
+     * part's latest reading, in part order. A null reading is a part Play has said nothing about
+     * yet in this fetch — asked for, unanswered — and reads as [FetchState.Pending].
+     *
+     * Each part goes through the per-part [advance] (the ONE status mapping, so no status is
+     * interpreted twice), and **the worst status wins**, by this order, worst first:
+     *
+     * ```
+     *   Failed > Cancelled > NeedsConfirmation > Idle > Pending > Downloading > Transferring > Verifying
+     * ```
+     *
+     * which is "furthest from delivered", with the three that need the USER on top: a failure the
+     * card must name (the first failing part's, in part order), the user's own stop, and Play's
+     * consent dialog — which covers every pack waiting on it, so one confirmation serves all
+     * parts. What the order buys, as rules:
+     *
+     *  - **Install begins only when EVERY part is delivered.** [FetchState.Verifying] — the state
+     *    the controller launches the install on — is the best rank, so the fold answers it only
+     *    when every part reads COMPLETED. One part delivered and the other failed is Failed, never
+     *    a partial install; the retry fetches the pair again, and Play answers the part it already
+     *    holds with COMPLETED at once, so only the failed part moves bytes.
+     *  - **Bytes are summed.** Downloading and Verifying carry the sum over every part's reported
+     *    bytes, so one progress bar covers the pair (a delivered part counts as all of its bytes).
+     *    The pair's total also stands in for the part's in the per-part mapping, so a storage
+     *    refusal names what the PAIR needs.
+     *  - **Re-attach re-queries every part.** After process death the controller starts with no
+     *    readings — every part Pending — and fetching the pair makes Play replay each part's
+     *    status into this fold.
+     *
+     * For ONE part the fold is the per-part [advance], status for status — executed in
+     * `NpuPackFetchTest` over every documented status and two off-table ones — which is what
+     * keeps every Qualcomm fetch exactly as it was. An empty list (no parts at all: a caller bug
+     * the controller refuses before it gets here) folds to [FetchState.Idle]: nothing requested.
+     */
+    fun advance(parts: List<PartReading?>): FetchState {
+        if (parts.isEmpty()) return FetchState.Idle
+        val soFar = parts.sumOf { it?.soFar ?: 0L }
+        val total = parts.sumOf { it?.total ?: 0L }
+        val each = parts.map { reading ->
+            if (reading == null) FetchState.Pending
+            else advance(reading.status, reading.errorCode, reading.soFar, total)
+        }
+        // maxBy keeps the FIRST element of the highest rank: the first failing part, in part order.
+        return when (val worst = each.maxBy { rank(it) }) {
+            is FetchState.Downloading -> FetchState.Downloading(soFar, total)
+            is FetchState.Verifying -> FetchState.Verifying(0, total)
+            else -> worst
+        }
+    }
+
+    /** The fold's order (see the list [advance]): higher is worse. */
+    private fun rank(state: FetchState): Int = when (state) {
+        // Installed is never produced by a Play status (NpuPackFetchTest proves it for every
+        // one), so it cannot reach the fold; ranked with Verifying for totality.
+        is FetchState.Verifying, is FetchState.Installed -> 0
+        is FetchState.Transferring -> 1
+        is FetchState.Downloading -> 2
+        is FetchState.Pending -> 3
+        is FetchState.Idle -> 4
+        is FetchState.NeedsConfirmation -> 5
+        is FetchState.Cancelled -> 6
+        is FetchState.Failed -> 7
     }
 
     /**

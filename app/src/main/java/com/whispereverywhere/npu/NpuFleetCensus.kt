@@ -72,7 +72,10 @@ sealed interface NpuRuntimeNeeds {
  *   (`8-elite-for-galaxy`); that mapping belongs to the artifact rows (F3), never to this field.
  * @property packGroup the Play device-group name this family's pack variant ships under. The
  *   device-group XML must carry exactly [socModels] under exactly this name — F4's layout pin
- *   holds the two files equal, which is what gives maintenance rule 1 its teeth.
+ *   holds the two files equal, which is what gives maintenance rule 1 its teeth. That holds for
+ *   every DEVICE-TARGETED family (the Qualcomm rows); a MediaTek row's pair ships in untargeted
+ *   modules of its own (P2-5, bundletool's `DeviceGroupParityValidator`), so its group names the
+ *   family in the census and in its pack metadata and renders into no XML.
  * @property socModels every `Build.SOC_MODEL` string known to name this silicon — exact, complete,
  *   and taken from what DEVICES REPORT, never from a spec sheet or a vendor catalog's alias
  *   (maintenance rule 1 in the [NpuFleetCensus] KDoc).
@@ -117,8 +120,11 @@ data class PackEntry(
  * single-pack machinery does today. A MediaTek pair is 1.88 GB against Play's 1.5 GB per-pack
  * cap, so it is TWO parts: the encoder in one module, the decoder in another.
  *
- * SHAPE ONLY at P2-3: nothing reads [PackArtifact.parts] yet. The machinery that fetches, installs
- * and removes per part is P2-4's, and the MediaTek modules the parts name are P2-5's.
+ * The Qualcomm modules are DEVICE-TARGETED (one `#group_` variant per family); a MediaTek
+ * family's two are UNTARGETED and its own — `npu_turbo_mt6989_enc` / `_dec`, named per family,
+ * because bundletool's `DeviceGroupParityValidator` requires every group-targeted module to carry
+ * the same set of groups, and the census gate (not Play) decides who fetches them (P2-5; design
+ * §2.7 "Modules").
  *
  * @property packName the asset-pack module — Play's identity for `fetch` / `getPackLocation`.
  * @property entries the pair's entries this pack carries, encoder first when it carries both.
@@ -176,9 +182,10 @@ private fun singlePackFor(tierId: String): String = when (tierId) {
  * @property encoder the primary context binary, under the tier's catalog `fileName`.
  * @property decoder the paired context binary, under the tier's catalog paired `fileName`.
  * @property evidence when and how this row was measured — a recorded date, never a vibe.
- * @property parts the asset packs the pair arrives in (P2, design §2.7; the SHAPE only until
- *   P2-4's machinery reads it). The default is today's single-pack behaviour, stated: one part,
- *   the tier's own module ([singlePackFor]), carrying both entries — every Qualcomm row's value.
+ * @property parts the asset packs the pair arrives in (P2, design §2.7), read by the pack
+ *   machinery through `NpuPackFetch.packsFor` since P2-4. The default is the single-pack
+ *   behaviour, stated: one part, the tier's own module ([singlePackFor]), carrying both entries —
+ *   every Qualcomm row's value.
  */
 data class PackArtifact(
     val familyId: String,
@@ -482,10 +489,13 @@ object NpuFleetCensus {
         // is {npu-turbo}, the family has one artifact row, and the cross-product pins are
         // vendor-scoped: a Qualcomm family has both tiers, a MediaTek family turbo only.
         //
-        // What it does NOT have yet: anything that can run it from the Play build. The dispatch
-        // staging, the runtime packaging and the manifest declaration are P2-6's, the two pack
-        // modules P2-5's, the per-part machinery P2-4's and the selector's vendor switch P2-7's —
-        // until then the driver check on a MediaTek device refuses, and the tier is not offered.
+        // What it does NOT have yet: the selector's vendor switch (P2-7), and with it anything that
+        // RUNS the pair from the Play build. The per-part machinery (P2-4), the two untargeted pack
+        // modules (P2-5), the runtime packaging, the dispatch stage and the adapter declaration
+        // (P2-6) are in — so from P2-6 the driver check on the tablet CAN pass and the tier is
+        // offered there, while the selector still builds the QNN engine for every family, whose
+        // prepare refuses this row at stage=skel (the loud CPU fallback). No build between P2-6 and
+        // P2-7 may reach a track.
         NpuSocFamily(
             id = "mt6989",
             packGroup = "soc_mt6989",
@@ -776,8 +786,10 @@ object NpuFleetCensus {
         ),
         // mt6989 — turbo alone (the owner's ruling, on the family row), a LOCAL pair: no vendor
         // zip, and TWO parts, because 1,887,468,672 B is over Play's 1.5 GB per-pack cap — the
-        // encoder in one on-demand module and the decoder in another (design §2.7; the modules
-        // are P2-5's, the machinery that reads parts P2-4's).
+        // encoder in one on-demand module and the decoder in another, both UNTARGETED and this
+        // family's own (P2-5, design §2.7: bundletool's DeviceGroupParityValidator refuses group-
+        // targeted modules whose group sets differ, so these carry no #group_ folder at all and
+        // the census gate decides who fetches them).
         PackArtifact(
             familyId = "mt6989",
             tierId = "npu-turbo",
@@ -786,8 +798,8 @@ object NpuFleetCensus {
             decoder = MT6989_TURBO_DECODER,
             evidence = COMPILED_MT6989,
             parts = listOf(
-                PackPart("npu_turbo_mtk_enc", listOf(MT6989_TURBO_ENCODER)),
-                PackPart("npu_turbo_mtk_dec", listOf(MT6989_TURBO_DECODER)),
+                PackPart("npu_turbo_mt6989_enc", listOf(MT6989_TURBO_ENCODER)),
+                PackPart("npu_turbo_mt6989_dec", listOf(MT6989_TURBO_DECODER)),
             ),
         ),
     )

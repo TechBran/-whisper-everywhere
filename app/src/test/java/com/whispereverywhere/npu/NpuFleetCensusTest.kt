@@ -151,10 +151,12 @@ class NpuFleetCensusTest {
         )
         assertEquals(
             "TWO parts — 1.88 GB is over Play's 1.5 GB per-pack cap — the encoder in one module " +
-                "and the decoder in the other, each carrying exactly its own entry (design §2.7)",
+                "and the decoder in the other, each carrying exactly its own entry (design §2.7), " +
+                "in untargeted modules named for THIS family (P2-5: bundletool's " +
+                "DeviceGroupParityValidator, so no #group_ variant — a later mt6991 gets its own two)",
             listOf(
-                PackPart("npu_turbo_mtk_enc", listOf(a.encoder)),
-                PackPart("npu_turbo_mtk_dec", listOf(a.decoder)),
+                PackPart("npu_turbo_mt6989_enc", listOf(a.encoder)),
+                PackPart("npu_turbo_mt6989_dec", listOf(a.decoder)),
             ),
             a.parts
         )

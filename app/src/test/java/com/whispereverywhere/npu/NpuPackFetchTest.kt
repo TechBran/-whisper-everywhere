@@ -370,6 +370,314 @@ class NpuPackFetchTest {
         }
     }
 
+    // ------------------------------------------------------------------ the parts machine (P2-4)
+
+    /**
+     * The eleven states ONE part can be in during a fetch: no reading yet (`-`: asked for, Play has
+     * not answered), then the ten documented statuses. The pair table below crosses them.
+     */
+    private val partStates: List<String> =
+        listOf("-", "IDLE", "PEND", "DOWN", "XFER", "DONE", "FAIL", "CANC", "WIFI", "CONF", "UNKN")
+
+    private fun statusOf(code: String): Int = when (code) {
+        "IDLE" -> NpuPackFetch.STATUS_NOT_INSTALLED
+        "PEND" -> NpuPackFetch.STATUS_PENDING
+        "DOWN" -> NpuPackFetch.STATUS_DOWNLOADING
+        "XFER" -> NpuPackFetch.STATUS_TRANSFERRING
+        "DONE" -> NpuPackFetch.STATUS_COMPLETED
+        "FAIL" -> NpuPackFetch.STATUS_FAILED
+        "CANC" -> NpuPackFetch.STATUS_CANCELED
+        "WIFI" -> NpuPackFetch.STATUS_WAITING_FOR_WIFI
+        "CONF" -> NpuPackFetch.STATUS_REQUIRES_USER_CONFIRMATION
+        "UNKN" -> NpuPackFetch.STATUS_UNKNOWN
+        else -> throw AssertionError("no status for part state '$code'")
+    }
+
+    /** Part 1 is the mt6989 encoder-sized part, part 2 the decoder-sized one (compressed sizes). */
+    private val partTotals = listOf(1_310_000_000L, 590_000_000L)
+    private val partSoFars = listOf(400_000_000L, 100_000_000L)
+
+    /** Part 1 fails on the network, part 2 on storage — so F1 and F2 are told apart by their words. */
+    private val partErrors = listOf(NpuPackFetch.ERROR_NETWORK_ERROR, NpuPackFetch.ERROR_INSUFFICIENT_STORAGE)
+
+    private fun readingOf(part: Int, code: String): NpuPackFetch.PartReading? {
+        if (code == "-") return null
+        val status = statusOf(code)
+        val soFar = if (status == NpuPackFetch.STATUS_COMPLETED) partTotals[part] else partSoFars[part]
+        val error = if (status == NpuPackFetch.STATUS_FAILED) partErrors[part] else NpuPackFetch.ERROR_NO_ERROR
+        return NpuPackFetch.PartReading(status, error, soFar, partTotals[part])
+    }
+
+    /**
+     * THE PAIR TABLE: part 1's state down, part 2's across, and the ONE state the fetch card shows.
+     * `P` Pending, `I` Idle, `D` Downloading (the pair's summed bytes), `T` Transferring, `V`
+     * Verifying (the pair's summed total — delivery complete, the install begins), `N`
+     * NeedsConfirmation, `C` Cancelled, `F1`/`F2` Failed with part 1's / part 2's own reason.
+     * Written out, not derived: the worst status wins — Failed > Cancelled > NeedsConfirmation >
+     * Idle > Pending > Downloading > Transferring > Verifying — and the first failing part names it.
+     */
+    private val pairTable: List<String> = listOf(
+        //       -    IDLE PEND DOWN XFER DONE FAIL CANC WIFI CONF UNKN    <- part 2
+        /* -    */ "P    I    P    P    P    P    F2   C    N    N    F2",
+        /* IDLE */ "I    I    I    I    I    I    F2   C    N    N    F2",
+        /* PEND */ "P    I    P    P    P    P    F2   C    N    N    F2",
+        /* DOWN */ "P    I    P    D    D    D    F2   C    N    N    F2",
+        /* XFER */ "P    I    P    D    T    T    F2   C    N    N    F2",
+        /* DONE */ "P    I    P    D    T    V    F2   C    N    N    F2",
+        /* FAIL */ "F1   F1   F1   F1   F1   F1   F1   F1   F1   F1   F1",
+        /* CANC */ "C    C    C    C    C    C    F2   C    C    C    F2",
+        /* WIFI */ "N    N    N    N    N    N    F2   C    N    N    F2",
+        /* CONF */ "N    N    N    N    N    N    F2   C    N    N    F2",
+        /* UNKN */ "F1   F1   F1   F1   F1   F1   F1   F1   F1   F1   F1",
+    )
+
+    @Test
+    fun theTwoPartMachineFoldsEveryCombinationOfPartStatesToTheTablesOneState() {
+        assertEquals("one table row per part-1 state", partStates.size, pairTable.size)
+        var cells = 0
+        for ((row, first) in partStates.withIndex()) {
+            val expectedRow = pairTable[row].trim().split(Regex("\\s+"))
+            assertEquals("row $first has one cell per part-2 state", partStates.size, expectedRow.size)
+            for ((column, second) in partStates.withIndex()) {
+                val readings = listOf(readingOf(0, first), readingOf(1, second))
+                val soFar = readings.sumOf { it?.soFar ?: 0L }
+                val total = readings.sumOf { it?.total ?: 0L }
+                val failureOf = { part: Int ->
+                    val reading = requireNotNull(readings[part])
+                    if (reading.status == NpuPackFetch.STATUS_FAILED) {
+                        NpuPackFetch.FetchState.Failed(NpuPackFetch.failureReason(reading.errorCode, total))
+                    } else {
+                        NpuPackFetch.FetchState.Failed("Google Play reported status 0 (unknown)")
+                    }
+                }
+                val expected: NpuPackFetch.FetchState = when (val cell = expectedRow[column]) {
+                    "P" -> NpuPackFetch.FetchState.Pending
+                    "I" -> NpuPackFetch.FetchState.Idle
+                    "D" -> NpuPackFetch.FetchState.Downloading(soFar, total)
+                    "T" -> NpuPackFetch.FetchState.Transferring
+                    "V" -> NpuPackFetch.FetchState.Verifying(0, total)
+                    "N" -> NpuPackFetch.FetchState.NeedsConfirmation
+                    "C" -> NpuPackFetch.FetchState.Cancelled
+                    "F1" -> failureOf(0)
+                    "F2" -> failureOf(1)
+                    else -> throw AssertionError("unknown table cell '$cell'")
+                }
+                assertEquals(
+                    "part 1 $first + part 2 $second folds to exactly the table's state",
+                    expected,
+                    NpuPackFetch.advance(readings),
+                )
+                cells++
+            }
+        }
+        assertEquals("all 121 combinations were executed", 121, cells)
+    }
+
+    @Test
+    fun theInstallBeginsOnlyWhenEveryPartIsDeliveredNeverOnAPartialPair() {
+        // Verifying is the state the controller launches installFromPack on. Across every one of
+        // the 121 combinations it appears exactly once: both parts COMPLETED. One part delivered
+        // and the other anything else — failed included — is never an install.
+        for (first in partStates) {
+            for (second in partStates) {
+                val folded = NpuPackFetch.advance(listOf(readingOf(0, first), readingOf(1, second)))
+                assertEquals(
+                    "$first + $second: Verifying if and only if BOTH parts are delivered",
+                    first == "DONE" && second == "DONE",
+                    folded is NpuPackFetch.FetchState.Verifying,
+                )
+                assertFalse("and no fold is ever Installed", folded is NpuPackFetch.FetchState.Installed)
+            }
+        }
+    }
+
+    @Test
+    fun onePartFailingAfterTheOtherDeliveredIsAFailureAndItsRetryMovesOnlyTheFailedPartsBytes() {
+        val delivered = readingOf(0, "DONE")
+        val failed = NpuPackFetch.advance(listOf(delivered, readingOf(1, "FAIL")))
+        assertEquals(
+            "the encoder delivered, the decoder failed: the card names the decoder's failure, and " +
+                "the storage sentence names what the PAIR needs — 1,900 MB, not the part's 590",
+            NpuPackFetch.FetchState.Failed(
+                NpuPackFetch.failureReason(NpuPackFetch.ERROR_INSUFFICIENT_STORAGE, 1_900_000_000L)
+            ),
+            failed,
+        )
+        assertTrue((failed as NpuPackFetch.FetchState.Failed).reason.contains("1900 MB"))
+        // The retry fetches the pair again; Play answers the part it still holds with COMPLETED at
+        // once and moves bytes only for the failed one — which the fold shows as ONE progress bar
+        // over the whole pair, the delivered part counted in full.
+        assertEquals(
+            "the retry, re-queried: the delivered part replays COMPLETED, the failed part is pending",
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.advance(listOf(delivered, readingOf(1, "PEND"))),
+        )
+        assertEquals(
+            "…then downloads, and the bar starts at the delivered part's bytes",
+            NpuPackFetch.FetchState.Downloading(1_310_000_000L + 100_000_000L, 1_900_000_000L),
+            NpuPackFetch.advance(listOf(delivered, readingOf(1, "DOWN"))),
+        )
+        assertEquals(
+            "…and the install begins only once the retried part is delivered too",
+            NpuPackFetch.FetchState.Verifying(0, 1_900_000_000L),
+            NpuPackFetch.advance(listOf(delivered, readingOf(1, "DONE"))),
+        )
+    }
+
+    @Test
+    fun reAttachAfterProcessDeathStartsFromEveryPartUnansweredAndReplaysEachPartsStatus() {
+        // A new process has no readings: every part is re-queried (the controller fetches the
+        // pair), and until Play answers each one the pair is Pending — never Idle (which would
+        // offer a second Get), never a progress bar with half its bytes.
+        assertEquals(NpuPackFetch.FetchState.Pending, NpuPackFetch.advance(listOf(null, null)))
+        assertEquals(
+            "one part replayed as delivered, the other not yet answered: still Pending",
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.advance(listOf(readingOf(0, "DONE"), null)),
+        )
+        assertEquals(
+            "a three-part pair folds by the same rule — the machine is not written for two",
+            NpuPackFetch.FetchState.Verifying(0, 30L),
+            NpuPackFetch.advance(
+                listOf(
+                    NpuPackFetch.PartReading(NpuPackFetch.STATUS_COMPLETED, 0, 10L, 10L),
+                    NpuPackFetch.PartReading(NpuPackFetch.STATUS_COMPLETED, 0, 10L, 10L),
+                    NpuPackFetch.PartReading(NpuPackFetch.STATUS_COMPLETED, 0, 10L, 10L),
+                )
+            ),
+        )
+        assertEquals(
+            "and an unrecognised status in either part is the loud Failed it always was",
+            NpuPackFetch.FetchState.Failed("Google Play reported status 99"),
+            NpuPackFetch.advance(
+                listOf(readingOf(0, "DONE"), NpuPackFetch.PartReading(99, 0, 0L, 0L))
+            ),
+        )
+        assertEquals(
+            "no parts at all is nothing requested",
+            NpuPackFetch.FetchState.Idle,
+            NpuPackFetch.advance(emptyList()),
+        )
+    }
+
+    @Test
+    fun forOnePartTheFoldIsThePerPartMappingStatusForStatus() {
+        // The Qualcomm fleet's whole guarantee: a one-part pair folds to EXACTLY what the per-part
+        // mapping answered before parts existed — for every documented status, two the library
+        // never documented, and every error code the failure arm can carry.
+        val statuses = intConstants(AssetPackStatus::class.java).values + listOf(99, -3)
+        val errors = intConstants(AssetPackErrorCode::class.java).values + listOf(-777)
+        for (status in statuses) {
+            for (error in errors) {
+                assertEquals(
+                    "status $status / error $error: one part folds to the per-part mapping",
+                    NpuPackFetch.advance(status, error, soFar, total),
+                    NpuPackFetch.advance(listOf(NpuPackFetch.PartReading(status, error, soFar, total))),
+                )
+            }
+        }
+        assertEquals(
+            "and one part with no reading yet is the Pending the controller publishes at start",
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.advance(listOf(null)),
+        )
+    }
+
+    @Test
+    fun packsForIsTheFamilysOwnPartsAndEmptyWhereThereIsNothingToFetch() {
+        for (a in NpuFleetCensus.artifacts) {
+            val family = requireNotNull(NpuFleetCensus.familyById(a.familyId))
+            assertEquals(
+                "${a.familyId}/${a.tierId}: the packs to fetch ARE the census row's parts",
+                a.parts,
+                NpuPackFetch.packsFor(a.tierId, family),
+            )
+        }
+        val gen3 = requireNotNull(NpuFleetCensus.familyById("8gen3"))
+        assertEquals(
+            "a Qualcomm pair is ONE part — the tier's own pack, both entries — which is what the " +
+                "single-pack machinery fetched before parts existed",
+            listOf("npu_turbo"),
+            NpuPackFetch.packsFor("npu-turbo", gen3).map { it.packName },
+        )
+        assertEquals(
+            listOf(NpuPackFetch.PACK_BY_TIER.getValue("npu")),
+            NpuPackFetch.packsFor("npu", gen3).map { it.packName },
+        )
+        val mt6989 = requireNotNull(NpuFleetCensus.familyById("mt6989"))
+        assertEquals(
+            "the MediaTek pair is two: the encoder's module, then the decoder's",
+            listOf("npu_turbo_mt6989_enc", "npu_turbo_mt6989_dec"),
+            NpuPackFetch.packsFor("npu-turbo", mt6989).map { it.packName },
+        )
+        assertEquals(
+            "no Small was ever built for the tablet: nothing to fetch",
+            emptyList<PackPart>(),
+            NpuPackFetch.packsFor("npu", mt6989),
+        )
+        assertEquals("no family resolved: nothing to fetch", emptyList<PackPart>(), NpuPackFetch.packsFor("npu-turbo", null))
+        assertEquals("a tier the census has no pair for has no pack", emptyList<PackPart>(), NpuPackFetch.packsFor("cpu", gen3))
+    }
+
+    @Test
+    fun thePackLabelIsTheOnePacksNameAndTheJoinedPartsOtherwise() {
+        val gen3 = requireNotNull(NpuFleetCensus.familyById("8gen3"))
+        val mt6989 = requireNotNull(NpuFleetCensus.familyById("mt6989"))
+        assertEquals(
+            "a Qualcomm fetch's pack= field is byte-identical to the line it has always printed",
+            "npu_turbo",
+            NpuPackFetch.packLabel(NpuPackFetch.packsFor("npu-turbo", gen3)),
+        )
+        assertEquals(
+            "a two-part pair names both, as ONE token — the line still parses on spaces",
+            "npu_turbo_mt6989_enc+npu_turbo_mt6989_dec",
+            NpuPackFetch.packLabel(NpuPackFetch.packsFor("npu-turbo", mt6989)),
+        )
+    }
+
+    @Test
+    fun eachEntryIsReadOutOfThePartThatCarriesItAndTheMetadataOutOfPartOne() {
+        val mt6989 = requireNotNull(NpuFleetCensus.familyById("mt6989"))
+        val parts = NpuPackFetch.packsFor("npu-turbo", mt6989)
+        val paths = mapOf(
+            "npu_turbo_mt6989_enc" to "/data/app/asset_packs/enc/assets",
+            "npu_turbo_mt6989_dec" to "/data/app/asset_packs/dec/assets",
+        )
+        assertEquals(
+            "the encoder from part 1's delivered directory, the decoder from part 2's",
+            mapOf(
+                "turbo_encoder_qairt_context.bin" to java.io.File("/data/app/asset_packs/enc/assets", "npu_turbo_mt6989_enc"),
+                "turbo_decoder_qairt_context.bin" to java.io.File("/data/app/asset_packs/dec/assets", "npu_turbo_mt6989_dec"),
+            ),
+            NpuPackFetch.deliveredEntryDirs(parts, paths),
+        )
+        assertEquals(
+            "and metadata.json — which lists BOTH entries — out of part 1's",
+            java.io.File("/data/app/asset_packs/enc/assets", "npu_turbo_mt6989_enc"),
+            NpuPackFetch.deliveredMetadataDir(parts, paths),
+        )
+        assertEquals(
+            "a part Play gave no location for contributes nothing: its entry is missing, and the " +
+                "install's both-present check refuses it by name",
+            setOf("turbo_encoder_qairt_context.bin"),
+            NpuPackFetch.deliveredEntryDirs(parts, paths - "npu_turbo_mt6989_dec").keys,
+        )
+        assertEquals(
+            "no location for part 1 is no metadata: the empty delivery",
+            null,
+            NpuPackFetch.deliveredMetadataDir(parts, paths - "npu_turbo_mt6989_enc"),
+        )
+        // The Qualcomm pair: both entries out of the ONE pack's directory, exactly as before.
+        val gen3 = requireNotNull(NpuFleetCensus.familyById("8gen3"))
+        val one = NpuPackFetch.packsFor("npu-turbo", gen3)
+        val dir = java.io.File("/assets", "npu_turbo")
+        assertEquals(
+            mapOf("turbo_encoder_qairt_context.bin" to dir, "turbo_decoder_qairt_context.bin" to dir),
+            NpuPackFetch.deliveredEntryDirs(one, mapOf("npu_turbo" to "/assets")),
+        )
+        assertEquals(dir, NpuPackFetch.deliveredMetadataDir(one, mapOf("npu_turbo" to "/assets")))
+    }
+
     // ------------------------------------------------------------------ the empty delivery
 
     @Test

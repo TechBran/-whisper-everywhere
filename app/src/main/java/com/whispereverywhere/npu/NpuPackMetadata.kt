@@ -27,13 +27,24 @@ import kotlinx.serialization.json.JsonPrimitive
  * whole? Metadata can lie where bytes cannot, so the peek never replaces the stream hash — it
  * only moves the wrong-pack answer before the expensive part.
  *
- * ### The parse is STRICT, version 1 only
+ * ### The parse is STRICT, versions 1 and 2 only
  *
  * Every field present and well-typed, entries exactly two, digests 64 lowercase hex — anything
  * else is a named [IllegalStateException]. A pack that fails to parse is not "a pack with
  * defaults", it is not our pack. Unknown EXTRA fields are tolerated (a future writer may add
- * them), but a `version` other than [VERSION] refuses outright: this reader cannot know what a
- * version-2 file means, and guessing is how a wrong pack installs.
+ * them), but a `version` other than [VERSION] or [VERSION_2] refuses outright: this reader
+ * cannot know what a third format means, and guessing is how a wrong pack installs.
+ *
+ * ### Two versions, one per runtime (P2-5; design §2.7 "Metadata")
+ *
+ * **Version 1** is the Qualcomm packs' document — its `htpVersion` names the Hexagon the context
+ * binaries are compiled for — and every Qualcomm pack stays byte-identical at it.
+ * **Version 2** is written for MediaTek rows only: it adds `neuronMajor` (the Neuron runtime
+ * major the bytecode restores on), `socStamp` (the chip the files' own `LiteRtStamp` names) and
+ * `compiler` (the bytecode's own compiler self-description, recorded at build time), and makes
+ * `htpVersion` optional — a MediaTek pack has no Hexagon to name. The vendor is never stored: it
+ * is the census row's, and [crossCheckRefusal] reads the row's runtime to decide which document
+ * a family's pack must be.
  */
 object NpuPackMetadata {
 
@@ -45,8 +56,11 @@ object NpuPackMetadata {
      *  wearing the metadata name must never be read into memory on the way to Ignoring it. */
     const val MAX_BYTES: Int = 65_536
 
-    /** The one format this reader understands. */
+    /** Version 1: the Qualcomm packs' document, an HTP version and all. */
     const val VERSION: Int = 1
+
+    /** Version 2 (P2-5): the MediaTek packs' document — see the object KDoc. */
+    const val VERSION_2: Int = 2
 
     /** One described entry: the delivery filename, its exact bytes, its sha256. */
     data class MetaEntry(
@@ -55,14 +69,26 @@ object NpuPackMetadata {
         val sha256: String,
     )
 
-    /** A parsed, well-formed `metadata.json`. Existence of this type IS the parse's promise. */
+    /**
+     * A parsed, well-formed `metadata.json`. Existence of this type IS the parse's promise.
+     *
+     * @property htpVersion required at version 1 (never null there); at version 2 present only
+     *   if the document carries one, which on a MediaTek row is itself a refusal.
+     * @property neuronMajor version 2 only (null at version 1): the Neuron major the bytecode was
+     *   compiled for.
+     * @property socStamp version 2 only: the chip the pack's model files are stamped for.
+     * @property compiler version 2 only: the compiler's own self-description of the bytecode.
+     */
     data class Meta(
         val version: Int,
         val tierId: String,
         val familyId: String,
-        val htpVersion: Int,
+        val htpVersion: Int?,
         val packGroup: String,
         val entries: List<MetaEntry>,
+        val neuronMajor: Int?,
+        val socStamp: String?,
+        val compiler: String?,
     )
 
     private val HEX_64 = Regex("^[0-9a-f]{64}$")
@@ -80,13 +106,23 @@ object NpuPackMetadata {
         }
         val obj = root as? JsonObject ?: error("the metadata must be one JSON object")
         val version = intField(obj, "version")
-        check(version == VERSION) {
-            "metadata version is $version and this build reads version $VERSION only"
+        check(version == VERSION || version == VERSION_2) {
+            "metadata version is $version and this build reads versions $VERSION and " +
+                "$VERSION_2 only"
         }
         val tierId = stringField(obj, "tierId")
         val familyId = stringField(obj, "familyId")
-        val htpVersion = intField(obj, "htpVersion")
+        // Required at version 1; at version 2 optional, but well-typed when present.
+        val htpVersion = if (version == VERSION || obj.containsKey("htpVersion")) {
+            intField(obj, "htpVersion")
+        } else {
+            null
+        }
         val packGroup = stringField(obj, "packGroup")
+        // Version 2's three, each required there; a version-1 document is never read for them.
+        val neuronMajor = if (version == VERSION_2) intField(obj, "neuronMajor") else null
+        val socStamp = if (version == VERSION_2) stringField(obj, "socStamp") else null
+        val compiler = if (version == VERSION_2) stringField(obj, "compiler") else null
         val entriesElement = obj["entries"] ?: error("the metadata is missing 'entries'")
         val array = entriesElement as? JsonArray ?: error("'entries' must be a JSON array")
         check(array.size == 2) {
@@ -103,13 +139,19 @@ object NpuPackMetadata {
             }
             MetaEntry(fileName, bytes, sha256)
         }
-        return Meta(version, tierId, familyId, htpVersion, packGroup, entries)
+        return Meta(
+            version, tierId, familyId, htpVersion, packGroup, entries,
+            neuronMajor, socStamp, compiler,
+        )
     }
 
     /**
      * Null when [meta] IS the pack this device needs; otherwise ONE sentence naming the first
-     * disagreement, checked in declaration order (tier, family, htp, pack group, then the two
-     * entries field by field).
+     * disagreement, checked in declaration order (tier, family, the runtime arm — the document's
+     * version and HTP on a Qualcomm row; no HTP, the chip stamp and the Neuron major on a
+     * MediaTek one — pack group, then the two entries field by field). `compiler` is recorded,
+     * never compared: the census holds no compiler field, the build asserts it against its own
+     * pinned literal, and the entries' digests already name the exact bytes.
      *
      * The family arm gets the clearest words — "this pack is the X variant and this device
      * is Y" — because it is the one Play could plausibly produce: device targeting resolves
@@ -132,20 +174,46 @@ object NpuPackMetadata {
                 "device is ${family.id}. Its binaries are compiled for different silicon, so " +
                 "get the ${family.id} pack instead. Nothing was installed."
         }
-        // The HTP arm reads the row's QNN needs (P2 moved the HTP version off the row). A
-        // version-1 document is a QUALCOMM pack's shape — `htpVersion` names a Hexagon — so on a
-        // row of another vendor it cannot describe this family's pack whatever its number says;
-        // the MediaTek twin of this arm is metadata version 2's, a later P2 task.
+        // The runtime arm reads the row's own needs (P2 moved them off the row into `runtime`).
+        // A version-1 document is a QUALCOMM pack's shape — `htpVersion` names a Hexagon — and a
+        // version-2 document a MEDIATEK one; each row takes only its own vendor's document.
         when (val runtime = family.runtime) {
-            is NpuRuntimeNeeds.Qnn -> if (meta.htpVersion != runtime.htpVersion) {
-                return "That pack says HTP v${meta.htpVersion} where the ${family.id} family is " +
-                    "v${runtime.htpVersion}, so it is not this family's published pack. Nothing " +
-                    "was installed."
+            is NpuRuntimeNeeds.Qnn -> {
+                if (meta.version != VERSION) {
+                    return "That pack is a MediaTek AI-chip pack (metadata version " +
+                        "${meta.version}) and the ${family.id} family runs on Qualcomm's " +
+                        "Hexagon, so it is not this family's published pack. Nothing was " +
+                        "installed."
+                }
+                if (meta.htpVersion != runtime.htpVersion) {
+                    return "That pack says HTP v${meta.htpVersion} where the ${family.id} family is " +
+                        "v${runtime.htpVersion}, so it is not this family's published pack. Nothing " +
+                        "was installed."
+                }
             }
-            is NpuRuntimeNeeds.LiteRtMediatek -> return "That pack says HTP " +
-                "v${meta.htpVersion}, which only a Qualcomm AI-chip pack does, and the " +
-                "${family.id} family runs on MediaTek's APU, so it is not this family's " +
-                "published pack. Nothing was installed."
+            is NpuRuntimeNeeds.LiteRtMediatek -> {
+                // An HTP version — a version-1 document's, or one a version-2 document carries —
+                // names a Hexagon, whatever its number says.
+                if (meta.version == VERSION || meta.htpVersion != null) {
+                    return "That pack says HTP v${meta.htpVersion}, which only a Qualcomm AI-chip " +
+                        "pack does, and the ${family.id} family runs on MediaTek's APU, so it is " +
+                        "not this family's published pack. Nothing was installed."
+                }
+                // THE MEDIATEK TWIN of the HTP arm (P2-5; design §2.3 item 4): the chip the
+                // bytecode is stamped for, then the Neuron major it restores on — each against the
+                // row the driver check and the engine's init also read.
+                if (meta.socStamp != runtime.socStamp) {
+                    return "That pack's model files are stamped for ${meta.socStamp} where the " +
+                        "${family.id} family's chip is ${runtime.socStamp}, so their bytecode " +
+                        "would not restore on this device. Nothing was installed."
+                }
+                if (meta.neuronMajor != runtime.neuronMajor) {
+                    return "That pack was compiled for Neuron ${meta.neuronMajor} where the " +
+                        "${family.id} family's driver check admits Neuron " +
+                        "${runtime.neuronMajor}, so it is not this family's published pack. " +
+                        "Nothing was installed."
+                }
+            }
         }
         if (meta.packGroup != family.packGroup) {
             return "That pack names group '${meta.packGroup}' where the ${family.id} family " +

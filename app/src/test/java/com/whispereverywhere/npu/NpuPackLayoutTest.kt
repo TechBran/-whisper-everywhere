@@ -45,6 +45,18 @@ import javax.xml.parsers.DocumentBuilderFactory
  * each module's `.gitignore` (the payload dirs are structurally uncommittable, so the
  * committed tree cannot even carry content to leak into a variant).
  *
+ * ### Two layout rules since P2-5 — targeted and untargeted
+ *
+ * The Qualcomm pairs are `#group_` variants of the two TARGETED modules (`npu_small`,
+ * `npu_turbo`), and everything above is their rule, unweakened. A MediaTek pair ships in two
+ * UNTARGETED modules of its own family (`npu_turbo_mt6989_enc` / `_dec`): bundletool's
+ * `DeviceGroupParityValidator` requires every group-targeted module to support the same set of
+ * groups, so a MediaTek variant can never sit beside the Qualcomm modules' six. Each untargeted
+ * module is one payload directory named after the pack — its part's entry, `metadata.json` in
+ * part 1, the tracked `.gitkeep` — with no group folder; its family renders into no XML group;
+ * and the census gate alone decides who fetches it. The tests at the bottom hold that second
+ * rule.
+ *
  * No JVM test can run a Gradle bundle build or call Play, so the build-side halves are
  * SOURCE pins (the L6 split); the census side executes. Every file this class reads is in
  * the test task's `sourcePinnedInputs`, or an edit confined to it would leave the suite
@@ -68,6 +80,28 @@ class NpuPackLayoutTest {
     /** tier id -> the pack MODULE that ships it (the brief's two names; F5's PACK_BY_TIER
      *  will spell the same mapping through the tier-id homes). */
     private val moduleByTier = mapOf("npu" to "npu_small", "npu-turbo" to "npu_turbo")
+
+    /**
+     * The families the device-group XML RENDERS (P2-5): those whose every pair ships as a
+     * `#group_` variant of the tier's device-targeted module — one part, `npu_small`/`npu_turbo`,
+     * both entries. DERIVED from the census parts, not typed: a family whose pair ships in
+     * untargeted modules of its own (the MediaTek rows, since bundletool's
+     * `DeviceGroupParityValidator` refuses group-targeted modules whose group sets differ) is in no
+     * group Play resolves, so its `packGroup` names the family in the census and its pack metadata
+     * and renders into no XML. [theTargetedFamiliesAreTheQualcommRowsAndTheMediatekRowsShipUntargeted]
+     * holds this set equal to the Qualcomm rows.
+     */
+    private val targetedFamilies: List<NpuSocFamily> = families.filter { f ->
+        val pairs = NpuFleetCensus.artifacts.filter { it.familyId == f.id }
+        pairs.isNotEmpty() && pairs.all { a ->
+            a.parts == listOf(PackPart(moduleByTier.getValue(a.tierId), listOf(a.encoder, a.decoder)))
+        }
+    }
+
+    /** The untargeted pack modules (P2-5) — every census part that is not a targeted module's. */
+    private val untargetedParts: List<Pair<PackArtifact, PackPart>> =
+        NpuFleetCensus.artifacts.flatMap { a -> a.parts.map { a to it } }
+            .filter { (_, part) -> part.packName !in moduleByTier.values }
 
     // ------------------------------------------------------------------ source helpers
 
@@ -112,7 +146,8 @@ class NpuPackLayoutTest {
     private fun renderedDeviceTargetingXml(): String {
         val sb = StringBuilder()
         sb.append("<config:device-targeting-config xmlns:config=\"http://schemas.android.com/apk/config\">\n")
-        for (family in families) {
+        // (P2-5) The device-TARGETED families only — see [targetedFamilies].
+        for (family in targetedFamilies) {
             sb.append("  <config:device-group name=\"${family.packGroup}\">\n")
             for (manufacturer in family.manufacturers) {
                 sb.append("    <config:device-selector>\n")
@@ -149,15 +184,15 @@ class NpuPackLayoutTest {
         )
         val groups = doc.getElementsByTagNameNS(ns, "device-group")
         assertEquals(
-            "the XML's group names are the census packGroups exactly, exhaustively, in " +
-                "families order — this file GENERATES from the census, and a census edit " +
-                "that forgets it ships a store and a gate that disagree about a device",
-            families.map { it.packGroup },
+            "the XML's group names are the device-targeted census packGroups exactly, " +
+                "exhaustively, in families order — this file GENERATES from the census, and a " +
+                "census edit that forgets it ships a store and a gate that disagree about a device",
+            targetedFamilies.map { it.packGroup },
             (0 until groups.length).map {
                 (groups.item(it) as org.w3c.dom.Element).getAttribute("name")
             }
         )
-        for ((index, family) in families.withIndex()) {
+        for ((index, family) in targetedFamilies.withIndex()) {
             val group = groups.item(index) as org.w3c.dom.Element
             val selectors = group.getElementsByTagNameNS(ns, "device-selector")
             assertEquals(
@@ -182,23 +217,31 @@ class NpuPackLayoutTest {
     }
 
     /**
-     * P2-3 — THE MEDIATEK GROUP, and the Qualcomm groups beside it unchanged: the renderer emits
-     * each FAMILY'S manufacturer set, so soc_mt6989 carries one selector under the one spelling the
-     * Tab S10+ reports, while every Qualcomm group keeps exactly its two. Hard literals, because
-     * a renderer that fell back to one global set would render a Qualcomm spelling for MediaTek
-     * silicon (or the reverse) and every derived assertion above would still agree with it.
+     * RE-POINTED AT P2-5 (was `theMt6989GroupIsOneMediatekSelectorAndEveryQualcommGroupKeepsItsTwo`,
+     * P2-3's pin on the soc_mt6989 group): THE MEDIATEK GROUP IS ABSENT, and must stay so. The
+     * mt6989 pair ships in untargeted modules of its own — bundletool's DeviceGroupParityValidator
+     * requires every module with device-group targeting to support the same set of groups, so the
+     * MediaTek pair cannot be a #group_ variant beside the Qualcomm modules' six — and a group
+     * nothing targets is one more unknown for the upload (Play's acceptance of a declared-but-unused
+     * group is undocumented). So the XML names no MediaTek group, spelling or chip at all, and every
+     * Qualcomm group keeps exactly its two selectors. Hard literals, for the reason the old pin had
+     * them: a renderer drifting back to every family would pass every derived assertion above.
      */
     @Test
-    fun theMt6989GroupIsOneMediatekSelectorAndEveryQualcommGroupKeepsItsTwo() {
-        val start = xml.indexOf("name=\"soc_mt6989\"")
-        assertTrue("the soc_mt6989 group exists", start >= 0)
-        val block = xml.substring(start, xml.indexOf("</config:device-group>", start))
+    fun theXmlCarriesNoMediatekGroupAndEveryQualcommGroupKeepsItsTwo() {
         assertEquals(
-            "one selector, one chip: Mediatek / MT6989",
-            listOf("<config:system-on-chip manufacturer=\"Mediatek\" model=\"MT6989\"/>"),
-            Regex("<config:system-on-chip [^>]*/>").findAll(block).map { it.value }.toList()
+            "no soc_mt6989 group — the mt6989 family's packs are untargeted, so Play resolves no " +
+                "group for it and the census gate alone decides who fetches them",
+            0, count(xml, "soc_mt6989")
         )
-        assertEquals("exactly one device-selector", 1, count(block, "<config:device-selector>"))
+        for (absent in listOf("manufacturer=\"Mediatek\"", "manufacturer=\"MediaTek\"", "MT6989")) {
+            assertEquals("the XML names no <<$absent>>", 0, count(xml, absent))
+        }
+        assertEquals(
+            "and the mt6989 row is still the census's, with its packGroup on the row (census and " +
+                "pack metadata read it; the XML does not)",
+            "soc_mt6989", requireNotNull(NpuFleetCensus.familyById("mt6989")).packGroup
+        )
         for (family in qualcommFamilies) {
             val s = xml.indexOf("name=\"${family.packGroup}\"")
             val group = xml.substring(s, xml.indexOf("</config:device-group>", s))
@@ -224,7 +267,8 @@ class NpuPackLayoutTest {
 
     @Test
     fun everyCensusStringAppearsUnderEachOfItsFamilysManufacturerSpellingsInItsOwnGroup() {
-        for (family in families) {
+        // (P2-5) Every device-TARGETED family's strings — an untargeted family has no group.
+        for (family in targetedFamilies) {
             val start = xml.indexOf("name=\"${family.packGroup}\"")
             assertTrue("group ${family.packGroup} exists", start >= 0)
             val end = xml.indexOf("</config:device-group>", start)
@@ -248,8 +292,9 @@ class NpuPackLayoutTest {
     @Test
     fun nothingTheCensusDoesNotNameAppearsInTheXml() {
         // Each string once per spelling ITS family admits (P2: per row, where it was "twice"
-        // against one global Qualcomm pair — the same count on every Qualcomm row).
-        val censusStrings = families.flatMap { f -> f.socModels.flatMap { s -> f.manufacturers.map { s } } }
+        // against one global Qualcomm pair — the same count on every Qualcomm row). (P2-5) Over
+        // the device-targeted families: an untargeted family's strings belong in no group.
+        val censusStrings = targetedFamilies.flatMap { f -> f.socModels.flatMap { s -> f.manufacturers.map { s } } }
         val modelValues = Regex("model=\"([^\"]*)\"").findAll(xml).map { it.groupValues[1] }.toList()
         assertEquals(
             "every census string appears exactly once per manufacturer spelling its family admits " +
@@ -270,9 +315,13 @@ class NpuPackLayoutTest {
                 0, modelValues.count { it == sketch }
             )
         }
+        // RE-POINTED AT P2-5: this compared against NpuGate.SUPPORTED_SOC_MANUFACTURERS, the
+        // gate's union of EVERY row's spellings — which since the mt6989 row carries Mediatek, a
+        // spelling the XML must not name now its family is untargeted. The XML's spellings are
+        // the rendered families' own, and nothing else.
         assertEquals(
-            "and the manufacturer spellings are the gate's own set, nothing else",
-            NpuGate.SUPPORTED_SOC_MANUFACTURERS,
+            "and the manufacturer spellings are the device-targeted families' own, nothing else",
+            targetedFamilies.flatMap { it.manufacturers }.toSet(),
             Regex("manufacturer=\"([^\"]*)\"").findAll(xml).map { it.groupValues[1] }.toSet()
         )
     }
@@ -424,8 +473,9 @@ class NpuPackLayoutTest {
             }
             // (P2-3) VENDOR-SCOPED: these two modules are the QUALCOMM packs (design §2.7 —
             // `npu_turbo` stays Qualcomm-only; a MediaTek family's pair ships in its own two
-            // modules, npu_turbo_mtk_enc/_dec, which P2-5 adds). So the variants here are the
-            // Qualcomm rows' groups, and soc_mt6989 is in neither module.
+            // UNTARGETED modules, npu_turbo_mt6989_enc/_dec since P2-5, held by the untargeted
+            // tests below). So the variants here are the Qualcomm rows' groups, and soc_mt6989 is
+            // in neither module.
             assertEquals(
                 "$module must carry the SIX Qualcomm census variants plus the empty #group_other " +
                     "— four until 2026-09-22, when the 8 Gen 2 became a family on device evidence; " +
@@ -563,6 +613,290 @@ class NpuPackLayoutTest {
         assertTrue(
             "a failed self-verification is a named FATAL, not a warning",
             count(script, "built variant failed its own verification") == 1
+        )
+    }
+
+    // ------------------------------------------------------------------ the untargeted modules (P2-5)
+
+    @Test
+    fun theTargetedFamiliesAreTheQualcommRowsAndTheMediatekRowsShipUntargeted() {
+        assertEquals(
+            "the families the XML renders are exactly the Qualcomm rows — the ones whose pairs are " +
+                "#group_ variants of npu_small/npu_turbo",
+            qualcommFamilies.map { it.id },
+            targetedFamilies.map { it.id }
+        )
+        for (f in families.filter { it.vendor == NpuVendor.MEDIATEK }) {
+            for (a in NpuFleetCensus.artifacts.filter { it.familyId == f.id }) {
+                for (part in a.parts) {
+                    assertTrue(
+                        "${f.id}/${a.tierId}: part ${part.packName} is none of the device-targeted " +
+                            "modules — bundletool's DeviceGroupParityValidator would refuse a " +
+                            "MediaTek variant beside the Qualcomm modules' groups",
+                        part.packName !in moduleByTier.values
+                    )
+                    assertTrue(
+                        "${f.id}/${a.tierId}: and it is named for its FAMILY — an untargeted module " +
+                            "cannot hold a per-family variant, so each family has modules of its own",
+                        part.packName.contains(f.id)
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun theMt6989PartsAreTheTwoUntargetedModulesInPartOrder() {
+        assertEquals(
+            "the census's untargeted parts are the mt6989 pair's two, encoder first",
+            listOf("npu_turbo_mt6989_enc", "npu_turbo_mt6989_dec"),
+            untargetedParts.map { (_, part) -> part.packName }
+        )
+    }
+
+    @Test
+    fun eachUntargetedModuleDeclaresItsExactNameAndOnDemandDelivery() {
+        for ((_, part) in untargetedParts) {
+            val module = part.packName
+            val pack = read("$module/build.gradle.kts")
+            assertEquals("$module is an asset pack", 1, count(pack, "id(\"com.android.asset-pack\")"))
+            assertEquals(
+                "$module's pack name is the census part's — fetch(), getPackLocation() and the " +
+                    "delivered directory all key on it",
+                1, count(pack, "packName.set(\"$module\")")
+            )
+            assertEquals(
+                "$module is on-demand: 1.3 GB and 585 MB move only after the gates pass and the " +
+                    "user opts in",
+                1, count(pack, "deliveryType.set(\"on-demand\")")
+            )
+            assertEquals(
+                "and it carries no device-group anything — the build file never mentions #group_",
+                0, count(pack.lines().filterNot { it.trimStart().startsWith("//") }.joinToString("\n"), "#group_")
+            )
+        }
+    }
+
+    @Test
+    fun settingsIncludesTheUntargetedModulesInTheirOwnStatementAndTheAppListsThem() {
+        val settings = read("settings.gradle.kts")
+        assertEquals(
+            "the MediaTek pair's modules are included in ONE statement of their own — the " +
+                "Qualcomm pair's line (pinned above) stays exactly what it was",
+            1,
+            count(settings, "include(\":npu_turbo_mt6989_enc\", \":npu_turbo_mt6989_dec\")")
+        )
+        for ((_, part) in untargetedParts) {
+            assertEquals(
+                "${part.packName} is named exactly once in the app's ONE assetPacks list — a pack " +
+                    "missing there ships nothing at all, silently",
+                1, count(appGradle, "\":${part.packName}\"")
+            )
+        }
+        assertEquals(
+            "…by a concatenated list of their own, so the prefix pins keep their teeth",
+            1, count(appGradle, "+ listOf(\":npu_turbo_mt6989_enc\", \":npu_turbo_mt6989_dec\")")
+        )
+        assertEquals("and still one assetPacks statement", 1, count(appGradle, "assetPacks +="))
+    }
+
+    @Test
+    fun eachUntargetedModuleIsOnePayloadDirectoryWithTheAnchorAndNoGroupFolder() {
+        // THE UNTARGETED LAYOUT RULE: src/main/assets/ holds ONE directory, named after the pack
+        // (the 4.2 F8 rule — no entry path can clash across modules — and exactly what
+        // deliveredEntryDirs reads on the device), and its tracked .gitkeep proves it exists in a
+        // clean clone. No #group_ folder of any kind: that is what keeps bundletool's
+        // DeviceGroupParityValidator from counting these modules at all.
+        for ((_, part) in untargetedParts) {
+            val module = part.packName
+            val assets = repoFile("$module/src/main/assets")
+            assertEquals(
+                "$module/src/main/assets holds exactly its one payload directory",
+                listOf(module),
+                (assets.listFiles() ?: emptyArray()).map { it.name }.sorted()
+            )
+            val names = (File(assets, module).listFiles() ?: emptyArray()).map { it.name }
+            assertTrue("the payload directory's .gitkeep anchor is present: $names", ".gitkeep" in names)
+            assertTrue(
+                "and nothing in it looks like a group variant: $names",
+                names.none { it.contains("#group_") }
+            )
+        }
+    }
+
+    @Test
+    fun eachUntargetedGitignoreWallsThePayloadAndKeepsTheAnchor() {
+        for ((_, part) in untargetedParts) {
+            val module = part.packName
+            val lines = read("$module/.gitignore").lines().map { it.trim() }
+            assertEquals(
+                "$module/.gitignore walls the payload directory's contents with the LINE " +
+                    "`src/main/assets/$module/*` — NeuroPilot bytecode must never enter a repo with a " +
+                    "public remote, and the root walls do not cover .bin",
+                1, lines.count { it == "src/main/assets/$module/*" }
+            )
+            assertEquals(
+                "…and re-includes the anchor by the LINE `!src/main/assets/$module/.gitkeep`",
+                1, lines.count { it == "!src/main/assets/$module/.gitkeep" }
+            )
+        }
+    }
+
+    @Test
+    fun verifyNpuPacksHoldsEveryUntargetedPartToTheCensusAsASecondRule() {
+        for ((artifact, part) in untargetedParts) {
+            val entry = part.entries.single()
+            val first = artifact.parts.first() == part
+            assertEquals(
+                "verifyNpuPacks carries ${part.packName}'s part row — module, family, the one entry, " +
+                    "its census bytes, and whether metadata.json rides in it (part 1 only)",
+                1,
+                count(
+                    appGradle,
+                    "listOf(\"${part.packName}\", \"${artifact.familyId}\", \"${entry.fileName}\", " +
+                        "${grouped(entry.bytes)}L, $first),"
+                )
+            )
+        }
+        assertEquals("one parts table", 1, count(appGradle, "val npuPackPartRows = listOf("))
+        assertEquals(
+            "and the gate walks it — the untargeted rule runs in the same task as the targeted one, " +
+                "before every bundle packaging task",
+            1, count(appGradle, "for (row in npuPackPartRows) {")
+        )
+        assertEquals(
+            "the untargeted part is exactly its entry (+ metadata.json in part 1) + the anchor",
+            1,
+            count(
+                appGradle,
+                "val expected = (listOf(name, \".gitkeep\") +\n" +
+                    "                if (carriesMetadata) listOf(\"metadata.json\") else emptyList()).sorted()"
+            )
+        )
+        assertEquals(
+            "…in the ONE payload directory, with nothing beside it",
+            1, count(appGradle, "an untargeted module carries assets/\$module/ and nothing")
+        )
+        // The Qualcomm rule is not weakened: its table, its three-file check and its empty-default
+        // rule are pinned above by the tests that always held them, and the untargeted rows are
+        // not in npuPackCensusRows at all.
+        assertEquals(
+            "no untargeted module is a row of the targeted table",
+            0,
+            untargetedParts.sumOf { (_, part) -> count(appGradle, "listOf(\"${part.packName}\", \"soc_") }
+        )
+    }
+
+    // ------------------------------------------------------------------ the LOCAL source (P2-5)
+
+    /** The census's MediaTek (LOCAL) rows with their LiteRT needs. */
+    private val localFamilies: List<Pair<NpuSocFamily, NpuRuntimeNeeds.LiteRtMediatek>> =
+        families.mapNotNull { f -> (f.runtime as? NpuRuntimeNeeds.LiteRtMediatek)?.let { f to it } }
+
+    @Test
+    fun theScriptsLocalTableIsTheCensusRowAndItsPartsInOrder() {
+        assertTrue("the census has LOCAL rows for the script to fill", localFamilies.isNotEmpty())
+        for ((family, needs) in localFamilies) {
+            assertEquals(
+                "LOCAL_FAMILIES carries ${family.id}'s pack group — the one its metadata names",
+                1, count(script, "\"pack_group\": \"${family.packGroup}\",")
+            )
+            assertEquals(
+                "…the stamp its files' own LiteRtStamp must carry — the vendor LiteRT writes and " +
+                    "the row's socStamp, the chip the engine's init checks",
+                1, count(script, "\"stamp\": (\"MediaTek\", \"${needs.socStamp}\"),")
+            )
+            assertEquals(
+                "…and the Neuron major the bytecode's compiler must be, the row's own",
+                1, count(script, "\"neuron_major\": ${needs.neuronMajor},")
+            )
+            for (a in NpuFleetCensus.artifacts.filter { it.familyId == family.id }) {
+                val tuples = a.parts.map { part ->
+                    "(\"${part.packName}\", \"${part.entries.single().fileName}\", \""
+                }
+                for (tuple in tuples) {
+                    assertEquals("the script's part row <<$tuple>>, exactly once", 1, count(script, tuple))
+                }
+                assertTrue(
+                    "…in the census's part order — part 1 (metadata.json's) first",
+                    tuples.map { script.indexOf(it) }.zipWithNext().all { (x, y) -> x < y }
+                )
+                // The source names the script copies from are the compile's own, the ones the
+                // row's provenance record names.
+                for (source in Regex("\"(turbo_[a-z]+_[a-z0-9_]+_MediaTek_MT6989_apply_plugin\\.tflite)\"")
+                    .findAll(script).map { it.groupValues[1] }.toSet()) {
+                    assertTrue("the provenance record names $source", a.evidence.contains(source))
+                }
+            }
+        }
+        // The compiler string is READ out of each file (the bytecode's own {"Compiler": ...}
+        // trailer) and held to this literal before a byte is copied; its major is the family's.
+        assertEquals(1, count(script, "\"compiler\": \"adapter 8.2.30\","))
+        assertEquals(
+            "…and 'adapter 8.2.30' is Neuron major 8, the mt6989 row's",
+            8, requireNotNull(localFamilies.firstOrNull { it.first.id == "mt6989" }).second.neuronMajor
+        )
+    }
+
+    @Test
+    fun theScriptsLocalIoSpecIsNpuModelSpecTurbo() {
+        val turbo = NpuModelSpec.TURBO
+        for ((key, value) in listOf(
+            "mel_bins" to turbo.melBins, "mel_frames" to turbo.melFrames,
+            "dec_layers" to turbo.decLayers, "heads" to turbo.heads, "head_dim" to turbo.headDim,
+            "audio_ctx" to turbo.audioCtx, "vocab" to turbo.tokens.vocab,
+            "max_positions" to turbo.maxPositions,
+        )) {
+            assertEquals(
+                "LOCAL_IO_SPEC's $key is NpuModelSpec.TURBO's ($value) — the IO gate refuses at " +
+                    "build time exactly what derivePairCensus would refuse at init",
+                1, count(script, "\"$key\": $value")
+            )
+        }
+        assertEquals("one spec row, turbo's", 1, count(script, "LOCAL_IO_SPEC = {\n    \"npu-turbo\": {"))
+    }
+
+    @Test
+    fun theLocalSourceGatesEveryFileWritesVersionTwoAndSharesTheOneVerification() {
+        for (gate in listOf(
+            "sums = local_sums(src_dir)", "stamp = head.litert_stamp()",
+            "compiler = head.bytecode_compiler()", "ins, outs = io_gate(tier, head, key)",
+        )) {
+            assertEquals("local_gate runs <<$gate>> before any copy", 1, count(script, gate))
+        }
+        assertTrue(
+            "…and every gate runs BEFORE the copy",
+            script.indexOf("ins, outs = io_gate(tier, head, key)") <
+                script.indexOf("stream_pinned(open(source, \"rb\")")
+        )
+        assertEquals("the copy streams through the pinned-digest helper", 1, count(script, "stream_pinned(open(source, \"rb\")"))
+        assertEquals(
+            "into the UNTARGETED module's one payload directory",
+            1, count(script, "out_dir = untargeted_payload_dir(module)")
+        )
+        assertEquals(
+            "version 2 is written for LOCAL rows, version 1 stays the vendor rows' — one of each",
+            listOf(1, 1), listOf(count(script, "\"version\": 2,"), count(script, "\"version\": 1,"))
+        )
+        for (field in listOf(
+            "\"neuronMajor\": local[\"neuron_major\"],", "\"socStamp\": local[\"stamp\"][1],",
+            "\"compiler\": local[\"compiler\"],",
+        )) {
+            assertEquals("the version-2 writer's <<$field>>", 1, count(script, field))
+        }
+        assertEquals(
+            "both builds end in the ONE shared finish (metadata into part 0, then the verification " +
+                "whose failure is the one named FATAL)",
+            listOf(1, 1),
+            listOf(
+                count(script, "finish_variant(tier, family, out_dir)\n"),
+                count(script, "finish_variant(tier, family, out_dir, index)"),
+            )
+        )
+        assertEquals("build fills the LOCAL parts too", 1, count(script, "build_local(local_root)"))
+        assertEquals(
+            "and build-local has its dry run: every head-and-tail gate, a listing, nothing written",
+            1, count(script, "dry_run = \"--dry-run\" in rest")
         )
     }
 }
