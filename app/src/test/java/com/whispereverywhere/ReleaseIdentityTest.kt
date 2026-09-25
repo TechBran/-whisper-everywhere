@@ -209,6 +209,12 @@ import org.junit.Test
  * Neuron major. On a MediaTek row the turbo card claims accuracy alone — its Qualcomm "fastest"
  * is false on the tablet — and the owner's wording for a MediaTek speed claim is pending.
  *
+ * From the P2c review, in this build too: a Play fetch answer that lands after a Cancel is
+ * dropped; one killed driver walk is walked again instead of hiding the tier (two unfinished
+ * walks in a row are still recorded as `probe-crashed`); the service's boot chain waits at most
+ * 3 s for the verdict, refreshes the offer once more if it lands later, and skips the hop on a
+ * Qualcomm start; the shared LiteRT download cache writes under a name of its own.
+ *
  * **What this paragraph must not be read as:** nothing here has run from a Play build. Before
  * promotion the ship sheet (plan P3-4, the owner's Tab S10+ through the internal track) must show
  * the offer line `soc=MT6989:pass`, the `apu:` driver line, the cold arm with no "Waiting for
