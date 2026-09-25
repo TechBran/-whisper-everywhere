@@ -238,6 +238,15 @@ EXPECTED_ZIP_BYTES = {
 # never invented). The 8gen3 rows are the catalog's own four digests -- the self-check.
 # NpuFleetCensus.artifacts carries the same digests, row for row; NpuFleetCensusTest pins the two
 # tables together.
+#
+# A LOCAL ROW (P2, the MediaTek APU tier -- design section 2.1): zip bytes None INSIDE the tuple.
+# That is not "unmeasured" (a whole-value None): the pair was compiled on the MS-02 from the recipe
+# in tools/mtk-apu/, so there is no vendor zip to measure, and the five-slot shape holds a row
+# without one by leaving that one slot empty -- the smallest honest change to the table. Its
+# family is in no FAMILIES entry (those are the VENDOR families, with a chipset key and an HTP),
+# so measure, build and delivery-zip never visit it; its digests are the private artefact
+# store's SHA256SUMS, pinned here so the LOCAL source that will fill its two pack modules (P2-5)
+# builds against the same literals the app verifies.
 CENSUS = {
     # Measured 2026-09-24 against manifest v0.63.0 (Last-Modified 23 Sep 2026), every row by
     # the instrument and pasted from its own printed line. THE FINDING: nothing reproduces.
@@ -307,6 +316,15 @@ CENSUS = {
         821_903_663,
         681_574_152, "2005e39cd6d94c7b66f63832b9d0ba182b0b322876d3f579a826e8edcc74168e",
         294_692_768, "c5bb0775b19afb1f7b115c231aaaf78d003479228b3e905181fe0436c87b5fc2",
+    ),
+    # mt6989 -- LOCAL (see above): the AOT pair for the Tab S10+ (MT6989), turbo only, compiled
+    # 2026-09-24 and mirrored with SHA256SUMS (docs/measurements/2026-09-24-tab-apu-turbo-encoder.md
+    # section 7). NeuroPilot's output is not byte-reproducible, so these digests ARE the artefact;
+    # a recompile is a new artefact to re-pin, not a re-measurement of this one.
+    ("npu-turbo", "mt6989"): (
+        None,
+        1_302_606_488, "bc68f161eac358940f76dd84bc8351057d7353d6fc49a91918b767b520ad09c6",
+        584_862_184, "b596eec465c8e6fcc1ab50463b1caf62e2a0e2b7e24bc991185c2dec32719079",
     ),
 }
 
@@ -521,6 +539,7 @@ def measure(workspace: str) -> dict:
     os.makedirs(workspace, exist_ok=True)
     unmeasured = []
     paths = {}
+    reproduced = 0
     for tier in MODELS:
         manifest = fetch_manifest(tier)
         print(f"manifest ok: {tier} release v{RELEASE}")
@@ -554,6 +573,7 @@ def measure(workspace: str) -> dict:
                     f"human look) or the table was edited without a measurement."
                 )
             else:
+                reproduced += 1
                 print("  census: MATCHES the embedded table"
                       + (" (the 8gen3 SELF-CHECK: the catalog's own digests reproduced)"
                          if family == "8gen3" else ""))
@@ -567,9 +587,14 @@ def measure(workspace: str) -> dict:
         raise SystemExit(2)
     # Counted, not spelled: the row and digest totals moved when the fifth family arrived
     # (2026-09-22), and a hardcoded "8 rows / 16 digests" would have gone quietly stale in the
-    # one line a reader trusts to tell them the run was complete.
-    print(f"measure OK: all {len(CENSUS)} rows reproduce the embedded "
-          f"{len(CENSUS) * 2}-digest census exactly")
+    # one line a reader trusts to tell them the run was complete. (P2) Counted as the rows this
+    # run REPRODUCED, not len(CENSUS): a LOCAL row has no vendor zip and is never measured here,
+    # and a total that counted it would claim a reproduction nobody ran.
+    local = sum(1 for row in CENSUS.values() if row is not None and row[0] is None)
+    print(f"measure OK: all {reproduced} vendor rows reproduce the embedded "
+          f"{reproduced * 2}-digest census exactly"
+          + (f" ({local} LOCAL row(s) carry no vendor zip and are not measured here)"
+             if local else ""))
     return paths
 
 
@@ -756,6 +781,11 @@ def delivery_zip(workspace: str, family: str, tier: str) -> None:
     import json
 
     if family not in FAMILIES:
+        if (tier, family) in CENSUS:
+            # A LOCAL row (P2): no public SAF delivery zip exists for it -- Play only, until the
+            # owner's NeuroPilot licence ruling (design section 1, non-goals).
+            raise fail(f"'{family}' is a LOCAL census row with no vendor zip; it has no "
+                       f"delivery zip (vendor families: {', '.join(FAMILIES)})")
         raise fail(f"unknown family '{family}' (census families: {', '.join(FAMILIES)})")
     if tier not in MODELS:
         raise fail(f"unknown tier '{tier}' (tiers: {', '.join(MODELS)})")

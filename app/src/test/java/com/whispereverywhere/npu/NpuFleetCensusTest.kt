@@ -70,15 +70,16 @@ class NpuFleetCensusTest {
         n.toString().reversed().chunked(3).joinToString("_").reversed()
 
     @Test
-    fun theCensusHasExactlyTheSixPublishedFamiliesInTableOrder() {
+    fun theCensusHasExactlyTheSevenFamiliesInTableOrder() {
         assertEquals(
-            "six families have published w8a16 packages (manifests re-fetched 2026-09-24, " +
-                "v0.63.0) — a seventh row is a vendor event with evidence, a dropped row is lost " +
-                "coverage nothing reports. qcs8550 is the 8 Gen 2, appended 2026-09-22 on DEVICE " +
-                "evidence (S23 Ultra); 8gen1 is the 8 Gen 1, appended 2026-09-24 when v0.63.0 " +
-                "first published its key — on the metadata and IO-census gates, with no " +
-                "execution yet",
-            listOf("8gen3", "8elite_galaxy", "8elite5_galaxy", "7gen4", "qcs8550", "8gen1"),
+            "six Qualcomm families have published w8a16 packages (manifests re-fetched " +
+                "2026-09-24, v0.63.0), and the seventh is mt6989, the first MediaTek row — a " +
+                "LOCAL self-compile (P2, rule 2 as amended). A new row is an event with evidence, " +
+                "a dropped row is lost coverage nothing reports. qcs8550 is the 8 Gen 2, appended " +
+                "2026-09-22 on DEVICE evidence (S23 Ultra); 8gen1 is the 8 Gen 1, appended " +
+                "2026-09-24 when v0.63.0 first published its key; mt6989 the same day, on the " +
+                "tablet's own reads and a pair that ran word-perfect on it",
+            listOf("8gen3", "8elite_galaxy", "8elite5_galaxy", "7gen4", "qcs8550", "8gen1", "mt6989"),
             families.map { it.id }
         )
         assertEquals(
@@ -86,9 +87,101 @@ class NpuFleetCensusTest {
                 "F4 regenerates the device-group XML from THESE strings, so a drift here is a " +
                 "store/gate disagreement",
             listOf("soc_8gen3", "soc_8elite_galaxy", "soc_8elite5_galaxy", "soc_7gen4",
-                "soc_qcs8550", "soc_8gen1"),
+                "soc_qcs8550", "soc_8gen1", "soc_mt6989"),
             families.map { it.packGroup }
         )
+    }
+
+    /**
+     * P2-3 — THE mt6989 ROW, every value as a hard literal (design §2.1's table): the Tab S10+'s
+     * own reads, the driver the tier was measured on, and the owner's turbo-only ruling.
+     */
+    @Test
+    fun theMt6989RowIsTheTabletsOwnReadsAndTheDriverItWasMeasuredOn() {
+        val row = byId("mt6989")
+        assertEquals("a MediaTek row", NpuVendor.MEDIATEK, row.vendor)
+        assertEquals("its Play group", "soc_mt6989", row.packGroup)
+        assertEquals(
+            "the one string the tablet reports (ro.soc.model=MT6989, the Play catalog's 24 rows)",
+            setOf("MT6989"), row.socModels
+        )
+        assertEquals(
+            "the one spelling the tablet reports — ro.soc.manufacturer=Mediatek, NOT LiteRT's " +
+                "enum spelling MediaTek: the row admits only what a device reports",
+            setOf("Mediatek"), row.manufacturers
+        )
+        assertEquals(
+            "LiteRT on the APU: the Neuron major the AOT bytecode was compiled for, and the chip " +
+                "each model file's LiteRtStamp must name",
+            NpuRuntimeNeeds.LiteRtMediatek(neuronMajor = 8, socStamp = "mt6989"), row.runtime
+        )
+        assertEquals(
+            "TURBO ONLY — the owner's ruling (2026-09-24): \"the biggest, best model we can get " +
+                "on there\"; no Small was ever built for this chip, so there is nothing to hide",
+            setOf("npu-turbo"), row.tiers
+        )
+        for (fact in listOf(
+            "ro.soc.manufacturer=Mediatek", "ro.soc.model=MT6989", "Play catalog 24 rows",
+            "SM-X828U", "Neuron 8.2.26", "docs/measurements/2026-09-24-tab-apu-turbo-encoder.md",
+        )) {
+            assertTrue("the row's evidence records <<$fact>>: ${row.evidence}", row.evidence.contains(fact))
+        }
+    }
+
+    @Test
+    fun theMt6989PairIsTheMirroredAotPairExactlyInTwoParts() {
+        val a = artifact("mt6989", "npu-turbo")
+        assertNull("a LOCAL row: no vendor zip, so no source length", a.sourceBytes)
+        assertEquals(
+            "the encoder — turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite — under " +
+                "the catalog's name, at the mirrored length and digest",
+            PackEntry(
+                "turbo_encoder_qairt_context.bin", 1_302_606_488L,
+                "bc68f161eac358940f76dd84bc8351057d7353d6fc49a91918b767b520ad09c6",
+            ),
+            a.encoder
+        )
+        assertEquals(
+            "the decoder — turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite — likewise",
+            PackEntry(
+                "turbo_decoder_qairt_context.bin", 584_862_184L,
+                "b596eec465c8e6fcc1ab50463b1caf62e2a0e2b7e24bc991185c2dec32719079",
+            ),
+            a.decoder
+        )
+        assertEquals(
+            "TWO parts — 1.88 GB is over Play's 1.5 GB per-pack cap — the encoder in one module " +
+                "and the decoder in the other, each carrying exactly its own entry (design §2.7)",
+            listOf(
+                PackPart("npu_turbo_mtk_enc", listOf(a.encoder)),
+                PackPart("npu_turbo_mtk_dec", listOf(a.decoder)),
+            ),
+            a.parts
+        )
+        for (part in a.parts) {
+            assertTrue(
+                "${part.packName} is under Play's 1.5 GB per-pack cap",
+                part.entries.sumOf { it.bytes } <= 1_500_000_000L
+            )
+        }
+        assertTrue("and together the pair is not", a.encoder.bytes + a.decoder.bytes > 1_500_000_000L)
+    }
+
+    @Test
+    fun everyQualcommPairIsOnePartTheTiersOwnPackCarryingBothEntries() {
+        // parts' DEFAULT, held to what today's single-pack readers do: one part, the pack
+        // NpuPackFetch.PACK_BY_TIER fetches for the tier, carrying the encoder then the decoder.
+        // So nothing that reads parts can ever disagree with the machinery that does not.
+        val qualcommIds = families.filter { it.vendor == NpuVendor.QUALCOMM }.map { it.id }.toSet()
+        val qualcomm = artifacts.filter { it.familyId in qualcommIds }
+        assertEquals("twelve Qualcomm pairs", 12, qualcomm.size)
+        for (a in qualcomm) {
+            assertEquals(
+                "${a.familyId}/${a.tierId}: one part, the tier's own pack, both entries",
+                listOf(PackPart(NpuPackFetch.PACK_BY_TIER.getValue(a.tierId), listOf(a.encoder, a.decoder))),
+                a.parts
+            )
+        }
     }
 
     @Test
@@ -247,6 +340,10 @@ class NpuFleetCensusTest {
                 "and the only spelling Play's catalog holds for the part (67 rows, all " +
                 "'QTI SM8450'). No bin suffix exists to write out",
             setOf("SM8450"), byId("8gen1").socModels
+        )
+        assertEquals(
+            "the MT6989 carries ONE string, the tablet's own read",
+            setOf("MT6989"), byId("mt6989").socModels
         )
         for (a in families) {
             for (b in families) {
@@ -417,14 +514,33 @@ class NpuFleetCensusTest {
     // ------------------------------------------------------------------ the artifact census (F3)
 
     @Test
-    fun theArtifactCensusHasTwelveRowsFamilyMajorInTableOrderUnderTheCatalogsNames() {
+    fun theArtifactCensusIsEachFamilysOwnTiersFamilyMajorInTableOrderUnderTheCatalogsNames() {
+        // VENDOR-SCOPED AT P2-3 (the cross-product pin the design names, §1 non-goals): it held
+        // "6 families x 2 tiers", which was the census contract while every family was Qualcomm.
+        // The owner's turbo-only ruling for the tablets amends it, and the pin says so: a
+        // Qualcomm family carries both tiers, a MediaTek family turbo alone — each row's OWN
+        // `tiers`, in the order npu before npu-turbo, family-major in families order.
         assertEquals(
-            "twelve measured pairs: 6 families x 2 tiers, family-major in families order, " +
-                "npu before npu-turbo — a missing row is a family that cannot verify an " +
-                "arrival, a surplus row is a measurement nobody made",
-            families.flatMap { f -> listOf(f.id to "npu", f.id to "npu-turbo") },
+            "thirteen pairs: each family's own tiers, family-major in families order, npu " +
+                "before npu-turbo — a missing row is a family that cannot verify an arrival, a " +
+                "surplus row is a measurement nobody made",
+            families.flatMap { f -> listOf("npu", "npu-turbo").filter { it in f.tiers }.map { f.id to it } },
             artifacts.map { it.familyId to it.tierId }
         )
+        assertEquals("thirteen, counted", 13, artifacts.size)
+        for (f in families) {
+            val expected = when (f.vendor) {
+                NpuVendor.QUALCOMM -> setOf("npu", "npu-turbo")
+                NpuVendor.MEDIATEK -> setOf("npu-turbo")
+            }
+            assertEquals(
+                "${f.id} (${f.vendor}) — a Qualcomm family has both tiers, a MediaTek family " +
+                    "turbo only (the owner, 2026-09-24: \"Don't necessarily need small for the " +
+                    "tablets\")",
+                expected,
+                artifacts.filter { it.familyId == f.id }.map { it.tierId }.toSet()
+            )
+        }
         assertEquals(
             "and the artifact tier ids ARE the catalog's paired tiers — the census spells " +
                 "them as literals (forcing the catalog's <clinit> from the census's would " +
@@ -451,10 +567,14 @@ class NpuFleetCensusTest {
     }
 
     @Test
-    fun allTwentyFourArtifactDigestsAreSixtyFourHexAndPairwiseDistinct() {
+    fun allTwentySixArtifactDigestsAreSixtyFourHexAndPairwiseDistinct() {
         val hex = Regex("^[0-9a-f]{64}$")
         val digests = artifacts.flatMap { listOf(it.encoder.sha256, it.decoder.sha256) }
-        assertEquals("twelve pairs carry twenty-four digests", 24, digests.size)
+        assertEquals(
+            "thirteen pairs carry twenty-six digests (mt6989's turbo pair joined the twelve " +
+                "Qualcomm pairs on 2026-09-24)",
+            26, digests.size
+        )
         for (d in digests) {
             assertTrue(
                 "every artifact digest is 64 lowercase hex — got \"$d\"; anything else is a " +
@@ -463,15 +583,15 @@ class NpuFleetCensusTest {
             )
         }
         assertEquals(
-            "twenty-four DISTINCT digests — a copy-paste between rows would install one " +
+            "twenty-six DISTINCT digests — a copy-paste between rows would install one " +
                 "family's binary under another family's verification with a passing " +
                 "metadata check",
-            24, digests.toSet().size
+            26, digests.toSet().size
         )
-        // Twenty-four artifact digests plus FIVE skels, not six: qcs8550 and 7gen4 are both HTP
-        // v73 and name the same blob, so the union is 29 rather than 30. Derived from the
-        // census rather than spelled, because the two counts move independently — 8gen1 added
-        // two artifact digests AND a skel, because it brought a new architecture (v69).
+        // Twenty-six artifact digests plus FIVE skels, not six: qcs8550 and 7gen4 are both HTP
+        // v73 and name the same blob. Derived from the census rather than spelled, because the
+        // two counts move independently — 8gen1 added two artifact digests AND a skel, because it
+        // brought a new architecture (v69); mt6989 added two digests and no skel at all.
         val skels = qnnFamilies.map { qnn(it).skelSha256 }.toSet()
         assertEquals(
             "and none of them collides with a skel digest — every artifact digest and every " +
@@ -541,6 +661,12 @@ class NpuFleetCensusTest {
         assertEquals(285_697_544L, artifact("7gen4", "npu").sourceBytes)
         assertEquals(285_198_646L, artifact("qcs8550", "npu").sourceBytes)
         assertEquals(284_581_383L, artifact("8gen1", "npu").sourceBytes)
+        // And the one LOCAL row: no vendor zip, so no source length — null, never a stand-in.
+        assertEquals(
+            "exactly one row has no vendor zip — mt6989's, compiled here",
+            listOf("mt6989" to "npu-turbo"),
+            artifacts.filter { it.sourceBytes == null }.map { it.familyId to it.tierId }
+        )
     }
 
     @Test
@@ -554,21 +680,36 @@ class NpuFleetCensusTest {
         // the installed-size gate read each family's own census bytes. At v0.63.0 that fact is
         // gone: every family's encoder sits inside the band — 7gen4 turbo is the widest at +2.6%
         // — and 8gen1 sits just under the reference (-1.1% small, -0.7% turbo).
+        //
+        // (P2-3) The reference band is the QUALCOMM pairs' fact — the catalog's reference record
+        // is a w8a16 QNN pair — so its two assertions run over the Qualcomm rows. The mt6989 pair
+        // is the same model compiled another way (fp16, AOT, 1,302,606,488 B of encoder: +90%)
+        // and sits far outside the band BY CONSTRUCTION; the per-family gate below is the one
+        // that judges it, and it holds on every row.
+        val qualcommIds = families.filter { it.vendor == NpuVendor.QUALCOMM }.map { it.id }.toSet()
         for (a in artifacts) {
             val model = requireNotNull(WhisperCatalog.byId(a.tierId))
-            assertTrue(
-                "${a.familyId}/${a.tierId}: encoder ${a.encoder.bytes} B within ±5% of the " +
-                    "reference ${model.primaryBytes} B — every family sits inside the reference " +
-                    "band at v0.63.0, 7gen4 included",
-                WhisperCatalog.sizeWithinTolerance(a.encoder.bytes, model.primaryBytes)
-            )
-            assertTrue(
-                "${a.familyId}/${a.tierId}: every family's decoder sits within ±5% of the " +
-                    "reference record",
-                WhisperCatalog.sizeWithinTolerance(
-                    a.decoder.bytes, requireNotNull(model.pairedArtifact).approxBytes
+            if (a.familyId in qualcommIds) {
+                assertTrue(
+                    "${a.familyId}/${a.tierId}: encoder ${a.encoder.bytes} B within ±5% of the " +
+                        "reference ${model.primaryBytes} B — every Qualcomm family sits inside " +
+                        "the reference band at v0.63.0, 7gen4 included",
+                    WhisperCatalog.sizeWithinTolerance(a.encoder.bytes, model.primaryBytes)
                 )
-            )
+                assertTrue(
+                    "${a.familyId}/${a.tierId}: every Qualcomm family's decoder sits within ±5% " +
+                        "of the reference record",
+                    WhisperCatalog.sizeWithinTolerance(
+                        a.decoder.bytes, requireNotNull(model.pairedArtifact).approxBytes
+                    )
+                )
+            } else {
+                assertFalse(
+                    "${a.familyId}/${a.tierId}: a MediaTek pair is OUTSIDE the Qualcomm reference " +
+                        "band — which is why only the family-aware gate may judge it",
+                    WhisperCatalog.sizeWithinTolerance(a.encoder.bytes, model.primaryBytes)
+                )
+            }
             // The family-aware gate still accepts every family's own pair — it reads the row's
             // bytes, so this holds whatever the reference band says.
             val gate = NpuAssetImport.installedGateBytes(model, a)
@@ -625,8 +766,10 @@ class NpuFleetCensusTest {
                     script,
                     lines(
                         "    (\"${a.tierId}\", \"${a.familyId}\"): (",
-                        // (P2) sourceBytes — the vendor zip's length, the field's old value.
-                        "        ${grouped(requireNotNull(a.sourceBytes) { "${a.familyId}/${a.tierId} has no vendor zip" })},",
+                        // (P2) sourceBytes — the vendor zip's length, the field's old value; a
+                        // LOCAL row has none, and the script's five-slot tuple spells that
+                        // `None` in the zip slot (not a whole-value None, which is "unmeasured").
+                        "        ${a.sourceBytes?.let { grouped(it) } ?: "None"},",
                         "        ${grouped(a.encoder.bytes)}, \"${a.encoder.sha256}\",",
                         "        ${grouped(a.decoder.bytes)}, \"${a.decoder.sha256}\",",
                     ),
@@ -672,8 +815,39 @@ class NpuFleetCensusTest {
     }
 
     @Test
+    fun theLocalRowsEvidenceIsItsProvenanceRecordVerbatim() {
+        // A LOCAL row has no measure run to name, so its evidence must carry what stands in
+        // for one (design §2.1, rule 2 as amended): where the bytes are held, the recipe, and
+        // what the reproducibility check found — the sheet's §7, recorded verbatim.
+        val evidence = artifact("mt6989", "npu-turbo").evidence
+        for (fact in listOf(
+            "2026-09-24",
+            "tools/mtk-apu/",
+            "turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite",
+            "turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite",
+            "`~/.androidbuild/mtk-artefacts-2026-09-24/aot_mt6989/` on the MS-02 with SHA256SUMS",
+            "produced the SAME lengths and DIFFERENT digests",
+            "encoder 1,287,182,371 of 1,302,606,488 bytes differ from offset 424,930",
+            "decoder 312,425,450 of 584,862,184 from offset 267,959,894",
+            "MediaTek's compiler output is not byte-reproducible",
+            "the pinned bytes in the private store ARE the artefact",
+            "the recipe reproduces the model, not the file",
+            "(`p2_repro_pair_litertasr`) transcribed all four utterances identically",
+            "A rebuilt pair is a NEW artefact: re-pin, re-measure, re-mirror before it ships.",
+        )) {
+            assertTrue("the mt6989 pair's evidence records <<$fact>>", evidence.contains(fact))
+        }
+        assertFalse(
+            "and it claims no measure run — none measured it",
+            evidence.contains("build_asset_packs.py measure")
+        )
+    }
+
+    @Test
     fun everyArtifactEvidenceLineCarriesTheMeasurementRecord() {
-        for (a in artifacts) {
+        // (P2-3) Every VENDOR row's — the rows the measure run measures, the ones with a zip
+        // length. The LOCAL row's record is its provenance, pinned in the test above.
+        for (a in artifacts.filter { it.sourceBytes != null }) {
             assertTrue(
                 "${a.familyId}/${a.tierId}: evidence must carry the measure date — got " +
                     "\"${a.evidence}\"",
@@ -718,19 +892,26 @@ class NpuFleetCensusTest {
             "the truth table's gated input is the two npu-class tiers",
             setOf("npu", "npu-turbo"), gatedTierIds
         )
+        // VENDOR-SCOPED AT P2-3: "both measured tiers" is the Qualcomm answer; a MediaTek family
+        // offers turbo alone, so a capable fresh install there is offered turbo and nothing else.
         for (family in families) {
+            val offers = when (family.vendor) {
+                NpuVendor.QUALCOMM -> setOf("npu", "npu-turbo")
+                NpuVendor.MEDIATEK -> setOf("npu-turbo")
+            }
             assertEquals(
-                "${family.id}: capable with nothing installed -> both measured tiers fetchable",
-                setOf("npu", "npu-turbo"),
+                "${family.id}: capable with nothing installed -> every tier the family offers " +
+                    "and has measured is fetchable",
+                offers,
                 NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds, emptySet())
             )
             assertEquals(
                 "${family.id}: an installed tier is OFFERED, never fetchable",
-                setOf("npu-turbo"),
+                offers - "npu",
                 NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds, setOf("npu"))
             )
             assertEquals(
-                setOf("npu"),
+                offers - "npu-turbo",
                 NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds, setOf("npu-turbo"))
             )
             assertEquals(
@@ -739,6 +920,11 @@ class NpuFleetCensusTest {
                 NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds, gatedTierIds)
             )
         }
+        assertEquals(
+            "the MediaTek tablet, by name: turbo and only turbo",
+            setOf("npu-turbo"),
+            NpuFleetCensus.fetchableTierIds(byId("mt6989"), true, gatedTierIds, emptySet())
+        )
     }
 
     @Test
@@ -793,8 +979,9 @@ class NpuFleetCensusTest {
         // catalog before anyone measures its pairs.
         for (family in families) {
             assertEquals(
-                "${family.id}: an unmeasured gated id is absent, the measured two remain",
-                setOf("npu", "npu-turbo"),
+                "${family.id}: an unmeasured gated id is absent, the family's own measured " +
+                    "tiers remain",
+                family.tiers,
                 NpuFleetCensus.fetchableTierIds(family, true, gatedTierIds + "npu-max", emptySet())
             )
         }

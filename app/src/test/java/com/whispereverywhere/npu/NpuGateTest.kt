@@ -320,15 +320,16 @@ class NpuGateTest {
                 "how it is allowed to grow: a census edit with evidence, and the device-group " +
                 "XML regenerated in the same commit. Never because a part looked close.",
             setOf("SM8650", "SM8650-AC", "SM8750", "SM8750-AC", "SM8850", "SM8850-AD", "SM7750",
-                "SM8550", "SM8550-AC", "SM8450"),
+                "SM8550", "SM8550-AC", "SM8450", "MT6989"),
             NpuGate.SUPPORTED_SOCS
         )
         // (P2) The fleet-wide set is DERIVED now — the union of the rows' own spellings — and it
         // survives only for the device-group XML's equality pin; familyFor asks the row.
         assertEquals(
             "and the fleet-wide spellings are exactly the union of the rows' own: the two " +
-                "Qualcomm spellings the platform ships, on every Qualcomm row",
-            setOf("QTI", "Qualcomm"),
+                "Qualcomm spellings the platform ships, on every Qualcomm row, and the one the " +
+                "Tab S10+ reports, on the mt6989 row",
+            setOf("QTI", "Qualcomm", "Mediatek"),
             NpuGate.SUPPORTED_SOC_MANUFACTURERS
         )
         assertEquals(
@@ -392,6 +393,27 @@ class NpuGateTest {
         }
     }
 
+    /**
+     * P2-3 — THE TABLET'S ROW, resolved exactly as the tablet reports itself: `MT6989` under
+     * `Mediatek` (`ro.soc.manufacturer`, and the Play catalog's spelling). LiteRT's own enum
+     * spelling `MediaTek` denies — the row admits only what a device reports (design §7 q1) — and
+     * so does every Qualcomm spelling: the manufacturer check is the row's, and one vendor's
+     * spelling says nothing about the other vendor's silicon.
+     */
+    @Test
+    fun theMt6989RowResolvesUnderTheSpellingTheTabletReportsAndNoOther() {
+        val mt6989 = requireNotNull(NpuFleetCensus.familyById("mt6989"))
+        assertSame("MT6989 + Mediatek is the Tab S10+'s own read", mt6989, NpuGate.familyFor("MT6989", "Mediatek"))
+        assertTrue(NpuGate.isSocSupported("MT6989", "Mediatek"))
+        for (mfr in listOf("MediaTek", "MEDIATEK", "mediatek", "QTI", "Qualcomm", "", "unknown")) {
+            assertNull("MT6989 under '$mfr' denies — not a spelling the row admits", NpuGate.familyFor("MT6989", mfr))
+        }
+        for (soc in listOf("mt6989", "MT6989X", " MT6989", "MT6991", "MT6985")) {
+            assertNull("'$soc' under Mediatek denies — exact matching, and MT6991 is a later row", NpuGate.familyFor(soc, "Mediatek"))
+        }
+        assertNull("a null model denies whatever the spelling", NpuGate.familyFor(null, "Mediatek"))
+    }
+
     // ------------------------------------------------------------------ the capability half (P2)
 
     /**
@@ -439,6 +461,11 @@ class NpuGateTest {
             "a passed driver check is capable",
             NpuGate.runtimeAvailable(mediatekRow, neverQnn, verdict(refusal = null))
         )
+        // And the census's own MediaTek row answers identically: the dispatch is the vendor's.
+        val mt6989 = requireNotNull(NpuFleetCensus.familyById("mt6989"))
+        assertFalse(NpuGate.runtimeAvailable(mt6989, neverQnn, null))
+        assertFalse(NpuGate.runtimeAvailable(mt6989, neverQnn, verdict(refusal = "adapter-missing")))
+        assertTrue(NpuGate.runtimeAvailable(mt6989, neverQnn, verdict(refusal = null)))
     }
 
     @Test
@@ -528,6 +555,8 @@ class NpuGateTest {
             "" to "",
             "SM8650" to "QUALCOMM", // not one of the two shipped spellings
             "SM8650" to "MediaTek",
+            "SM8650" to "Mediatek", // a real row's spelling, the wrong vendor's silicon (P2)
+            "MT6989" to "QTI", // and the other way round: the row decides its manufacturer
             "SM8750-AC" to "unknown", // a covered model under an unknown manufacturer: still no row
         )
         for ((soc, mfr) in denials) {

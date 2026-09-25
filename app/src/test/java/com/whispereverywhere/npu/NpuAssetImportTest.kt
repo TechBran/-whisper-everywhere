@@ -1045,10 +1045,11 @@ class NpuAssetImportTest {
                 turbo, NpuFleetCensus.artifactFor("8gen3", "npu-turbo")
             ),
         )
-        // Every family x tier: the map is exactly the artifact row's values under the
-        // catalog's names -- one derivation, executed across the whole fleet.
+        // Every family x ITS OWN tiers (P2-3: vendor-scoped — a MediaTek family offers turbo
+        // alone, so it has no npu row to derive a map from): the map is exactly the artifact
+        // row's values under the catalog's names -- one derivation, executed across the fleet.
         NpuFleetCensus.families.forEach { family ->
-            NpuAssetImport.PAIRED_TIER_IDS.forEach { id ->
+            NpuAssetImport.PAIRED_TIER_IDS.filter { it in family.tiers }.forEach { id ->
                 val model = WhisperCatalog.byId(id)!!
                 val artifact = NpuFleetCensus.artifactFor(family.id, id)!!
                 assertEquals(

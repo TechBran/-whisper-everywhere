@@ -62,6 +62,9 @@ class NpuPackLayoutTest {
     private val qnnFamilies: List<Pair<NpuSocFamily, NpuRuntimeNeeds.Qnn>> =
         families.mapNotNull { f -> (f.runtime as? NpuRuntimeNeeds.Qnn)?.let { f to it } }
 
+    /** The Qualcomm rows — the families the `npu_small` / `npu_turbo` modules carry variants for. */
+    private val qualcommFamilies: List<NpuSocFamily> = families.filter { it.vendor == NpuVendor.QUALCOMM }
+
     /** tier id -> the pack MODULE that ships it (the brief's two names; F5's PACK_BY_TIER
      *  will spell the same mapping through the tier-id homes). */
     private val moduleByTier = mapOf("npu" to "npu_small", "npu-turbo" to "npu_turbo")
@@ -175,6 +178,35 @@ class NpuPackLayoutTest {
                     }
                 )
             }
+        }
+    }
+
+    /**
+     * P2-3 — THE MEDIATEK GROUP, and the Qualcomm groups beside it unchanged: the renderer emits
+     * each FAMILY'S manufacturer set, so soc_mt6989 carries one selector under the one spelling the
+     * Tab S10+ reports, while every Qualcomm group keeps exactly its two. Hard literals, because
+     * a renderer that fell back to one global set would render a Qualcomm spelling for MediaTek
+     * silicon (or the reverse) and every derived assertion above would still agree with it.
+     */
+    @Test
+    fun theMt6989GroupIsOneMediatekSelectorAndEveryQualcommGroupKeepsItsTwo() {
+        val start = xml.indexOf("name=\"soc_mt6989\"")
+        assertTrue("the soc_mt6989 group exists", start >= 0)
+        val block = xml.substring(start, xml.indexOf("</config:device-group>", start))
+        assertEquals(
+            "one selector, one chip: Mediatek / MT6989",
+            listOf("<config:system-on-chip manufacturer=\"Mediatek\" model=\"MT6989\"/>"),
+            Regex("<config:system-on-chip [^>]*/>").findAll(block).map { it.value }.toList()
+        )
+        assertEquals("exactly one device-selector", 1, count(block, "<config:device-selector>"))
+        for (family in qualcommFamilies) {
+            val s = xml.indexOf("name=\"${family.packGroup}\"")
+            val group = xml.substring(s, xml.indexOf("</config:device-group>", s))
+            assertEquals("${family.packGroup} keeps exactly its two selectors", 2, count(group, "<config:device-selector>"))
+            assertEquals(
+                "${family.packGroup} names no MediaTek spelling",
+                0, count(group, "manufacturer=\"Mediatek\"") + count(group, "manufacturer=\"MediaTek\"")
+            )
         }
     }
 
@@ -390,16 +422,20 @@ class NpuPackLayoutTest {
                     n.startsWith("$module#group_")
                 )
             }
+            // (P2-3) VENDOR-SCOPED: these two modules are the QUALCOMM packs (design §2.7 —
+            // `npu_turbo` stays Qualcomm-only; a MediaTek family's pair ships in its own two
+            // modules, npu_turbo_mtk_enc/_dec, which P2-5 adds). So the variants here are the
+            // Qualcomm rows' groups, and soc_mt6989 is in neither module.
             assertEquals(
-                "$module must carry the SIX census variants plus the empty #group_other — " +
-                    "four until 2026-09-22, when the 8 Gen 2 became a family on device evidence; " +
+                "$module must carry the SIX Qualcomm census variants plus the empty #group_other " +
+                    "— four until 2026-09-22, when the 8 Gen 2 became a family on device evidence; " +
                     "five until 2026-09-24, when v0.63.0 published the 8 Gen 1's package",
-                families.size + 1, names.size
+                qualcommFamilies.size + 1, names.size
             )
             assertEquals(
-                "...and they are exactly the census's groups under this module's prefix, plus " +
-                    "#group_other — a count alone would pass with one family's dir renamed",
-                (families.map { "$module#group_${it.packGroup}" } + "$module#group_other").sorted(),
+                "...and they are exactly the Qualcomm rows' groups under this module's prefix, " +
+                    "plus #group_other — a count alone would pass with one family's dir renamed",
+                (qualcommFamilies.map { "$module#group_${it.packGroup}" } + "$module#group_other").sorted(),
                 names
             )
             names.toSet()
@@ -417,8 +453,11 @@ class NpuPackLayoutTest {
         assertEquals(1, count(appGradle, "tasks.register(\"verifyNpuPacks\")"))
         // The pack table: one row per variant, byte literals the census's own — restated in
         // the build script because it cannot read the app's classes, and pinned equal here
-        // (the extractQnnSkel fleet-table discipline, one gate over).
-        for (artifact in NpuFleetCensus.artifacts) {
+        // (the extractQnnSkel fleet-table discipline, one gate over). (P2-3) Over the pairs this
+        // gate verifies — the Qualcomm ones, one part each in npu_small/npu_turbo; the mt6989
+        // pair's two parts join verifyNpuPacks with their modules at P2-5.
+        val qualcommIds = qualcommFamilies.map { it.id }.toSet()
+        for (artifact in NpuFleetCensus.artifacts.filter { it.familyId in qualcommIds }) {
             val module = moduleByTier.getValue(artifact.tierId)
             val group = requireNotNull(NpuFleetCensus.familyById(artifact.familyId)).packGroup
             assertEquals(

@@ -244,6 +244,35 @@ class NpuPackMetadataTest {
     }
 
     @Test
+    fun aVersionOneDocumentCanNeverDescribeAMediatekFamilysPack() {
+        // (P2-3) Version 1 carries an HTP version — a Hexagon — so it is a Qualcomm pack's shape.
+        // On the mt6989 row the HTP arm refuses it WHATEVER its number, even with every other
+        // field matching that row: the MediaTek twin of this check is metadata version 2's (a
+        // later P2 task), and until it exists no v1 document may install a MediaTek pair.
+        val mt6989 = NpuFleetCensus.familyById("mt6989")!!
+        val pair = NpuFleetCensus.artifactFor("mt6989", "npu-turbo")!!
+        val meta = NpuPackMetadata.parse(metaJson(
+            familyId = "\"mt6989\"", htpVersion = "75", packGroup = "\"soc_mt6989\"",
+            entries = entriesJson(
+                encoderName = pair.encoder.fileName, encoderBytes = pair.encoder.bytes,
+                encoderSha = pair.encoder.sha256, decoderName = pair.decoder.fileName,
+                decoderBytes = pair.decoder.bytes, decoderSha = pair.decoder.sha256,
+            ),
+        ))
+        val refusal = NpuPackMetadata.crossCheckRefusal(meta, mt6989, pair, "npu-turbo")
+        assertNotNull("a v1 document on a MediaTek row refuses", refusal)
+        assertTrue(
+            "and says why in the pack's own terms — a Qualcomm pack on MediaTek's APU: $refusal",
+            refusal!!.contains("HTP v75") && refusal.contains("MediaTek's APU") &&
+                refusal.contains("Nothing was installed")
+        )
+        assertNull(
+            "while the same shape of document still passes on the Qualcomm row it describes",
+            NpuPackMetadata.crossCheckRefusal(NpuPackMetadata.parse(metaJson()), family, artifact, "npu-turbo")
+        )
+    }
+
+    @Test
     fun theFamilyMismatchRefusalNamesBothFamiliesInTheClearestWords() {
         // THE ARM PLAY COULD PLAUSIBLY PRODUCE: same tier, wrong family variant. A v79 user
         // holding the 8gen3 zip learns this in one second, in these words, instead of

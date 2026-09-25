@@ -68,9 +68,9 @@ object NpuGate {
      * `MT6989` under `QTI` both deny, where one global Qualcomm set could only ask "Qualcomm?".)
      *
      * **Matching is EXACT, and every "helpful" relaxation of that is a way to ship the wrong
-     * binary to the wrong silicon.** This is now a FLEET rule, not an owner-device rule — six
-     * families wide since 2026-09-24 (SM8450 was the latest string in), and wider only by census
-     * edit. Not a prefix match — that also accepts every
+     * binary to the wrong silicon.** This is now a FLEET rule, not an owner-device rule — seven
+     * families wide since 2026-09-24 (SM8450, then MT6989 — the first MediaTek string — were the
+     * latest in), and wider only by census edit. Not a prefix match — that also accepts every
      * future superstring part nobody has run. Not `equals(ignoreCase = true)` — `Build.SOC_MODEL`
      * is a vendor field, and a device whose OEM spells a part differently is a device we have not
      * seen, which is the whole population this function exists to keep out. Exact matching also

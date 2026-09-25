@@ -111,6 +111,38 @@ data class PackEntry(
 )
 
 /**
+ * One Play asset pack a pair arrives in, and the entries it carries (P2; design §2.7) — the unit
+ * the pack machinery fetches, installs from and removes. A Qualcomm pair is ONE part: the tier's
+ * own module (`npu_small`, `npu_turbo`) carrying both entries, which is exactly what the
+ * single-pack machinery does today. A MediaTek pair is 1.88 GB against Play's 1.5 GB per-pack
+ * cap, so it is TWO parts: the encoder in one module, the decoder in another.
+ *
+ * SHAPE ONLY at P2-3: nothing reads [PackArtifact.parts] yet. The machinery that fetches, installs
+ * and removes per part is P2-4's, and the MediaTek modules the parts name are P2-5's.
+ *
+ * @property packName the asset-pack module — Play's identity for `fetch` / `getPackLocation`.
+ * @property entries the pair's entries this pack carries, encoder first when it carries both.
+ */
+data class PackPart(
+    val packName: String,
+    val entries: List<PackEntry>,
+)
+
+/**
+ * The ONE pack a tier's pair ships in on the Qualcomm fleet — F4's module names, restated as
+ * literals for [PackArtifact.tierId]'s reason (forcing `NpuPackFetch`'s `<clinit>`, which reaches
+ * the catalog and the spec table, from the census's would re-open the initialisation-order
+ * caution), and pinned equal to `NpuPackFetch.PACK_BY_TIER` — the map today's single-pack readers
+ * fetch through — by `NpuFleetCensusTest`. Only [PackArtifact.parts]' default calls it, so a row
+ * with another tier must name its parts, and a row that forgets fails the census's first touch.
+ */
+private fun singlePackFor(tierId: String): String = when (tierId) {
+    "npu" -> "npu_small"
+    "npu-turbo" -> "npu_turbo"
+    else -> throw IllegalArgumentException("no single pack ships tier '$tierId' — name the row's parts")
+}
+
+/**
  * One family's published pair for one tier — the artifact half of the census (4.2 F3). Every
  * arrival route (the SAF import today, the F5 pack install) verifies an incoming pair against
  * THE DEVICE FAMILY'S row, never the reference family's: the same model compiled for a different
@@ -118,14 +150,17 @@ data class PackEntry(
  * against the 8gen3 digests — a TRUE refusal for the WRONG stated reason ("corrupted download")
  * on every non-reference device.
  *
- * Every value is MEASURED, by `tools/build_asset_packs.py measure`, which downloads each vendor
- * zip through the pinned release manifest under four gates (HTTP 200; the pinned Last-Modified
- * re-upload event, 2026-09-23 at v0.63.0; the exact zip length; `testzip()` CRC) and asserts the
- * vendor's own `metadata.json` carries this family's HTP version AND the exact IO census of
- * [NpuModelSpec]'s row for the tier — the executed proof that per-SoC packages carry the SAME
- * model. The script embeds every row's digests as literals in its own verification table and
+ * Every VENDOR row's value is MEASURED, by `tools/build_asset_packs.py measure`, which downloads
+ * each vendor zip through the pinned release manifest under four gates (HTTP 200; the pinned
+ * Last-Modified re-upload event, 2026-09-23 at v0.63.0; the exact zip length; `testzip()` CRC)
+ * and asserts the vendor's own `metadata.json` carries this family's HTP version AND the exact IO
+ * census of [NpuModelSpec]'s row for the tier — the executed proof that per-SoC packages carry the
+ * SAME model. The script embeds every row's digests as literals in its own verification table and
  * `NpuFleetCensusTest` pins the two tables together, so the census and the instrument that fills
- * the packs cannot drift apart.
+ * the packs cannot drift apart. A LOCAL row (P2 — no vendor zip; [sourceBytes] null) carries the
+ * digests of its compile's mirrored artefacts, and its [evidence] names the mirror, the recipe
+ * and the reproducibility record; the script's table carries its digests too, beside the vendor
+ * rows, so the same pin holds it.
  *
  * @property familyId the [NpuSocFamily.id] this pair is compiled for.
  * @property tierId the catalog tier (`npu`, `npu-turbo`) — written as literals here on purpose:
@@ -141,6 +176,9 @@ data class PackEntry(
  * @property encoder the primary context binary, under the tier's catalog `fileName`.
  * @property decoder the paired context binary, under the tier's catalog paired `fileName`.
  * @property evidence when and how this row was measured — a recorded date, never a vibe.
+ * @property parts the asset packs the pair arrives in (P2, design §2.7; the SHAPE only until
+ *   P2-4's machinery reads it). The default is today's single-pack behaviour, stated: one part,
+ *   the tier's own module ([singlePackFor]), carrying both entries — every Qualcomm row's value.
  */
 data class PackArtifact(
     val familyId: String,
@@ -149,6 +187,7 @@ data class PackArtifact(
     val encoder: PackEntry,
     val decoder: PackEntry,
     val evidence: String,
+    val parts: List<PackPart> = listOf(PackPart(singlePackFor(tierId), listOf(encoder, decoder))),
 )
 
 /**
@@ -185,6 +224,13 @@ data class PackArtifact(
  * part number looks close. The sixth, `8gen1`, joined that way on 2026-09-24: AI Hub v0.63.0 was
  * the first release to publish its chipset key, and the vendor metadata names the SM8450's own
  * `soc_model` 36.
+ * **Amended at P2 (design §2.1), and stated as an amendment:** a new family joins when the vendor
+ * publishes a package for it, OR by a recorded self-compile whose recipe is in the repo
+ * (`tools/mtk-apu/`) and whose artefacts are held in the private artefact store. The seventh,
+ * `mt6989`, joined the second way on 2026-09-24 — a LOCAL row, no vendor zip — and measurement
+ * still decided it: its pair ran word-perfect on the silicon it was compiled for, in the product's
+ * own engine shape, before the row was written. Its pair's evidence says where the bytes are held
+ * and what "reproducible" does and does not mean for a NeuroPilot compile.
  */
 object NpuFleetCensus {
 
@@ -206,8 +252,10 @@ object NpuFleetCensus {
     private val SMALL_AND_TURBO: Set<String> = setOf("npu", "npu-turbo")
 
     /**
-     * The six families with published w8a16 packages: the spec table's four in its order, then
-     * `qcs8550` (2026-09-22) and `8gen1` (2026-09-24) in the order they joined. First verified
+     * Every census family, in the order they joined: the six Qualcomm families with published
+     * w8a16 packages — the spec table's four in its order, then `qcs8550` (2026-09-22) and `8gen1`
+     * (2026-09-24) — and then `mt6989` (2026-09-24), the first MediaTek row, a LOCAL self-compile
+     * (maintenance rule 2 as amended at P2). The Qualcomm half: first verified
      * against the live release manifests and the live asset bucket on 2026-08-29 (research doc
      * `2026-08-29-pad-soc-delivery.md` §7); all six re-verified at AI Hub v0.63.0 on 2026-09-24,
      * and every skel row re-measured out of `qnn-runtime-2.50.0.aar` the same day. The 4.1-shipped
@@ -410,6 +458,51 @@ object NpuFleetCensus {
                 "67 rows 'QTI SM8450' (15 Samsung); not yet executed in this program, in an " +
                 "AI Hub job of ours or on any device",
         ),
+        // THE MEDIATEK DIMENSITY 9300 (MT6989) — the Galaxy Tab S10+ and S10 Ultra, and every
+        // MT6989 phone (vivo, OPPO, Xiaomi), which report the same string and match the same row.
+        // The first MediaTek row and the first LOCAL one (P2, design §2.1): large-v3-turbo compiled
+        // ahead of time for this chip by MediaTek's NeuroPilot compiler on the MS-02, not a vendor
+        // package — maintenance rule 2 as amended above. Its runtime is LiteRT 2.1.1 on the APU
+        // through the Neuron driver, and its driver is checked before anything is offered (§2.3):
+        // the adapter must be `libneuronusdk_adapter.mtk.so` at major 8, the major the bytecode was
+        // compiled for, and each model file's own LiteRtStamp must name `mt6989` at init.
+        //
+        // THE STRINGS ARE WHAT THE TABLET REPORTS: `ro.soc.manufacturer=Mediatek` — that spelling,
+        // not LiteRT's own enum spelling `MediaTek`; the row admits only what a device reports
+        // (design §7 q1) — and `ro.soc.model=MT6989`, both read off the owner's SM-X828U, and the
+        // Play catalog's 24 rows spell it "Mediatek MT6989". Other spellings stay refused until a
+        // device reports one (maintenance rule 1).
+        //
+        // TURBO ONLY — AN AMENDMENT TO THE CENSUS CONTRACT, STATED AS SUCH. Every Qualcomm row
+        // carries both tiers, and commit 7494e4a RESTORED qcs8550's small row after an attempt to
+        // drop it ("hide, do not delete"; see that row). This row is different in kind: no Small was
+        // ever built for it, so there is nothing to hide, and the owner ruled it out (2026-09-24):
+        // "Don't necessarily need small for the tablets. The tablets are big and powerful already.
+        // So the biggest, best model we can get on there is going to be what we want." So `tiers`
+        // is {npu-turbo}, the family has one artifact row, and the cross-product pins are
+        // vendor-scoped: a Qualcomm family has both tiers, a MediaTek family turbo only.
+        //
+        // What it does NOT have yet: anything that can run it from the Play build. The dispatch
+        // staging, the runtime packaging and the manifest declaration are P2-6's, the two pack
+        // modules P2-5's, the per-part machinery P2-4's and the selector's vendor switch P2-7's —
+        // until then the driver check on a MediaTek device refuses, and the tier is not offered.
+        NpuSocFamily(
+            id = "mt6989",
+            packGroup = "soc_mt6989",
+            socModels = setOf("MT6989"),
+            manufacturers = setOf("Mediatek"),
+            runtime = NpuRuntimeNeeds.LiteRtMediatek(
+                neuronMajor = 8,
+                socStamp = "mt6989",
+            ),
+            tiers = setOf("npu-turbo"),
+            evidence = "Tab S10+ E0 read 2026-09-24 (ro.soc.manufacturer=Mediatek, " +
+                "ro.soc.model=MT6989); Play catalog 24 rows 'Mediatek MT6989'; the owner's " +
+                "SM-X828U at Neuron 8.2.26 — the driver check passed there, " +
+                "libneuronusdk_adapter.mtk.so 8.2.26 want=8 " +
+                "(docs/measurements/2026-09-24-tab-apu-turbo-encoder.md §6, P1's device gate); " +
+                "not yet run from a Play build",
+        ),
     )
 
     /** The row named [id], or null — exact match, the same doctrine as every string in here. */
@@ -435,11 +528,60 @@ object NpuFleetCensus {
         "v69 binary has run in an AI Hub job of ours or in the app"
 
     /**
-     * The artifact census: twelve measured pairs — 6 families x 2 tiers, family-major in
-     * [families] order, `npu` before `npu-turbo` within a family. The 8gen3 rows ARE the
+     * The mt6989 pair's provenance — a LOCAL row (P2): compiled here, not measured out of a vendor
+     * zip, so it carries no zip length and no `build_asset_packs.py measure` record. What it
+     * carries instead, VERBATIM from the measurement work of 2026-09-24 21:18
+     * (`docs/measurements/2026-09-24-tab-apu-turbo-encoder.md` §7), is where the bytes are held and
+     * what the recipe does and does not reproduce. The two files are
+     * `turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite` and
+     * `turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite` — the AOT compile's own names —
+     * delivered under the tier's catalog names (design §2.7: the engine picks its loader by
+     * vendor, and LiteRT does not care about the extension), so every call site that names a turbo
+     * file names these too.
+     */
+    private const val COMPILED_MT6989 = "compiled 2026-09-24 on the MS-02 by the recipe in " +
+        "tools/mtk-apu/ (ai_edge_litert.aot.aot_compile, Target(SocModel.MT6989), NeuroPilot " +
+        "v8_0_10) from the f32 exports turbo_encoder_qcio_f32.tflite / turbo_decoder_mtk_f32.tflite " +
+        "into turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite and " +
+        "turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite, delivered under the catalog " +
+        "names. The pair is mirrored at `~/.androidbuild/mtk-artefacts-2026-09-24/aot_mt6989/` on " +
+        "the MS-02 with SHA256SUMS (digests identical to the pinned ones); a recompile from the " +
+        "same f32 exports with the same recipe produced the SAME lengths and DIFFERENT digests " +
+        "(encoder 1,287,182,371 of 1,302,606,488 bytes differ from offset 424,930; decoder " +
+        "312,425,450 of 584,862,184 from offset 267,959,894) — MediaTek's compiler output is not " +
+        "byte-reproducible, so the pinned bytes in the private store ARE the artefact and the " +
+        "recipe reproduces the model, not the file — proven functionally: the recompiled pair " +
+        "run through the product-shaped engine on the tablet (`p2_repro_pair_litertasr`) " +
+        "transcribed all four utterances identically to the reference with the same log-probs " +
+        "(sheet §7). A rebuilt pair is a NEW artefact: re-pin, re-measure, re-mirror before it ships."
+
+    /**
+     * The mt6989 pair's two entries, named once each: the row's `encoder`/`decoder` and its two
+     * parts carry the SAME objects, so a digest has one spelling here however many places read it.
+     * Declared above [artifacts] for the object's textual initialisation order.
+     */
+    private val MT6989_TURBO_ENCODER = PackEntry(
+        "turbo_encoder_qairt_context.bin", 1_302_606_488L,
+        "bc68f161eac358940f76dd84bc8351057d7353d6fc49a91918b767b520ad09c6",
+    )
+    private val MT6989_TURBO_DECODER = PackEntry(
+        "turbo_decoder_qairt_context.bin", 584_862_184L,
+        "b596eec465c8e6fcc1ab50463b1caf62e2a0e2b7e24bc991185c2dec32719079",
+    )
+
+    /**
+     * The artifact census: thirteen pairs — each family's own [NpuSocFamily.tiers], family-major
+     * in [families] order, `npu` before `npu-turbo` within a family: the six Qualcomm families x 2
+     * tiers (twelve measured vendor pairs), then mt6989's turbo pair alone (LOCAL; the owner's
+     * turbo-only ruling is on its family row). The 8gen3 rows ARE the
      * catalog's record (`WhisperCatalog` keeps its constants as the reference family's record —
      * provenance and the published delivery zips — and the census test pins the two records
      * equal, which is what makes them one record).
+     *
+     * The ±5% reference band below is the QUALCOMM pairs' story: the mt6989 pair is an fp16 AOT
+     * compile of the same model, 1,302,606,488 B of encoder against the w8a16 reference's
+     * 686,112,520, and only the per-family gate — which reads this census's own bytes — can judge
+     * it, which is the gate every device uses since F5.
      *
      * NOTE, measured 2026-08-30 and carried to F5 BY NAME: both 7gen4 ENCODERS sat outside the
      * ±5% tolerance `WhisperModelManager.isInstalled` applies around the catalog's reference
@@ -631,6 +773,22 @@ object NpuFleetCensus {
                 "c5bb0775b19afb1f7b115c231aaaf78d003479228b3e905181fe0436c87b5fc2",
             ),
             evidence = MEASURED_8GEN1,
+        ),
+        // mt6989 — turbo alone (the owner's ruling, on the family row), a LOCAL pair: no vendor
+        // zip, and TWO parts, because 1,887,468,672 B is over Play's 1.5 GB per-pack cap — the
+        // encoder in one on-demand module and the decoder in another (design §2.7; the modules
+        // are P2-5's, the machinery that reads parts P2-4's).
+        PackArtifact(
+            familyId = "mt6989",
+            tierId = "npu-turbo",
+            sourceBytes = null,
+            encoder = MT6989_TURBO_ENCODER,
+            decoder = MT6989_TURBO_DECODER,
+            evidence = COMPILED_MT6989,
+            parts = listOf(
+                PackPart("npu_turbo_mtk_enc", listOf(MT6989_TURBO_ENCODER)),
+                PackPart("npu_turbo_mtk_dec", listOf(MT6989_TURBO_DECODER)),
+            ),
         ),
     )
 
