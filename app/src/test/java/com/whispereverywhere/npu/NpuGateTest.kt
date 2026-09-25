@@ -66,6 +66,7 @@ class NpuGateTest {
     private fun verdict(refusal: String?) = NpuApuVerdict(
         fingerprint = "test/fingerprint",
         appBuild = 112,
+        appUpdatedAtMs = 1L,
         wantMajor = 8,
         refusal = refusal,
         probedAtMs = 1L,

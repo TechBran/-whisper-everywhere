@@ -13,16 +13,18 @@ import com.whispereverywhere.data.local.UsageTracker
 import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModelManager
-import com.whispereverywhere.npu.LiteRtAsrNative
 import com.whispereverywhere.npu.NpuApuDriverCheck
+import com.whispereverywhere.npu.NpuApuKey
 import com.whispereverywhere.npu.NpuDiag
 import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.npu.NpuRuntimeNeeds
 import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.npu.NpuVendor
+import com.whispereverywhere.transcription.LiteRtAsrEngine
 import com.whispereverywhere.transcription.NpuWhisperBackend
 import com.whispereverywhere.transcription.speakers.SpeakerSpikeStore
+import com.whispereverywhere.whisper.WhisperNative
 
 class WhisperEverywhereApp : Application() {
 
@@ -334,77 +336,132 @@ class WhisperEverywhereApp : Application() {
 
     /**
      * THE MEDIATEK DRIVER CHECK'S VERDICT FOR THIS PROCESS (P2; design §2.3 items 1–3) — what
-     * [npuCapableDevice]'s MediaTek half reads.
+     * [npuCapableDevice]'s MediaTek half reads. Started here, at `onCreate`, and settled by
+     * [awaitApuDriverVerdict]:
      *
      *  1. **Not a MediaTek row → nothing.** The first two lines return on every Qualcomm and
-     *     off-census device, so their launch is exactly 4.15's: no thread, no LiteRT.
-     *  2. **A stored verdict that still answers → published now.** Taken on this ROM
-     *     (`Build.FINGERPRINT`), by this build, against this family's Neuron major — the
-     *     [NpuApuDriverCheck.reusableOrNull] rule, whose keys say why each is one. The read is
-     *     the device-local store `PreferencesManager` loaded at construction, so this is Main-safe
-     *     and a later launch's chooser never sees "unknown" at all.
-     *  3. **Otherwise one probe, on a daemon thread of its own** — `LiteRtAsrNative.nativeProbe`,
-     *     whose first walk holds bionic's loader lock for 169–239 ms, so never Main — then the
-     *     verdict is published (every chooser keyed on it re-reads) and persisted device-locally.
+     *     off-census device, so their launch is exactly 4.15's: no thread, no LiteRT, and not
+     *     even the driver check's flow is created.
+     *  2. **A stored verdict that still answers → published NOW, on Main.** Taken under this
+     *     process's [apuVerdictKey] — this ROM, this build, this install, this family's Neuron
+     *     major (the [NpuApuDriverCheck.reusableOrNull] rule; [NpuApuKey] says why each is one).
+     *     The read is the device-local store `PreferencesManager` loaded at construction and the
+     *     publish is a StateFlow write, so this is Main-safe and a later launch's chooser never
+     *     sees "unknown" at all.
+     *  3. **Then the settle, on a daemon thread of its own** — [awaitApuDriverVerdict]: on the
+     *     reuse above it only announces the verdict (the `apu: verdict` line goes out through
+     *     native logging, which loads the whisper JNI library — never on Main); otherwise it walks
+     *     the adapter (169–239 ms with bionic's loader lock held, so never Main either), under the
+     *     crash-loop guard, and publishes the answer — every chooser keyed on the flow re-reads.
      *     Until it lands the verdict is unknown, which [NpuGate.runtimeAvailable] answers as
-     *     not-yet-capable.
+     *     not-yet-capable, and the bubble service's boot prewarm waits for it before its first read
+     *     of the gate (the P2a review's L1).
      *
-     * The dispatch directory it hands the probe is [NpuApuDriverCheck.dispatchDir] — the name's one
-     * home, which the dispatch staging and the LiteRT engine reuse. At P2-2 nothing was staged there
-     * and the manifest did not declare the adapter, so on a MediaTek device the answer was a
-     * refusal (`adapter-missing`, or `runtime: …`), which a later build re-probes rather than
-     * inherits (the verdict is keyed on the build as well as the ROM). Since P2-6 (the adapter
-     * declared, `libLiteRt.so` in `lib/`) the Tab S10+ can PASS, and since P2-7 the selector builds
-     * the LiteRT engine for the row, so an offered tier arms on the APU.
-     *
-     * The service's boot prewarm running the probe when this has not (design §2.3 item 1) is
-     * P2-7's; the `apu:` driver line is the native probe's own, and this adds one
-     * [NpuDiag.apuVerdict] line saying which verdict the process holds and where it came from.
+     * At P2-2 nothing was staged in the dispatch directory and the manifest did not declare the
+     * adapter, so on a MediaTek device the answer was a refusal (`adapter-missing`, or
+     * `runtime: …`), which a later build re-probes rather than inherits (the verdict is keyed on the
+     * build and the install as well as the ROM). Since P2-6 (the adapter declared, `libLiteRt.so` in
+     * `lib/`) the Tab S10+ can PASS, and since P2-7 the selector builds the LiteRT engine for the
+     * row, so an offered tier arms on the APU.
      */
     private fun settleApuDriverVerdict() {
         val family = npuSocFamily ?: return
         val needs = family.runtime as? NpuRuntimeNeeds.LiteRtMediatek ?: return
-        val fingerprint = Build.FINGERPRINT
-        val build = BuildConfig.VERSION_CODE
-        val stored = NpuApuDriverCheck.reusableOrNull(
-            preferencesManager.npuApuVerdict, fingerprint, build, needs.neuronMajor,
-        )
-        if (stored != null) {
-            NpuApuDriverCheck.publish(stored)
-            Log.i(NpuDiag.TAG, NpuDiag.apuVerdict(stored, reused = true))
-            return
-        }
-        val files = filesDir
-        val libDir = applicationInfo.nativeLibraryDir
-        val prefs = preferencesManager
+        val stored = NpuApuDriverCheck.reusableOrNull(preferencesManager.npuApuVerdict, apuVerdictKey(needs))
+        if (stored != null) NpuApuDriverCheck.publish(stored)
         val thread = Thread(
             {
                 // Wrapped whole: an uncaught throw on this thread would take the PROCESS down
-                // (Android's default handler), and the tier may never cost the app its life.
-                // probeNow already turns anything the probe throws into a named refusal.
-                runCatching {
-                    val verdict = NpuApuDriverCheck.probeNow(
-                        probe = { dispatchDir, lib, wantMajor ->
-                            LiteRtAsrNative.nativeProbe(dispatchDir, lib, wantMajor)
-                        },
-                        filesDir = files,
-                        libDir = libDir,
-                        fingerprint = fingerprint,
-                        appBuild = build,
-                        wantMajor = needs.neuronMajor,
-                        clock = System::currentTimeMillis,
-                    )
-                    NpuApuDriverCheck.publish(verdict)
-                    Log.i(NpuDiag.TAG, NpuDiag.apuVerdict(verdict, reused = false))
-                    runCatching { prefs.recordNpuApuVerdict(verdict) }
-                        .onFailure { Log.w(NpuDiag.TAG, "apu: the verdict could not be stored", it) }
-                }.onFailure { Log.w(NpuDiag.TAG, "apu: the driver check failed", it) }
+                // (Android's default handler), and the tier may never cost the app its life. The
+                // settle already turns anything the probe throws into a named refusal.
+                runCatching { awaitApuDriverVerdict() }
+                    .onFailure { Log.w(NpuDiag.TAG, "apu: the driver check failed", it) }
             },
             "npu-apu-driver-check",
         )
         thread.isDaemon = true
         thread.start()
     }
+
+    /**
+     * One settle of the driver verdict per process: the launch thread and the service's boot
+     * prewarm may both ask, and whichever holds this lock first walks the adapter while the other
+     * waits for its answer — never a second walk.
+     */
+    private val apuVerdictLock = Any()
+
+    /** Guarded by [apuVerdictLock]: this process's one `apu: verdict` line has gone out. */
+    private var apuVerdictAnnounced = false
+
+    /**
+     * THE DRIVER VERDICT, SETTLED — BLOCKING until this process holds one (design §2.3 item 1; P2-7).
+     * Never on Main, and never inside `NativeComputeGate`: the walk is 169–239 ms with bionic's
+     * loader lock held, and there is no wait left in it to hide (the 5 s P0 measured was a library
+     * the product never declares) — so this exists for the VERDICT, not as a warm-up.
+     *
+     * Two callers, one settle ([apuVerdictLock]): the thread [settleApuDriverVerdict] starts at
+     * `onCreate`, and `FloatingBubbleService`'s boot prewarm, which awaits it before its first read
+     * of the gate — so a service started milliseconds after `onCreate` (BootReceiver on an update)
+     * reads the verdict, not "unknown" (the P2a review's L1). If the launch thread is walking, the
+     * prewarm waits for its answer; if it never ran, the prewarm walks. Every device that is not a
+     * MediaTek row returns on the first two lines and never touches the driver check.
+     *
+     * The settle itself is [NpuApuDriverCheck.settle] — reuse, the crash-loop guard, one walk
+     * through [LiteRtAsrEngine.probe] (the one caller of `LiteRtAsrNative` in the app is that
+     * engine), a verdict recorded only when the probe answered rather than threw — and a verdict
+     * [settleApuDriverVerdict] already published from the store on Main is announced as stored.
+     *
+     * THE `apu: verdict` LINE GOES OUT THROUGH NATIVE LOGGING (the P2a review's L5). R8 strips every
+     * `android.util.Log` from the release build (`proguard-rules.pro`, "Release log hygiene"), and a
+     * launch that reuses a stored verdict runs no native probe — so a Play build would otherwise
+     * leave no trace of the verdict it holds. `WhisperNative.diag` is the stale-pair sweep's route,
+     * for the same reason; once per process, from this thread or the prewarm's, never Main.
+     */
+    fun awaitApuDriverVerdict() {
+        val family = npuSocFamily ?: return
+        val needs = family.runtime as? NpuRuntimeNeeds.LiteRtMediatek ?: return
+        synchronized(apuVerdictLock) {
+            if (apuVerdictAnnounced) return
+            val published = NpuApuDriverCheck.verdict.value
+            val settled = if (published != null) {
+                NpuApuDriverCheck.Settled(published, reused = true)
+            } else {
+                NpuApuDriverCheck.settle(
+                    store = preferencesManager,
+                    key = apuVerdictKey(needs),
+                    probe = { dispatchDir, lib, _ -> LiteRtAsrEngine(family, lib).probe(dispatchDir) },
+                    filesDir = filesDir,
+                    libDir = applicationInfo.nativeLibraryDir,
+                    clock = System::currentTimeMillis,
+                ).also { NpuApuDriverCheck.publish(it.verdict) }
+            }
+            apuVerdictAnnounced = true
+            runCatching { WhisperNative.diag(NpuDiag.apuVerdict(settled.verdict, reused = settled.reused)) }
+        }
+    }
+
+    /**
+     * THE KEY this process's driver verdict answers under — ONE derivation, read by both halves
+     * of the settle: `Build.FINGERPRINT`, this build's versionCode, when this install last changed
+     * (`PackageInfo.lastUpdateTime`, the P2a review's L3 — same-versionCode builds must not inherit
+     * each other's refusals) and the family's wanted Neuron major. [NpuApuKey] says why each is one.
+     */
+    private fun apuVerdictKey(needs: NpuRuntimeNeeds.LiteRtMediatek): NpuApuKey = NpuApuKey(
+        fingerprint = Build.FINGERPRINT,
+        appBuild = BuildConfig.VERSION_CODE,
+        appUpdatedAtMs = installUpdatedAtMs(),
+        wantMajor = needs.neuronMajor,
+    )
+
+    /**
+     * `PackageInfo.lastUpdateTime` for this app — or 0 if the package manager cannot say, which
+     * keeps the key stable across launches (the verdict is still reused) at the cost of the
+     * same-versionCode separation this field exists for. Asking about our own package does not
+     * fail in practice.
+     */
+    @Suppress("DEPRECATION")
+    private fun installUpdatedAtMs(): Long =
+        runCatching { packageManager.getPackageInfo(packageName, 0).lastUpdateTime }.getOrDefault(0L)
 
     /**
      * Points the FastRPC loader at the app's own files directory (4.0 NPU tier; the skel's real

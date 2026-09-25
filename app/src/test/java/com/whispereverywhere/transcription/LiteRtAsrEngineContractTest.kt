@@ -162,6 +162,45 @@ class LiteRtAsrEngineContractTest {
     }
 
     /**
+     * **…and from nowhere else in main** (P2-7). `LiteRtAsrNative` is a process-global session
+     * behind one mutex: a second Kotlin caller is a second, unguarded path to it — around the
+     * engine's refusals, its dispatch stage, the backend's arming epoch. The app's driver check
+     * reaches the probe THROUGH the engine (`LiteRtAsrEngine(family, lib).probe(dispatchDir)`), so
+     * this file is the ONE main-source file with a live `LiteRtAsrNative.` call. (The probe app in
+     * `tools/probes/` calls it directly by design: it is the device gate's harness, outside main.)
+     */
+    @Test
+    fun liteRtAsrNativeIsCalledFromTheEngineAndFromNowhereElseInMain() {
+        val mainRoot = run {
+            var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+            var found: File? = null
+            while (dir != null && found == null) {
+                found = listOf(File(dir, "src/main/java"), File(dir, "app/src/main/java"))
+                    .firstOrNull { File(it, "com/whispereverywhere/npu/LiteRtAsrNative.kt").isFile }
+                dir = dir.parentFile
+            }
+            requireNotNull(found) { "cannot locate src/main/java from ${System.getProperty("user.dir")}" }
+        }
+        val callers = mainRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { liveOffsets(it.readText().replace("\r\n", "\n"), "LiteRtAsrNative.").isNotEmpty() }
+            .map { it.name }
+            .sorted()
+            .toList()
+        assertEquals(
+            "LiteRtAsrEngine.kt is the ONE main-source file with a live LiteRtAsrNative call. Found: $callers",
+            listOf("LiteRtAsrEngine.kt"),
+            callers,
+        )
+        val app = source("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
+        assertEquals(
+            "the app's driver check reaches the probe through the engine, once",
+            1,
+            liveLines(app, "LiteRtAsrEngine(family, lib).probe(dispatchDir)").size,
+        )
+    }
+
+    /**
      * **`nativeInit` is handed its thirteen arguments in native's order — the five varying scalars
      * off the spec, the row's stamp and major — and the two defaults as LITERALS at the call**:
      * `performanceMode = -1` (LiteRT's default, inert on 2.1.1 AOT) and `selfKvStrategy = 1` (one

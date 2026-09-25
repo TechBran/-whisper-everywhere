@@ -712,6 +712,11 @@ tasks.withType<Test>().configureEach {
         // probe's path to the one function built from it. Both are claims a comment-shaped edit
         // or a second literal could break without changing what any executed test observes.
         "src/main/java/com/whispereverywhere/npu/NpuApuDriverCheck.kt",
+        // (P2-7, the P2a review's L5) The release shrinker's rules, by the same rule: the driver
+        // verdict's `apu: verdict` line goes out through WhisperNative.diag BECAUSE these rules
+        // strip android.util.Log from every release build, and NpuApuDriverCheckTest reads the
+        // file to hold that reason to the rule it rests on. It is an input to no compile task.
+        "proguard-rules.pro",
         // (P2-6, runtime packaging) The LiteRT runtime's Kotlin home — NpuAssetStageDirTest reads it
         // as text to hold the dispatch stage to the one dispatch directory (NpuApuDriverCheck's) and
         // to no second spelling of its name; comment-shaped edits compile to identical bytes.
