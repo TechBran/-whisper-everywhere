@@ -71,7 +71,37 @@ class LiteRtNativeContractTest {
     private val cmake: String by lazy { source("src/main/cpp/CMakeLists.txt") }
     private val bandScan: String by lazy { source("src/main/cpp/band_scan.h") }
     private val stamp: String by lazy { source("src/main/cpp/litert_stamp.h") }
+    private val mapHeader: String by lazy { source("src/main/cpp/model_map.h") }
     private val gradle: String by lazy { source("build.gradle.kts") }
+
+    /** One function's body in `model_map.h`; its functions, like litert_asr.cpp's, close at column 0. */
+    private fun mapFunction(anchor: String): String {
+        val start = mapHeader.indexOf(anchor)
+        assertTrue("anchor \"$anchor\" is missing from model_map.h", start >= 0)
+        val body = mapHeader.substring(start)
+        assertTrue("no column-0 closing brace follows \"$anchor\" in model_map.h", body.contains("\n}\n"))
+        return body.substringBefore("\n}\n")
+    }
+
+    /** The offset of the one live line of [scope] containing [needle] - failing unless there is exactly one. */
+    private fun onlyOffset(scope: String, needle: String, where: String): Int {
+        val at = liveOffsets(scope, needle)
+        assertEquals("$where: exactly one live `$needle`", 1, at.size)
+        return at[0]
+    }
+
+    /**
+     * The offset of the one occurrence of [needle] in a `model_map.h` function body, by RAW text - for the
+     * statements that begin with an out-parameter's `*` (`*why = ...`), which [isComment] reads as a block
+     * comment's continuation line and every live-line helper therefore skips. Sound only inside a body
+     * with no comments in it, which each of the header's function bodies is.
+     */
+    private fun onlyRawOffset(body: String, needle: String, where: String): Int {
+        val at = body.indexOf(needle)
+        assertTrue("$where: exactly one `$needle`", at >= 0 && body.indexOf(needle, at + 1) < 0)
+        assertTrue("$where: the body this reads raw must hold no comment", !body.substringAfter("{").contains("//"))
+        return at
+    }
 
     /**
      * **The CMake target: `litertasr`, one source, linked to `log` and `dl` and nothing else, and
@@ -192,17 +222,29 @@ class LiteRtNativeContractTest {
             liveLines(cpp, "dlclose").isEmpty()
         )
         val release = functionBody("void releaseLocked() {")
+        val releaseSlot = functionBody("void releaseSlotLocked(Slot &slot) {")
         listOf("rt.env", "rt.lib", "adapter.", "LiteRtCreateEnvironment").forEach {
             assertTrue(
-                "releaseLocked must not touch process state - `$it` on a live line of it: " +
-                    liveLines(release, it),
-                liveLines(release, it).isEmpty()
+                "releaseLocked and the slot teardown it calls must not touch process state - `$it` on a live " +
+                    "line: " + liveLines(release, it) + liveLines(releaseSlot, it),
+                liveLines(release, it).isEmpty() && liveLines(releaseSlot, it).isEmpty()
             )
         }
-        listOf("LiteRtDestroyTensorBuffer(", "LiteRtDestroyCompiledModel(", "LiteRtDestroyModel(",
-               "LiteRtDestroyOptions(", "LiteRtDestroyTensorBufferRequirements(").forEach {
+        listOf("LiteRtDestroyTensorBuffer(", "LiteRtDestroyTensorBufferRequirements(").forEach {
             assertTrue("releaseLocked frees the session: `$it` on a live line", liveLines(release, it).isNotEmpty())
         }
+        listOf("LiteRtDestroyCompiledModel(", "LiteRtDestroyModel(", "LiteRtDestroyOptions(").forEach {
+            assertTrue(
+                "releaseSlotLocked frees each slot's objects: `$it` on a live line",
+                liveLines(releaseSlot, it).isNotEmpty()
+            )
+        }
+        assertTrue(
+            "and releaseLocked hands it both slots, the decoder's first as ever",
+            liveOffsets(release, "releaseSlotLocked(g.dec);").size == 1 &&
+                liveOffsets(release, "releaseSlotLocked(g.enc);").size == 1 &&
+                liveOffsets(release, "releaseSlotLocked(g.dec);")[0] < liveOffsets(release, "releaseSlotLocked(g.enc);")[0]
+        )
         val ensure = functionBody("std::string ensureEnvironmentLocked(")
         assertTrue(
             "the environment is created once, with the dispatch directory as its one option",
@@ -329,7 +371,7 @@ class LiteRtNativeContractTest {
         ).forEach { assertTrue("the expected output order must carry: $it", census.contains(it)) }
         val init = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(")
         val ioDec = init.indexOf("checkIoLocked(g.dec, census.decIn, census.decOut)")
-        val restore = init.indexOf("compileLocked(g.enc, &encMs)")
+        val restore = init.indexOf("err = restoreLocked(g.enc, encoderPath, kEncodeSignature,")
         assertTrue(
             "the census runs on both models before the first restore (census at $ioDec, restore at $restore)",
             init.contains("checkIoLocked(g.enc, census.encIn, census.encOut)") && ioDec in 0 until restore
@@ -855,6 +897,269 @@ class LiteRtNativeContractTest {
     }
 
     /**
+     * **The models are opened through a read-only mapping - `LiteRtCreateModelFromBuffer` - with
+     * LiteRT's file loader as the fallback, at the open AND at the restore** (4.16.1, the Tab S10+ ship
+     * sheet's F2).
+     *
+     * LiteRT v2.1.1's `LiteRtCreateModelFromFile` copies every DISPATCH_OP's bytecode onto the native
+     * heap (litert/core/model/model_load.cc, LoadModelFromFile): 1,302,604,120 + 317,005,992 B on the
+     * pair, cold after the restore and swappable only - the sheet found 3.23 GB of native heap in zram.
+     * `LiteRtCreateModelFromBuffer` copies nothing ("The caller must ensure that the buffer remains valid
+     * for the lifetime of the model", litert/c/litert_model.h), so the mapped pages stay file-backed.
+     * Held here: the entry point is resolved beside the file variant; the open goes through
+     * `model_map::loadPreferMapped` (map, the buffer loader, else the file loader); the restore through
+     * `model_map::compilePreferMapped`, whose fallback releases the slot, re-opens it with the file
+     * loader ALONE, re-censuses it and gives it fresh options before restoring again; only a successful
+     * restore is advised for the run phase; the opened line names the loader; the `models:` line follows
+     * both restores. The helper's own behaviour - the real mmap, madvise, mincore and munmap, and both
+     * fallbacks in every branch - is `tools/model_map_check.py`'s to hold.
+     */
+    @Test
+    fun theModelsAreOpenedThroughAReadOnlyMappingWithLiteRtsFileLoaderAsTheFallback() {
+        val table = cpp.split("\n").filterNot { isComment(it) }.map { it.trim() }
+        val file = table.indexOfFirst { it.startsWith("X(LiteRtCreateModelFromFile)") }
+        assertTrue(
+            "LiteRtCreateModelFromBuffer is resolved, once, on the line after LiteRtCreateModelFromFile",
+            liveLines(cpp, "X(LiteRtCreateModelFromBuffer)").size == 1 && file >= 0 &&
+                table[file + 1].startsWith("X(LiteRtCreateModelFromBuffer)")
+        )
+        assertTrue("litert_asr.cpp includes the helper", liveLines(cpp, "#include \"model_map.h\"").size == 1)
+
+        val open = functionBody("std::string openModelLocked(")
+        assertTrue(
+            "the open prefers the mapping: loadPreferMapped over both loaders, the buffer one given the mapping",
+            liveLines(
+                open,
+                "err = model_map::loadPreferMapped(path, &slot.map, fromBuffer, fromFile, &slot.via, &why, &advice);"
+            ).size == 1 &&
+                liveLines(open, "const LiteRtStatus s = rt.api.LiteRtCreateModelFromBuffer(addr, size, &slot.model);")
+                    .size == 1 &&
+                liveLines(open, "const LiteRtStatus s = rt.api.LiteRtCreateModelFromFile(path.c_str(), &slot.model);")
+                    .size == 1
+        )
+        assertTrue(
+            "the file loader alone only when the caller says so (restoreLocked's re-open); the default maps",
+            collapsed(open).contains("if (allowMap) { err = model_map::loadPreferMapped(") &&
+                collapsed(open).contains("} else { err = fromFile(); if (err.empty()) slot.via = model_map::Via::File; }") &&
+                liveLines(
+                    cpp,
+                    "std::string openModelLocked(Slot &slot, const std::string &path, const char *sigKey, bool allowMap = true) {"
+                ).size == 1
+        )
+        assertTrue(
+            "the opened line names the loader: `via mmap` / `via file`",
+            liveLines(open, "LOGI(\"%s: %s opened in %.0f ms via %s, signature '%s' #%zu, %zu in / %zu out\"").size == 1 &&
+                collapsed(open).contains("msSince(t0), model_map::viaName(slot.via), sigKey,") &&
+                liveLines(mapHeader, "return v == Via::Mapped ? \"mmap\" : v == Via::File ? \"file\" : \"none\";").size == 1
+        )
+
+        val restore = functionBody("std::string restoreLocked(")
+        assertTrue(
+            "the restore goes through compilePreferMapped, the compile being compileLocked's",
+            collapsed(restore).contains("model_map::compilePreferMapped( slot.via, [&] { return compileLocked(slot, ms); },")
+        )
+        val steps = listOf(
+            "releaseSlotLocked(slot);",
+            "std::string e = openModelLocked(slot, path, sigKey, /*allowMap=*/false);",
+            "if (e.empty()) e = checkIoLocked(slot, ins, outs);",
+            "if (e.empty()) e = buildOptionsLocked(slot, accelerators, performanceMode);",
+        ).map { onlyOffset(restore, it, "restoreLocked") }
+        assertEquals(
+            "the fallback releases the slot (model, then mapping), re-opens it from the file alone, re-censuses " +
+                "it and builds fresh options - in that order",
+            steps.sorted(), steps
+        )
+        val fallback = onlyOffset(restore, "const std::string err = model_map::compilePreferMapped(", "restoreLocked")
+        val advise = onlyOffset(restore, "const int advice = model_map::adviseRunPhase(slot.map);", "restoreLocked")
+        assertTrue(
+            "and only a successful restore is advised for the run phase",
+            fallback < advise &&
+                collapsed(restore).contains("&why); if (!err.empty()) return err; const int advice = model_map::adviseRunPhase(slot.map);")
+        )
+
+        val init = collapsed(functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit("))
+        assertTrue(
+            "nativeInit restores both slots through restoreLocked, each with its own path, census and set",
+            init.contains(
+                "err = restoreLocked(g.enc, encoderPath, kEncodeSignature, census.encIn, census.encOut, " +
+                    "kEncoderAccelerators, performanceMode, &encMs);"
+            ) &&
+                init.contains(
+                    "err = restoreLocked(g.dec, decoderPath, kDecodeSignature, census.decIn, census.decOut, " +
+                        "kDecoderAccelerators, performanceMode, &decMs);"
+                ) &&
+                liveLines(functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit("), "compileLocked(")
+                    .isEmpty()
+        )
+        assertTrue(
+            "the models line follows the two restores and precedes the buffers",
+            init.contains("if (!err.empty()) return refuse(err); logModelsLocked(); err = allocateLocked();")
+        )
+        val models = functionBody("void logModelsLocked() {")
+        assertTrue(
+            "and it reads: `models: mapped X+Y B, resident-after-compile Z MB`, from mincore over both mappings",
+            liveLines(
+                models,
+                "LOGI(\"models: mapped %zu+%zu B, resident-after-compile %s MB (encoder %s MB via %s, decoder %s MB via %s)\","
+            ).size == 1 &&
+                liveLines(models, "const int encErr = model_map::residentBytes(g.enc.map, &enc);").size == 1 &&
+                liveLines(models, "const int decErr = model_map::residentBytes(g.dec.map, &dec);").size == 1
+        )
+    }
+
+    /**
+     * **A mapping is released only after its model, and on every way out of a session** (4.16.1).
+     *
+     * The mapping must outlive the model (`LiteRtCreateModelFromBuffer`'s contract) and the model its
+     * compiled model, whose dispatch holds a pointer into the bytecode: an unmap one line early is a
+     * SIGSEGV inside the next restore or run - on the tablet, not here. So there is ONE place a model is
+     * destroyed and a mapping released, `releaseSlotLocked`, in the order compiled model, options,
+     * model, mapping; and every exit reaches it - each refusal of nativeInit once the slots start
+     * filling (`refuse` releases), a re-arm over a live session, nativeRelease, and restoreLocked's
+     * fallback. The helper releases a mapping LiteRT refused BEFORE the file loader runs, and every
+     * path through its mapReadOnly closes the fd it opened.
+     */
+    @Test
+    fun aMappingIsReleasedOnlyAfterItsModelAndOnEveryExit() {
+        assertEquals(
+            "one live unmap site in litert_asr.cpp: " + liveLines(cpp, "model_map::unmap("),
+            1, liveLines(cpp, "model_map::unmap(").size
+        )
+        assertEquals(
+            "one live LiteRtDestroyModel call: " + liveLines(cpp, "LiteRtDestroyModel("),
+            1, liveLines(cpp, "LiteRtDestroyModel(").size
+        )
+        assertEquals(
+            "the only raw munmap in the engine is the stamp reader's own transient mapping",
+            listOf("munmap(m, static_cast<size_t>(sb.st_size));"), liveLines(cpp, "munmap(")
+        )
+        val slot = functionBody("void releaseSlotLocked(Slot &slot) {")
+        val order = listOf(
+            "if (slot.compiled) rt.api.LiteRtDestroyCompiledModel(slot.compiled);",
+            "if (slot.options) rt.api.LiteRtDestroyOptions(slot.options);",
+            "if (slot.model) rt.api.LiteRtDestroyModel(slot.model);",
+            "const int unmapped = model_map::unmap(&slot.map);",
+            "slot = Slot{};",
+        ).map { onlyOffset(slot, it, "releaseSlotLocked") }
+        assertEquals("the compiled model, its options, the model, THEN the mapping, then the reset", order.sorted(), order)
+
+        val initBody = functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(")
+        val init = collapsed(initBody)
+        assertTrue(
+            "nativeInit's refusals release the session",
+            init.contains(
+                "auto refuse = [&](const std::string &why) { releaseLocked(); " +
+                    "return env->NewStringUTF(failure(\"init: \" + why).c_str()); };"
+            )
+        )
+        val lambda = initBody.indexOf("auto refuse = [&](const std::string &why) {")
+        val rest = initBody.substring(initBody.indexOf("};", lambda) + 2)
+        assertTrue(
+            "and once the slots start filling, EVERY refusal releases - no bare failure return after the lambda: " +
+                liveLines(rest, "NewStringUTF(failure("),
+            liveLines(rest, "NewStringUTF(failure(").isEmpty() && liveLines(rest, "return refuse(").size >= 6
+        )
+        assertTrue(
+            "a re-arm releases the live session first",
+            init.contains(
+                "if (g.initialised) { LOGW(\"nativeInit called on an already-initialised session; releasing it " +
+                    "first\"); releaseLocked(); }"
+            )
+        )
+        assertTrue(
+            "and nativeRelease releases it",
+            liveLines(functionBody("Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeRelease("), "releaseLocked();")
+                .size == 1
+        )
+
+        val load = mapFunction("std::string loadPreferMapped(")
+        val handed = onlyRawOffset(load, "*why = fromBuffer(static_cast<const void *>(map->addr), map->size);", "loadPreferMapped")
+        val dropped = onlyOffset(load, "unmap(map);", "loadPreferMapped")
+        val file = onlyOffset(load, "const std::string err = fromFile();", "loadPreferMapped")
+        assertTrue("the helper releases a refused mapping BEFORE the file loader runs", handed < dropped && dropped < file)
+        assertTrue(
+            "and refuses a slot that already holds one before anything loads",
+            collapsed(load).contains("why->clear(); if (!isEmpty(*map)) return \"load \" + path + \": this slot already holds a mapping\";")
+        )
+        val map = mapFunction("inline std::string mapReadOnly(")
+        val mmapAt = onlyOffset(map, "void *m = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);", "mapReadOnly")
+        val closeAt = onlyOffset(map, "close(fd);   // the mapping keeps the file", "mapReadOnly")
+        val failedAt = onlyOffset(map, "if (m == MAP_FAILED)", "mapReadOnly")
+        assertTrue("the fd is closed right after the mmap, mapped or not", mmapAt < closeAt && closeAt < failedAt)
+        assertEquals(
+            "and on each of the four refusals between the open and the mmap (fstat, not regular, empty, too " +
+                "large): five closes in all",
+            5, liveLines(map, "close(fd);").size
+        )
+    }
+
+    /**
+     * **model_map.h stays Android- and LiteRT-free, maps read-only and private, and only ever DEMOTES the
+     * pages the compiled model still reads** (4.16.1).
+     *
+     * Android-free because its only test is the host check (tools/model_map_check.py), which compiles THIS
+     * header outside the app. Read-only because LiteRT's own file loader maps the same file PROT_READ
+     * (TFLite's MMAPAllocation without allow_modifications), so nothing that runs today writes into a
+     * model's bytes - and a write would be a SIGSEGV, never a quiet corruption. The advice: SEQUENTIAL then
+     * WILLNEED for the compile pass, NORMAL then COLD after the restore - and never DONTNEED, PAGEOUT, FREE
+     * or REMOVE, in the helper or the engine: the decoder's CPU ops read the model's bytes every step and
+     * the dispatch's Neuron model keeps a pointer into the bytecode, so the pages are put first in line
+     * for reclaim, never thrown away.
+     */
+    @Test
+    fun modelMapStaysAndroidFreeMapsReadOnlyAndOnlyDemotesPages() {
+        listOf("<jni.h>", "<android/", "litert/c/", "__android_log_print", "LiteRt", "rt.api", "g.enc", "g.dec").forEach {
+            assertTrue(
+                "model_map.h must stay Android- and LiteRT-free - `$it` on a live line breaks the host check " +
+                    "(tools/model_map_check.py) that is its only test: " + liveLines(mapHeader, it),
+                liveLines(mapHeader, it).isEmpty()
+            )
+        }
+        assertEquals(
+            "one mmap in the helper, read-only and private",
+            listOf("void *m = mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);"), liveLines(mapHeader, "mmap(")
+        )
+        listOf("PROT_WRITE", "PROT_EXEC", "MAP_SHARED", "MADV_DONTNEED", "MADV_PAGEOUT", "MADV_FREE", "MADV_REMOVE").forEach {
+            assertTrue(
+                "`$it` on a live line of model_map.h or litert_asr.cpp: " + liveLines(mapHeader, it) + liveLines(cpp, it),
+                liveLines(mapHeader, it).isEmpty() && liveLines(cpp, it).isEmpty()
+            )
+        }
+        val compilePass = mapFunction("inline int adviseCompilePass(")
+        assertTrue(
+            "the compile pass: SEQUENTIAL, then WILLNEED",
+            onlyOffset(compilePass, "madvise(m.addr, m.size, MADV_SEQUENTIAL)", "adviseCompilePass") <
+                onlyOffset(compilePass, "madvise(m.addr, m.size, MADV_WILLNEED)", "adviseCompilePass")
+        )
+        val runPhase = mapFunction("inline int adviseRunPhase(")
+        assertTrue(
+            "the run phase: NORMAL, then COLD",
+            onlyOffset(runPhase, "madvise(m.addr, m.size, MADV_NORMAL)", "adviseRunPhase") <
+                onlyOffset(runPhase, "madvise(m.addr, m.size, MADV_COLD)", "adviseRunPhase")
+        )
+        assertEquals("madvise is called in those four places and nowhere else in the helper", 4, liveLines(mapHeader, "madvise(").size)
+        assertTrue("and never directly by the engine", liveLines(cpp, "madvise(").isEmpty())
+        val load = mapFunction("std::string loadPreferMapped(")
+        val mapped = onlyRawOffset(load, "*why = mapReadOnly(path, map);", "loadPreferMapped")
+        val advised = onlyRawOffset(load, "*adviceErrno = adviseCompilePass(*map);", "loadPreferMapped")
+        val handed = onlyRawOffset(load, "*why = fromBuffer(static_cast<const void *>(map->addr), map->size);", "loadPreferMapped")
+        assertTrue(
+            "a fresh mapping gets the compile pass's advice before LiteRT sees it (map at $mapped, advice at " +
+                "$advised, the buffer loader at $handed)",
+            mapped < advised && advised < handed
+        )
+        val compile = mapFunction("std::string compilePreferMapped(")
+        val recorded = onlyRawOffset(compile, "*why = err;", "compilePreferMapped")
+        val reopened = onlyOffset(compile, "err = reopenFromFile();", "compilePreferMapped")
+        assertTrue(
+            "only a MAPPED model's refusal is retried through the file loader, and only after it is recorded; a " +
+                "file model's is final",
+            liveLines(compile, "if (err.empty() || via != Via::Mapped) return err;").size == 1 && recorded < reopened &&
+                collapsed(compile).contains("err = reopenFromFile(); if (err.empty()) err = compile();")
+        )
+    }
+
+    /**
      * **The literals the native side keeps for itself equal the Kotlin they mirror**: the three
      * universal shape factors against `NpuModelSpec.TURBO`, the six stats slots and four terminator
      * codes against [NpuDecodeStats], the entropy window against [NpuDecodePolicy], and the EOT
@@ -894,7 +1199,7 @@ class LiteRtNativeContractTest {
     }
 
     /**
-     * **The five pinned sources are inputs of the test task.** A pin over a file the task does not
+     * **The six pinned sources are inputs of the test task.** A pin over a file the task does not
      * list is a pin that stops re-running the day an edit is confined to that file.
      */
     @Test
@@ -902,6 +1207,7 @@ class LiteRtNativeContractTest {
         listOf(
             "\"src/main/cpp/litert_asr.cpp\",",
             "\"src/main/cpp/litert_stamp.h\",",
+            "\"src/main/cpp/model_map.h\",",
             "\"src/main/cpp/band_scan.h\",",
             "\"src/main/cpp/CMakeLists.txt\",",
             "\"src/main/java/com/whispereverywhere/npu/LiteRtAsrNative.kt\",",

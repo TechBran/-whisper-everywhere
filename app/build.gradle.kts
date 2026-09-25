@@ -689,9 +689,13 @@ tasks.withType<Test>().configureEach {
         // no Gradle compile task at all. band_scan.h joins with them: its float twin is the detect
         // pass's, and NpuNativeContractTest already read the header for the Android-free property
         // without listing it - an edit confined to it left the suite UP-TO-DATE. litert_stamp.h is
-        // the chip check's parser, pinned Android-free for its host check.
+        // the chip check's parser, pinned Android-free for its host check. model_map.h (4.16.1, the
+        // Tab S10+ sheet's F2) is the models' read-only mapping and its two fallbacks - pinned
+        // Android-free for ITS host check (tools/model_map_check.py), read-only, advised COLD and
+        // never DONTNEED; a header-only edit to it would otherwise leave the suite UP-TO-DATE.
         "src/main/cpp/litert_asr.cpp",
         "src/main/cpp/litert_stamp.h",
+        "src/main/cpp/model_map.h",
         "src/main/cpp/band_scan.h",
         "src/main/cpp/CMakeLists.txt",
         "src/main/java/com/whispereverywhere/npu/LiteRtAsrNative.kt",
