@@ -1346,8 +1346,14 @@ class FloatingBubbleService : Service(),
      * what the cap is, and which end overflow eats. Touched by the capture thread (append, paced
      * drain) and by Main (clear, and the stop path's flush behind the capture joins); the ring
      * synchronises itself.
+     *
+     * (P2-7; design §2.9) SIZED PER FAMILY: the app answers this device's ring — 12 s on a
+     * MediaTek row, whose cold arm is two bytecode restores on the APU, 6 s everywhere else — and
+     * the service asks it rather than resolving a family itself. Lazy because the app answers from
+     * its census memo, and the first touch is session open's `clear()` on Main, long after
+     * `Application.onCreate`; the lazy is synchronised, so the capture thread's reads are safe.
      */
-    private val startupRing = StartupRing()
+    private val startupRing by lazy { StartupRing(app.startupRingCapacityBytes) }
 
     /**
      * Has the session's engine reported `onOpen`? The capture thread's only readiness question,
@@ -3489,7 +3495,7 @@ class FloatingBubbleService : Service(),
         val dropped = startupRing.append(chunk, amp, nowMs)
         if (dropped > 0 && !startupOverflowLogged) {
             startupOverflowLogged = true
-            android.util.Log.w("WE-DIAG", StartupRing.overflowLine(StartupRing.msOf(dropped)))
+            android.util.Log.w("WE-DIAG", StartupRing.overflowLine(StartupRing.msOf(dropped), startupRing.capacityMs))
         }
     }
 

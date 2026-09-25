@@ -1,5 +1,7 @@
 package com.whispereverywhere.audio
 
+import com.whispereverywhere.npu.NpuVendor
+
 /**
  * THE STARTUP RING (4.4.0 startup amendment, Task S2) — the audio captured between the tap and
  * the engine being ready to receive it.
@@ -33,6 +35,18 @@ package com.whispereverywhere.audio
  * [CAPACITY_MS] is 6 s — the measured 4,107 ms worst case with margin — which at 16 kHz mono
  * PCM16 is [CAPACITY_BYTES] = 192 KB. Negligible beside `LocalWhisperEngine`'s own
  * `MAX_BUFFER_BYTES` (960,000 B), which the engine already tolerates.
+ *
+ * **Per family since P2-7** (design `docs/superpowers/specs/2026-09-24-mediatek-apu-tier-design.md`
+ * §2.9; [capacityBytesFor]): 12 s — [MEDIATEK_CAPACITY_MS], 384 KB — on a MediaTek row, 6 s on
+ * every other device. A cold MediaTek arm is the two bytecode restores plus `load`'s own stages:
+ * `nativeInit` took 2,752–3,632 ms at P1's device gate (runs `p1b2_litertasr_kv1` / `_kv0` and
+ * `p1b3_litertasr_default`, `docs/measurements/2026-09-24-tab-apu-turbo-encoder.md` §6; 3,665–4,045
+ * ms in the §4b runs), plus the 169–239 ms adapter walk when no probe ran first, plus ~1.6 s of mel,
+ * vocabulary and staging — ≈ 4.5–5.9 s against a 6 s ring, inside it by a margin too thin to lean
+ * on for audio.
+ * So the MediaTek ring is doubled until P3's in-app cold-arm number decides it; a bigger ring
+ * costs nothing unless the arm really is that slow (the replay only exists for audio the ring
+ * actually held).
  *
  * On overflow the **OLDEST** audio goes (the amendment's ruling, against the investigation's
  * initial suggestion of "stop buffering"): once the ring is full the user is still talking, and
@@ -82,6 +96,9 @@ package com.whispereverywhere.audio
  * `StartupRingTest` can pin their bytes; the service emits them.
  */
 class StartupRing(private val capacityBytes: Int = CAPACITY_BYTES) {
+
+    /** This ring's cap as milliseconds of 16 kHz mono PCM16 — what its overflow line states. */
+    val capacityMs: Long get() = msOf(capacityBytes)
 
     private class Entry(val pcm: ByteArray, val amp: Int, val nowMs: Long)
 
@@ -194,6 +211,25 @@ class StartupRing(private val capacityBytes: Int = CAPACITY_BYTES) {
         const val CAPACITY_BYTES = 192_000
 
         /**
+         * A MediaTek row's ring (P2-7; design §2.9) — twice [CAPACITY_MS], until P3's in-app
+         * cold-arm number on the Tab S10+ decides it. See the class KDoc for the arithmetic.
+         */
+        const val MEDIATEK_CAPACITY_MS = 12_000L
+
+        /** [MEDIATEK_CAPACITY_MS] of [BYTES_PER_SECOND] = 384 KB. Pinned against each other by the test. */
+        const val MEDIATEK_CAPACITY_BYTES = 384_000
+
+        /**
+         * THE RING'S CAPACITY ON A DEVICE WHOSE CENSUS ROW IS [vendor]'s — per family (design
+         * §2.9): [MEDIATEK_CAPACITY_BYTES] on a MediaTek row, [CAPACITY_BYTES] on a Qualcomm row
+         * and off the census (null). Exhaustive, so a third vendor chooses its ring here.
+         */
+        fun capacityBytesFor(vendor: NpuVendor?): Int = when (vendor) {
+            NpuVendor.MEDIATEK -> MEDIATEK_CAPACITY_BYTES
+            NpuVendor.QUALCOMM, null -> CAPACITY_BYTES
+        }
+
+        /**
          * Replayed chunks per LIVE chunk — the amendment's condition 3, and the one number that
          * keeps the drain from being strictly worse than the bug.
          *
@@ -207,7 +243,8 @@ class StartupRing(private val capacityBytes: Int = CAPACITY_BYTES) {
          * At 4 the capture thread spends 5 probe calls per 32 ms read period — ~11.5 ms at p50,
          * under 31 ms even at the measured p99 of 6.1 ms — and the backlog shrinks by 3 chunks
          * (96 ms of audio) per 32 ms tick, so the measured 4,107 ms worst case is level again
-         * ~1.4 s after the cue and a full 6 s ring ~2.0 s after it.
+         * ~1.4 s after the cue and a full 6 s ring ~2.0 s after it (a full 12 s MediaTek ring,
+         * ~4.0 s — the same pace; only a slower arm than the ring's own ever fills it).
          */
         const val DRAIN_CHUNKS_PER_TICK = 4
 
@@ -217,10 +254,12 @@ class StartupRing(private val capacityBytes: Int = CAPACITY_BYTES) {
         /**
          * ONE line per session, at the FIRST drop — not one per dropped chunk, which at 31.25 Hz
          * would be a log flood that buries the fact it is reporting. Numbers only, like every
-         * diag line in this app.
+         * diag line in this app. [capacityMs] is the ring's OWN cap ([StartupRing.capacityMs]) —
+         * since P2-7 a MediaTek ring's is 12 s, and a line that said 6000ms there would be false;
+         * the default is the 6 s ring every other device holds.
          */
-        fun overflowLine(firstDropMs: Long): String =
-            "startup ring: FULL at ${CAPACITY_MS}ms - dropping the oldest audio (first drop ${firstDropMs}ms)"
+        fun overflowLine(firstDropMs: Long, capacityMs: Long = CAPACITY_MS): String =
+            "startup ring: FULL at ${capacityMs}ms - dropping the oldest audio (first drop ${firstDropMs}ms)"
 
         /** ONE line at `onOpen`, naming what the ring held and the session's TOTAL dropped audio. */
         fun drainLine(chunks: Int, bufferedMs: Long, droppedMs: Long): String =

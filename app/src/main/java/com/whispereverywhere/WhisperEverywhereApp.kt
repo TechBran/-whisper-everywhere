@@ -8,6 +8,7 @@ import android.os.Build
 import android.system.ErrnoException
 import android.system.Os
 import android.util.Log
+import com.whispereverywhere.audio.StartupRing
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.data.local.UsageTracker
 import com.whispereverywhere.model.ModelInstallSignal
@@ -146,6 +147,16 @@ class WhisperEverywhereApp : Application() {
     val npuSocFamily: NpuSocFamily? by lazy {
         NpuGate.familyFor(npuSocModel, npuSocManufacturer)
     }
+
+    /**
+     * THIS DEVICE'S STARTUP-RING CAPACITY, in bytes (P2-7; design §2.9) — per family, off the one
+     * census resolution above: 12 s on a MediaTek row, whose cold arm is the two bytecode restores
+     * on the APU, and the 6 s every other device has always had ([StartupRing.capacityBytesFor]
+     * holds the table). Read once, by `FloatingBubbleService`'s ring — the service never resolves
+     * a family itself. Main-safe: a table lookup over a memo.
+     */
+    val startupRingCapacityBytes: Int
+        get() = StartupRing.capacityBytesFor(npuSocFamily?.vendor)
 
     /**
      * The [ModelInstallSignal] generation the [NpuDiag.offer] line was last emitted at, or
