@@ -1285,8 +1285,11 @@ class FloatingBubbleService : Service(),
     // this cap the engine buffer grows unbounded and produces one giant end-of-session segment.
     // 3.6.0 (Workstream A): the cap is first-commit-aware — the session's FIRST stretch cuts at
     // 4 s so first visible text lands fast under continuous speech; every later stretch keeps the
-    // old 15 s. The 800 ms pause cut is untouched and still wins when a real pause happens.
-    // First-vs-later rule and per-session reset are JVM-pinned in SegmentCapPolicyTest.
+    // old 15 s — except on the AI-chip tiers, 5 s since 4.16.1 (owner ruling 2026-09-25). Built
+    // with NO tier in it: the service outlives every model switch, so the session's wall is handed
+    // over at each session open in startRecording (segmentCapPolicy.onSessionTier). The 800 ms
+    // pause cut is untouched and still wins when a real pause happens. First-vs-later rule, the
+    // per-tier rule and per-session reset are JVM-pinned in SegmentCapPolicyTest.
     private val segmentCapPolicy = SegmentCapPolicy()
 
     /**
@@ -5251,6 +5254,17 @@ class FloatingBubbleService : Service(),
         // resolveTranscriptionEngine() ran above — and it is the same cloud predicate stopRecording
         // uses. 4.4.0 S2: it moved down here WITH the anchor, and had to.
         if (cloudWrapper != null) segmentCapPolicy.onCommit(sessionStartMs)
+        // 4.16.1 (owner ruling 2026-09-25) — THE LATER WALL IS THIS SESSION'S TIER'S: 5 s on the
+        // AI-chip tiers, 15 s on every CPU tier and in every cloud session, whatever the tier
+        // (SegmentCapPolicy.laterWallMsFor; SegmentCapPolicyTest executes it over the catalog).
+        // Asked HERE, at every session open, off the same installedModel the cadence floors below
+        // read — so a model switch while the service lives is a new wall at the next session,
+        // never the old one kept, and the wall and the floors can never come from two different
+        // tiers. Handed over before startAudioInput(), so the first capExceeded() already sees it.
+        // SegmentCapTierWiringPinTest holds all three.
+        segmentCapPolicy.onSessionTier(
+            SegmentCapPolicy.laterWallMsFor(tierId = installedModel?.id, isCloudSession = cloudWrapper != null),
+        )
         // 3.7 (Workstream D3): the endpointer's paced-commit floor is the MEASURED cost governor,
         // and it is per-session because it depends on BOTH the installed tier and whether every
         // commit becomes a provider request. cloudWrapper is already resolved here — see the note
