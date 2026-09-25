@@ -185,6 +185,24 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 114 — the plain successor to 113, and the NAME stays 4.16.0.** 113 went to the
+ * INTERNAL TRACK on 2026-09-25 — the owner's upload, after the Tab S10+ ship session
+ * (`docs/measurements/2026-09-25-tab-apu-ship.md`: thirteen of fifteen rows pass, and after 32
+ * minutes on the APU the owner said the tier "works fantastic") — so it is spent on the track
+ * exactly as 81, 83, 85 and 88 were. 114 supersedes it there with exactly three things 113 lacks,
+ * all owner rulings made at the end of that session, and nothing else: the MediaTek speed claim is
+ * ruled accuracy only (*"the MediaTek speed claim copy is fine for now."* — the card's copy is
+ * unchanged, and its pin guards a ruling instead of a pending decision); the licences page carries
+ * the NeuroPilot Express notice for the mt6989 pair, and the clearance record says that licence was
+ * ACCEPTED (*"we already agreed to the license"*); and the consequence P3b flagged — no CPU card on
+ * a capable device even while its AI-chip tier keeps declining — is ruled, not open (*"we deliver
+ * these asset packs ourselves, so it should always work. And CPU only for devices that can't do the
+ * NPU."*). The NAME stays 4.16.0 — a name is spent by a release, and 113 was not promoted. If 113
+ * IS promoted before 114 uploads, 114 becomes 4.16.1 and this paragraph is wrong: change both.
+ * Every bump still re-arms GpuPolicy's canary latches (below), and on a MediaTek row the stored
+ * driver verdict is keyed on the build, so 114's first launch probes the driver once more, as 113's
+ * did.
+ *
  * **versionCode 113 = 4.16.0 — the MediaTek APU gets the AI chip.** The Galaxy Tab S10+ and S10
  * Ultra (MT6989): for the first time a second silicon VENDOR gains the app's best tier, so the
  * name takes a MINOR, as whole Qualcomm generations did at 4.12.0, 4.13.0 and 4.15.0. 113 because
@@ -510,22 +528,23 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_16_0_at_version_code_113() {
+    fun release_identity_is_4_16_0_at_version_code_114() {
         assertEquals(
             "versionName must be 4.16.0 for this release (app/build.gradle.kts defaultConfig): " +
                 "the MediaTek APU tier is a MINOR, because a whole silicon VENDOR gains the best tier " +
                 "(the Galaxy Tab S10+ / S10 Ultra, MT6989) — as whole Qualcomm generations did at " +
-                "4.12.0, 4.13.0 and 4.15.0",
+                "4.12.0, 4.13.0 and 4.15.0. 114 keeps the name because a name is spent by a RELEASE " +
+                "and 113 was not promoted; if 113 is promoted before 114 uploads, 114 becomes 4.16.1",
             "4.16.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 113 for this release (app/build.gradle.kts defaultConfig). " +
-                "112 = 4.15.1 (the seam, the tier's regression gate) was built for the internal " +
-                "track on 2026-09-24 22:49, so its code is spent whether or not it was uploaded — " +
-                "Play refuses a second upload at a spent code; 111 = 4.15.0 went to the internal " +
-                "track; 105 = 4.11.3 is in production",
-            113,
+            "versionCode must be 114 for this release (app/build.gradle.kts defaultConfig). " +
+                "113 = 4.16.0 went to the internal track on 2026-09-25 (the owner's upload, after " +
+                "the Tab S10+ ship session), so its code is spent — Play refuses a second upload at " +
+                "a spent code; 112 = 4.15.1 was built for the internal track; 105 = 4.11.3 is in " +
+                "production",
+            114,
             BuildConfig.VERSION_CODE,
         )
     }
