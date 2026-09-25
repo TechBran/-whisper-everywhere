@@ -168,6 +168,17 @@ class WhisperEverywhereApp : Application() {
         java.util.concurrent.atomic.AtomicInteger(Int.MIN_VALUE)
 
     /**
+     * Did the last offer line say `probe=unknown`? (P2-7, the P2a review's L6.) On a MediaTek row
+     * the gate's capability half is the driver check's verdict, which lands ~200 ms after the
+     * process starts — and a chooser opened inside that window evaluates the gate first. The
+     * install-epoch latch alone would then keep the `unknown` line as the epoch's only record, so
+     * this remembers it, and the first evaluation after the verdict lands emits ONE more line with
+     * the answer (a compare-and-set: concurrent evaluations emit it once). Never set on any other
+     * row, where the line is exactly 4.15's.
+     */
+    private val npuOfferSaidUnknown = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
      * The gated tiers a chooser may OFFER: every gated catalog tier whose own files are on disk,
      * provided this device's hardware can run the NPU class at all. Empty for every other device,
      * which is the answer the ungated lineup has always rendered.
@@ -205,21 +216,42 @@ class WhisperEverywhereApp : Application() {
      * [npuOfferLoggedGeneration]). Three predicates collapse into one answer here, so without it
      * a report of "the card never showed" cannot be told apart from "wrong SoC", "the QNN stack
      * did not load" and "nothing installed" — three different next actions. See [NpuDiag.offer].
+     * On a MediaTek row the probe half is the driver check — `probe=unknown` until it answers,
+     * `probe=fail:<reason>` on a refusal — and the line goes out once more when the verdict lands
+     * after an `unknown` one ([npuOfferSaidUnknown]; P2-7, the P2a review's L6).
      */
     fun offeredNpuTierIds(): Set<String> {
         val installed = WhisperCatalog.entries
             .filter { it.gated && whisperModelManager.isInstalled(it) }
             .map { it.id }
             .toSet()
+        // (P2-7, the P2a review's L6) A MediaTek row's driver verdict, read ONCE and BEFORE the
+        // gate, for the offer line — and only on a MediaTek row, so a Qualcomm process never
+        // touches the driver check's flow. The verdict moves once, from unknown to its answer and
+        // never back, so a read taken first can only lag the gate's own: at worst this line says
+        // `unknown` beside a tier the gate just offered, and the re-fire below corrects it.
+        val driverCheck = if (npuSocFamily?.vendor == NpuVendor.MEDIATEK) {
+            NpuDiag.OfferDriverCheck(NpuApuDriverCheck.verdict.value)
+        } else {
+            null
+        }
         val capable: Boolean? = if (installed.isEmpty()) null else npuCapableDevice
         val offered: Set<String> = if (capable == true) installed else emptySet()
         // Once per install epoch — see [npuOfferLoggedGeneration]. MONOTONIC since 4.2 F6 (4.1
         // L8 review M3, folded): getAndSet could REGRESS the latch when two concurrent
         // evaluations held different generations — the older writer landing second re-armed the
         // line and bought a spurious extra emission; max() cannot go backwards, and concurrent
-        // evaluations of the same generation still emit exactly once.
+        // evaluations of the same generation still emit exactly once. (P2-7, L6) And once more
+        // on a MediaTek row when its driver verdict has landed since a line said `unknown` —
+        // see [npuOfferSaidUnknown].
         val generation = ModelInstallSignal.generation.value
-        if (npuOfferLoggedGeneration.getAndUpdate { maxOf(it, generation) } < generation) {
+        val newEpoch = npuOfferLoggedGeneration.getAndUpdate { maxOf(it, generation) } < generation
+        val verdictLanded = driverCheck?.verdict != null && npuOfferSaidUnknown.compareAndSet(true, false)
+        if (newEpoch || verdictLanded) {
+            // The line about to go out says `unknown` exactly when the check has not answered and
+            // the gate was evaluated (with nothing installed it says `skipped`, which the verdict
+            // cannot change) — and only then is a re-fire owed.
+            if (driverCheck != null) npuOfferSaidUnknown.set(capable != null && driverCheck.verdict == null)
             // isSocSupported is called here for REPORTING only — it is a pure two-string table
             // lookup, it cannot dlopen, and the DECISION is `capable` above. The gate is not
             // re-run and is not duplicated: this only recovers which HALF of `capable` answered,
@@ -231,6 +263,7 @@ class WhisperEverywhereApp : Application() {
                     socSupported = NpuGate.isSocSupported(npuSocModel, npuSocManufacturer),
                     capable = capable,
                     installedTierIds = installed,
+                    driverCheck = driverCheck,
                 ),
             )
         }

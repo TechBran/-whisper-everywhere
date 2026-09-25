@@ -658,6 +658,10 @@ class NpuDiagTest {
             1,
             liveLineCount(gate, "NpuDiag.offer("),
         )
+        // RE-SPELLED AT P2-7 (the P2a review's L6): the latch is read into `newEpoch` and the
+        // emission is behind `newEpoch || verdictLanded` — the second term is the once-more line on
+        // a MediaTek row, pinned whole in theOfferLineReFiresOnceWhenAMediatekVerdictLandsAfterUnknown.
+        // What this assertion guards is unchanged: the generation latch, monotonic, gates the line.
         assertEquals(
             "the emitter is behind the generation latch, so it runs once per install epoch and " +
                 "not once per chooser open — and the update is MONOTONIC since 4.2 F6 (4.1 L8 " +
@@ -665,10 +669,13 @@ class NpuDiagTest {
                 "held different generations, the older writer landing second re-arming the line " +
                 "for a spurious extra emission; max() cannot go backwards, and concurrent " +
                 "evaluations of the SAME generation still emit exactly once",
-            1,
-            liveLineCount(
-                gate,
-                "if (npuOfferLoggedGeneration.getAndUpdate { maxOf(it, generation) } < generation) {",
+            listOf(1, 1),
+            listOf(
+                liveLineCount(
+                    gate,
+                    "val newEpoch = npuOfferLoggedGeneration.getAndUpdate { maxOf(it, generation) } < generation",
+                ),
+                liveLineCount(gate, "if (newEpoch || verdictLanded) {"),
             ),
         )
         assertEquals(
@@ -698,6 +705,109 @@ class NpuDiagTest {
                 "below the default logcat filter",
             1,
             liveLineCount(gate, "Log.i("),
+        )
+    }
+
+    // ---------------------------------------- P2-7 (the P2a review's L6): the driver check on the line
+
+    private fun apuVerdict(refusal: String?) = NpuApuVerdict(
+        fingerprint = "samsung/gts10pxx/gts10p:14/UP1A.231005.007/X828USQU1AXH1:user/release-keys",
+        appBuild = 112,
+        appUpdatedAtMs = 1L,
+        wantMajor = 8,
+        refusal = refusal,
+        probedAtMs = 2L,
+    )
+
+    /**
+     * On a MediaTek row the offer line's probe IS the driver check, and it reports which of its
+     * THREE states the gate read. Until P2-7 the line had two words, so the ~200 ms before the
+     * walk lands — "unknown" — printed as `probe=fail`: a reader sent after a driver that was fine.
+     * Design §2.3's `probe=fail:<reason>` names the refusal; `probe=unknown` is its own word.
+     */
+    @Test
+    fun theOfferLineOnAMediatekRowSaysUnknownFailWithItsReasonOrPass() {
+        assertEquals(
+            "not answered yet: unknown, never fail",
+            "npu: offer soc=MT6989:pass probe=unknown installed=npu-turbo offered=none",
+            NpuDiag.offer("MT6989", true, false, setOf("npu-turbo"), NpuDiag.OfferDriverCheck(null)),
+        )
+        assertEquals(
+            "a refusal carries its reason — the design's spelling",
+            "npu: offer soc=MT6989:pass probe=fail:adapter-missing installed=npu-turbo offered=none",
+            NpuDiag.offer("MT6989", true, false, setOf("npu-turbo"), NpuDiag.OfferDriverCheck(apuVerdict("adapter-missing"))),
+        )
+        assertEquals(
+            "…including the crash-loop guard's own word",
+            "npu: offer soc=MT6989:pass probe=fail:probe-crashed installed=npu-turbo offered=none",
+            NpuDiag.offer(
+                "MT6989", true, false, setOf("npu-turbo"),
+                NpuDiag.OfferDriverCheck(apuVerdict(NpuApuDriverCheck.PROBE_CRASHED)),
+            ),
+        )
+        assertEquals(
+            "a pass is a pass",
+            "npu: offer soc=MT6989:pass probe=pass installed=npu-turbo offered=npu-turbo",
+            NpuDiag.offer("MT6989", true, true, setOf("npu-turbo"), NpuDiag.OfferDriverCheck(apuVerdict(null))),
+        )
+        assertEquals(
+            "with nothing installed the gate was not evaluated: skipped, whatever the driver says",
+            "npu: offer soc=MT6989:pass probe=skipped installed=none offered=none",
+            NpuDiag.offer("MT6989", true, null, emptySet(), NpuDiag.OfferDriverCheck(null)),
+        )
+        assertEquals(
+            "and a Qualcomm line — no driver check — is 4.15's to the byte",
+            "npu: offer soc=SM8650:pass probe=fail installed=npu offered=none",
+            NpuDiag.offer("SM8650", socSupported = true, capable = false, installedTierIds = setOf("npu")),
+        )
+    }
+
+    /**
+     * The emission half of L6, pinned as source (the app is an `Application`): the verdict is read
+     * ONCE, BEFORE the gate, on a MediaTek row only — so a Qualcomm process never touches the
+     * driver check's flow — handed to the line, and the line re-fires ONCE when the verdict has
+     * landed since a line said `unknown`: without it the install-epoch latch keeps the `unknown`
+     * line as the epoch's only record (the review's finding), and the log never says the answer.
+     */
+    @Test
+    fun theOfferLineReFiresOnceWhenAMediatekVerdictLandsAfterUnknown() {
+        val app = source("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt")
+        val gate = app.substringAfter("fun offeredNpuTierIds(): Set<String> {").substringBefore("\n    }")
+        val read = offsetOfLive(gate, "val driverCheck = if (npuSocFamily?.vendor == NpuVendor.MEDIATEK) {")
+        val snapshot = offsetOfLive(gate, "NpuDiag.OfferDriverCheck(NpuApuDriverCheck.verdict.value)")
+        val capable = offsetOfLive(gate, "val capable: Boolean? = if (installed.isEmpty()) null else npuCapableDevice")
+        assertTrue(
+            "the verdict is read on a MediaTek row only ($read), once ($snapshot), BEFORE the gate " +
+                "($capable) — a read after it could report a verdict the gate never saw",
+            read >= 0 && read < snapshot && snapshot < capable &&
+                liveLineCount(gate, "NpuApuDriverCheck.verdict.value") == 1,
+        )
+        assertEquals(
+            "the re-fire is a compare-and-set on the flag, taken only once the verdict has landed",
+            1,
+            liveLineCount(gate, "val verdictLanded = driverCheck?.verdict != null && npuOfferSaidUnknown.compareAndSet(true, false)"),
+        )
+        assertEquals(
+            "the flag is set exactly when THIS line says unknown — the gate evaluated, no verdict — " +
+                "and never on a row without a driver check",
+            1,
+            liveLineCount(gate, "if (driverCheck != null) npuOfferSaidUnknown.set(capable != null && driverCheck.verdict == null)"),
+        )
+        assertEquals(
+            "and the line is handed the snapshot",
+            1,
+            liveLineCount(gate, "driverCheck = driverCheck,"),
+        )
+        assertEquals(
+            "the flag is declared once, false",
+            1,
+            liveLineCount(app, "private val npuOfferSaidUnknown = java.util.concurrent.atomic.AtomicBoolean(false)"),
+        )
+        val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
+        assertEquals(
+            "and the KDoc no longer calls every verdict on the line process-permanent",
+            0,
+            diag.split("The SoC and probe verdicts are process-permanent").size - 1,
         )
     }
 

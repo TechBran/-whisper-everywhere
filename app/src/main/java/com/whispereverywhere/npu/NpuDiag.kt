@@ -261,7 +261,8 @@ object NpuDiag {
      * `npu: offer soc=SM8650:pass probe=pass installed=npu,npu-turbo offered=npu,npu-turbo` —
      * emitted **once per install epoch** (once per process per `ModelInstallSignal` generation —
      * re-armed by an install, never by a chooser open; 4.1 L8, L5 review I1), at the gate's
-     * first evaluation of each epoch.
+     * first evaluation of each epoch — and on a MediaTek row **once more** when the driver
+     * verdict lands after a line that said `probe=unknown` (P2-7, L6).
      *
      * **This line is the run-book's first read.** The gate composes three predicates and its
      * answer is one set, so "the card never showed" collapses three very different next actions
@@ -280,6 +281,15 @@ object NpuDiag {
      * too (`soc=…:pass installed=none`). In both states the probe genuinely did not run, and
      * reporting `fail` would invent a measurement that was never taken.
      *
+     * **On a MediaTek row the probe IS the driver check** (P2-7, the P2a review's L6; design §2.3),
+     * and the field says which of its three states the gate read: `probe=pass`,
+     * `probe=fail:<reason>` — the check's own refusal (`adapter-missing`, `driver-major-9-want-8`,
+     * `probe-crashed`, …), the design's spelling — and `probe=unknown` while the check has not
+     * answered yet, which is NOT a failure: the walk lands ~200 ms after the process starts, and a
+     * line that called that window `fail` sent the reader after a driver that was fine. The caller
+     * emits one more line when the verdict lands after an `unknown` one, so the log always ends on
+     * the answer. A Qualcomm row keeps `pass`/`fail` exactly: the QNN probe's reason is not kept.
+     *
      * **Never transcript content**: two hardware identifiers, two verdicts and a set of tier ids.
      *
      * @param socModel `Build.SOC_MODEL`, or null below API 31 — reported as `unknown`, which is
@@ -290,20 +300,26 @@ object NpuDiag {
      *        returned before evaluating it** because nothing was installed. Null is reported as
      *        `probe=skipped`, never as `fail`.
      * @param installedTierIds the gated tiers whose files were on disk **at this emission**.
-     *        The SoC and probe verdicts are process-permanent; this one is a snapshot — and
-     *        since the L8 re-arm, an import refreshes it: the next evaluation emits a fresh
-     *        line for the new epoch. Only the signal-less `adb push` route leaves a stale
-     *        snapshot until restart, and the run-book says so where it prescribes that route.
+     *        The SoC verdict is process-permanent, and so is the QNN probe's; a MediaTek row's
+     *        driver verdict moves exactly once in a process, from unknown to its answer (the line
+     *        re-fires then); this one is a snapshot — and since the L8 re-arm, an import
+     *        refreshes it: the next evaluation emits a fresh line for the new epoch. Only the
+     *        signal-less `adb push` route leaves a stale snapshot until restart, and the run-book
+     *        says so where it prescribes that route.
+     * @param driverCheck a MediaTek row's driver check as the gate read it ([OfferDriverCheck]),
+     *        or null on every other row — the default, so the Qualcomm line is 4.15's to the byte.
      */
     fun offer(
         socModel: String?,
         socSupported: Boolean,
         capable: Boolean?,
         installedTierIds: Set<String>,
+        driverCheck: OfferDriverCheck? = null,
     ): String {
         val probe = when {
             !socSupported -> "skipped"
             capable == null -> "skipped"
+            driverCheck != null -> driverProbeWord(driverCheck.verdict)
             capable -> "pass"
             else -> "fail"
         }
@@ -314,6 +330,21 @@ object NpuDiag {
             else installedTierIds.sorted().joinToString(",")
         val offered = if (capable == true) installed else "none"
         return "npu: offer soc=$soc probe=$probe installed=$installed offered=$offered"
+    }
+
+    /**
+     * A MediaTek row's driver check AS THE OFFER LINE READS IT (P2-7, the P2a review's L6): the
+     * process's verdict when the gate was evaluated — [verdict] null while the check has not
+     * answered. The offer line takes this in place of nothing on a MediaTek row only; every other
+     * row's capability is the QNN probe, whose reason is not kept.
+     */
+    data class OfferDriverCheck(val verdict: NpuApuVerdict?)
+
+    /** [offer]'s `probe=` word for a MediaTek row: `unknown`, `fail:<reason>` or `pass`. */
+    private fun driverProbeWord(verdict: NpuApuVerdict?): String = when {
+        verdict == null -> "unknown"
+        verdict.refusal != null -> "fail:${verdict.refusal}"
+        else -> "pass"
     }
 
     /**
