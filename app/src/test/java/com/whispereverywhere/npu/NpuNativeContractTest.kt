@@ -407,8 +407,10 @@ class NpuNativeContractTest {
                 liveOffsets(available, "QnnAsrEngine().probe(libDir)").first()
         )
         assertTrue(
-            "…and the driver check's STORED verdict as the MediaTek arm — its current value, no probe",
-            liveOffsets(available, "apuVerdict = NpuApuDriverCheck.verdict.value,").isNotEmpty()
+            "…and the driver check's STORED verdict as the MediaTek arm — its current value, no " +
+                "probe, DEFERRED into the lambda only that arm invokes (P2-7, the P2a review's " +
+                "note: read eagerly here, it made every Qualcomm process create the check's flow)",
+            liveOffsets(available, "apuVerdict = { NpuApuDriverCheck.verdict.value },").isNotEmpty()
         )
         assertEquals(
             "the tier-visibility gate never touches the LiteRT seam: the verdict is produced at " +

@@ -1097,7 +1097,9 @@ class NpuWhisperBackend(
          * dlopens anything here: neither the QNN stack, which is not its chip's, nor its own
          * adapter, whose walk holds bionic's loader lock on the chooser's path. An unknown verdict
          * (not probed yet) answers false — which is why the MediaTek half of the caller's memo is
-         * re-read rather than memoised (`WhisperEverywhereApp.npuCapableDevice`).
+         * re-read rather than memoised (`WhisperEverywhereApp.npuCapableDevice`). The verdict is
+         * deferred too (P2-7), into the lambda only the MediaTek arm invokes, so a Qualcomm
+         * process never creates the driver check's flow on this path.
          *
          * `runCatching` covers [LinkageError] and everything downstream of it: on a build where
          * the proprietary QNN headers were unavailable, `libqnnasr.so` is deliberately absent, the
@@ -1115,7 +1117,7 @@ class NpuWhisperBackend(
                     qnnProbePasses = {
                         runCatching { QnnAsrEngine().probe(libDir).isEmpty() }.getOrDefault(false)
                     },
-                    apuVerdict = NpuApuDriverCheck.verdict.value,
+                    apuVerdict = { NpuApuDriverCheck.verdict.value },
                 )
 
         /**
