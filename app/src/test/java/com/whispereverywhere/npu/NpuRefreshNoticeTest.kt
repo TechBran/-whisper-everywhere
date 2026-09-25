@@ -482,7 +482,10 @@ class NpuRefreshNoticeTest {
         assertEquals(
             "the visibility is the pure rule, once",
             1,
-            liveLineCount(flow, "NpuRefreshNotice.showsInAppNote(refreshRecord, selectedTierForNote, refreshPackBytes)"),
+            // (2026-09-25) RE-SPELLED for a rename: the selection read gained a second reader, the
+            // engines step's chooser (the owner's one exception — the selected card is never
+            // hidden), so it is named for what it is. The claim here is unchanged.
+            liveLineCount(flow, "NpuRefreshNotice.showsInAppNote(refreshRecord, selectedTierId, refreshPackBytes)"),
         )
         assertEquals(
             "COLLECTED, not remembered: the record clears when the pair lands and the sentence must go with it",
@@ -492,7 +495,7 @@ class NpuRefreshNoticeTest {
         assertEquals(
             "and the selection too: a pick of another tier takes the sentence away",
             1,
-            liveLineCount(flow, "val selectedTierForNote by notePrefs.selectedModelIdFlow.collectAsState()"),
+            liveLineCount(flow, "val selectedTierId by notePrefs.selectedModelIdFlow.collectAsState()"),
         )
         assertEquals(
             "the pack size is the device family's, so the sentence never names a download the phone cannot get",

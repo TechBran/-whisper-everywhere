@@ -116,17 +116,56 @@ fun OnboardingModelScreen(
     // (Q7a §9.3).
     //
     // 4.3: the source is the WHOLE CATALOG, not the rendered lineup, and the dependency inverted
-    // with it — the lineup now READS this set (an existing install keeps its card on a capable
-    // device), so deriving it from the lineup would be circular. `entries` rather than `pickable`
-    // is deliberate twice over: a retired-but-installed eco/base is a legal CPU fallback and must
-    // count toward `hasCpuFallback` below, and `pickableFor`'s own `!retired` filter is what keeps
-    // it from re-entering a lineup through this door. The `key2 = npuTierIds` went with the
-    // inversion: this answer is a fact about the disk and never about the gate.
+    // with it — the lineup now READS this set (through the one rule below: since the owner's
+    // ruling of 2026-09-25 a capable device shows an installed tier only when it is a gated one
+    // or the selection), so deriving it from the lineup would be circular. `entries` rather than
+    // `pickable` is deliberate twice over: a retired-but-installed eco/base is a legal CPU
+    // fallback and must count toward `hasCpuFallback` below, and `pickableFor`'s own `!retired`
+    // filter is what keeps it from re-entering a lineup through this door. The `key2 = npuTierIds`
+    // went with the inversion: this answer is a fact about the disk and never about the gate.
     val installedIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {
         value = withContext(Dispatchers.IO) {
             WhisperCatalog.entries.filter { manager.isInstalled(it) }.map { it.id }.toSet()
         }
     }
+
+    val state by viewModel.state.collectAsState()
+
+    // 4.3 micro-round — WHERE THE SELECTION POINTS, which is the second premise under the decline
+    // note's "restart to try the AI chip again". A restart re-tries this tier only because the
+    // decline record dies with the process — but routesToNpu reads the SELECTION, and the recovery
+    // moves it to `NpuTierStatus.RECOVERY_TIER_ID`. Read off Main (a SharedPreferences hit) and keyed on BOTH the install
+    // generation and the download state, because the recovery's own write lands between them:
+    // manager.download() bumps the generation, THEN the ViewModel writes selectedModelId, THEN the
+    // state becomes Done. Keyed on the generation alone this would re-read one write too early and
+    // keep displaying the false promise the micro-round exists to remove.
+    //
+    // (2026-09-25) It has a second reader: the lineup rule below, where the owner's one exception
+    // lives — the selected model's card is never hidden. The same keys serve it: every write this
+    // screen makes (Use this model, a download, the recovery) lands before its state change. The
+    // initial null errs the ruling's way: until the first read lands it can briefly hold the
+    // selected CPU card back, and it can never show a card the ruling hides.
+    val selectedTierId by produceState<String?>(
+        initialValue = null,
+        key1 = installGeneration,
+        key2 = state,
+    ) {
+        value = withContext(Dispatchers.IO) { app.preferencesManager.selectedModelId }
+    }
+
+    // (2026-09-25) WHAT JOINS A CAPABLE DEVICE'S ONE-CARD LINEUP — the SAME pure rule the guided
+    // flow asks (OnboardingLogic.chooserAlsoOfferedIds; one rule, two callers). The owner's
+    // ruling: "if the NPU multilingual is here, then we hide all of the other CPU models so users
+    // don't get confused about which model to download" — so of what is on disk only the gated
+    // tiers and the SELECTION join a lineup the one tier heads; the files stay, and every other
+    // device's lineup is byte-identical. No delivery latch on this surface (`false`): it has no
+    // mandatory step to wedge — a user reaches it with a model already chosen — and its routes
+    // past an undeliverable tier are the card's own Retry and, where the family is offered one,
+    // the per-card import.
+    val alsoOfferedIds = OnboardingLogic.chooserAlsoOfferedIds(
+        installedIds, oneTierDeliveryFailed = false,
+        offeredGatedIds = npuTierIds, selectedTierId = selectedTierId,
+    )
 
     // 4.8.0: this picker is deliberately NOT filtered by the first-run RAM rule the guided flow
     // applies (`OnboardingLogic.firstRunLineup`). The owner's ruling of 2026-09-17 is about
@@ -151,7 +190,7 @@ fun OnboardingModelScreen(
     val totalRamBytes by produceState(initialValue = 0L) {
         value = withContext(Dispatchers.IO) { manager.deviceTotalRamBytes() }
     }
-    val ordered = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, installedIds)
+    val ordered = ModelTierCopy.orderedForLanguageTagFor(languageTag, npuTierIds, alsoOfferedIds)
     val steerId = ModelTierCopy.steerIdForLanguageTagFor(languageTag, npuTierIds)
         .let { OnboardingLogic.firstRunSteer(ordered, it, totalRamBytes) }
     val models = OnboardingLogic.steerFirst(ordered, steerId)
@@ -221,24 +260,6 @@ fun OnboardingModelScreen(
     // is the same read for non-Compose callers; a Compose card reads the collected map so a
     // decline recomposes it.)
     val npuTierReasons by NpuTierStatus.reasons.collectAsState()
-
-    val state by viewModel.state.collectAsState()
-
-    // 4.3 micro-round — WHERE THE SELECTION POINTS, which is the second premise under the decline
-    // note's "restart to try the AI chip again". A restart re-tries this tier only because the
-    // decline record dies with the process — but routesToNpu reads the SELECTION, and the recovery
-    // moves it to `NpuTierStatus.RECOVERY_TIER_ID`. Read off Main (a SharedPreferences hit) and keyed on BOTH the install
-    // generation and the download state, because the recovery's own write lands between them:
-    // manager.download() bumps the generation, THEN the ViewModel writes selectedModelId, THEN the
-    // state becomes Done. Keyed on the generation alone this would re-read one write too early and
-    // keep displaying the false promise the micro-round exists to remove.
-    val selectedTierId by produceState<String?>(
-        initialValue = null,
-        key1 = installGeneration,
-        key2 = state,
-    ) {
-        value = withContext(Dispatchers.IO) { app.preferencesManager.selectedModelId }
-    }
 
     // The tier the user tapped (drives which card shows progress / error).
     var activeModelId by remember { mutableStateOf<String?>(null) }

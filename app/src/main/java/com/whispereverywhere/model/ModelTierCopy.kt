@@ -446,7 +446,8 @@ object ModelTierCopy {
             // superlative, not borrowed from the opener. The first 4.9.1 draft said "our most
             // accurate model" — an app-wide claim — and the review caught it: `ultra-q8`'s body
             // is "The most accurate one." and the two cards render together whenever a turbo
-            // device has `ultra-q8` installed or the CPU tiers join through
+            // device has `ultra-q8` installed (since the owner's ruling of 2026-09-25: installed
+            // and selected) or the CPU tiers join through
             // `OnboardingLogic.chooserAlsoOfferedIds` after a delivery failure, so that draft put
             // two cards in front of one user each claiming the top in plain words — the defect
             // class `exactly_one_card_claims_the_top_of_the_accuracy_order` exists to catch
@@ -733,18 +734,21 @@ object ModelTierCopy {
      * **4.3 — the ordering rules are UNCHANGED IN BODY; the LIST they order got shorter.** The
      * owner's ruling ("only the multilingual v3 turbo" where the NPU can run it) lives entirely in
      * [WhisperCatalog.pickableFor], which this delegates to: on a capable device that list is
-     * `npu-turbo` plus whatever is already installed, so the three keys below sort one or two
-     * cards instead of four. The keys still earn their place for every OTHER device — the whole
+     * `npu-turbo` plus what [alsoOfferedIds] names (since the owner's ruling of 2026-09-25, the
+     * installed gated tiers and the selection), so the three keys below sort one or two cards
+     * instead of four. The keys still earn their place for every OTHER device — the whole
      * non-capable fleet still reads the 3.7 language ordering, and the L9 npu-runner-up key still
      * fires on a device offered `npu` without turbo. Not one key was deleted to make the lineup
      * short: the SET is what shrank, which is why the gate-fail path is byte-identical.
      *
      * @param alsoOfferedIds forwarded verbatim to [WhisperCatalog.pickableFor] — the ids that join
-     *        a capable device's one-card lineup anyway: what is already on disk (an existing
-     *        install keeps its card) and, on the onboarding surface, the CPU tiers once the one
-     *        tier's delivery has failed (`OnboardingLogic.chooserAlsoOfferedIds` — the no-wedge
-     *        escape). Defaulted to empty: the ungated delegate and every caller that cannot answer
-     *        the question keep exactly the lineup they had.
+     *        a capable device's one-card lineup anyway, which both chooser surfaces take from ONE
+     *        rule, `OnboardingLogic.chooserAlsoOfferedIds`: of what is on disk, the gated tiers
+     *        and the selection (the owner's ruling of 2026-09-25 and its one exception — the card
+     *        a user is running on is never hidden) and, on the onboarding surface, the CPU tiers
+     *        once the one tier's delivery has failed (the no-wedge escape). Defaulted to empty:
+     *        the ungated delegate and every caller that cannot answer the question keep exactly
+     *        the lineup they had.
      */
     fun orderedForLanguageTagFor(
         languageTag: String,

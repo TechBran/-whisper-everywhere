@@ -768,11 +768,13 @@ object WhisperCatalog {
      * to [pickable] so the owner could measure them, and the narrowing above takes every CPU rung
      * back on any device whose gate set names [ONE_TIER_ID] — which is the whole 8 Gen 3-class
      * fleet, the Fold6 included. So on a capable device whose turbo delivery works, the chooser
-     * renders `npu-turbo` plus whatever is already installed, and the CPU ladder — since 4.7 the
-     * three Q8 rungs `small-q8`, `medium-q8` and `ultra-q8`; since 4.9 none of them an
-     * instrument — renders no card at all: neither selectable nor downloadable there. The owner
-     * re-ruled the same on 2026-09-17: *"NPU tier detection still stays the same: if they have
-     * that chip and we have a pack available for them, they should absolutely get the NPU tier."*
+     * renders `npu-turbo` plus what [alsoOfferedIds] names — whatever was already installed, until
+     * the owner's ruling of 2026-09-25 narrowed that to the installed gated tiers and the
+     * selection (producer 1, below) — and the CPU ladder — since 4.7 the three Q8 rungs
+     * `small-q8`, `medium-q8` and `ultra-q8`; since 4.9 none of them an instrument — renders no
+     * card at all: neither selectable nor downloadable there. The owner re-ruled the same on
+     * 2026-09-17: *"NPU tier detection still stays the same: if they have that chip and we have
+     * a pack available for them, they should absolutely get the NPU tier."*
      * `WhisperCatalogHelpersTest`'s `a_device_offered_the_one_tier_is_offered_no_cpu_rung`
      * (named `…_no_instrument` until 4.9 emptied the set) executes that sentence, deliberately beside
      * `every_instrument_is_pickable_ungated_and_installable_by_download` — the two halves of the
@@ -791,28 +793,47 @@ object WhisperCatalog {
      * other way: [alsoOfferedIds] is exactly this door — it admits any non-retired id, and
      * `OnboardingLogic.chooserAlsoOfferedIds` already pushes the whole [pickable] ladder through it
      * on the delivery-failure path (pinned in `OnboardingLogicTest`). The change would be at the
-     * two producers of that argument, and nothing in this function would move.
+     * two producers of that argument, and nothing in this function would move. (The owner's
+     * ruling of 2026-09-25 proved that shape from the other side: it asked for FEWER CPU cards,
+     * and it landed at the producers — `OnboardingLogic.chooserAlsoOfferedIds`, since then the one
+     * rule both chooser surfaces ask — with this body unmoved.)
      *
      * @param alsoOfferedIds the ids that join the one-card lineup ANYWAY. Two producers, and both
      *        exist because the narrowing has two ways of being wrong:
      *
-     *        1. **What is already on disk** — the non-disturbance rule. A capable device already
-     *           running `multi` or `npu` keeps its card, keeps transcribing on it, and is never
-     *           silently switched or deleted from; deleting a gigabyte the user paid bandwidth for
-     *           is not ours to do. It is also how the decline recovery resolves: the CPU tier is
-     *           absent until a decline downloads it, and is then simply an installed tier.
+     *        1. **What is already on disk** — the non-disturbance rule. A capable device is never
+     *           silently switched or deleted from, and keeps transcribing on what it runs;
+     *           deleting a gigabyte the user paid bandwidth for is not ours to do. Its DISPLAY half
+     *           — every installed tier keeps its card — held from 4.3 until **the owner's ruling
+     *           of 2026-09-25**, made on the Tab S10+ ship session of 4.16.0/113, whose chooser
+     *           showed three installed Q8 rungs beside the AI-chip card: *"if the NPU multilingual
+     *           is here, then we hide all of the other CPU models so users don't get confused
+     *           about which model to download."* So on a device whose set names [ONE_TIER_ID],
+     *           this producer names the installed GATED tiers — an installed `npu` keeps its card,
+     *           exactly as since 4.3 — and **ONE EXCEPTION, by controller ruling: the CURRENTLY
+     *           SELECTED model is never hidden.** A user whose selection is an installed CPU rung
+     *           still sees the card they are running on (an active selection with no card is the
+     *           same confusion from the other side); once they pick the AI-chip tier, that card
+     *           goes. The files stay and routing keeps reading the selection. It is also how the
+     *           decline recovery resolves: the CPU tier is absent until a decline downloads it,
+     *           and the recovery then makes it the selection, so its card is back. The rule is
+     *           `OnboardingLogic.chooserAlsoOfferedIds`, one for both chooser surfaces; every
+     *           device NOT offered the one tier gets the pre-ruling answer, which this function
+     *           never reads there anyway.
      *        2. **The CPU tiers when the one tier could not be DELIVERED** —
      *           `OnboardingLogic.chooserAlsoOfferedIds`, the no-wedge escape (4.2 F6 fix round 1,
      *           I-1) carried into 4.3. A sideloaded capable device is offered turbo (the census
      *           says the family HAS a pack; it cannot know Play will refuse this install), and
      *           onboarding's model step is mandatory — so a chooser narrowed to one undeliverable
      *           card would wedge setup with no completable path. The suspension is the existing
-     *           mechanism, not a new rule: the ids simply join the lineup, exactly as an installed
-     *           tier does.
+     *           mechanism, not a new rule: the ids simply join the lineup through the door
+     *           producer 1 uses. The 2026-09-25 ruling leaves this producer untouched — once the
+     *           one tier could not be delivered, the CPU ladder joins, installed rungs included.
      *
-     *        `!it.retired` still runs FIRST either way, so an installed retired tier (eco, base)
-     *        cannot re-enter a lineup through this door. Defaulted to empty so the ungated callers
-     *        and the gate-fail path stay one argument shorter and one rule simpler.
+     *        `!it.retired` still runs FIRST either way, so an installed retired tier (eco, base) —
+     *        even a selected one — cannot re-enter a lineup through this door. Defaulted to empty
+     *        so the ungated callers and the gate-fail path stay one argument shorter and one rule
+     *        simpler.
      */
     fun pickableFor(
         offeredGatedIds: Set<String>,
