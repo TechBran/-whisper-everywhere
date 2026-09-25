@@ -56,8 +56,9 @@ import java.nio.ByteBuffer
  * counts every `release(`). So a re-arm after `onTrimMemory` pays the two bytecode restores and
  * nothing else — no adapter walk, no environment: 3,354–3,558 ms at P1's gate
  * (`docs/measurements/2026-09-24-tab-apu-turbo-encoder.md` §6, the re-arm row; 3,410 ms on the
- * default's own run, `p1b3_litertasr_default`), against a cold process's 2,752–3,555 ms `init`
- * plus the 169–239 ms walk when no probe ran first (§4b, §6).
+ * default's own run, `p1b3_litertasr_default`), against a cold process's 2,752–3,632 ms `init`
+ * (the two P1 gate runs and the default's own, `p1b3_litertasr_default`, in §6's addendum) plus
+ * the 169–239 ms walk when no probe ran first (§4b, §6).
  *
  * **The measured shape of one commit on the Tab S10+** (sheet §6): encode ≈ 1.72 s warm, a decode
  * step ≈ 30 ms (23–37), so a 20-token commit ≈ 2.3–2.4 s — S23 class.
@@ -145,8 +146,9 @@ class LiteRtAsrEngine(
         // NpuAssetStage's directory overload: its .part and .staged marker live in the sibling
         // filesDir/litert_dispatch.staged/, never inside the scanned directory, and any stray
         // in it — a planted libneuron_adapter.so, the walk's fourth candidate, above all — is
-        // removed first. The first arm writes 409,728 B; every later one is a handful of stats
-        // against the marker. Serialised twice over: the stage holds its own lock, and `load`
+        // removed first. The first arm writes the dispatch's bytes (LiteRtRuntime holds its size
+        // and digest, once); every later one is a handful of stats against the marker.
+        // Serialised twice over: the stage holds its own lock, and `load`
         // runs it under NativeComputeGate, the gate init — and so LiteRT's scan — runs under.
         // THE RETURN PATH IS DELIBERATELY UNUSED: init derives the same directory from
         // NpuEngineDirs.filesDir through the same function, so the call's value is its refusal.

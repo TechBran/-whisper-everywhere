@@ -117,8 +117,11 @@ object NpuGate {
      *    false: not-yet-capable, never an optimistic yes that a later probe has to take back.
      *
      * Both vendors' checks arrive DEFERRED and each arm invokes its own alone: a MediaTek device
-     * never runs the QNN probe, and a Qualcomm process never reads — so never creates — the driver
-     * check's flow (P2-7, the P2a review's note: the verdict used to be read eagerly at the call).
+     * never runs the QNN probe, and on a Qualcomm row the gate never reads — so never creates, on
+     * the gate's path — the driver check's flow (P2-7, the P2a review's note: the verdict used to
+     * be read eagerly at the call). Not "never in the process": the onboarding and chooser screens
+     * collect that flow on every device, to re-read their producers when a verdict lands (the P2c
+     * review's correction of this sentence).
      *
      * @param family [familyFor]'s answer for this device.
      * @param qnnProbePasses the QNN probe (`QnnAsrEngine().probe(libDir)` is `""`), deferred so
