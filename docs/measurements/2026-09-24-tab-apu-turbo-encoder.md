@@ -297,3 +297,39 @@ probe 165 ms, init 3,632 ms, re-arm 3,410 ms, encode warm 1,723.2 ms (sd 5.3), s
 (23.1–36.6, sd 5.4 — a wider spread than the 20:19 kv1 run's 25.6–33.2; the two runs sit inside each other's
 range, so the per-step figure to quote is "≈30 ms, 23–37"), all seven utterances `matches_reference=true`,
 zero waits. The 20-token commit estimate stays ≈ 2.3–2.4 s.
+
+## 7. Provenance of the pair — the mirror, and what "reproducible" means for a NeuroPilot compile (21:18–21:25)
+
+The design's maintenance rule for a LOCAL row (§2.1) asks for two records before the `mt6989` row lands: the
+artefacts held in a second, checksummed location, and a recorded reproducibility check of the recipe.
+
+**Mirror.** `~/mtk-whisper/out/pair/aot_mt6989/` copied to `~/.androidbuild/mtk-artefacts-2026-09-24/aot_mt6989/`
+on the MS-02 with a `SHA256SUMS`; both copies digest identically:
+
+| file | bytes | sha256 |
+|---|---|---|
+| `turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite` | 1,302,606,488 | `bc68f161eac358940f76dd84bc8351057d7353d6fc49a91918b767b520ad09c6` |
+| `turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite` | 584,862,184 | `b596eec465c8e6fcc1ab50463b1caf62e2a0e2b7e24bc991185c2dec32719079` |
+
+These are the bytes `PackArtifact(npu-turbo, mt6989)` pins.
+
+**Recompile.** The same recipe (`ai_edge_litert.aot.aot_compile(..., Target(SocModel.MT6989))`, the same
+`venv`, the same f32 exports `turbo_encoder_qcio_f32.tflite` / `turbo_decoder_mtk_f32.tflite`) run again into
+`out/pair/aot_mt6989_repro/` — encoder 20.7 s, decoder 5.6 s — produced the **same lengths and different
+digests**: encoder `17f81b27…`, with 1,287,182,371 of 1,302,606,488 bytes differing from offset 424,930 (the
+flatbuffer wrapper is identical, the bytecode after it is not); decoder `10cebd24…`, 312,425,450 of
+584,862,184 differing from offset 267,959,894 (the first 268 MB identical, the rest not). NeuroPilot's bytecode
+is not byte-reproducible across compiles — the pattern (identical length, almost every byte of a region
+changed) is what a per-compile key or nonce over the bytecode looks like, not a scheduling difference.
+
+**So the recipe reproduces the MODEL, not the file.** The recompiled pair, pushed to the tablet under
+`repro_` names and run through the product-shaped engine (`p2_repro_pair_litertasr`, probe `0cbc8865…`):
+probe 200 ms pass, init 3,452 ms, encode 1,720 ms warm, step 30.5 ms, and **all four utterances
+`matches_reference=true`** with the same `lp` to three decimals (−0.087 jfk, −0.114 canary), paired monotonic
+timestamps, EOT. The files were removed from the tablet afterwards.
+
+**What the census therefore records** (P2-3): the pinned digests above are THE artefact, held in the private
+store (the MS-02 mirror; a second copy off that machine is still to be made); the recipe in `tools/mtk-apu/`
+reproduces a functionally identical pair and is the provenance of the model; a rebuilt pair is a NEW artefact
+that must be re-pinned, re-measured against the reference and re-mirrored before it ships. Rule 2's "recorded
+self-compile whose recipe is in the repo" is met in that sense and no stronger one.
