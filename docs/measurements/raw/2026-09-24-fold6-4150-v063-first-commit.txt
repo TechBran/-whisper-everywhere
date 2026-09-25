@@ -1,0 +1,8 @@
+# Galaxy Z Fold6 (SM-F956U, SM8650 / 8 Gen 3), Whisper Everywhere 4.15.0/111 from the internal track (Play-installed 19:46:19),
+# npu-turbo on the AI Hub v0.63.0 pack after the one-time re-download. The owner's own ~12 s clip (193,040 samples), one commit.
+# Captured live over wireless adb from the PC: adb logcat -v threadtime -s WE-DIAG:V (the update-time lines were already out of the 10-minute ring).
+09-24 21:10:20.495 23589 25116 I WE-DIAG : encode: graphExecute OK in 260.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:10:20.840 23589 25116 I WE-DIAG : decode: 43 tokens in 344.7 ms (8.02 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.40 ent=3.23 rung=0 steps=46
+09-24 21:10:20.914 23589 29060 I WE-DIAG : VAD-standalone: 193040 samples -> 3 segments wallMs=61.5
+09-24 21:10:21.240 23589 23589 I WE-DIAG : speaker: seq=1 segs=3 windows=4 embedMs=325 ids=[0,0,0,1] best=[-,-,-,-] dur=[0.0,0.0,0.6,1.5] confirmed=0 load=1 route=vad pick=3
+09-24 21:10:21.240 23589 23589 I WE-DIAG : finalize-timing: speaker-drain=388ms settled=true
