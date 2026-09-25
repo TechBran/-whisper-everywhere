@@ -3,6 +3,7 @@ package com.whispereverywhere.transcription
 import android.content.Context
 import android.os.SystemClock
 import com.whispereverywhere.npu.HallucinationPolicy
+import com.whispereverywhere.npu.NpuApuDriverCheck
 import com.whispereverywhere.npu.NpuAssetStage
 import com.whispereverywhere.npu.NpuDecodePolicy
 import com.whispereverywhere.npu.NpuDecodeStats
@@ -1074,8 +1075,8 @@ class NpuWhisperBackend(
         // quietly come back.
 
         /**
-         * Whether the npu tier may be OFFERED on this device: the right silicon, and a QNN stack
-         * that actually loads.
+         * Whether the npu tier may be OFFERED on this device: the right silicon, and a runtime that
+         * actually loads — the QNN stack on a Qualcomm row, the Neuron driver on a MediaTek one.
          *
          * **The SoC gate is first and the short circuit is load-bearing.** The probe —
          * [QnnAsrEngine.probe], which is `nativeProbe` — dlopens `libQnnSystem.so` and
@@ -1085,10 +1086,15 @@ class NpuWhisperBackend(
          * another. Only [NpuGate] can, so it decides first and the probe merely confirms that the
          * stack it needs is loadable.
          *
-         * **The QNN engine's probe for every family (P1a)**, as the selector builds the QNN engine
-         * for every family: a throwaway [QnnAsrEngine], which holds no state until it is armed. The
-         * census names no second vendor yet; P2's vendor-dispatched gate is where a MediaTek family
-         * stops asking this question at all.
+         * **Vendor-dispatched since P2** ([NpuGate.runtimeAvailable], a truth table `NpuGateTest`
+         * executes). A Qualcomm row asks the QNN engine's probe, a throwaway [QnnAsrEngine] that
+         * holds no state until it is armed — exactly the P1a question, deferred into the lambda
+         * that only the Qualcomm arm invokes. A MediaTek row reads the driver check's STORED
+         * verdict ([NpuApuDriverCheck.verdict], filled at process start off Main) and never
+         * dlopens anything here: neither the QNN stack, which is not its chip's, nor its own
+         * adapter, whose walk holds bionic's loader lock on the chooser's path. An unknown verdict
+         * (not probed yet) answers false — which is why the MediaTek half of the caller's memo is
+         * re-read rather than memoised (`WhisperEverywhereApp.npuCapableDevice`).
          *
          * `runCatching` covers [LinkageError] and everything downstream of it: on a build where
          * the proprietary QNN headers were unavailable, `libqnnasr.so` is deliberately absent, the
@@ -1101,7 +1107,13 @@ class NpuWhisperBackend(
          */
         fun isTierAvailable(socModel: String?, socManufacturer: String?, libDir: String): Boolean =
             NpuGate.isSocSupported(socModel, socManufacturer) &&
-                runCatching { QnnAsrEngine().probe(libDir).isEmpty() }.getOrDefault(false)
+                NpuGate.runtimeAvailable(
+                    family = NpuGate.familyFor(socModel, socManufacturer),
+                    qnnProbePasses = {
+                        runCatching { QnnAsrEngine().probe(libDir).isEmpty() }.getOrDefault(false)
+                    },
+                    apuVerdict = NpuApuDriverCheck.verdict.value,
+                )
 
         /**
          * The `epoch` refusal's detail line, built in one place so that **both** numbers are always

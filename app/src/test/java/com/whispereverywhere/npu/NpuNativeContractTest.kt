@@ -377,6 +377,54 @@ class NpuNativeContractTest {
     }
 
     /**
+     * P2 — THE GATE'S SECOND OPERAND, VENDOR-SPLIT (design §2.2). The QNN claims above hold
+     * unchanged — gate first, then `QnnAsrEngine().probe(libDir)` — and the probe now sits inside
+     * the lambda [NpuGate.runtimeAvailable] invokes on the Qualcomm arm ONLY (`NpuGateTest` runs
+     * that truth table with a fake that fails if the QNN probe runs for a MediaTek row). This pins
+     * the other half, which only source can show: a MediaTek row's capability is the driver check's
+     * STORED verdict, read here, and the tier-visibility path never loads the LiteRT seam — the
+     * adapter walk holds bionic's loader lock, and this path is forced on the onboarding and
+     * chooser screens.
+     */
+    @Test
+    fun theTierVisibilityGateRoutesAMediatekRowToTheStoredVerdictAndNeverToAProbe() {
+        val available = kotlinMemberBody(
+            backend,
+            "fun isTierAvailable(socModel: String?, socManufacturer: String?, libDir: String): Boolean ="
+        )
+        assertTrue(
+            "the second operand is the gate's vendor dispatch, on a live line",
+            liveOffsets(available, "NpuGate.runtimeAvailable(").isNotEmpty()
+        )
+        assertTrue(
+            "…handed THIS device's row, resolved by the same gate from the same two strings",
+            liveOffsets(available, "family = NpuGate.familyFor(socModel, socManufacturer),").isNotEmpty()
+        )
+        assertTrue(
+            "…the QNN probe as the deferred Qualcomm arm, inside the lambda",
+            liveOffsets(available, "qnnProbePasses = {").isNotEmpty() &&
+                liveOffsets(available, "qnnProbePasses = {").first() <
+                liveOffsets(available, "QnnAsrEngine().probe(libDir)").first()
+        )
+        assertTrue(
+            "…and the driver check's STORED verdict as the MediaTek arm — its current value, no probe",
+            liveOffsets(available, "apuVerdict = NpuApuDriverCheck.verdict.value,").isNotEmpty()
+        )
+        assertEquals(
+            "the tier-visibility gate never touches the LiteRT seam: the verdict is produced at " +
+                "process start, off Main, by WhisperEverywhereApp — never on this path",
+            0,
+            liveOffsets(available, "LiteRtAsrNative").size
+        )
+        assertTrue(
+            "the gate operand is still the LEFT one — the vendor dispatch is the right operand of " +
+                "the same && short circuit, so an off-census device asks no runtime at all",
+            liveOffsets(available, "NpuGate.isSocSupported(").first() <
+                liveOffsets(available, "NpuGate.runtimeAvailable(").first()
+        )
+    }
+
+    /**
      * Lesson 3 — the one that cost a device round trip on the spike's run 6. `QNN_TENSOR_VERSION_1`
      * and `QNN_TENSOR_VERSION_2` are ENUM CONSTANTS, not macros, so `#ifdef QNN_TENSOR_VERSION_2`
      * is ALWAYS false: the whole v2 branch compiles out while the error text still claims the

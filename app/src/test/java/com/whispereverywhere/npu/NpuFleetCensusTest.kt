@@ -742,6 +742,27 @@ class NpuFleetCensusTest {
     }
 
     @Test
+    fun fetchableTierIdsOffersOnlyTheTiersTheFamilyOffers() {
+        // P2 — the chooser's fetch set consults the family's `tiers`, not only the artifact
+        // rows: the MediaTek rows offer turbo alone (the owner's ruling for the tablets), and a
+        // tier outside a family's `tiers` must grow no Get button even where a measured pair
+        // exists. A real row with its tiers narrowed is the whole proof: the npu artifact is
+        // still in the census, and the answer drops it anyway.
+        val narrowed = byId("8gen3").copy(tiers = setOf("npu-turbo"))
+        assertNotNull("the npu pair IS measured for 8gen3", NpuFleetCensus.artifactFor("8gen3", "npu"))
+        assertEquals(
+            "a family that does not offer npu is never fetched npu",
+            setOf("npu-turbo"),
+            NpuFleetCensus.fetchableTierIds(narrowed, true, gatedTierIds, emptySet())
+        )
+        assertEquals(
+            "and a family that offers nothing fetches nothing",
+            emptySet<String>(),
+            NpuFleetCensus.fetchableTierIds(byId("8gen3").copy(tiers = emptySet()), true, gatedTierIds, emptySet())
+        )
+    }
+
+    @Test
     fun fetchableTierIdsIsEmptyOffTheCensusOrWhenTheProbeFails() {
         // This emptiness IS F6's non-capable byte-identity proof: the chooser's set is offered
         // UNION fetchable, union with the empty set is the identity, and every device this

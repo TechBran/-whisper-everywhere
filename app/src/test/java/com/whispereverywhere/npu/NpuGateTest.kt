@@ -1,5 +1,6 @@
 package com.whispereverywhere.npu
 
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -28,8 +29,47 @@ import java.io.File
  * strings pass (and resolve to their own rows; six families since 2026-09-24), and the census's
  * own CPU ledger all denies. The 4.0
  * owner-device rows are unchanged below; they became census rows without moving.
+ *
+ * P2 (the gate on the row): the manufacturer is the ROW's now — a string passes only under a
+ * spelling its own family admits, so the table is per vendor rather than "every family passes
+ * under QTI" — and the capability half is dispatched on the row's vendor
+ * ([NpuGate.runtimeAvailable]): the QNN probe on a Qualcomm row, the driver check's stored verdict
+ * on a MediaTek one, executed here with fakes that fail the test if the wrong vendor's check runs.
  */
 class NpuGateTest {
+
+    @After
+    fun forgetTheDriverVerdict() {
+        // The driver check's flow is process state; a verdict one test publishes must not leak
+        // into the next one's "unknown" (the NpuTierStatusTest reset, for the same reason).
+        NpuApuDriverCheck.resetToUnknownForTest()
+    }
+
+    /** Every manufacturer spelling this table asks about — real ones and near-misses alike. */
+    private val spellings: List<String> =
+        listOf("QTI", "Qualcomm", "QUALCOMM", "Mediatek", "MediaTek", "MEDIATEK", "unknown", "")
+
+    /**
+     * A MediaTek row for the capability truth table, constructed here: the gate's dispatch is a
+     * property of a row's VENDOR, and this pins it whether or not the census carries such a row.
+     */
+    private val mediatekRow = NpuSocFamily(
+        id = "test_mtk",
+        packGroup = "soc_test_mtk",
+        socModels = setOf("MTTEST"),
+        manufacturers = setOf("Mediatek"),
+        runtime = NpuRuntimeNeeds.LiteRtMediatek(neuronMajor = 8, socStamp = "mttest"),
+        tiers = setOf("npu-turbo"),
+        evidence = "constructed in NpuGateTest 2026-09-24",
+    )
+
+    private fun verdict(refusal: String?) = NpuApuVerdict(
+        fingerprint = "test/fingerprint",
+        appBuild = 112,
+        wantMajor = 8,
+        refusal = refusal,
+        probedAtMs = 1L,
+    )
 
     /**
      * Reads a repo file from the test's working directory — the locator the other source-reading
@@ -283,18 +323,34 @@ class NpuGateTest {
                 "SM8550", "SM8550-AC", "SM8450"),
             NpuGate.SUPPORTED_SOCS
         )
+        // (P2) The fleet-wide set is DERIVED now — the union of the rows' own spellings — and it
+        // survives only for the device-group XML's equality pin; familyFor asks the row.
         assertEquals(
-            "and exactly the two Qualcomm spellings the platform ships",
+            "and the fleet-wide spellings are exactly the union of the rows' own: the two " +
+                "Qualcomm spellings the platform ships, on every Qualcomm row",
             setOf("QTI", "Qualcomm"),
+            NpuGate.SUPPORTED_SOC_MANUFACTURERS
+        )
+        assertEquals(
+            "…derived, never retyped — the same set as the census's own union",
+            NpuFleetCensus.families.flatMap { it.manufacturers }.toSet(),
             NpuGate.SUPPORTED_SOC_MANUFACTURERS
         )
     }
 
+    /**
+     * RE-SPECCED AT P2 (the gate on the row) from "every census string passes under both
+     * Qualcomm spellings" — which was true only because every row was Qualcomm's — to what the
+     * gate now IS: a string passes exactly under the spellings ITS OWN ROW admits, and under
+     * every other spelling it denies. On a Qualcomm row that is still both Qualcomm spellings and
+     * nothing else, so the old table is this one's Qualcomm half, unchanged; what grew is the
+     * deny half, which now includes the other vendor's spellings.
+     */
     @Test
-    fun everyCensusStringPassesUnderBothManufacturerSpellings() {
+    fun everyCensusStringPassesUnderExactlyItsOwnRowsManufacturers() {
         for (family in NpuFleetCensus.families) {
             for (soc in family.socModels) {
-                for (mfr in listOf("QTI", "Qualcomm")) {
+                for (mfr in family.manufacturers) {
                     assertTrue(
                         "$soc + $mfr is census-covered silicon (family ${family.id}) and must " +
                             "pass — a false deny here is invisible on the device: the card " +
@@ -302,9 +358,16 @@ class NpuGateTest {
                         NpuGate.isSocSupported(soc, mfr)
                     )
                     assertSame(
-                        "and familyFor must resolve $soc to its OWN row — F2 stages " +
-                            "family.skelAsset off this answer, so 'some row' is not enough",
+                        "and familyFor must resolve $soc to its OWN row — the engine stages " +
+                            "that row's runtime off this answer, so 'some row' is not enough",
                         family,
+                        NpuGate.familyFor(soc, mfr)
+                    )
+                }
+                for (mfr in spellings - family.manufacturers) {
+                    assertNull(
+                        "$soc under '$mfr' — a spelling its row (${family.id}) does not admit — " +
+                            "must resolve NO row: the row decides its manufacturer",
                         NpuGate.familyFor(soc, mfr)
                     )
                 }
@@ -313,9 +376,94 @@ class NpuGateTest {
     }
 
     @Test
+    fun theQualcommRowsPassUnderTheQualcommSpellingsAndNeverUnderMediateks() {
+        // The Qualcomm half of the per-vendor table as hard literals — the 4.0-4.15 behaviour,
+        // held byte for byte through P2: both Qualcomm spellings pass, and a MediaTek spelling
+        // denies a Snapdragon string exactly as an unknown one always did.
+        val qualcomm = NpuFleetCensus.families.filter { it.vendor == NpuVendor.QUALCOMM }
+        assertEquals("six Qualcomm rows", 6, qualcomm.size)
+        for (family in qualcomm) {
+            for (soc in family.socModels) {
+                assertSame(family, NpuGate.familyFor(soc, "QTI"))
+                assertSame(family, NpuGate.familyFor(soc, "Qualcomm"))
+                assertNull("$soc under Mediatek denies", NpuGate.familyFor(soc, "Mediatek"))
+                assertNull("$soc under MediaTek denies", NpuGate.familyFor(soc, "MediaTek"))
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ the capability half (P2)
+
+    /**
+     * THE CAPABILITY HALF, DISPATCHED ON THE VENDOR — executed. A Qualcomm row asks the QNN probe
+     * and ignores any driver verdict; a MediaTek row reads the stored verdict and NEVER invokes
+     * the QNN probe (the fake throws if it does — the executed form of "a MediaTek device never
+     * dlopens a Qualcomm backend"); no family asks nothing.
+     */
+    @Test
+    fun runtimeAvailableAsksTheQnnProbeOnQualcommRowsAndOnlyThere() {
+        for (family in NpuFleetCensus.families.filter { it.vendor == NpuVendor.QUALCOMM }) {
+            var probes = 0
+            assertTrue(
+                "${family.id}: a passing QNN probe is capability",
+                NpuGate.runtimeAvailable(family, { probes++; true }, null)
+            )
+            assertFalse(
+                "${family.id}: a failing QNN probe is none — whatever a driver verdict says",
+                NpuGate.runtimeAvailable(family, { probes++; false }, verdict(refusal = null))
+            )
+            assertEquals("${family.id}: the probe ran once per question", 2, probes)
+        }
+        assertFalse(
+            "no family: nothing is capable, and nothing is asked",
+            NpuGate.runtimeAvailable(null, { throw AssertionError("the probe ran for no family") }, verdict(null))
+        )
+    }
+
+    @Test
+    fun runtimeAvailableReadsTheStoredVerdictOnMediatekRowsAndNeverTheQnnProbe() {
+        val neverQnn: () -> Boolean = { throw AssertionError("the QNN probe ran for a MediaTek row") }
+        assertFalse(
+            "UNKNOWN — no verdict yet — is not-yet-capable, never an optimistic yes",
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, null)
+        )
+        assertFalse(
+            "a refused driver check is not capable",
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, verdict(refusal = "adapter-missing"))
+        )
+        assertFalse(
+            "…whatever the refusal",
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, verdict(refusal = "driver-major-9-want-8"))
+        )
+        assertTrue(
+            "a passed driver check is capable",
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, verdict(refusal = null))
+        )
+    }
+
+    @Test
+    fun unknownUntilProbedThenTheVerdictTheCheckPublished() {
+        // The chooser's premise, at the layer a JVM can run: what isTierAvailable reads on a
+        // MediaTek row is NpuApuDriverCheck.verdict's CURRENT value — unknown before the check
+        // lands, the verdict after. (The producers that re-read on it are source-pinned in
+        // ChooserSteerWiringPinTest; this is the answer they re-read.)
+        val neverQnn: () -> Boolean = { throw AssertionError("the QNN probe ran for a MediaTek row") }
+        assertNull("a process starts with no verdict", NpuApuDriverCheck.verdict.value)
+        assertFalse(
+            "and reads not-yet-capable until the check answers",
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, NpuApuDriverCheck.verdict.value)
+        )
+        NpuApuDriverCheck.publish(verdict(refusal = null))
+        assertTrue(
+            "the check passed: the same read is now capable",
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, NpuApuDriverCheck.verdict.value)
+        )
+    }
+
+    @Test
     fun everyCpuByCensusKeyDenies() {
         for ((soc, evidence) in NpuFleetCensus.CPU_BY_CENSUS) {
-            for (mfr in listOf("QTI", "Qualcomm")) {
+            for (mfr in spellings) {
                 assertFalse(
                     "$soc must deny ($evidence) — a pass here means the gate and the census's " +
                         "own CPU ledger contradict each other about a device",
@@ -331,9 +479,10 @@ class NpuGateTest {
 
     @Test
     fun familyForResolvesTheFamilyWhoseRowCarriesTheString() {
-        // The gate's answer is not merely a boolean. F2 stages family.skelAsset, F3 verifies
-        // against the family's artifact rows, F4 regenerates family.packGroup's XML — all off the
-        // row THIS resolves. Identity, not equality: the object handed onward IS the census's row.
+        // The gate's answer is not merely a boolean. The engine stages the row's runtime (F2's
+        // skel, in the row's Qnn needs since P2), F3 verifies against the family's artifact rows,
+        // F4 regenerates family.packGroup's XML — all off the row THIS resolves. Identity, not
+        // equality: the object handed onward IS the census's row.
         val gen3 = requireNotNull(NpuFleetCensus.familyById("8gen3"))
         val elite = requireNotNull(NpuFleetCensus.familyById("8elite_galaxy"))
         val elite5 = requireNotNull(NpuFleetCensus.familyById("8elite5_galaxy"))
@@ -399,7 +548,7 @@ class NpuGateTest {
         val socs: List<String?> = NpuFleetCensus.families.flatMap { it.socModels } +
             NpuFleetCensus.CPU_BY_CENSUS.keys +
             listOf("sm8650", "SM8650X", " SM8650", "unknown", "UNKNOWN", "", null)
-        val mfrs: List<String?> = listOf("QTI", "Qualcomm", "QUALCOMM", "MediaTek", "unknown", "", null)
+        val mfrs: List<String?> = spellings + null
         for (soc in socs) {
             for (mfr in mfrs) {
                 assertEquals(
@@ -436,6 +585,61 @@ class NpuGateTest {
                 "ONE home, the census, and a literal here is the second list growing back",
             0,
             liveLines(gate, "\"SM").size
+        )
+        // (P2) The manufacturer moved onto the row, with the same doctrine as the soc strings:
+        // one home, the census rows; the gate derives and asks, and types nothing.
+        assertEquals(
+            "SUPPORTED_SOC_MANUFACTURERS is the census derivation on exactly one live line",
+            1,
+            liveLines(gate, "NpuFleetCensus.families.flatMap { it.manufacturers }.toSet()").size
+        )
+        assertEquals(
+            "familyFor asks the ROW for both strings, on one live line — the model in its " +
+                "socModels AND the manufacturer in its OWN manufacturers",
+            1,
+            liveLines(gate, "model in it.socModels && manufacturer in it.manufacturers").size
+        )
+        listOf("\"QTI\"", "\"Qualcomm\"", "\"Mediatek\"", "\"MediaTek\"").forEach { spelling ->
+            assertEquals(
+                "no live line of NpuGate.kt spells the manufacturer $spelling — the spellings' " +
+                    "one home is the rows",
+                0,
+                liveLines(gate, spelling).size
+            )
+        }
+        val familyFor = gate.substringAfter("fun familyFor(").substringBefore("fun isSocSupported(")
+        assertEquals(
+            "and familyFor never consults the fleet-wide union — a spelling one vendor ships says " +
+                "nothing about another vendor's silicon",
+            0,
+            liveLines(familyFor, "SUPPORTED_SOC_MANUFACTURERS").size
+        )
+        assertEquals(
+            "the union is exactly the census's own",
+            NpuFleetCensus.families.flatMap { it.manufacturers }.toSet(),
+            NpuGate.SUPPORTED_SOC_MANUFACTURERS
+        )
+        // And the capability half's dispatch is on the VENDOR, one arm each, with the QNN probe
+        // on the Qualcomm arm alone (the truth table above executes it; this is its shape).
+        assertEquals(
+            "runtimeAvailable dispatches on the row's vendor",
+            1,
+            liveLines(gate, "): Boolean = when (family?.vendor) {").size
+        )
+        assertEquals(
+            "…the Qualcomm arm is the QNN probe",
+            1,
+            liveLines(gate, "NpuVendor.QUALCOMM -> qnnProbePasses()").size
+        )
+        assertEquals(
+            "…the MediaTek arm is the stored verdict, unknown reading false",
+            1,
+            liveLines(gate, "NpuVendor.MEDIATEK -> apuVerdict?.passed == true").size
+        )
+        assertEquals(
+            "…and the QNN probe is invoked nowhere else in the gate",
+            1,
+            liveLines(gate, "qnnProbePasses()").size
         )
         assertEquals(
             "and the executed set equals the derivation (the needles prove provenance; " +

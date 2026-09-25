@@ -36,6 +36,7 @@ import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
 import com.whispereverywhere.model.WhisperModel
+import com.whispereverywhere.npu.NpuApuDriverCheck
 import com.whispereverywhere.npu.NpuPackController
 import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.npu.NpuRefreshNotice
@@ -910,8 +911,16 @@ private fun EnginesStep(
         // KEYED on the install generation, for the reason spelled out at the Settings picker's
         // copy of this block: an unkeyed produceState samples once per composition entry, so an
         // import landing while the chooser is on screen would never reach the lineup.
+        //
+        // (P2) AND ON THE MEDIATEK DRIVER CHECK'S VERDICT, for the same reason one fact over. On
+        // a MediaTek family the capability half is the stored verdict, and on a fresh install it
+        // is UNKNOWN until the probe Application.onCreate started lands — which this step, the
+        // first screen a new user reaches, can easily beat. Unknown answers not-yet-capable, and
+        // the key re-reads the gate the moment the verdict arrives. On every other device the
+        // verdict never leaves null, so the key never moves and this producer is 4.15's.
         val installGeneration by ModelInstallSignal.generation.collectAsState()
-        val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {
+        val apuVerdict by NpuApuDriverCheck.verdict.collectAsState()
+        val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration, key2 = apuVerdict) {
             value = withContext(Dispatchers.IO) {
                 val app = WhisperEverywhereApp.getInstance()
                 app.offeredNpuTierIds() + app.fetchableNpuTierIds()

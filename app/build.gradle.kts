@@ -673,6 +673,11 @@ tasks.withType<Test>().configureEach {
         // below), and the next assertion that reads this file as text is not required to
         // remember the distinction.
         "src/main/java/com/whispereverywhere/npu/NpuFleetCensus.kt",
+        // (P2, the gate on the row) The MediaTek driver check — NpuApuDriverCheckTest reads it as
+        // text to hold the dispatch directory's name to ONE live spelling (the constant) and the
+        // probe's path to the one function built from it. Both are claims a comment-shaped edit
+        // or a second literal could break without changing what any executed test observes.
+        "src/main/java/com/whispereverywhere/npu/NpuApuDriverCheck.kt",
         // (4.2 F5) NpuPackController.kt — the Play fetch flow's Android shell. It is
         // AssetPackManager-bound (no JVM test can construct it), so NpuDiagTest pins its
         // emission sites and the remove-after-install ORDER as source text; without this

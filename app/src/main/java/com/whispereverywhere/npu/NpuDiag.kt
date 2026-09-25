@@ -316,6 +316,26 @@ object NpuDiag {
     }
 
     /**
+     * `apu: verdict=pass want=8 source=probe build=112 probedAtMs=1790000000000` — the MediaTek
+     * driver check's answer as THIS PROCESS holds it (P2; design §2.3), emitted once per process
+     * when `WhisperEverywhereApp` publishes it. `verdict=` is `pass` or `refuse(<reason>)`, the
+     * native `apu:` line's own two spellings, so one grep reads both.
+     *
+     * **Why a second `apu:` line exists.** The native probe prints the driver line — the adapter's
+     * name and version, the APU devices, the walk time — but only when it runs, and a process that
+     * reuses a stored verdict runs no probe. `source=stored` is that process's evidence: which
+     * verdict it is acting on, taken by which build, and when; `source=probe` sits beside the
+     * native line of the probe it came from. Never transcript content — a verdict, a major, a build
+     * number and a timestamp.
+     */
+    fun apuVerdict(verdict: NpuApuVerdict, reused: Boolean): String {
+        val answer = verdict.refusal?.let { "refuse($it)" } ?: "pass"
+        val source = if (reused) "stored" else "probe"
+        return "apu: verdict=$answer want=${verdict.wantMajor} source=$source " +
+            "build=${verdict.appBuild} probedAtMs=${verdict.probedAtMs}"
+    }
+
+    /**
      * `npu: stale pair removed tier=npu-turbo encoder=775831552 decoder=295854080
      * census=686112520/295856032` — the launch sweep's one line per removed tier (4.15), emitted
      * by `WhisperModelManager.reconcileNpuStagingDebris` when [NpuStalePairSweep.sweep] removed a

@@ -237,9 +237,12 @@ class ChooserSteerWiringPinTest {
         assertGateAnswerReachesBothCallsOffMain(
             flow,
             "the guided flow",
+            // (P2) The producer gained its second key, the MediaTek driver check's verdict,
+            // collected on the line above it — RE-SPELLED in-commit; see the helper.
             block(
                 "        val installGeneration by ModelInstallSignal.generation.collectAsState()",
-                "        val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {",
+                "        val apuVerdict by NpuApuDriverCheck.verdict.collectAsState()",
+                "        val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration, key2 = apuVerdict) {",
                 "            value = withContext(Dispatchers.IO) {",
                 "                val app = WhisperEverywhereApp.getInstance()",
                 "                app.offeredNpuTierIds() + app.fetchableNpuTierIds()",
@@ -476,24 +479,45 @@ class ChooserSteerWiringPinTest {
         // above is spelled identically from `produceState` onward and would otherwise raise this
         // count to 2. Naming the variable keeps the assertion about the GATE producer, which is
         // what it has always been about; the sibling producer has its own count directly above.
+        // (P2) RE-SPELLED in-commit, and made one key STRONGER rather than looser: the gate
+        // producer is keyed on the install generation AND on the MediaTek driver check's verdict.
+        // On a MediaTek family the capability half is that verdict, UNKNOWN until the probe
+        // Application.onCreate started lands — and unknown answers not-yet-capable, so without
+        // the second key a chooser that sampled first would hide the tier until the user left
+        // and came back (the install-generation failure, one fact over). On every other device
+        // the verdict never leaves null and the key never moves. The needle still ends on the
+        // producer's closing paren, so a THIRD key, or a lost one, fails here by name.
         assertEquals(
-            "$surface keys the gate producer on the install generation, so an import that lands " +
-                "while the chooser is on screen re-reads the gate instead of being invisible until " +
-                "the user navigates away and back",
+            "$surface keys the gate producer on the install generation AND the driver verdict, so " +
+                "an import that lands — or a verdict that lands — while the chooser is on screen " +
+                "re-reads the gate instead of being invisible until the user navigates away and back",
             1,
             count(
                 source,
                 "val npuTierIds by produceState(initialValue = emptySet<String>(), " +
-                    "key1 = installGeneration)",
+                    "key1 = installGeneration, key2 = apuVerdict)",
             ),
+        )
+        assertEquals(
+            "$surface collects the verdict key from the driver check's ONE flow, exactly once — a " +
+                "second source for it would be a second answer to 'has the driver been checked?'",
+            1,
+            count(source, "val apuVerdict by NpuApuDriverCheck.verdict.collectAsState()"),
         )
         // [booleanKeyedProducers] is the count of the picker's OTHER keyed device question —
         // `npuCapableDevice` alone, the import entry's capability-only gate, which must not be
         // gated on the tier already being installed (4.0, Q8; its own test below). The flow asks
         // no second question. A producer that lost its key drops a count rather than raising one.
+        // (P2) It is keyed on the verdict too: it IS the capability half.
         assertEquals(
             "$surface's capability-only producers, keyed identically",
             booleanKeyedProducers,
+            count(source, "produceState(initialValue = false, key1 = installGeneration, key2 = apuVerdict)"),
+        )
+        assertEquals(
+            "$surface keeps no capability producer keyed on the install generation ALONE — one " +
+                "would sample 'unknown' on a MediaTek family and never re-read it",
+            0,
             count(source, "produceState(initialValue = false, key1 = installGeneration)"),
         )
         assertEquals(
@@ -848,9 +872,11 @@ class ChooserSteerWiringPinTest {
         assertGateAnswerReachesBothCallsOffMain(
             picker,
             "the Settings picker",
+            // (P2) The second key, re-spelled in-commit — see the helper.
             block(
                 "    val installGeneration by ModelInstallSignal.generation.collectAsState()",
-                "    val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration) {",
+                "    val apuVerdict by NpuApuDriverCheck.verdict.collectAsState()",
+                "    val npuTierIds by produceState(initialValue = emptySet<String>(), key1 = installGeneration, key2 = apuVerdict) {",
                 "        value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() + app.fetchableNpuTierIds() }",
                 "    }",
             ),
@@ -885,8 +911,9 @@ class ChooserSteerWiringPinTest {
             1,
             count(
                 picker,
+                // (P2) keyed on the driver verdict as well — the helper above says why.
                 block(
-                    "    val npuCapable by produceState(initialValue = false, key1 = installGeneration) {",
+                    "    val npuCapable by produceState(initialValue = false, key1 = installGeneration, key2 = apuVerdict) {",
                     "        value = withContext(Dispatchers.IO) { app.npuCapableDevice }",
                     "    }",
                 ),
@@ -1026,11 +1053,41 @@ class ChooserSteerWiringPinTest {
         // the probe's evaluation is conditional on the installed half, which is a cost claim,
         // not a truth-value claim. The 4.0 comment that declined to pin the order was right for
         // the shape it described.
+        // RE-POINTED AT P2 (the gate on the row), not loosened. `npuCapableDevice` is vendor-
+        // dispatched now: its MediaTek arm is the driver check's STORED verdict, which moves once
+        // from unknown to a verdict and must be re-read, so the property itself can no longer be
+        // `by lazy`. The QNN probe's memo survives exactly — it moved one declaration down, as
+        // `qnnCapableDevice`, and every device that is not a MediaTek row reads it. What this pin
+        // guards is unchanged: the probe's dlopen runs at most once per process.
         assertEquals(
             "the memo survives (battery T11's neighbour): without `by lazy` the probe's dlopen " +
                 "runs again on every read, and the readers are recomposing choosers",
             1,
-            count(app, "val npuCapableDevice: Boolean by lazy {"),
+            count(app, "private val qnnCapableDevice: Boolean by lazy { npuTierAvailable() }"),
+        )
+        assertEquals(
+            "…and it is what npuCapableDevice answers on every device that is not a MediaTek row; " +
+                "only the MediaTek arm — a StateFlow read that dlopens nothing — is re-read",
+            1,
+            count(
+                app,
+                block(
+                    "    val npuCapableDevice: Boolean",
+                    "        get() = if (npuSocFamily?.vendor == NpuVendor.MEDIATEK) npuTierAvailable() else qnnCapableDevice",
+                ),
+            ),
+        )
+        assertEquals(
+            "one call site of the gate in the app — both arms ask the same function, so the two " +
+                "cannot drift into two gates",
+            1,
+            liveLineCount(app, "NpuWhisperBackend.isTierAvailable("),
+        )
+        assertEquals(
+            "and no `by lazy` spelling of npuCapableDevice survives on a live line — one would " +
+                "freeze a MediaTek device's 'unknown' for the life of the process",
+            0,
+            liveLineCount(app, "val npuCapableDevice: Boolean by lazy"),
         )
         // battery T12. minSdk is 26 and both SOC fields arrived in API 31, so an unguarded read
         // throws NoSuchFieldError on every pre-S device that opens the chooser — a crash, on a
