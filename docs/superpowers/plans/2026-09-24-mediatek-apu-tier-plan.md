@@ -99,7 +99,8 @@ with P1a.
 2. **The gate on the row.** `NpuGate.familyFor` uses `family.manufacturers`; `SUPPORTED_SOC_MANUFACTURERS`
    becomes the derived union; `npuCapableDevice` becomes vendor-dispatched and, for MediaTek, reads the stored
    verdict (a `StateFlow`), with the probe started from `Application.onCreate` on a background thread and the
-   verdict persisted per `Build.FINGERPRINT`. Tests: gate per vendor, verdict store round-trip, "unknown until
+   verdict persisted per `Build.FINGERPRINT` (and, corrected at P2-2 where this met the code, per app build and
+   wanted major — design §2.3 item 3). Tests: gate per vendor, verdict store round-trip, "unknown until
    probed" in the chooser's `produceState`.
 3. **The `mt6989` row.** `NpuSocFamily("mt6989", "soc_mt6989", {"MT6989"}, {"Mediatek"}, LiteRtMediatek(8, "mt6989"),
    {npu-turbo}, evidence …)`; `PackArtifact(npu-turbo, mt6989)` with the AOT pair's digests/lengths, `parts`,
