@@ -78,7 +78,8 @@ class WhisperEverywhereApp : Application() {
      * reads that memo, so their answer is the 4.15 answer by construction.
      *
      * **MediaTek: the driver check's STORED verdict, re-read on every call.** Its answer is filled
-     * at process start, off Main, by [settleApuDriverVerdict] (design §2.3), and it moves exactly
+     * at process start by [settleApuDriverVerdict] — a reusable stored verdict at once, a probe off
+     * Main through [awaitApuDriverVerdict] otherwise (design §2.3) — and it moves exactly
      * once — from unknown to a verdict — so a memo would freeze "unknown" for the life of the
      * process. Re-reading costs a table lookup and a StateFlow read: [isTierAvailable]'s MediaTek
      * arm never dlopens. The 4.0 note that this "cannot change within a process" holds for
