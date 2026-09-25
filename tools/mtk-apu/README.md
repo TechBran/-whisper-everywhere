@@ -17,7 +17,9 @@ They run on a Linux x86-64 host (the MS-02) because MediaTek's host compiler ins
 Weights: `hf download openai/whisper-large-v3-turbo --local-dir ~/mtk-whisper/models/whisper-large-v3-turbo`.
 The MediaTek host compiler comes under MediaTek's **NeuroPilot Express SDK licence** (downloaded by the pip
 stub from a public S3 URL; no account, no NDA; revocable; indemnity; object-code redistribution only inside an
-app for MediaTek chips) — an owner decision before anything ships.
+app for MediaTek chips) — an owner decision before anything ships, ACCEPTED by the owner on 2026-09-25: "we
+already agreed to the license." The licences page (`app/src/main/assets/oss_licenses.html`,
+`id="mediatek-apu-models"`) carries the pair's provenance entry.
 
 On the tablet the artefacts are driven by `tools/probes/litertlm-probe` (`mode=sig` times any signature by
 input/output names; `mode=e2eqc` runs real mel through the pair with the KV cache). `drive.py` always needs

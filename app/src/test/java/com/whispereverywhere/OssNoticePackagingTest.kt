@@ -1,5 +1,6 @@
 package com.whispereverywhere
 
+import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.transcription.stream.StreamingPackCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -317,9 +318,18 @@ class OssNoticePackagingTest {
      * And the placement reason is the build's own: the needles at the end are how
      * `app/build.gradle.kts` puts both files in every APK.
      *
-     * TODO(owner): the NeuroPilot Express notice for the compiled MediaTek pair waits on the
-     * owner's reading of that licence. The page carries a TODO(owner) beside the MediaTek entry,
-     * and this pins that it is there — the question cannot be lost by an edit to the page.
+     * **And the model files that dispatch runs, and the licence they were compiled under.** The
+     * mt6989 pair — the two files in the `npu_turbo_mt6989_enc` / `npu_turbo_mt6989_dec` packs —
+     * was compiled with MediaTek's NeuroPilot Express SDK (its host compiler, NeuroPilot v8_0_10,
+     * `adapter 8.2.30`) from the MIT `openai/whisper-large-v3-turbo` weights (tools/mtk-apu/, and
+     * the design's §2.1 provenance). The owner ACCEPTED that SDK's licence on 2026-09-25 — *"we
+     * already agreed to the license"* — so the owner question that sat beside the MediaTek entry
+     * became a plain provenance entry, `id="mediatek-apu-models"`, and this pins it: beside the
+     * dispatch entry, before the next section; naming both packs as the census row names them
+     * (a renamed pack reddens this), the SDK, the compiler as the pack build pins it and the
+     * census records it, the weights and their licence, and the one distribution term the repo
+     * records (`tools/mtk-apu/README.md`: object-code redistribution only inside an app for
+     * MediaTek chips) — no licence term beyond it. And no owner question is left open on the page.
      */
     @Test fun theLiteRtLibrariesEveryApkShipsAreNamedWithTheNoticeTheirLicenceFileCarries() {
         val page = File(repoRoot(), BASE_MODULE_NOTICE).readText().replace("\r\n", "\n")
@@ -351,14 +361,42 @@ class OssNoticePackagingTest {
         )) {
             assertTrue("the Caffe notice lost <<$line>>", caffe.contains(line))
         }
-        // TODO(owner) — beside the MediaTek entry, before the next section begins.
+        // THE MEDIATEK MODEL FILES' PROVENANCE — beside the MediaTek entry, before the next section
+        // begins. The owner accepted the NeuroPilot Express licence on 2026-09-25.
         val afterDispatch = page.substringAfter("id=\"litert-dispatch-mediatek\"")
             .substringAfter("</div>")
             .substringBefore("<h2")
         assertTrue(
-            "the TODO(owner) for the NeuroPilot Express notice is no longer beside the MediaTek " +
-                "entry — the licence the owner is reading may ask for one, and the page is where it goes",
-            afterDispatch.contains("<!-- TODO(owner):") && afterDispatch.contains("NeuroPilot Express"),
+            "the MediaTek model files' provenance entry is no longer beside the MediaTek dispatch " +
+                "entry — the pair that dispatch runs was compiled with MediaTek's NeuroPilot Express " +
+                "SDK, and this is where the page says so",
+            afterDispatch.contains("<div class=\"license\" id=\"mediatek-apu-models\">"),
+        )
+        val models = licenseEntry(page, "mediatek-apu-models")
+        val pair = NpuFleetCensus.artifactFor("mt6989", "npu-turbo")!!
+        for (needle in pair.parts.map { "<code>${it.packName}</code>" } + listOf(
+            "NeuroPilot Express SDK", "under its licence", "NeuroPilot v8_0_10", "<code>adapter 8.2.30</code>",
+            "<code>openai/whisper-large-v3-turbo</code>", "MIT License",
+            "distributed only inside this app, for MediaTek chips, as that SDK's licence permits",
+        )) {
+            assertTrue("the MediaTek model files' entry does not carry <<$needle>>", models.contains(needle))
+        }
+        // The two facts the entry restates are the ones the census and the pack build record: a
+        // recompiled pair is a new artefact (sheet §7), and its compiler goes on the page with it.
+        assertTrue(
+            "the census's mt6989 provenance no longer names NeuroPilot v8_0_10, which the page states",
+            pair.evidence.contains("NeuroPilot v8_0_10"),
+        )
+        assertTrue(
+            "tools/build_asset_packs.py no longer pins the mt6989 pair's compiler as adapter 8.2.30, " +
+                "which the page states — read the new pair's DLA trailer and restate it on the page",
+            File(repoRoot(), "tools/build_asset_packs.py").readText().contains("\"compiler\": \"adapter 8.2.30\","),
+        )
+        assertTrue(
+            "the licences page carries a TODO(owner) again. The NeuroPilot Express licence was " +
+                "accepted by the owner on 2026-09-25 (\"we already agreed to the license\") and its " +
+                "notice is the entry above; a new question here is a new ruling to record",
+            !page.contains("TODO(owner)"),
         )
         // WHY both are on the page: every APK carries them — the build packages them this way.
         val build = buildScript()

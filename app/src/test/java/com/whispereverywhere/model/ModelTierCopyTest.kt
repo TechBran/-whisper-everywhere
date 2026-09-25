@@ -1643,10 +1643,10 @@ class ModelTierCopyTest {
             val all = (card.headline + " " + card.body + " " + card.badges.joinToString(" ")).lowercase()
             // The position the 3.7 census demands, in the headline where the eye lands first.
             assertTrue("the MediaTek turbo headline takes no position", POSITION_WORDS.any { card.headline.lowercase().contains(it) })
-            // No speed claim of any kind — the ruling is pending (the TODO(owner) pin below).
+            // No speed claim of any kind — ruled 2026-09-25: accuracy only (the ruling's pin below).
             SPEED_CLAIM_WORDS.forEach { word ->
                 assertFalse(
-                    "the MediaTek turbo card claims speed with <<$word>> — its speed claim awaits the owner's wording",
+                    "the MediaTek turbo card claims speed with <<$word>> — the owner ruled it accuracy only (2026-09-25)",
                     Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(all),
                 )
             }
@@ -1699,16 +1699,18 @@ class ModelTierCopyTest {
     }
 
     /**
-     * TODO(owner): THE SPEED CLAIM ON MEDIATEK FAMILIES AWAITS THE OWNER'S WORDING (plan P3-2;
-     * design §2.8 and §7 q3). The Qualcomm turbo card's "fastest" / "the fastest on this device" is
-     * measured and owner-ruled on Qualcomm silicon and FALSE on the Tab S10+ — its CPU commits
-     * `small-q8` in 1,217 ms and `medium-q8` in 1,341 against the APU's ≈ 2.3 s (the two sheets the
-     * card's KDoc cites). Until he rules, the MediaTek card carries NO speed claim, and this pin
-     * fails the moment the Qualcomm speed sentence renders on a MediaTek row — through the card, or
-     * through a chooser surface that stops asking for the family's card. His wording replaces the
-     * MediaTek body and this pin together.
+     * THE SPEED CLAIM ON MEDIATEK FAMILIES — RULED 2026-09-25: ACCURACY ONLY (plan P3-2; design
+     * §2.8 and §7 q3). The owner, at the end of the Tab S10+ ship session of 4.16.0/113: *"the
+     * MediaTek speed claim copy is fine for now."* The Qualcomm turbo card's "fastest" / "the
+     * fastest on this device" is measured and owner-ruled on Qualcomm silicon and FALSE on the
+     * Tab S10+ — its CPU commits `small-q8` in 1,217 ms and `medium-q8` in 1,341 against the APU's
+     * ≈ 2.3 s (the two sheets the card's KDoc cites) — so the APU's win there is accuracy, and the
+     * MediaTek card carries NO speed claim, by ruling. This pin guards the ruling, not a pending
+     * decision: it fails the moment the Qualcomm speed sentence renders on a MediaTek row — through
+     * the card, or through a chooser surface that stops asking for the family's card. A MediaTek
+     * speed claim would be a new ruling, replacing the MediaTek body and this pin together.
      */
-    @Test fun todo_owner_the_qualcomm_speed_sentence_never_renders_on_a_mediatek_row() {
+    @Test fun the_qualcomm_speed_sentence_never_renders_on_a_mediatek_row_by_ruling() {
         val qualcomm = ModelTierCopy.forId("npu-turbo")!!
         assertTrue("the Qualcomm card still carries its measured speed claim", qualcomm.body.contains("the fastest on this device"))
         for (family in mediatekFamilies) {
@@ -1720,7 +1722,7 @@ class ModelTierCopyTest {
             }
             val turbo = ModelTierCopy.forIdOn("npu-turbo", family)!!
             assertFalse(
-                "the turbo card on ${family.id} says 'fastest' — its speed claim awaits the owner's wording",
+                "the turbo card on ${family.id} says 'fastest' — the owner ruled the MediaTek card accuracy only (2026-09-25)",
                 Regex("\\bfastest\\b").containsMatchIn((turbo.headline + " " + turbo.body).lowercase()),
             )
             assertTrue("the MediaTek turbo card is not the Qualcomm one", turbo.headline != qualcomm.headline && turbo.body != qualcomm.body)
@@ -1812,9 +1814,11 @@ class ModelTierCopyTest {
 
     /**
      * NOTHING WAS INVENTED: the MediaTek card's one claim is cited beside it — the owner's ladder
-     * words and the doc, the APU sheet's §6 and its verdict, the tie with ultra-q8 — and the
-     * pending speed ruling is a TODO(owner) there, with the numbers that make the Qualcomm claim
-     * false on the tablet. Read out of ModelTierCopy.kt itself (a declared input of the test task).
+     * words and the doc, the APU sheet's §6 and its verdict, the tie with ultra-q8 — and the speed
+     * ruling (2026-09-25: accuracy only) is recorded there in the owner's words, with the numbers
+     * that make the Qualcomm claim false on the tablet and the pin that guards it, and no open
+     * owner question is left there. Read out of ModelTierCopy.kt itself (a declared input of the
+     * test task).
      */
     @Test fun the_mediatek_cards_evidence_lives_in_the_kdoc_beside_it() {
         val src = MODEL_TIER_COPY_SOURCE
@@ -1827,10 +1831,17 @@ class ModelTierCopyTest {
             "the same large-v3-turbo weights at Q8_0", "It ranks it against nothing.",
             "It does not compare the APU with any of them.",
             "Neither sheet ranks the APU model against a CPU rung", "It ranks NOTHING that runs on",
-            "TODO(owner)", "plan P3-2", "1,887,468,672",
+            "ruled 2026-09-25: accuracy only", "the MediaTek speed claim copy is fine for now.",
+            "the_qualcomm_speed_sentence_never_renders_on_a_mediatek_row_by_ruling", "1,217 ms",
+            "plan P3-2", "1,887,468,672",
         ).forEach { needle ->
             assertTrue("the MediaTek card's KDoc no longer carries <<$needle>>", block.contains(needle))
         }
+        assertFalse(
+            "the MediaTek card's KDoc carries a TODO(owner) again — its speed claim was ruled on " +
+                "2026-09-25 (accuracy only), so a new question there is a new ruling to record, not a TODO",
+            block.contains("TODO(owner)"),
+        )
         assertEquals("the MediaTek map carries exactly the turbo card", 1, Regex("\" to TierCopy\\(").findAll(block).count())
     }
 

@@ -6,8 +6,10 @@ after `feat/qnn-250-8gen1` (workstream A, 4.15.0/111) merges; versionCode 112+. 
 (`spike/tab-apu-turbo`) merge into it first.
 
 **Owner rulings in force (2026-09-24):** build the tier; turbo only on tablets; a driver version check; the
-NeuroPilot Express licence read and accepted by the owner before the first Play upload. **Owner ruling
-still needed:** the wording of the speed claim on MediaTek families (P3-2).
+NeuroPilot Express licence read and accepted by the owner before the first Play upload (accepted 2026-09-25:
+"we already agreed to the license"; the licences page carries the pair's provenance entry). **The owner ruling
+that was still needed** — the wording of the speed claim on MediaTek families (P3-2) — came on 2026-09-25:
+accuracy only, "the MediaTek speed claim copy is fine for now."
 
 Every task below names its files, its tests and its done-condition. Tasks inside a phase are ordered; P1a
 must land before P1b's Kotlin half and before P2; P1b's native half may proceed in a worktree in parallel
@@ -151,9 +153,15 @@ with P1a.
    the decline note's speed half and the small-pair import panel were false on a MediaTek row and were fixed.
 2. **The speed claim** on MediaTek families — the owner's wording (proposed: "the most accurate model this
    device can run, on its AI chip"). *Still pending at P3a:* the MediaTek card carries no speed claim, and a
-   `TODO(owner)` pin guards it until he rules. Its accuracy-only body is "The most accurate model that runs on
+   pin guarded it until he ruled. Its accuracy-only body is "The most accurate model that runs on
    this device's AI chip." — *corrected by the P3a review (FIX-NOW 2):* the proposal above ranked every model the
    device can run, CPU rungs included, which the claim rules forbid (design §2.8); the census now splits at ", ".
+   *Ruled 2026-09-25: accuracy only.* The owner, at the end of the Tab S10+ ship session of 4.16.0/113: "the
+   MediaTek speed claim copy is fine for now." The headline ("Best AI-chip accuracy") and the body stay exactly
+   as they are, with no speed claim — on the tablet the CPU's small model commits in ~1.2 s against the APU's
+   ~2.3 s, so the APU's win is accuracy — and the pin stays, renamed
+   `the_qualcomm_speed_sentence_never_renders_on_a_mediatek_row_by_ruling`: it guards a ruling, not a pending
+   decision. Done (design §2.8).
 3. **Version** 4.16.0 / 113 (or the next free code), `ReleaseIdentityTest` paragraph; internal track. (112 went
    out as 4.15.1 — the seam and the refresh-notice take-down, the regression gate of P1a-6 — by owner ruling
    2026-09-24: "you can seam it up for 112".)

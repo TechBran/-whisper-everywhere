@@ -4,7 +4,9 @@
 delivery). Every fix-before-plan finding is folded in below; the review's own record is in this session's
 workflow journal (`wf_cc4f0c46-392`). Owner ruling the same day: *"Build the tier. Yes."*, plus *"a version
 checker there to make sure we're hitting the right chip for the driver."* The owner is reading MediaTek's
-NeuroPilot Express SDK licence themself; nothing ships to Play before that is accepted.
+NeuroPilot Express SDK licence themself; nothing ships to Play before that is accepted. **Accepted
+2026-09-25**, at the end of the Tab S10+ ship session: *"we already agreed to the license."* The licences
+page carries the pair's provenance entry (`id="mediatek-apu-models"`; `docs/LANGUAGE-CLEARANCE.md` records it).
 
 **What this is:** `npu-turbo` — the app's fastest local tier, large-v3-turbo on an AI chip — on MediaTek's APU,
 for the Galaxy Tab S10+/S10 Ultra (MT6989) in this release, and for the Tab S11/S11 Ultra (MT6991) in a later
@@ -385,11 +387,12 @@ this device can run, on its AI chip". Onboarding's size line reads the family's 
 **"981 MB"** by then (4.15's v0.63.0 pair), not "1072 MB". Both chooser surfaces now render
 `ModelTierCopy.forIdOn(id, family)`: every gated card's badge is the family's census pair by the
 badge rule (SI MB, truncated — mt6989 1,302,606,488 + 584,862,184 = 1,887,468,672 B, "1887 MB"),
-and a MediaTek family reads its own turbo card. The owner's wording for a MediaTek speed claim is
-still PENDING, so that card carries **no speed claim**: headline "Best AI-chip accuracy", body
+and a MediaTek family reads its own turbo card. The owner's wording for a MediaTek speed claim was
+still pending at P3a (ruled 2026-09-25: accuracy only — the next paragraph), so that card carries
+**no speed claim**: headline "Best AI-chip accuracy", body
 **"The most accurate model that runs on this device's AI chip."** — 4.6 T2's scoped claim, ranking
-only the models that run on the AI chip (on a MediaTek family, turbo alone) — and a `TODO(owner)`
-pin fails if the Qualcomm "the fastest on this device" ever renders on a MediaTek row. *Corrected
+only the models that run on the AI chip (on a MediaTek family, turbo alone) — and a pin fails if
+the Qualcomm "the fastest on this device" ever renders on a MediaTek row. *Corrected
 by the P3a review (FIX-NOW 2):* the first P3a body was this section's proposal, "The most accurate
 model this device can run, on its AI chip.", and it broke the claim rules — it ranked every model
 the device can run, the CPU rungs included (`ultra-q8` is the same weights; a retired `large-v3`
@@ -407,6 +410,19 @@ release-page zip — offered now only where the family offers the tier it import
 not changed:** it names no device on any branch — its sections are device-neutral — so there is no
 list to add the tablets beside, and naming devices there would be a new claim for the owner to
 rule on.
+
+*Owner ruling, 2026-09-25, at the end of the Tab S10+ ship session of 4.16.0/113 — the MediaTek
+speed claim, ruled 2026-09-25: accuracy only:* **"the MediaTek speed claim copy is fine for now."**
+The MediaTek turbo card keeps its headline "Best AI-chip accuracy" and its body "The most accurate
+model that runs on this device's AI chip." exactly as they are, and says nothing about speed,
+because speed is not what the AI chip wins on the tablet: the CPU's small model (`small-q8`)
+commits in ~1.2 s (1,217 ms) against the APU's ~2.3 s. The APU's win is accuracy — it runs
+large-v3-turbo, where the rungs that beat it on speed are the smaller Whispers; the ruling adds no
+comparative with `ultra-q8`, the same weights on the CPU. No string moved. The pin stays, renamed
+from `todo_owner_the_qualcomm_speed_sentence_never_renders_on_a_mediatek_row` to
+`the_qualcomm_speed_sentence_never_renders_on_a_mediatek_row_by_ruling`: it guards a ruling now,
+not a pending decision, and a MediaTek speed claim would be a new ruling that replaces the body and
+the pin together.
 
 *Owner ruling, 2026-09-25, during the Tab S10+ ship session of 4.16.0/113:* **"if the NPU
 multilingual is here, then we hide all of the other CPU models so users don't get confused about
@@ -426,6 +442,17 @@ stays cardless). Nothing is deleted or switched: the files stay, routing reads t
 still brings the whole CPU ladder back, and every device not offered the one tier renders the
 pre-ruling lineup byte for byte. It keys on the gate set, not the vendor, so the MediaTek and
 Qualcomm rows follow it alike; `pickableFor`'s body and every card string are unchanged.
+
+*Owner ruling, 2026-09-25, at the end of the same session — no CPU cards on a capable device, even
+while the AI-chip tier keeps declining:* **"we deliver these asset packs ourselves, so it should
+always work. And CPU only for devices that can't do the NPU."** The consequence the P3b
+implementation flagged — on a device offered the one tier, a turbo that keeps declining cannot be
+swapped for a CPU rung on purpose, because no CPU card renders there unless it is the selection —
+is the owner's ruling, not an open question. The automatic fallback (the backend's loud fallback
+to an eligible CPU model on disk, which the declining card announces) and the recovery button on
+that card ("Download the standard model", which fetches `small-q8` and makes it the selection) are
+the whole answer. No code changed: `OnboardingLogic.chooserAlsoOfferedIds` and
+`WhisperCatalog.pickableFor` (producer 1) record the ruling beside the rule.
 
 ### 2.9 Cadence, calibration, the ring
 
@@ -527,5 +554,6 @@ loop, Play internal app sharing (no versionCode spent) is checked as an alternat
 1. Spelling: the tablet and the Play catalog say `Mediatek`; LiteRT's enum says `MediaTek`. The row admits
    only what a device reports.
 2. Whether Google publishes a MediaTek dispatch for a newer LiteRT (licence talks, #9482).
-3. The owner's wording for the speed claim on MediaTek families (§2.8).
+3. ~~The owner's wording for the speed claim on MediaTek families~~ — ruled 2026-09-25: accuracy only,
+   "the MediaTek speed claim copy is fine for now." (§2.8).
 4. ~~Whether the `apuware` dependency libraries must be declared~~ — answered by P0(c): they need not be.
