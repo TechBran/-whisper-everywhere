@@ -3574,9 +3574,14 @@ class FloatingBubbleService : Service(),
                 commitSegment(engine, EndpointDiag.VAD, nowMs = now)
             } else if (segmentCapPolicy.capExceeded(now)) {
                 // currentCapMs() is read BEFORE onCommit flips first->later, so the line names
-                // the cap that actually fired (4000ms for the session's first LOCAL stretch;
-                // cloud sessions closed the first-cap window at onOpen and always read 15000ms).
-                android.util.Log.i("WE-DIAG", EndpointDiag.capCommitLine(segmentCapPolicy.currentCapMs()))
+                // the cap that actually fired (4000ms for the session's first LOCAL stretch, then
+                // the tier's sustained wall: 5000ms on the AI-chip tiers since 4.16.1, 15000ms on
+                // every CPU tier; cloud sessions closed the first-cap window at the session open
+                // and always read 15000ms). THROUGH THE NATIVE EXPORT since 4.16.1: R8 strips every
+                // android.util.Log call from release, and the owner's 4.16.1 session counts these
+                // lines per minute on a Play build. The capture thread, so never Main; wrapped, so a
+                // native-load surprise can never cost the cut below.
+                runCatching { WhisperNative.diag(EndpointDiag.capCommitLine(segmentCapPolicy.currentCapMs())) }
                 // A cap cut on SILENCE-ONLY audio still commits the buffer (bounded, and whisper's
                 // VAD returns empty fast); only the policy bookkeeping below is conditional.
                 // hasPendingSpeech() and pendingCutPointMs() are both read BEFORE

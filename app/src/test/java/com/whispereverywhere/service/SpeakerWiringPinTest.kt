@@ -158,18 +158,21 @@ class SpeakerWiringPinTest {
 
     @Test
     fun theOneDiagLinePerChunkGoesOutThroughNativeLoggingSoR8CannotStripIt() {
-        // FIVE native lines, and no more: the per-chunk `speaker:` line, the once-per-session
+        // SIX native lines, and no more: the per-chunk `speaker:` line, the once-per-session
         // relabel (Task 5), the per-pass `speaker-recluster:` line spike session 6 added,
         // — since 4.11.3 removed the panel's character ceiling — the `panel:` line that reports
         // what rendering the WHOLE session costs, so that decision stays a measurement, and —
         // since the 2026-09-22 mute toggle — the ONE `logMute` site every `mute:` edge goes out
         // through (on, off, session ended muted), so a Play build shows when capture was
-        // silenced. The relabel's is counted here rather than left to drift because it is
+        // silenced; and — since 4.16.1 — the wall-cap line (`wall-clock cap -> commit
+        // (cap=…ms)`), one per cap cut, which the owner's 4.16.1 session counts per minute to
+        // judge the AI-chip tiers' 5 s wall (CapSeamPinTest pins it at its call site). The
+        // relabel's is counted here rather than left to drift because it is
         // guarded by the latch's own "did it move" answer and must stay once per session however
-        // many callers ask for the latch. All five go out through WhisperNative.diag because R8
+        // many callers ask for the latch. All six go out through WhisperNative.diag because R8
         // strips every android.util.Log call from the release build, and the release build is
         // the only one the owner can install.
-        assertEquals(5, count(service, "WhisperNative.diag("))
+        assertEquals(6, count(service, "WhisperNative.diag("))
         assertEquals("the mute's lines share one site", 1, count(service, "runCatching { WhisperNative.diag(line) }"))
         assertEquals(
             "the panel's cost line is emitted from exactly one place, and only past the old cap",

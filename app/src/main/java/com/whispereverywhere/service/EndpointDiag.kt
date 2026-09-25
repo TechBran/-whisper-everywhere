@@ -108,6 +108,16 @@ object EndpointDiag {
      * session's `onOpen` inside `FloatingBubbleService.startRecording`. Cited by SYMBOL, not by
      * line number — the number this comment shipped with (`:2238`) had already drifted into an
      * unrelated function by the time anyone read it.
+     *
+     * **4.16.1 — the cap in force is per tier, and the line goes out natively.** `cap=` names the
+     * wall that fired: `cap=4000ms` for a LOCAL session's first stretch, then the tier's sustained
+     * wall — `cap=5000ms` on the AI-chip tiers (`SegmentCapPolicy.NPU_SUSTAINED_WALL_MS`, owner
+     * ruling 2026-09-25) and `cap=15000ms` on every CPU tier. A cloud session reads
+     * `cap=15000ms` on every line whatever its tier, so `cap=5000ms` there is a regression
+     * signature of the same kind as `cap=4000ms`: `SegmentCapPolicy.laterWallMsFor`'s cloud arm
+     * broke. The service emits it through `WhisperNative.diag`, so unlike this family's other
+     * members it prints on a Play build — one line per cap cut, which is what the owner's 4.16.1
+     * session counts per minute.
      */
     fun capCommitLine(capMs: Long): String =
         "wall-clock cap -> commit (cap=${capMs}ms) VAD-MISS: no endpoint in this window"
