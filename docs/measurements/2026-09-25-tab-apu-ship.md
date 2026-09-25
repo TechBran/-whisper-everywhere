@@ -37,6 +37,18 @@ tablet's log ring is short); the owner drives the device; the head reads the cap
 | 14 | fallback (packs removed via the card) | the tier reads not installed, the CPU tier answers, no crash | the owner removed the pair (10:50:38 `nativeRelease complete (epoch 1)`); with NO CPU model on this tablet the app-wide gate asked for a download instead of answering on the CPU — the owner: "the fallback just lets you know that you need to download a model." No crash, no stale offer; the re-Get landed at 10:51:27 and re-armed at 10:51:36 (restore 1,200 + 397 ms, APU check 35.9 ms). PASS as the gate is designed (a CPU answer needs a CPU model on disk) |
 | 15 | the copy (owner looks) | turbo card "Best AI-chip accuracy" / "The most accurate model that runs on this device's AI chip." / badge "1887 MB"; onboarding "about 1.9 GB"; no import offered | the owner, in the chooser: "Multilingual on NPU, large V3 Turbo, the most accurate model that runs on this device's AI chip. And that looks good. No need for a model import or anything like that since we're supplying the models." — PASS (the body verbatim; no import surface seen) |
 
+**Row 5, the Play half (15:39–16:10).** After the owner installed 113 from the internal track on the tablet (a clean
+Play install, `installerPackageName=com.android.vending`), every Get answered Play's `PACK_UNAVAILABLE` (−2):
+Finsky logged `startDownload() for package: com.whispereverywhere` → `Request execution failed with error code: -2`
+→ `AssetModuleException: Request to PGS failed because all packs are unavailable.` on each attempt from 15:39:40,
+while the untargeted `tts_kokoro` pack delivered at 15:53 and the console's App bundle explorer listed both MediaTek
+packs as deliverable. It resolved on its own about three hours after the upload: Play needed that long to stage the
+1.2 GB encoder pack — the largest this app has shipped — for delivery. **Owner's rule from it:** every bundle goes to
+the internal track first and sits for several hours; the readiness check is a Get from the card on the device that
+needs the biggest pack; then the SAME bundle is promoted (Play reuses what it staged), never a fresh upload to
+production. Copy item for the next patch: the app's `PACK_UNAVAILABLE` sentence ("update the app from Play") is the
+wrong advice while Play is still staging — it should say the pack is not available yet and to try later.
+
 ## Findings during the session
 
 **F1 — one native crash, in the GPU driver, not in the engine (10:08:22).** Eight seconds after the first arm the
