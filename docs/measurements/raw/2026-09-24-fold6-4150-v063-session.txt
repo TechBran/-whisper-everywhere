@@ -1,0 +1,309 @@
+# Galaxy Z Fold6 (SM8650 / 8 Gen 3), Whisper Everywhere 4.15.0/111 from the internal track, npu-turbo on the v0.63.0 pack.
+# Every WE-DIAG line captured live over wireless adb from 21:09 to 23:00 on 2026-09-24 (the owner's own use: one ~12 s clip at 21:10,
+# then an ~11-minute session 21:57-22:08 of 75 commits). ActivityManager/AndroidRuntime lines dropped.
+09-24 21:10:20.495 23589 25116 I WE-DIAG : encode: graphExecute OK in 260.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:10:20.840 23589 25116 I WE-DIAG : decode: 43 tokens in 344.7 ms (8.02 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.40 ent=3.23 rung=0 steps=46
+09-24 21:10:20.914 23589 29060 I WE-DIAG : VAD-standalone: 193040 samples -> 3 segments wallMs=61.5
+09-24 21:10:21.240 23589 23589 I WE-DIAG : speaker: seq=1 segs=3 windows=4 embedMs=325 ids=[0,0,0,1] best=[-,-,-,-] dur=[0.0,0.0,0.6,1.5] confirmed=0 load=1 route=vad pick=3
+09-24 21:10:21.240 23589 23589 I WE-DIAG : finalize-timing: speaker-drain=388ms settled=true
+09-24 21:57:49.863 23589 25116 I WE-DIAG : encode: graphExecute OK in 283.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:57:50.094 23589 25116 I WE-DIAG : decode: 21 tokens in 230.5 ms (10.98 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.22 ent=nan rung=0 steps=24
+09-24 21:57:50.132 23589 21994 I WE-DIAG : VAD-standalone: 64000 samples -> 2 segments wallMs=35.3
+09-24 21:57:50.424 23589 23589 I WE-DIAG : speaker: seq=2 segs=2 windows=2 embedMs=290 ids=[0,0] best=[-,-] dur=[0.6,1.4] confirmed=0 load=1 route=vad pick=1
+09-24 21:58:04.810 23589 25116 I WE-DIAG : encode: graphExecute OK in 238.3 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:58:05.605 23589 25116 I WE-DIAG : decode: 81 tokens in 794.4 ms (9.81 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.23 ent=3.28 rung=0 steps=84
+09-24 21:58:05.783 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=171.0
+09-24 21:58:06.248 23589 23589 I WE-DIAG : speaker: seq=3 segs=1 windows=4 embedMs=459 ids=[1,1,1,1] best=[-,0.73,0.72,0.71] dur=[3.8,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=0
+09-24 21:58:19.819 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:58:20.635 23589 25116 I WE-DIAG : decode: 82 tokens in 816.1 ms (9.95 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.20 ent=3.23 rung=0 steps=85
+09-24 21:58:20.807 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=170.1
+09-24 21:58:21.255 23589 23589 I WE-DIAG : speaker: seq=4 segs=2 windows=6 embedMs=446 ids=[1,1,1,1,1,1] best=[0.55,0.72,0.70,0.57,0.76,0.73] dur=[2.3,2.3,2.3,2.3,3.0,3.0] confirmed=0 load=0 route=vad pick=4
+09-24 21:58:24.478 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:58:24.728 23589 25116 I WE-DIAG : decode: 24 tokens in 249.8 ms (10.41 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.34 ent=nan rung=0 steps=27
+09-24 21:58:24.782 23589 21994 I WE-DIAG : VAD-standalone: 74752 samples -> 2 segments wallMs=52.6
+09-24 21:58:24.916 23589 23589 I WE-DIAG : speaker: seq=5 segs=2 windows=2 embedMs=132 ids=[1,1] best=[0.64,0.62] dur=[1.7,2.4] confirmed=0 load=0 route=vad pick=1
+09-24 21:58:39.503 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.7 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:58:40.440 23589 25116 I WE-DIAG : decode: 90 tokens in 937.1 ms (10.41 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.16 ent=3.26 rung=0 steps=93
+09-24 21:58:40.604 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=161.0
+09-24 21:58:41.027 23589 23589 I WE-DIAG : speaker: seq=6 segs=1 windows=7 embedMs=421 ids=[1,1,1,1,1,1,1] best=[0.68,0.68,0.59,0.74,0.54,0.60,0.69] dur=[1.9,2.5,1.9,2.9,1.0,2.1,2.3] confirmed=0 load=0 route=vad pick=3
+09-24 21:58:44.660 23589 25116 I WE-DIAG : encode: graphExecute OK in 245.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:58:44.965 23589 25116 I WE-DIAG : decode: 29 tokens in 305.3 ms (10.53 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.26 ent=nan rung=0 steps=32
+09-24 21:58:45.024 23589 21994 I WE-DIAG : VAD-standalone: 82432 samples -> 1 segments wallMs=57.5
+09-24 21:58:45.150 23589 23589 I WE-DIAG : speaker: seq=7 segs=1 windows=2 embedMs=125 ids=[1,1] best=[0.58,0.59] dur=[1.8,2.5] confirmed=0 load=0 route=vad pick=1
+09-24 21:58:46.683 23589 25116 I WE-DIAG : encode: graphExecute OK in 238.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:58:46.803 23589 25116 I WE-DIAG : decode: 12 tokens in 120.2 ms (10.02 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.54 ent=nan rung=0 steps=15
+09-24 21:58:46.827 23589 21994 I WE-DIAG : VAD-standalone: 32768 samples -> 1 segments wallMs=23.6
+09-24 21:58:46.878 23589 23589 I WE-DIAG : speaker: seq=8 segs=1 windows=1 embedMs=50 ids=[1] best=[0.52] dur=[1.7] confirmed=0 load=0 route=vad pick=0
+09-24 21:58:49.060 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.4 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:58:49.274 23589 25116 I WE-DIAG : decode: 17 tokens in 214.2 ms (12.60 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.23 ent=nan rung=0 steps=20
+09-24 21:58:49.304 23589 21994 I WE-DIAG : VAD-standalone: 37888 samples -> 1 segments wallMs=27.3
+09-24 21:58:49.347 23589 23589 I WE-DIAG : speaker: seq=9 segs=1 windows=1 embedMs=42 ids=[1] best=[0.58] dur=[1.4] confirmed=0 load=0 route=vad pick=0
+09-24 21:59:04.068 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:59:04.911 23589 25116 I WE-DIAG : decode: 81 tokens in 842.4 ms (10.40 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.26 ent=3.32 rung=0 steps=84
+09-24 21:59:05.085 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=172.1
+09-24 21:59:05.496 23589 23589 I WE-DIAG : speaker: seq=10 segs=1 windows=4 embedMs=409 ids=[1,1,1,1] best=[0.66,0.72,0.72,0.74] dur=[2.6,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 21:59:13.296 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:59:13.810 23589 25116 I WE-DIAG : decode: 56 tokens in 513.5 ms (9.17 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.26 ent=3.19 rung=0 steps=59
+09-24 21:59:13.916 23589 21994 I WE-DIAG : VAD-standalone: 147456 samples -> 2 segments wallMs=104.8
+09-24 21:59:14.183 23589 23589 I WE-DIAG : speaker: seq=11 segs=2 windows=4 embedMs=265 ids=[1,1,1,1] best=[0.59,0.64,0.69,0.64] dur=[2.3,2.3,2.3,2.3] confirmed=0 load=0 route=vad pick=0
+09-24 21:59:19.019 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:59:19.371 23589 25116 I WE-DIAG : decode: 32 tokens in 351.7 ms (10.99 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.16 ent=nan rung=0 steps=35
+09-24 21:59:19.442 23589 21994 I WE-DIAG : VAD-standalone: 92160 samples -> 3 segments wallMs=70.1
+09-24 21:59:19.550 23589 23589 I WE-DIAG : speaker: seq=12 segs=3 windows=2 embedMs=106 ids=[1,1] best=[0.55,0.65] dur=[1.3,1.8] confirmed=0 load=0 route=vad pick=1
+09-24 21:59:21.352 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:59:21.455 23589 25116 I WE-DIAG : decode: 8 tokens in 102.7 ms (12.84 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.36 ent=nan rung=0 steps=11
+09-24 21:59:21.486 23589 21994 I WE-DIAG : VAD-standalone: 37376 samples -> 1 segments wallMs=29.5
+09-24 21:59:21.521 23589 23589 I WE-DIAG : speaker: seq=13 segs=1 windows=1 embedMs=34 ids=[1] best=[0.48] dur=[1.0] confirmed=0 load=0 route=vad pick=0
+09-24 21:59:36.396 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:59:37.152 23589 25116 I WE-DIAG : decode: 73 tokens in 756.2 ms (10.36 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.28 ent=3.38 rung=0 steps=76
+09-24 21:59:37.324 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=169.6
+09-24 21:59:37.766 23589 23589 I WE-DIAG : speaker: seq=14 segs=1 windows=4 embedMs=440 ids=[1,1,1,1] best=[0.77,0.74,0.84,0.71] dur=[3.8,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=0
+09-24 21:59:39.291 23589 25116 I WE-DIAG : encode: graphExecute OK in 237.0 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:59:39.629 23589 25116 I WE-DIAG : decode: 32 tokens in 337.8 ms (10.56 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.42 ent=nan rung=0 steps=35
+09-24 21:59:39.664 23589 21994 I WE-DIAG : VAD-standalone: 46592 samples -> 1 segments wallMs=33.9
+09-24 21:59:39.664 23589 23589 I WE-DIAG : speaker: seq=15 segs=1 windows=1 embedMs=0 ids=[1] best=[-] dur=[0.9] confirmed=0 load=0 route=vad pick=0
+09-24 21:59:42.661 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.8 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:59:42.835 23589 25116 I WE-DIAG : decode: 15 tokens in 173.4 ms (11.56 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.44 ent=nan rung=0 steps=18
+09-24 21:59:42.874 23589 21994 I WE-DIAG : VAD-standalone: 53760 samples -> 1 segments wallMs=38.0
+09-24 21:59:42.927 23589 23589 I WE-DIAG : speaker: seq=16 segs=1 windows=1 embedMs=52 ids=[1] best=[0.48] dur=[1.7] confirmed=0 load=0 route=vad pick=0
+09-24 21:59:47.190 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 21:59:47.412 23589 25116 I WE-DIAG : decode: 24 tokens in 221.7 ms (9.24 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.18 ent=nan rung=0 steps=27
+09-24 21:59:47.462 23589 21994 I WE-DIAG : VAD-standalone: 71680 samples -> 1 segments wallMs=48.8
+09-24 21:59:47.527 23589 23589 I WE-DIAG : speaker: seq=17 segs=1 windows=2 embedMs=63 ids=[1,1] best=[-,0.60] dur=[0.4,2.2] confirmed=0 load=0 route=vad pick=1
+09-24 22:00:02.155 23589 25116 I WE-DIAG : encode: graphExecute OK in 239.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:00:02.857 23589 25116 I WE-DIAG : decode: 69 tokens in 701.3 ms (10.16 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.19 ent=3.34 rung=0 steps=72
+09-24 22:00:03.029 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=170.2
+09-24 22:00:03.430 23589 23589 I WE-DIAG : speaker: seq=18 segs=1 windows=4 embedMs=398 ids=[1,1,1,1] best=[0.69,0.69,0.73,0.69] dur=[2.3,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:00:17.163 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:00:17.879 23589 25116 I WE-DIAG : decode: 69 tokens in 715.2 ms (10.37 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.31 ent=3.29 rung=0 steps=72
+09-24 22:00:18.042 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=161.0
+09-24 22:00:18.464 23589 23589 I WE-DIAG : speaker: seq=19 segs=1 windows=4 embedMs=420 ids=[1,1,1,1] best=[0.58,0.61,0.73,0.71] dur=[3.8,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:00:32.179 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:00:32.909 23589 25116 I WE-DIAG : decode: 71 tokens in 729.2 ms (10.27 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.25 ent=2.94 rung=0 steps=74
+09-24 22:00:33.075 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 3 segments wallMs=163.5
+09-24 22:00:33.452 23589 23589 I WE-DIAG : speaker: seq=20 segs=3 windows=4 embedMs=376 ids=[1,1,1,1] best=[0.65,0.67,0.67,0.56] dur=[2.0,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:00:47.175 23589 25116 I WE-DIAG : encode: graphExecute OK in 238.4 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:00:47.900 23589 25116 I WE-DIAG : decode: 72 tokens in 724.6 ms (10.06 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.26 ent=3.16 rung=0 steps=75
+09-24 22:00:48.056 23589 21994 I WE-DIAG : VAD-standalone: 227328 samples -> 2 segments wallMs=154.4
+09-24 22:00:48.459 23589 23589 I WE-DIAG : speaker: seq=21 segs=2 windows=4 embedMs=400 ids=[1,1,1,1] best=[0.71,0.72,0.72,0.68] dur=[3.6,3.6,3.6,3.6] confirmed=0 load=0 route=vad pick=0
+09-24 22:01:02.196 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.7 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:01:02.987 23589 25116 I WE-DIAG : decode: 84 tokens in 790.7 ms (9.41 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.20 ent=3.26 rung=0 steps=87
+09-24 22:01:03.158 23589 21994 I WE-DIAG : VAD-standalone: 252928 samples -> 2 segments wallMs=169.1
+09-24 22:01:03.603 23589 23589 I WE-DIAG : speaker: seq=22 segs=2 windows=4 embedMs=442 ids=[1,1,1,1] best=[0.63,0.72,0.70,0.74] dur=[3.0,4.0,4.0,4.0] confirmed=0 load=0 route=vad pick=1
+09-24 22:01:17.194 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:01:17.800 23589 25116 I WE-DIAG : decode: 58 tokens in 605.3 ms (10.44 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.20 ent=3.17 rung=0 steps=61
+09-24 22:01:17.970 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=168.2
+09-24 22:01:18.410 23589 23589 I WE-DIAG : speaker: seq=23 segs=1 windows=4 embedMs=438 ids=[1,1,1,1] best=[0.70,0.55,0.68,0.66] dur=[3.8,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:01:23.430 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:01:23.695 23589 25116 I WE-DIAG : decode: 26 tokens in 264.8 ms (10.19 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.16 ent=nan rung=0 steps=29
+09-24 22:01:23.759 23589 21994 I WE-DIAG : VAD-standalone: 99840 samples -> 1 segments wallMs=62.9
+09-24 22:01:23.841 23589 23589 I WE-DIAG : speaker: seq=24 segs=1 windows=2 embedMs=82 ids=[1,1] best=[-,0.69] dur=[0.6,3.0] confirmed=0 load=0 route=vad pick=1
+09-24 22:01:38.445 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:01:39.185 23589 25116 I WE-DIAG : decode: 75 tokens in 739.2 ms (9.86 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.18 ent=3.32 rung=0 steps=78
+09-24 22:01:39.347 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=160.6
+09-24 22:01:39.727 23589 23589 I WE-DIAG : speaker: seq=25 segs=1 windows=4 embedMs=378 ids=[1,1,1,1] best=[0.66,0.68,0.73,0.69] dur=[2.2,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:01:53.448 23589 25116 I WE-DIAG : encode: graphExecute OK in 240.8 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:01:54.164 23589 25116 I WE-DIAG : decode: 68 tokens in 715.9 ms (10.53 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.32 ent=3.34 rung=0 steps=71
+09-24 22:01:54.335 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 3 segments wallMs=169.0
+09-24 22:01:54.778 23589 23589 I WE-DIAG : speaker: seq=26 segs=3 windows=6 embedMs=441 ids=[1,1,1,1,1,1] best=[0.72,0.60,0.65,0.49,0.66,0.68] dur=[3.5,3.5,2.0,1.8,2.0,2.0] confirmed=0 load=0 route=vad pick=1
+09-24 22:01:56.293 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.8 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:01:56.502 23589 25116 I WE-DIAG : decode: 19 tokens in 208.9 ms (11.00 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.29 ent=nan rung=0 steps=22
+09-24 22:01:56.537 23589 21994 I WE-DIAG : VAD-standalone: 45568 samples -> 1 segments wallMs=33.3
+09-24 22:01:56.537 23589 23589 I WE-DIAG : speaker: seq=27 segs=1 windows=1 embedMs=0 ids=[1] best=[-] dur=[0.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:02:11.289 23589 25116 I WE-DIAG : encode: graphExecute OK in 239.7 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:02:11.924 23589 25116 I WE-DIAG : decode: 73 tokens in 634.4 ms (8.69 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.14 ent=3.23 rung=0 steps=76
+09-24 22:02:12.083 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=158.4
+09-24 22:02:12.496 23589 23589 I WE-DIAG : speaker: seq=28 segs=1 windows=4 embedMs=411 ids=[1,1,1,1] best=[0.65,0.75,0.64,0.69] dur=[3.7,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:02:15.881 23589 25116 I WE-DIAG : encode: graphExecute OK in 240.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:02:16.126 23589 25116 I WE-DIAG : decode: 27 tokens in 244.1 ms (9.04 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.11 ent=nan rung=0 steps=30
+09-24 22:02:16.174 23589 21994 I WE-DIAG : VAD-standalone: 73216 samples -> 2 segments wallMs=48.0
+09-24 22:02:16.214 23589 23589 I WE-DIAG : speaker: seq=29 segs=2 windows=2 embedMs=39 ids=[1,1] best=[-,0.57] dur=[0.5,1.4] confirmed=0 load=0 route=vad pick=1
+09-24 22:02:20.550 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.0 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:02:20.724 23589 25116 I WE-DIAG : decode: 14 tokens in 174.3 ms (12.45 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.30 ent=nan rung=0 steps=17
+09-24 22:02:20.781 23589 21994 I WE-DIAG : VAD-standalone: 74752 samples -> 1 segments wallMs=56.2
+09-24 22:02:20.782 23589 23589 I WE-DIAG : speaker: seq=30 segs=1 windows=2 embedMs=0 ids=[1,1] best=[-,-] dur=[0.0,0.9] confirmed=0 load=0 route=vad pick=1
+09-24 22:02:23.790 23589 25116 I WE-DIAG : encode: graphExecute OK in 240.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:02:23.900 23589 25116 I WE-DIAG : decode: 9 tokens in 110.3 ms (12.25 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.05 ent=nan rung=0 steps=12
+09-24 22:02:23.942 23589 21994 I WE-DIAG : VAD-standalone: 50688 samples -> 1 segments wallMs=41.1
+09-24 22:02:23.985 23589 23589 I WE-DIAG : speaker: seq=31 segs=1 windows=1 embedMs=41 ids=[1] best=[0.54] dur=[1.1] confirmed=0 load=0 route=vad pick=0
+09-24 22:02:38.728 23589 25116 I WE-DIAG : encode: graphExecute OK in 239.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:02:41.411 23589 25116 I WE-DIAG : decode: 73 tokens in 2683.2 ms (36.76 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.11 ent=3.19 rung=2 steps=262
+09-24 22:02:41.565 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=152.2
+09-24 22:02:41.960 23589 23589 I WE-DIAG : speaker: seq=32 segs=1 windows=4 embedMs=393 ids=[1,1,1,1] best=[0.70,0.76,0.81,0.71] dur=[2.6,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:02:42.591 23589 25116 I WE-DIAG : encode: graphExecute OK in 240.4 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:02:42.829 23589 25116 I WE-DIAG : decode: 21 tokens in 237.5 ms (11.31 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.42 ent=nan rung=0 steps=24
+09-24 22:02:42.870 23589 21994 I WE-DIAG : VAD-standalone: 61952 samples -> 1 segments wallMs=39.9
+09-24 22:02:42.933 23589 23589 I WE-DIAG : speaker: seq=33 segs=1 windows=1 embedMs=62 ids=[1] best=[0.59] dur=[1.9] confirmed=0 load=0 route=vad pick=0
+09-24 22:02:46.298 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.3 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:02:46.510 23589 25116 I WE-DIAG : decode: 19 tokens in 211.8 ms (11.15 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.35 ent=nan rung=0 steps=22
+09-24 22:02:46.553 23589 21994 I WE-DIAG : VAD-standalone: 59392 samples -> 1 segments wallMs=40.2
+09-24 22:02:46.651 23589 23589 I WE-DIAG : speaker: seq=34 segs=1 windows=1 embedMs=96 ids=[1] best=[0.61] dur=[3.0] confirmed=0 load=0 route=vad pick=0
+09-24 22:03:01.317 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:01.949 23589 25116 I WE-DIAG : decode: 64 tokens in 632.5 ms (9.88 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.23 ent=3.42 rung=0 steps=67
+09-24 22:03:02.106 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=154.8
+09-24 22:03:02.404 23589 23589 I WE-DIAG : speaker: seq=35 segs=2 windows=6 embedMs=296 ids=[1,1,1,1,1,1] best=[-,0.69,0.65,0.72,0.60,0.66] dur=[0.7,2.8,2.0,2.0,2.0,2.0] confirmed=0 load=0 route=vad pick=1
+09-24 22:03:11.010 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:11.561 23589 25116 I WE-DIAG : decode: 54 tokens in 551.1 ms (10.20 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.29 ent=3.21 rung=0 steps=57
+09-24 22:03:11.661 23589 21994 I WE-DIAG : VAD-standalone: 155136 samples -> 1 segments wallMs=98.2
+09-24 22:03:11.923 23589 23589 I WE-DIAG : speaker: seq=36 segs=1 windows=4 embedMs=259 ids=[1,1,1,1] best=[0.69,0.72,0.60,0.62] dur=[2.4,2.4,2.4,2.4] confirmed=0 load=0 route=vad pick=0
+09-24 22:03:13.379 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.3 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:13.543 23589 25116 I WE-DIAG : decode: 13 tokens in 163.5 ms (12.58 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.34 ent=nan rung=0 steps=16
+09-24 22:03:13.569 23589 21994 I WE-DIAG : VAD-standalone: 38400 samples -> 1 segments wallMs=24.7
+09-24 22:03:13.620 23589 23589 I WE-DIAG : speaker: seq=37 segs=1 windows=1 embedMs=50 ids=[1] best=[0.55] dur=[1.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:03:18.623 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:18.917 23589 25116 I WE-DIAG : decode: 28 tokens in 294.0 ms (10.50 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.53 ent=nan rung=0 steps=31
+09-24 22:03:18.970 23589 21994 I WE-DIAG : VAD-standalone: 83456 samples -> 3 segments wallMs=52.7
+09-24 22:03:19.019 23589 23589 I WE-DIAG : speaker: seq=38 segs=3 windows=2 embedMs=48 ids=[1,1] best=[-,0.40] dur=[0.6,1.7] confirmed=0 load=0 route=vad pick=1
+09-24 22:03:21.022 23589 25116 I WE-DIAG : encode: graphExecute OK in 239.4 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:21.079 23589 25116 I WE-DIAG : decode: 3 tokens in 56.9 ms (18.97 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.90 ent=nan rung=0 steps=6
+09-24 22:03:21.108 23589 21994 I WE-DIAG : VAD-standalone: 38400 samples -> 1 segments wallMs=27.9
+09-24 22:03:21.153 23589 23589 I WE-DIAG : speaker: seq=39 segs=1 windows=1 embedMs=44 ids=[1] best=[0.56] dur=[1.5] confirmed=0 load=0 route=vad pick=0
+09-24 22:03:24.775 23589 25116 I WE-DIAG : encode: graphExecute OK in 246.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:25.010 23589 25116 I WE-DIAG : decode: 20 tokens in 235.2 ms (11.76 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.14 ent=nan rung=0 steps=23
+09-24 22:03:25.053 23589 21994 I WE-DIAG : VAD-standalone: 59904 samples -> 1 segments wallMs=42.0
+09-24 22:03:25.143 23589 23589 I WE-DIAG : speaker: seq=40 segs=1 windows=1 embedMs=89 ids=[1] best=[0.55] dur=[3.0] confirmed=0 load=0 route=vad pick=0
+09-24 22:03:39.782 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:40.565 23589 25116 I WE-DIAG : decode: 72 tokens in 783.6 ms (10.88 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.21 ent=3.13 rung=0 steps=75
+09-24 22:03:40.723 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=155.7
+09-24 22:03:41.124 23589 23589 I WE-DIAG : speaker: seq=41 segs=1 windows=4 embedMs=399 ids=[1,1,1,1] best=[0.79,0.76,0.76,0.68] dur=[3.8,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:03:42.366 23589 25116 I WE-DIAG : encode: graphExecute OK in 239.8 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:42.476 23589 25116 I WE-DIAG : decode: 11 tokens in 110.1 ms (10.01 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.50 ent=nan rung=0 steps=14
+09-24 22:03:42.504 23589 21994 I WE-DIAG : VAD-standalone: 41472 samples -> 1 segments wallMs=27.1
+09-24 22:03:42.554 23589 23589 I WE-DIAG : speaker: seq=42 segs=1 windows=1 embedMs=47 ids=[1] best=[0.67] dur=[1.6] confirmed=0 load=0 route=vad pick=0
+09-24 22:03:45.886 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:46.087 23589 25116 I WE-DIAG : decode: 18 tokens in 200.9 ms (11.16 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.32 ent=nan rung=0 steps=21
+09-24 22:03:46.128 23589 21994 I WE-DIAG : VAD-standalone: 56320 samples -> 2 segments wallMs=39.3
+09-24 22:03:46.202 23589 23589 I WE-DIAG : speaker: seq=43 segs=2 windows=1 embedMs=72 ids=[1] best=[0.68] dur=[1.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:03:48.118 23589 25116 I WE-DIAG : encode: graphExecute OK in 240.4 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:03:48.292 23589 25116 I WE-DIAG : decode: 15 tokens in 173.9 ms (11.59 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.13 ent=nan rung=0 steps=18
+09-24 22:03:48.319 23589 21994 I WE-DIAG : VAD-standalone: 35840 samples -> 1 segments wallMs=26.2
+09-24 22:03:48.319 23589 23589 I WE-DIAG : speaker: seq=44 segs=1 windows=2 embedMs=0 ids=[1,1] best=[-,-] dur=[0.0,0.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:04:03.132 23589 25116 I WE-DIAG : encode: graphExecute OK in 240.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:04:03.685 23589 25116 I WE-DIAG : decode: 52 tokens in 552.5 ms (10.62 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.46 ent=3.36 rung=0 steps=55
+09-24 22:04:03.855 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=169.0
+09-24 22:04:04.186 23589 23589 I WE-DIAG : speaker: seq=45 segs=2 windows=4 embedMs=330 ids=[1,1,1,1] best=[-,0.69,0.72,0.75] dur=[0.8,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:04:11.003 23589 25116 I WE-DIAG : encode: graphExecute OK in 239.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:04:11.355 23589 25116 I WE-DIAG : decode: 38 tokens in 351.8 ms (9.26 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.23 ent=3.28 rung=0 steps=41
+09-24 22:04:11.457 23589 21994 I WE-DIAG : VAD-standalone: 125952 samples -> 1 segments wallMs=101.7
+09-24 22:04:11.704 23589 23589 I WE-DIAG : speaker: seq=46 segs=1 windows=2 embedMs=246 ids=[1,1] best=[0.73,0.69] dur=[3.8,3.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:04:24.488 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:04:25.178 23589 25116 I WE-DIAG : decode: 68 tokens in 689.9 ms (10.15 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.12 ent=3.10 rung=0 steps=71
+09-24 22:04:25.331 23589 21994 I WE-DIAG : VAD-standalone: 215552 samples -> 2 segments wallMs=151.9
+09-24 22:04:25.665 23589 23589 I WE-DIAG : speaker: seq=47 segs=2 windows=6 embedMs=332 ids=[1,1,1,1,1,1] best=[-,0.65,0.64,0.49,0.66,0.66] dur=[0.9,2.8,1.7,2.5,2.1,2.1] confirmed=0 load=0 route=vad pick=1
+09-24 22:04:39.510 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:04:40.167 23589 25116 I WE-DIAG : decode: 66 tokens in 656.7 ms (9.95 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.31 ent=3.32 rung=0 steps=69
+09-24 22:04:40.336 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=168.3
+09-24 22:04:40.706 23589 23589 I WE-DIAG : speaker: seq=48 segs=1 windows=6 embedMs=368 ids=[1,1,1,1,1,1] best=[-,0.59,0.63,0.50,0.60,0.62] dur=[0.0,1.3,2.0,2.0,3.5,3.5] confirmed=0 load=0 route=vad pick=4
+09-24 22:04:44.491 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:04:44.783 23589 25116 I WE-DIAG : decode: 27 tokens in 291.3 ms (10.79 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.26 ent=nan rung=0 steps=30
+09-24 22:04:44.837 23589 21994 I WE-DIAG : VAD-standalone: 79872 samples -> 1 segments wallMs=53.5
+09-24 22:04:44.898 23589 23589 I WE-DIAG : speaker: seq=49 segs=1 windows=2 embedMs=60 ids=[1,1] best=[-,0.55] dur=[0.0,2.1] confirmed=0 load=0 route=vad pick=1
+09-24 22:04:49.059 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:04:49.354 23589 25116 I WE-DIAG : decode: 26 tokens in 294.6 ms (11.33 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.26 ent=nan rung=0 steps=29
+09-24 22:04:49.404 23589 21994 I WE-DIAG : VAD-standalone: 73216 samples -> 2 segments wallMs=49.0
+09-24 22:04:49.445 23589 23589 I WE-DIAG : speaker: seq=50 segs=2 windows=2 embedMs=39 ids=[1,1] best=[-,0.51] dur=[0.9,1.4] confirmed=0 load=0 route=vad pick=1
+09-24 22:04:51.299 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:04:51.463 23589 25116 I WE-DIAG : decode: 14 tokens in 163.8 ms (11.70 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.42 ent=nan rung=0 steps=17
+09-24 22:04:51.489 23589 21994 I WE-DIAG : VAD-standalone: 35840 samples -> 2 segments wallMs=25.3
+09-24 22:04:51.535 23589 23589 I WE-DIAG : speaker: seq=51 segs=2 windows=1 embedMs=45 ids=[1] best=[0.53] dur=[1.5] confirmed=0 load=0 route=vad pick=0
+09-24 22:05:06.312 23589 25116 I WE-DIAG : encode: graphExecute OK in 240.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:05:06.865 23589 25116 I WE-DIAG : decode: 63 tokens in 553.3 ms (8.78 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.19 ent=3.22 rung=0 steps=66
+09-24 22:05:07.046 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=179.4
+09-24 22:05:07.487 23589 23589 I WE-DIAG : speaker: seq=52 segs=1 windows=4 embedMs=439 ids=[1,1,1,1] best=[0.73,0.68,0.73,0.74] dur=[3.8,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:05:09.123 23589 25116 I WE-DIAG : encode: graphExecute OK in 238.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:05:09.347 23589 25116 I WE-DIAG : decode: 20 tokens in 224.2 ms (11.21 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.36 ent=nan rung=0 steps=23
+09-24 22:05:09.380 23589 21994 I WE-DIAG : VAD-standalone: 45056 samples -> 1 segments wallMs=31.6
+09-24 22:05:09.380 23589 23589 I WE-DIAG : speaker: seq=53 segs=1 windows=1 embedMs=0 ids=[1] best=[-] dur=[0.9] confirmed=0 load=0 route=vad pick=0
+09-24 22:05:15.838 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:05:16.158 23589 25116 I WE-DIAG : decode: 35 tokens in 319.4 ms (9.13 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.40 ent=3.32 rung=0 steps=38
+09-24 22:05:16.231 23589 21994 I WE-DIAG : VAD-standalone: 107520 samples -> 2 segments wallMs=72.2
+09-24 22:05:16.418 23589 23589 I WE-DIAG : speaker: seq=54 segs=2 windows=2 embedMs=186 ids=[1,1] best=[0.69,0.69] dur=[3.3,2.9] confirmed=0 load=0 route=vad pick=0
+09-24 22:05:30.873 23589 25116 I WE-DIAG : encode: graphExecute OK in 245.3 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:05:31.624 23589 25116 I WE-DIAG : decode: 72 tokens in 749.9 ms (10.42 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.26 ent=3.12 rung=0 steps=75
+09-24 22:05:31.787 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=160.9
+09-24 22:05:32.141 23589 23589 I WE-DIAG : speaker: seq=55 segs=1 windows=4 embedMs=352 ids=[1,1,1,1] best=[0.55,0.72,0.78,0.78] dur=[1.2,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:05:45.872 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.0 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:05:46.594 23589 25116 I WE-DIAG : decode: 71 tokens in 721.8 ms (10.17 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.25 ent=3.13 rung=0 steps=74
+09-24 22:05:46.764 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 2 segments wallMs=167.6
+09-24 22:05:47.203 23589 23589 I WE-DIAG : speaker: seq=56 segs=2 windows=4 embedMs=437 ids=[1,1,1,1] best=[0.79,0.67,0.74,0.65] dur=[3.8,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:06:00.881 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:06:01.603 23589 25116 I WE-DIAG : decode: 72 tokens in 721.4 ms (10.02 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.24 ent=3.34 rung=0 steps=75
+09-24 22:06:01.773 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=168.4
+09-24 22:06:02.196 23589 23589 I WE-DIAG : speaker: seq=57 segs=1 windows=4 embedMs=422 ids=[1,1,1,1] best=[0.77,0.73,0.63,0.72] dur=[3.1,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:06:15.882 23589 25116 I WE-DIAG : encode: graphExecute OK in 245.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:06:16.642 23589 25116 I WE-DIAG : decode: 73 tokens in 759.4 ms (10.40 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.20 ent=3.29 rung=0 steps=76
+09-24 22:06:16.815 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=170.8
+09-24 22:06:17.265 23589 23589 I WE-DIAG : speaker: seq=58 segs=1 windows=6 embedMs=447 ids=[1,1,1,1,1,1] best=[0.71,0.69,0.66,0.66,0.56,0.66] dur=[3.5,3.5,2.0,2.0,2.0,2.0] confirmed=0 load=0 route=vad pick=0
+09-24 22:06:19.074 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:06:19.280 23589 25116 I WE-DIAG : decode: 17 tokens in 205.4 ms (12.08 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.15 ent=nan rung=0 steps=20
+09-24 22:06:19.316 23589 21994 I WE-DIAG : VAD-standalone: 51200 samples -> 2 segments wallMs=35.9
+09-24 22:06:19.382 23589 23589 I WE-DIAG : speaker: seq=59 segs=2 windows=1 embedMs=65 ids=[1] best=[0.53] dur=[2.2] confirmed=0 load=0 route=vad pick=0
+09-24 22:06:34.143 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:06:34.892 23589 25116 I WE-DIAG : decode: 83 tokens in 748.1 ms (9.01 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.26 ent=3.29 rung=0 steps=86
+09-24 22:06:35.063 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=169.9
+09-24 22:06:35.469 23589 23589 I WE-DIAG : speaker: seq=60 segs=1 windows=4 embedMs=404 ids=[1,1,1,1] best=[0.67,0.69,0.73,0.74] dur=[3.5,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:06:36.609 23589 25116 I WE-DIAG : encode: graphExecute OK in 239.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:06:36.750 23589 25116 I WE-DIAG : decode: 14 tokens in 141.0 ms (10.07 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.34 ent=nan rung=0 steps=17
+09-24 22:06:36.778 23589 21994 I WE-DIAG : VAD-standalone: 40448 samples -> 2 segments wallMs=26.8
+09-24 22:06:36.842 23589 23589 I WE-DIAG : speaker: seq=61 segs=2 windows=1 embedMs=64 ids=[1] best=[0.57] dur=[2.2] confirmed=0 load=0 route=vad pick=0
+09-24 22:06:51.627 23589 25116 I WE-DIAG : encode: graphExecute OK in 243.0 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:06:52.317 23589 25116 I WE-DIAG : decode: 69 tokens in 689.4 ms (9.99 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.22 ent=3.21 rung=0 steps=72
+09-24 22:06:52.482 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=162.5
+09-24 22:06:52.882 23589 23589 I WE-DIAG : speaker: seq=62 segs=1 windows=4 embedMs=399 ids=[1,1,1,1] best=[0.71,0.74,0.73,0.71] dur=[2.9,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:07:06.625 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:07:07.406 23589 25116 I WE-DIAG : decode: 76 tokens in 781.2 ms (10.28 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.35 ent=3.23 rung=0 steps=79
+09-24 22:07:07.576 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=167.3
+09-24 22:07:08.014 23589 23589 I WE-DIAG : speaker: seq=63 segs=1 windows=4 embedMs=436 ids=[1,1,1,1] best=[0.73,0.78,0.75,0.66] dur=[3.8,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:07:13.288 23589 25116 I WE-DIAG : encode: graphExecute OK in 245.7 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:07:13.644 23589 25116 I WE-DIAG : decode: 32 tokens in 356.4 ms (11.14 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.43 ent=nan rung=0 steps=35
+09-24 22:07:13.717 23589 21994 I WE-DIAG : VAD-standalone: 106496 samples -> 2 segments wallMs=71.4
+09-24 22:07:13.882 23589 23589 I WE-DIAG : speaker: seq=64 segs=2 windows=2 embedMs=164 ids=[1,1] best=[0.64,0.61] dur=[2.5,3.3] confirmed=0 load=0 route=vad pick=1
+09-24 22:07:16.480 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.1 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:07:16.675 23589 25116 I WE-DIAG : decode: 15 tokens in 194.1 ms (12.94 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.20 ent=nan rung=0 steps=18
+09-24 22:07:16.713 23589 21994 I WE-DIAG : VAD-standalone: 51200 samples -> 1 segments wallMs=37.3
+09-24 22:07:16.786 23589 23589 I WE-DIAG : speaker: seq=65 segs=1 windows=1 embedMs=73 ids=[1] best=[0.62] dur=[2.5] confirmed=0 load=0 route=vad pick=0
+09-24 22:07:19.135 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.4 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:07:19.345 23589 25116 I WE-DIAG : decode: 17 tokens in 209.9 ms (12.35 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.18 ent=nan rung=0 steps=20
+09-24 22:07:19.374 23589 21994 I WE-DIAG : VAD-standalone: 42496 samples -> 1 segments wallMs=28.7
+09-24 22:07:19.434 23589 23589 I WE-DIAG : speaker: seq=66 segs=1 windows=1 embedMs=59 ids=[1] best=[0.56] dur=[2.0] confirmed=0 load=0 route=vad pick=0
+09-24 22:07:27.080 23589 25116 I WE-DIAG : encode: graphExecute OK in 239.9 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:07:27.498 23589 25116 I WE-DIAG : decode: 40 tokens in 417.8 ms (10.44 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.23 ent=3.38 rung=0 steps=43
+09-24 22:07:27.588 23589 21994 I WE-DIAG : VAD-standalone: 126976 samples -> 2 segments wallMs=88.7
+09-24 22:07:27.810 23589 23589 I WE-DIAG : speaker: seq=67 segs=2 windows=3 embedMs=221 ids=[1,1,1] best=[0.61,0.67,0.44] dur=[2.4,2.3,2.8] confirmed=0 load=0 route=vad pick=2
+09-24 22:07:42.092 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.7 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:07:42.753 23589 25116 I WE-DIAG : decode: 64 tokens in 660.2 ms (10.32 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.26 ent=3.25 rung=0 steps=67
+09-24 22:07:42.920 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=164.2
+09-24 22:07:43.325 23589 23589 I WE-DIAG : speaker: seq=68 segs=1 windows=4 embedMs=403 ids=[1,1,1,1] best=[0.75,0.68,0.66,0.74] dur=[3.1,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:08:03.596 23589 25116 I WE-DIAG : encode: graphExecute OK in 246.0 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:08:04.224 23589 25116 I WE-DIAG : decode: 63 tokens in 628.2 ms (9.97 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.41 ent=3.25 rung=0 steps=66
+09-24 22:08:04.395 23589 21994 I WE-DIAG : VAD-standalone: 240128 samples -> 1 segments wallMs=168.0
+09-24 22:08:04.800 23589 23589 I WE-DIAG : speaker: seq=70 segs=1 windows=4 embedMs=404 ids=[1,1,1,1] best=[0.69,0.73,0.71,0.76] dur=[2.5,3.8,3.8,3.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:08:07.420 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:08:07.629 23589 25116 I WE-DIAG : decode: 18 tokens in 208.4 ms (11.58 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.37 ent=nan rung=0 steps=21
+09-24 22:08:07.676 23589 21994 I WE-DIAG : VAD-standalone: 61440 samples -> 1 segments wallMs=45.3
+09-24 22:08:07.778 23589 23589 I WE-DIAG : speaker: seq=71 segs=1 windows=1 embedMs=102 ids=[1] best=[0.48] dur=[3.2] confirmed=0 load=0 route=vad pick=0
+09-24 22:08:10.920 23589 25116 I WE-DIAG : encode: graphExecute OK in 241.8 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:08:11.078 23589 25116 I WE-DIAG : decode: 13 tokens in 157.1 ms (12.09 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.12 ent=nan rung=0 steps=16
+09-24 22:08:11.123 23589 21994 I WE-DIAG : VAD-standalone: 56320 samples -> 1 segments wallMs=44.2
+09-24 22:08:11.123 23589 23589 I WE-DIAG : speaker: seq=72 segs=1 windows=1 embedMs=0 ids=[1] best=[-] dur=[0.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:08:13.796 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.3 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:08:13.963 23589 25116 I WE-DIAG : decode: 14 tokens in 166.9 ms (11.92 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.69 ent=nan rung=0 steps=17
+09-24 22:08:13.998 23589 21994 I WE-DIAG : VAD-standalone: 45568 samples -> 1 segments wallMs=34.3
+09-24 22:08:14.093 23589 23589 I WE-DIAG : speaker: seq=73 segs=1 windows=1 embedMs=93 ids=[1] best=[0.54] dur=[2.8] confirmed=0 load=0 route=vad pick=0
+09-24 22:08:19.456 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.5 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:08:19.758 23589 25116 I WE-DIAG : decode: 28 tokens in 300.9 ms (10.75 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.23 ent=nan rung=0 steps=31
+09-24 22:08:19.824 23589 21994 I WE-DIAG : VAD-standalone: 90624 samples -> 1 segments wallMs=65.1
+09-24 22:08:19.990 23589 23589 I WE-DIAG : speaker: seq=74 segs=1 windows=2 embedMs=165 ids=[1,1] best=[0.65,0.67] dur=[2.8,2.8] confirmed=0 load=0 route=vad pick=1
+09-24 22:08:32.517 23589 25116 I WE-DIAG : encode: graphExecute OK in 242.3 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:08:32.950 23589 25116 I WE-DIAG : decode: 42 tokens in 432.5 ms (10.30 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.17 ent=3.23 rung=0 steps=45
+09-24 22:08:33.093 23589 21994 I WE-DIAG : VAD-standalone: 208896 samples -> 2 segments wallMs=141.2
+09-24 22:08:33.457 23589 23589 I WE-DIAG : speaker: seq=75 segs=2 windows=4 embedMs=362 ids=[1,1,1,2] best=[0.71,0.54,0.75,0.08] dur=[3.0,3.2,3.2,3.2] confirmed=0 load=0 route=vad pick=1
+09-24 22:08:40.393 23589 25116 I WE-DIAG : encode: graphExecute OK in 244.6 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:08:40.794 23589 25116 I WE-DIAG : decode: 39 tokens in 400.6 ms (10.27 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.35 ent=3.23 rung=0 steps=42
+09-24 22:08:40.870 23589 21994 I WE-DIAG : VAD-standalone: 125952 samples -> 1 segments wallMs=75.3
+09-24 22:08:41.060 23589 23589 I WE-DIAG : speaker: seq=76 segs=1 windows=2 embedMs=189 ids=[1,1] best=[0.70,0.71] dur=[3.5,3.9] confirmed=0 load=0 route=vad pick=1
+09-24 22:08:43.117 23589 25116 I WE-DIAG : encode: graphExecute OK in 240.2 ms (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling)
+09-24 22:08:43.310 23589 25116 I WE-DIAG : decode: 14 tokens in 192.2 ms (13.73 ms/token), terminated by EOT (vote: OK sustained: dcvsEnable=1 PERFORMANCE corners=SVS..TURBO sleepAllowed defaultSleepLatency rpc=100us NO-polling) nsp=0.00 lp=-0.40 ent=nan rung=0 steps=17
+09-24 22:08:43.340 23589 21994 I WE-DIAG : VAD-standalone: 43520 samples -> 1 segments wallMs=29.0
+09-24 22:08:43.380 23589 23589 I WE-DIAG : speaker: seq=77 segs=1 windows=1 embedMs=40 ids=[1] best=[0.54] dur=[1.1] confirmed=0 load=0 route=vad pick=0
+09-24 22:08:43.388 23589 23589 I WE-DIAG : finalize-timing: speaker-drain=75ms settled=true
