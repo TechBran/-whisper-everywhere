@@ -4,7 +4,9 @@
 delivery). Every fix-before-plan finding is folded in below; the review's own record is in this session's
 workflow journal (`wf_cc4f0c46-392`). Owner ruling the same day: *"Build the tier. Yes."*, plus *"a version
 checker there to make sure we're hitting the right chip for the driver."* The owner is reading MediaTek's
-NeuroPilot Express SDK licence themself; nothing ships to Play before that is accepted.
+NeuroPilot Express SDK licence themself; nothing ships to Play before that is accepted. **Accepted
+2026-09-25**, at the end of the Tab S10+ ship session: *"we already agreed to the license."* The licences
+page carries the pair's provenance entry (`id="mediatek-apu-models"`; `docs/LANGUAGE-CLEARANCE.md` records it).
 
 **What this is:** `npu-turbo` — the app's fastest local tier, large-v3-turbo on an AI chip — on MediaTek's APU,
 for the Galaxy Tab S10+/S10 Ultra (MT6989) in this release, and for the Tab S11/S11 Ultra (MT6991) in a later

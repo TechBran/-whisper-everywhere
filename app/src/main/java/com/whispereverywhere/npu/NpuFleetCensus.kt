@@ -496,8 +496,9 @@ object NpuFleetCensus {
         // through LiteRtAsrEngine — the dispatch staged into filesDir, both files' chip stamps
         // checked, the pair restored on the APU. What it does NOT have yet: a run from a Play build
         // (the P3 sheet on the tablet — the in-app cold arm, per-commit timing, the 30-minute
-        // session), the bundle built and size-verified on the MS-02 (P2-8), and the owner's
-        // acceptance of the NeuroPilot Express licence, which gates the first Play upload.
+        // session), the bundle built and size-verified on the MS-02 (P2-8). (The owner's acceptance
+        // of the NeuroPilot Express licence, which gated the first Play upload, came on 2026-09-25:
+        // "we already agreed to the license"; the licences page carries the pair's provenance.)
         NpuSocFamily(
             id = "mt6989",
             packGroup = "soc_mt6989",
