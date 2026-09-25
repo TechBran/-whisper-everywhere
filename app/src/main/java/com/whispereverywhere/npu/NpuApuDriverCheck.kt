@@ -155,9 +155,11 @@ interface NpuApuVerdictStore {
     val npuApuVerdict: NpuApuVerdict?
 
     /**
-     * The [NpuApuKey.marker] of a walk that started and has not finished, or null (L4). Present
-     * with no reusable verdict under the same key, it can mean one thing only: the process died
-     * inside the walk.
+     * The in-flight marker of a walk that started and has not finished, or null (L4) — the key's
+     * [NpuApuKey.marker] with the walk's attempt ([NpuApuDriverCheck.inFlightMarker], since the P2c
+     * review's later item). Present with no reusable verdict under the same key, it can mean one
+     * thing only: the process died inside the walk — killed or crashed, which one marker cannot
+     * tell apart, and two in a row can.
      */
     val npuApuProbeInFlight: String?
 
@@ -225,11 +227,44 @@ object NpuApuDriverCheck {
      * as `refuse(probe-crashed)` on the `apu:` line and `probe=fail:probe-crashed` on the offer
      * line.
      *
-     * The stated trade: a process KILLED inside the ~200 ms walk — not crashed, killed — reads the
-     * same, and costs the tier until the next install or OTA. The walk runs once per install, at
-     * process start; the alternative is a crash loop.
+     * **Recorded on the SECOND find, not the first (the P2c review, a LATER item — kill vs
+     * crash).** A process KILLED inside the ~200 ms walk — not crashed, killed — leaves the same
+     * marker a crash does, and the walk runs exactly when a kill is likeliest: the first launch
+     * after an update or an OTA, often a `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` start under
+     * memory pressure. Recorded on the first find, one kill hid the tier until the next update.
+     * So the marker carries an attempt counter ([inFlightMarker]): a launch that finds its own
+     * key's marker from ONE unfinished walk re-walks once, and only a second consecutive
+     * unfinished walk under the key ([CRASH_FINDS]) records this. The price, stated: a real crash
+     * loop costs one extra crash before the guard holds.
      */
     const val PROBE_CRASHED: String = "probe-crashed"
+
+    /**
+     * How many unfinished walks under one key it takes to record [PROBE_CRASHED] — two: one may be
+     * a kill, two in a row is the crash loop the guard exists for.
+     */
+    const val CRASH_FINDS: Int = 2
+
+    /**
+     * The in-flight marker written before walk number [attempt] (1, then 2) under [key]: the key's
+     * one spelling ([NpuApuKey.marker]) and the attempt, `#`-joined after it, so the marker is
+     * still compared whole and never parsed for the key.
+     */
+    fun inFlightMarker(key: NpuApuKey, attempt: Int): String = "${key.marker()}#$attempt"
+
+    /**
+     * How many walks under [key] started and never finished, as [inFlight] records it: 0 when there
+     * is no marker or it is another key's; the marker's own attempt otherwise — and 1 for a marker
+     * of this key whose attempt cannot be read, which is the reading that walks again rather than
+     * the one that gives up.
+     */
+    fun unfinishedWalks(inFlight: String?, key: NpuApuKey): Int {
+        if (inFlight == null) return 0
+        val marker = key.marker()
+        if (inFlight == marker) return 1
+        if (!inFlight.startsWith("$marker#")) return 0
+        return inFlight.removePrefix("$marker#").toIntOrNull()?.takeIf { it >= 1 } ?: 1
+    }
 
     private val _verdict = MutableStateFlow<NpuApuVerdict?>(null)
 
@@ -299,16 +334,22 @@ object NpuApuDriverCheck {
      * L4) — decided from what [store] holds, in this order:
      *
      *  1. **a stored verdict that still answers** ([reusableOrNull] under [key]) — reused, no walk;
-     *  2. **the in-flight marker of THIS key, with no verdict** — the last walk under this key
-     *     started and never finished: the process died inside it, most likely a native crash in
-     *     the adapter walk that nothing in Kotlin can catch. [PROBE_CRASHED] is recorded and the
-     *     adapter is never walked again under this key;
-     *  3. **otherwise one walk**: the marker is committed FIRST, synchronously; then [probeNow]; then
-     *     the verdict is recorded and the marker retired in one synchronous write — unless the
-     *     probe THREW (an out-of-memory, a missing `liblitertasr.so`), whose refusal is answered for
-     *     this process but never stored: a stored refusal outlives its cause, and one that came
-     *     from an exception is the likeliest to (L3). The marker is retired either way — a throw is
-     *     not a crash — so the next launch probes again.
+     *  2. **the in-flight marker of THIS key, from [CRASH_FINDS] unfinished walks in a row, with no
+     *     verdict** — the process died inside the walk twice running: a crash loop, most likely a
+     *     native crash in the adapter walk that nothing in Kotlin can catch. [PROBE_CRASHED] is
+     *     recorded and the adapter is never walked again under this key. ONE unfinished walk is not
+     *     that: it may be a kill (see [PROBE_CRASHED]), so the launch that finds it walks again, as
+     *     attempt 2 (the P2c review's later item);
+     *  3. **otherwise one walk**: the marker ([inFlightMarker], carrying the attempt) is committed
+     *     FIRST, synchronously; then [probeNow]; then the verdict is recorded and the marker retired
+     *     in one synchronous write — unless the probe THREW (an out-of-memory, a missing
+     *     `liblitertasr.so`), whose refusal is answered for this process but never stored: a stored
+     *     refusal outlives its cause, and one that came from an exception is the likeliest to (L3).
+     *     The marker is retired either way — a throw is not a crash — so the next launch probes
+     *     again. **And on EVERY exit that is not a death** — including an `Error` thrown out of
+     *     [probeNow] itself, after the marker is on disk — the marker is retired (`finally`), so the
+     *     same process's retry (the boot prewarm settling after the launch thread's settle threw)
+     *     never reads its own marker as a crash.
      *
      * BLOCKING when it walks (169–239 ms, bionic's loader lock held): never on Main, and never
      * inside `NativeComputeGate`, which would park a session's native work behind a driver walk.
@@ -323,30 +364,38 @@ object NpuApuDriverCheck {
         clock: () -> Long,
     ): Settled {
         reusableOrNull(store.npuApuVerdict, key)?.let { return Settled(it, reused = true) }
-        val marker = key.marker()
-        if (store.npuApuProbeInFlight == marker) {
+        val unfinished = unfinishedWalks(store.npuApuProbeInFlight, key)
+        if (unfinished >= CRASH_FINDS) {
             val crashed = NpuApuVerdict(key, PROBE_CRASHED, clock())
             store.recordNpuApuVerdict(crashed)
             return Settled(crashed, reused = false)
         }
-        store.markNpuApuProbeInFlight(marker)
-        var threw = false
-        val verdict = probeNow(
-            probe = { dispatchDir, lib, major ->
-                try {
-                    probe(dispatchDir, lib, major)
-                } catch (cause: Throwable) {
-                    threw = true
-                    throw cause
-                }
-            },
-            filesDir = filesDir,
-            libDir = libDir,
-            key = key,
-            clock = clock,
-        )
-        if (threw) store.clearNpuApuProbeInFlight() else store.recordNpuApuVerdict(verdict)
-        return Settled(verdict, reused = false)
+        store.markNpuApuProbeInFlight(inFlightMarker(key, unfinished + 1))
+        var retired = false
+        try {
+            var threw = false
+            val verdict = probeNow(
+                probe = { dispatchDir, lib, major ->
+                    try {
+                        probe(dispatchDir, lib, major)
+                    } catch (cause: Throwable) {
+                        threw = true
+                        throw cause
+                    }
+                },
+                filesDir = filesDir,
+                libDir = libDir,
+                key = key,
+                clock = clock,
+            )
+            if (threw) store.clearNpuApuProbeInFlight() else store.recordNpuApuVerdict(verdict)
+            retired = true
+            return Settled(verdict, reused = false)
+        } finally {
+            // Not a death — the process is still here to run this — so not a crash: whatever threw,
+            // the marker must not outlive this exit and be read as one by this process's retry.
+            if (!retired) runCatching { store.clearNpuApuProbeInFlight() }
+        }
     }
 
     /**
