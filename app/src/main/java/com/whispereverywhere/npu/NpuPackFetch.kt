@@ -160,7 +160,11 @@ object NpuPackFetch {
     /** `AssetPackErrorCode.APP_UNAVAILABLE`. */
     const val ERROR_APP_UNAVAILABLE: Int = -1
 
-    /** `AssetPackErrorCode.PACK_UNAVAILABLE` — this app version doesn't declare the pack. */
+    /**
+     * `AssetPackErrorCode.PACK_UNAVAILABLE` — Play has no such pack for this app version: either
+     * the version does not declare it, or Play has not finished staging it YET (2026-09-25: -2 for
+     * about three hours after an upload, while Play prepared the Tab's 1.2 GB pack, then served).
+     */
     const val ERROR_PACK_UNAVAILABLE: Int = -2
 
     /** `AssetPackErrorCode.INVALID_REQUEST`. */
@@ -391,10 +395,25 @@ object NpuPackFetch {
         "Google Play says this app is currently unavailable, so it can't deliver the " +
             "model right now. Try again later, or use 'Import model pair…' below."
 
-    /** [failureReason]'s PACK_UNAVAILABLE sentence — one of the family that names the import. */
+    /**
+     * [failureReason]'s PACK_UNAVAILABLE sentence — one of the family that names the import.
+     *
+     * TRUE IN BOTH CASES PLAY ANSWERS -2 FOR (reworded 4.16.1). It used to say *"This version of the
+     * app doesn't offer that model pack on Google Play. Update the app from Play"* — right only when
+     * the version really lacks the pack. On 2026-09-25 the Tab S10+ was on the current version and
+     * Play answered -2 for about three hours after the upload while it staged the 1.2 GB pack
+     * ("Request to PGS failed because all packs are unavailable"), then served it on the owner's
+     * Retry: the sentence had told him to update an app that was already up to date. It now states
+     * the fact both cases share (not available for this version YET), the staging case's step (try
+     * again in a few hours — "may", because nothing here knows Play's staging time) and the missing
+     * pack's (update the app, after a day). No promise, no comparative. The card's Retry stays
+     * beside it: a Failed fetch leaves the controller's single-flight guard open.
+     */
     private const val PACK_UNAVAILABLE_ANSWER: String =
-        "This version of the app doesn't offer that model pack on Google Play. Update " +
-            "the app from Play, or use 'Import model pair…' below."
+        "That model pack isn't available from Google Play for this version of the app yet. If the " +
+            "app was just updated, Play may still be preparing it — try again in a few hours. If " +
+            "it's still unavailable after a day, update the app from Play, " +
+            "or use 'Import model pair…' below."
 
     /** [emptyDeliveryRefusal] for a device-targeted pair — names the import. */
     private const val EMPTY_TARGETED: String =
@@ -426,8 +445,9 @@ object NpuPackFetch {
             "Google Play says this app is currently unavailable, so it can't deliver the " +
             "model right now. Try again later.",
         PACK_UNAVAILABLE_ANSWER to
-            "This version of the app doesn't offer that model pack on Google Play. Update " +
-            "the app from Play.",
+            "That model pack isn't available from Google Play for this version of the app yet. If " +
+            "the app was just updated, Play may still be preparing it — try again in a few hours. " +
+            "If it's still unavailable after a day, update the app from Play.",
         EMPTY_TARGETED to
             "Google Play delivered no model for this device — it is not in any device group this " +
             "app publishes a pack for, so the pack arrived empty. Nothing was installed.",
