@@ -290,3 +290,10 @@ under `~/.androidbuild/probe-logs/tab-apu-2026-09-24/`.
 The plan's P1b done-conditions hold except one number: per-step ≤ 24 ms was the Kotlin probe's figure with
 runtime-created buffers; the product engine's 30 ms includes the 8 MB cache copy and the locked logits read, and it
 is the figure the cadence row now uses.
+
+**Addendum (20:31, run `p1b3_litertasr_default`, probe APK `0cbc8865…`, `liblitertasr.so` 171,056 B `a39500a7…`).**
+The default flipped in 7099161 and run with no `kvstrategy` argument: the init line reports `kvstrategy=1`,
+probe 165 ms, init 3,632 ms, re-arm 3,410 ms, encode warm 1,723.2 ms (sd 5.3), step warm mean 32.4 ms
+(23.1–36.6, sd 5.4 — a wider spread than the 20:19 kv1 run's 25.6–33.2; the two runs sit inside each other's
+range, so the per-step figure to quote is "≈30 ms, 23–37"), all seven utterances `matches_reference=true`,
+zero waits. The 20-token commit estimate stays ≈ 2.3–2.4 s.
