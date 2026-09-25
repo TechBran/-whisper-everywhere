@@ -244,6 +244,49 @@ class NpuPackFetchTest {
         assertTrue("the sizeless form is still a sentence: $sizeless", sizeless.isNotBlank())
     }
 
+    /**
+     * PACK_UNAVAILABLE (-2) IS WORDED TRUE FOR BOTH THINGS PLAY MEANS BY IT (4.16.1). The old
+     * sentence — *"This version of the app doesn't offer that model pack on Google Play. Update the
+     * app from Play"* — was false on 2026-09-25: the Tab S10+ was on the current version and Play
+     * answered -2 for about three hours after the upload while it staged the 1.2 GB pack, then
+     * served it on the owner's Retry. So the sentence states what both cases share (not available
+     * for this version YET), the staging case's step (a few hours, hedged) and the missing pack's
+     * (update the app, after a day), within the house claim rules: no promise, no comparative, no
+     * superlative, no absolute, no invented number. Pinned exactly on both device shapes (the twin
+     * without the import is pinned in [aRefusalWordedForADeviceWithoutTheImportRouteNeverNamesIt]).
+     */
+    @Test
+    fun packUnavailableIsTrueWhilePlayStagesThePackAndWhenTheVersionLacksIt() {
+        val withRoute = NpuPackFetch.failureReason(NpuPackFetch.ERROR_PACK_UNAVAILABLE, total)
+        assertEquals(
+            "That model pack isn't available from Google Play for this version of the app yet. If the " +
+                "app was just updated, Play may still be preparing it — try again in a few hours. If " +
+                "it's still unavailable after a day, update the app from Play, or use 'Import model " +
+                "pair…' below.",
+            withRoute,
+        )
+        val without = NpuPackFetch.reasonFor(withRoute, importRoute = false)
+        for (sentence in listOf(withRoute, without)) {
+            val l = sentence.lowercase()
+            assertTrue("the fact both cases share — not available YET: <<$sentence>>", l.contains("for this version of the app yet"))
+            assertTrue(
+                "the staging case's step, hedged rather than promised: <<$sentence>>",
+                l.contains("may still be preparing it") && l.contains("try again in a few hours"),
+            )
+            assertTrue("the missing pack's step, after a day: <<$sentence>>", l.contains("after a day, update the app from play"))
+            assertFalse("no promise that the pack arrives: <<$sentence>>", Regex("\\b(will|guarantee[sd]?)\\b").containsMatchIn(l))
+            assertFalse("no comparative: <<$sentence>>", Regex("\\b(faster|sooner|quicker|better)\\b").containsMatchIn(l))
+            assertFalse("no superlative: <<$sentence>>", Regex("\\b(fastest|best|highest|most|quickest|top)\\b").containsMatchIn(l))
+            for (absolute in listOf("instant", "always", "never", "unlimited")) {
+                assertFalse("no absolute '$absolute': <<$sentence>>", l.contains(absolute))
+            }
+            assertFalse("no invented duration, as a number: <<$sentence>>", Regex("\\d").containsMatchIn(l))
+            assertFalse("not the sideload family's sentence: <<$sentence>>", sentence.contains("it wasn't installed from Play"))
+            assertFalse("and never the old advice alone: <<$sentence>>", sentence.contains("doesn't offer"))
+        }
+        assertTrue("with the route, the import below is named", withRoute.contains("'Import model pair…' below"))
+    }
+
     @Test
     fun networkErrorCarriesTheExactRetryCopy() {
         assertEquals(
@@ -946,8 +989,9 @@ class NpuPackFetchTest {
             NpuPackFetch.reasonFor(NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_UNAVAILABLE, total), importRoute = false),
         )
         assertEquals(
-            "This version of the app doesn't offer that model pack on Google Play. Update the app " +
-                "from Play.",
+            "That model pack isn't available from Google Play for this version of the app yet. If the " +
+                "app was just updated, Play may still be preparing it — try again in a few hours. If " +
+                "it's still unavailable after a day, update the app from Play.",
             NpuPackFetch.reasonFor(NpuPackFetch.failureReason(NpuPackFetch.ERROR_PACK_UNAVAILABLE, total), importRoute = false),
         )
         assertEquals(

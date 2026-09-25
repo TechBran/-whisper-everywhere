@@ -467,6 +467,20 @@ still runs at process start for the stored verdict (§2.3) — not to hide a wai
 trims (§2.6).
 The Tab sheet records cold-tap audio loss.
 
+*Owner ruling, 2026-09-25 — the sustained wall on the AI-chip tiers is 5 s (4.16.1):* **"a fair compromise
+would be five seconds to start… we can set it straight across the board for all of the NPU accelerator
+tiers."** Speech with no break long enough for the endpointer now commits every 5 s on `npu` and `npu-turbo`
+— on this tablet's APU as on the Snapdragon rows, since both vendors run those two tier ids — instead of at
+the 15 s wall, so the finalized turbo text arrives sooner and the preview strip never builds up. The session's
+first stretch keeps its 4 s wall, every CPU tier and every cloud session keep 15 s, the commit floors are
+unchanged (5 s clears turbo's 2,000/3,200 rows) and so is the 3 s cap-cut retain. At the per-commit cost above
+(≈ 2.5 s for the Tab sheet's 23-token commit) that is ≈ 50 % APU duty under unbroken speech, against ≈ 12 % on
+the Fold6 (≈ 0.6 s) and an estimated ≈ 18 % on the S23 Ultra (≈ 0.9 s); the owner accepted the tablet's half
+duty "to see how bad it is". The two costs — sentence context lost at three times as many seams, and three
+times the cap-driven commits per minute on the battery — are recorded at `SegmentCapPolicy.NPU_SUSTAINED_WALL_MS`
+beside the rule (`laterWallMsFor`); every cap cut prints `wall-clock cap -> commit (cap=5000ms)` through the
+native diag, so a Play build shows the count per minute.
+
 ## 3. A commit, end to end
 
 1. The service's mel path (whisper.cpp's, with the bundled 128-bin bank — unchanged) produces the float mel.

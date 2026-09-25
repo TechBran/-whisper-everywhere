@@ -167,14 +167,25 @@ class CapSeamPinTest {
         // the cap log call has never been pinned at its call site, so deleting it left the suite
         // green on 3.6.0 too. EndpointDiagTest pins every byte of the line; only this says the
         // branch ever asks for it.
+        //
+        // 4.16.1 — AND IT GOES OUT THROUGH THE NATIVE EXPORT. R8 strips every android.util.Log call
+        // from the release build (`proguard-rules.pro`, "Release log hygiene"), and the owner's
+        // 4.16.1 session counts these lines per minute on a Play build, so a Log.i here would make
+        // that count read zero on the one build it is taken on — with the debug build printing
+        // every line. Wrapped in runCatching, as every native diag site is: a log may not cost a cut.
         val capLine = indexOfOrFail(
-            "                android.util.Log.i(\"WE-DIAG\", " +
-                "EndpointDiag.capCommitLine(segmentCapPolicy.currentCapMs()))"
+            "                runCatching { WhisperNative.diag(" +
+                "EndpointDiag.capCommitLine(segmentCapPolicy.currentCapMs())) }"
         )
         assertEquals(
             "the cap line is emitted from exactly one place",
             1,
             text.split("EndpointDiag.capCommitLine(").size - 1,
+        )
+        assertEquals(
+            "and never through android.util.Log, which a release build strips",
+            0,
+            text.split("\n").count { it.contains("android.util.Log") && it.contains("capCommitLine") },
         )
         // ...and it is emitted BEFORE the bookkeeping, which is load-bearing and is what the
         // three-line comment above the call states: currentCapMs() must be read before onCommit

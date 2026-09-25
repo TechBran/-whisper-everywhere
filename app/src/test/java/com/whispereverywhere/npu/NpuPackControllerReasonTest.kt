@@ -67,6 +67,22 @@ class NpuPackControllerReasonTest {
         assertEquals(NpuPackFetch.FetchState.Downloading(10L, 100L), state.value)
     }
 
+    /**
+     * A -2 REFUSAL IS RETRYABLE FROM THE CARD, IN PLACE (4.16.1). On 2026-09-25 Play answered
+     * PACK_UNAVAILABLE for about three hours while it staged the Tab S10+'s pack, and then served
+     * it on the owner's Retry. The card's half is pinned as source in
+     * `NpuImportWiringPinTest.theFetchCardSpeaksTheMachinesWordsAndBridgesToTheImportPanel` (the
+     * Failed branch's `TextButton(onClick = onFetch)`, whose handler is `NpuPackController.start`);
+     * this is the controller's half, executed: the published refusal leaves the single-flight guard
+     * OPEN, so that Retry tap starts a fetch instead of being refused as busy.
+     */
+    @Test
+    fun aPackUnavailableRefusalLeavesTheSingleFlightGuardOpenForTheCardsRetry() {
+        publish(NpuPackFetch.FetchState.Failed(NpuPackFetch.failureReason(NpuPackFetch.ERROR_PACK_UNAVAILABLE)))
+        assertTrue("the refusal is published as a Failed terminal", state.value is NpuPackFetch.FetchState.Failed)
+        assertFalse("…which the guard does not hold: the card's Retry is accepted", NpuPackController.isBusy())
+    }
+
     @Test
     fun theFunnelReadsTheDevicesImportRuleOffTheAppsFamilyMemo() {
         val src = File(

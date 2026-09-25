@@ -115,4 +115,14 @@ class EndpointDiagTest {
             EndpointDiag.capCommitLine(15_000L),
         )
     }
+
+    @Test
+    fun theAiChipTiersSustainedWallPrintsAsCap5000ms() {
+        // 4.16.1: the line the owner's session counts per minute on the AI-chip tiers, byte for
+        // byte, from the constant the service hands the cap — not from a literal that could agree.
+        assertEquals(
+            "wall-clock cap -> commit (cap=5000ms) VAD-MISS: no endpoint in this window",
+            EndpointDiag.capCommitLine(SegmentCapPolicy.NPU_SUSTAINED_WALL_MS),
+        )
+    }
 }

@@ -478,6 +478,43 @@ class StartupRingWiringPinTest {
         )
     }
 
+    /**
+     * 4.16.1 — THE RING'S EVIDENCE SURVIVES A PLAY BUILD. R8 strips every android.util.Log call
+     * from release (`proguard-rules.pro`, "Release log hygiene"), and the owner's field report —
+     * the words spoken during the ~4 s arm lost on every tier and device (the Tab S10+ ship sheet's
+     * F3, 2026-09-25) — can only be investigated on a track build. So all four of the ring's lines
+     * go out through ONE native site, and that site hops OFF MAIN before it touches the export
+     * (the offer line's and the stale-pair sweep's discipline: the whisper JNI library is never
+     * first loaded on Main). The ring's texts are unchanged — StartupRingTest pins their bytes.
+     */
+    @Test
+    fun theRingsFourEvidenceLinesGoOutThroughOneNativeSiteOffMain() {
+        indexOfOrFail(
+            "    private fun logRingLine(ringLine: String) {\n" +
+                "        serviceScope.launch(Dispatchers.IO) { runCatching { WhisperNative.diag(ringLine) } }\n" +
+                "    }\n"
+        )
+        for (line in listOf("drainLine", "overflowLine", "switchFlushLine", "stopFlushLine")) {
+            assertEquals(
+                "StartupRing.$line( is handed to the native site, once",
+                1,
+                Regex("logRingLine\\(\\s*StartupRing\\.$line\\(").findAll(text).count(),
+            )
+        }
+        assertEquals(
+            "no ring line goes through android.util.Log any more — a release build strips it",
+            0,
+            Regex("android\\.util\\.Log\\.[a-z]+\\(\\s*\"WE-DIAG\",\\s*StartupRing\\.").findAll(text).count(),
+        )
+        assertEquals(
+            "…nor on any single live line that names both",
+            emptyList<String>(),
+            liveLines(text, "android.util.Log").filter { it.contains("StartupRing.") },
+        )
+        assertEquals("the declaration plus the four callers", 5, liveLines(text, "logRingLine(").size)
+        assertEquals("and the ring's native export is that one site", 1, count("WhisperNative.diag(ringLine)"))
+    }
+
     @Test
     fun theReadinessFlagIsSetOnceInOnOpenAndTheDrainLineIsEmittedBesideIt() {
         assertEquals("one writer for true, one for false-at-open, one for false-at-teardown", 1, count("engineReady = true"))
