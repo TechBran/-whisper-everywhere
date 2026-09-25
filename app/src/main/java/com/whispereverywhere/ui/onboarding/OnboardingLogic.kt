@@ -217,8 +217,41 @@ object OnboardingLogic {
     fun showChooseDifferentModel(speech: EngineState): Boolean = speech is EngineState.Failed
 
     /**
-     * What joins a capable device's one-card lineup on the ONBOARDING chooser (4.3) —
-     * `WhisperCatalog.pickableFor`'s `alsoOfferedIds`, produced for this surface.
+     * What joins a capable device's one-card lineup — `WhisperCatalog.pickableFor`'s
+     * `alsoOfferedIds` — on BOTH chooser surfaces: the onboarding flow (4.3) and, since the
+     * owner's ruling of 2026-09-25, the Settings picker too. ONE rule, two callers; each surface
+     * owns only the facts it is made of (the disk, its latch, its gate answer, its read of the
+     * selection), so the two can never answer differently about which card a device sees.
+     *
+     * ### The owner's ruling of 2026-09-25 — no CPU menu beside the one tier
+     *
+     * *"if the NPU multilingual is here, then we hide all of the other CPU models so users don't
+     * get confused about which model to download."* — during the Tab S10+ ship session of
+     * 4.16.0/113, whose chooser showed the three Q8 rungs (`small-q8`, `medium-q8`, `ultra-q8`)
+     * beside the AI-chip card because they were INSTALLED there (the 2026-09-17 ladder session).
+     * Until then everything on disk joined the one-card lineup — `pickableFor`'s producer 1, the
+     * 4.3 non-disturbance rule — and the ruling supersedes that rule's DISPLAY half only: when
+     * [offeredGatedIds] names `WhisperCatalog.ONE_TIER_ID` and the delivery has not failed, the
+     * installed ids that join are the GATED ones — an installed `npu` pair keeps exactly its 4.3
+     * behaviour, neither widened nor narrowed — plus the selection. Nothing is deleted and
+     * nothing is switched: the files stay, routing keeps reading the selection, the CPU fallback
+     * question (`WhisperCatalog.hasCpuFallback`) keeps reading the whole disk, and the decline
+     * recovery keeps its own control on the declining card.
+     *
+     * **ONE EXCEPTION, by controller ruling (the head's, the same day): the CURRENTLY SELECTED
+     * model is never hidden.** A user whose selection is an installed CPU rung still sees the card
+     * they are running on — an active selection with no card is the confusion the ruling is
+     * against, from the other side. Once they pick the AI-chip tier, the CPU card goes. The
+     * exception FILTERS the disk and adds nothing: a selected rung that is not on disk was never in
+     * a one-tier lineup and gets no Download card now; and `pickableFor` still runs `!it.retired`
+     * first, so a selected retired tier (`multi`, `pro`, `eco`, `base`) keeps no card, as it has
+     * had none since it retired.
+     *
+     * Everywhere else the answer is the pre-ruling one byte for byte: on a device whose gate set
+     * does not name the one tier (which `pickableFor` then never reads at all), and after a failed
+     * delivery on any device — the escape below. `OnboardingLogicTest` executes both halves.
+     *
+     * ### The no-wedge escape (4.3) — producer 2, untouched by the ruling
      *
      * **This is the no-wedge escape's other half, and without it 4.3 breaks the F6 contract.**
      * 4.3 narrows a capable device's chooser to `npu-turbo` alone. A SIDELOADED capable device is
@@ -231,29 +264,50 @@ object OnboardingLogic {
      *
      * So the one-tier rule is **suspended once the delivery has actually failed** — not before.
      * The owner's ruling is about what a working capable device is OFFERED; it was never about
-     * refusing a user any model at all on a device Play cannot serve. Before a failure this
-     * returns the installed ids alone, so a fresh capable install still sees exactly one card.
+     * refusing a user any model at all on a device Play cannot serve. Before a failure a fresh
+     * capable install — nothing on disk, nothing selected — still sees exactly one card.
      *
      * The suspension carries no new mechanism: the CPU ids simply join `alsoOfferedIds`, the same
      * door an already-installed tier walks through, so the ordering, the steer and the badge are
      * untouched — turbo still heads the lineup wearing the chip, with the CPU tiers below it in
-     * the 3.7 language order.
+     * the 3.7 language order. The 2026-09-25 ruling leaves it exactly so: once the one tier could
+     * not be delivered, the CPU ladder joins, installed rungs included, whatever is selected.
      *
+     * @param installedIds the tiers on disk — the surface's whole-catalog `isInstalled` answer.
      * @param oneTierDeliveryFailed the user reached the chooser through the failed-engine escape.
      *        It is DURABLE state on the flow screen rather than a read of the live engine state,
      *        because `resetSpeechForReChoice()` returns that state to `Pending` on the way back —
      *        by the time the chooser renders, the failure is over and only the reason the user is
-     *        standing here remains true.
+     *        standing here remains true. The Settings picker keeps no such latch and passes
+     *        `false`: it has no mandatory step to wedge (a user reaches it with a model already
+     *        chosen), and its routes past an undeliverable tier are the card's own Retry and,
+     *        where the family is offered one, the per-card import.
+     * @param offeredGatedIds the SAME gate answer the surface hands the ordering call
+     *        (`offeredNpuTierIds() + fetchableNpuTierIds()` on both). The ruling keys on
+     *        `WhisperCatalog.ONE_TIER_ID`'s presence in it — the very condition `pickableFor`
+     *        narrows on — so the two can never disagree about which device is ruled.
+     * @param selectedTierId `prefs.selectedModelId` as the surface already reads it, or null when
+     *        no selection is on record. No default, for `NpuTierStatus.cardNote`'s reason: a
+     *        caller that forgot it would hide the card its user is running on.
      */
     fun chooserAlsoOfferedIds(
         installedIds: Set<String>,
         oneTierDeliveryFailed: Boolean,
-    ): Set<String> =
-        if (oneTierDeliveryFailed) {
+        offeredGatedIds: Set<String>,
+        selectedTierId: String?,
+    ): Set<String> = when {
+        // Producer 2, the no-wedge escape: the whole ladder joins, the disk with it. Untouched.
+        oneTierDeliveryFailed ->
             installedIds + com.whispereverywhere.model.WhisperCatalog.pickable.map { it.id }
-        } else {
-            installedIds
+        // A device the one-tier rule never narrowed: the pre-ruling answer, byte for byte.
+        com.whispereverywhere.model.WhisperCatalog.ONE_TIER_ID !in offeredGatedIds -> installedIds
+        // THE RULING: of what is on disk, the gated tiers (an installed `npu` keeps its 4.3 card)
+        // and the selection (the one exception) — no other CPU rung.
+        else -> installedIds.filterTo(mutableSetOf()) { id ->
+            id == selectedTierId ||
+                com.whispereverywhere.model.WhisperCatalog.byId(id)?.gated == true
         }
+    }
 
     /**
      * Whether escaping THIS failed engine means the one tier could not be DELIVERED here — the

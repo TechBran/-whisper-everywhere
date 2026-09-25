@@ -374,6 +374,7 @@ class OnboardingLogicTest {
             for (tag in listOf("en-US", "bn-BD")) {
                 val alsoOffered = OnboardingLogic.chooserAlsoOfferedIds(
                     installedIds = emptySet(), oneTierDeliveryFailed = true,
+                    offeredGatedIds = gateSet, selectedTierId = null,
                 )
                 val lineup = ModelTierCopy.orderedForLanguageTagFor(tag, gateSet, alsoOffered)
                 // 4.6: the escape restores the whole LADDER, not "the CPU tiers" as a pair.
@@ -403,7 +404,9 @@ class OnboardingLogicTest {
                 ModelTierCopy.orderedForLanguageTagFor(
                     tag,
                     setOf("npu", "npu-turbo"),
-                    OnboardingLogic.chooserAlsoOfferedIds(emptySet(), oneTierDeliveryFailed = false),
+                    OnboardingLogic.chooserAlsoOfferedIds(
+                        emptySet(), oneTierDeliveryFailed = false, setOf("npu", "npu-turbo"), null,
+                    ),
                 ),
             )
         }
@@ -414,19 +417,27 @@ class OnboardingLogicTest {
                 "the suspension leaked into the gate-fail lineup ($tag)",
                 ModelTierCopy.orderedForLanguageTagFor(tag, emptySet()),
                 ModelTierCopy.orderedForLanguageTagFor(
-                    tag, emptySet(), OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true),
+                    tag, emptySet(), OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true, emptySet(), null),
                 ),
             )
         }
-        // The rule itself: installed ids always pass; the CPU ids join only after a failure.
+        // The rule itself — RE-SPECIFIED by the owner's ruling of 2026-09-25, whose truth table is
+        // `an_installed_cpu_rung_joins_a_one_tier_lineup_only_while_it_is_the_selection` below.
+        // On a device the one-tier rule never narrowed, installed ids always pass...
         assertEquals(
             setOf("multi"),
-            OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), oneTierDeliveryFailed = false),
+            OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), oneTierDeliveryFailed = false, emptySet(), null),
         )
-        assertTrue(
-            OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), true)
-                .containsAll(setOf("multi") + WhisperCatalog.pickable.map { it.id }),
-        )
+        // ...and after a failed delivery the CPU ids join on EVERY device, the installed ones with
+        // them — exactly, not merely at least: the no-wedge escape is the half the ruling leaves
+        // untouched, turbo offered or not.
+        for (gate in listOf(emptySet(), setOf("npu", "npu-turbo"))) {
+            assertEquals(
+                "the escape's answer moved ($gate)",
+                setOf("multi", "small-q8", "medium-q8", "ultra-q8"),
+                OnboardingLogic.chooserAlsoOfferedIds(setOf("multi"), true, gate, null),
+            )
+        }
     }
 
     // ------------------------------------------------------- 4.3 fix round: the narrowed latch
@@ -502,7 +513,8 @@ class OnboardingLogicTest {
         assertTrue("the other gated tier latches too", OnboardingLogic.oneTierDeliveryFailed("npu", "boom"))
 
         // And the composition the screen performs: a cancel leaves a capable device on ONE card,
-        // an undeliverable answer restores the menu with turbo still at its head.
+        // an undeliverable answer restores the menu with turbo still at its head. (The selection
+        // is the pick: the flow's Download tap persists it BEFORE the fetch begins.)
         val cancelLatch = OnboardingLogic.oneTierDeliveryFailed(
             "npu-turbo", OnboardingLogic.FETCH_CANCELLED_MESSAGE,
         )
@@ -512,7 +524,7 @@ class OnboardingLogicTest {
             ModelTierCopy.orderedForLanguageTagFor(
                 "en-US",
                 setOf("npu", "npu-turbo"),
-                OnboardingLogic.chooserAlsoOfferedIds(emptySet(), cancelLatch),
+                OnboardingLogic.chooserAlsoOfferedIds(emptySet(), cancelLatch, setOf("npu", "npu-turbo"), "npu-turbo"),
             ),
         )
         val realLatch = OnboardingLogic.oneTierDeliveryFailed(
@@ -521,13 +533,171 @@ class OnboardingLogicTest {
         val restored = ModelTierCopy.orderedForLanguageTagFor(
             "en-US",
             setOf("npu", "npu-turbo"),
-            OnboardingLogic.chooserAlsoOfferedIds(emptySet(), realLatch),
+            OnboardingLogic.chooserAlsoOfferedIds(emptySet(), realLatch, setOf("npu", "npu-turbo"), "npu-turbo"),
         )
         assertTrue(
             "an undeliverable answer restores the CPU ladder",
             restored.containsAll(WhisperCatalog.pickable.map { it.id }),
         )
         assertEquals("with turbo still at the head", "npu-turbo", restored.first())
+    }
+
+    // ------------------------- the owner's ruling of 2026-09-25: no CPU menu beside the one tier
+    //
+    // "if the NPU multilingual is here, then we hide all of the other CPU models so users don't
+    // get confused about which model to download." — on the Tab S10+ ship session of 4.16.0/113,
+    // where the chooser showed the three Q8 rungs beside the AI-chip card because they were
+    // INSTALLED there (the 2026-09-17 ladder session). The one exception, by controller ruling (the
+    // head's): the SELECTED model is never hidden — an active selection with no card is the same
+    // confusion from the other side.
+
+    @Test fun an_installed_cpu_rung_joins_a_one_tier_lineup_only_while_it_is_the_selection() {
+        // THE TRUTH TABLE: one tier offered x delivery failed x the selection is an installed CPU
+        // rung x which gated tiers are on disk. Two CPU rungs are on disk in every cell —
+        // `small-q8`, never the selection, and `medium-q8`, the selection in half the rows — so
+        // every cell can show a rung joining AND a rung held back. The other selection is
+        // `npu-turbo`: the pick the ruling is about. Each row's answer is a literal; the gated tiers
+        // on disk ride through EVERY cell unchanged (an installed `npu` pair keeps its 4.3
+        // behaviour — neither widened nor narrowed), so a cell's answer is its row's literal plus
+        // exactly those.
+        data class Row(
+            val oneTierOffered: Boolean,
+            val deliveryFailed: Boolean,
+            val selected: String,
+            val besidesTheGated: Set<String>,
+        )
+        val cpuOnDisk = setOf("small-q8", "medium-q8")
+        val ladder = setOf("small-q8", "medium-q8", "ultra-q8")
+        val rows = listOf(
+            // ONE TIER OFFERED, delivered: THE RULING. Of the CPU rungs on disk, only the selection.
+            Row(oneTierOffered = true, deliveryFailed = false, selected = "medium-q8", besidesTheGated = setOf("medium-q8")),
+            Row(oneTierOffered = true, deliveryFailed = false, selected = "npu-turbo", besidesTheGated = emptySet()),
+            // ONE TIER OFFERED, delivery failed: producer 2, the no-wedge escape, UNTOUCHED — the
+            // whole ladder joins, the installed rungs with it, whatever is selected.
+            Row(oneTierOffered = true, deliveryFailed = true, selected = "medium-q8", besidesTheGated = ladder),
+            Row(oneTierOffered = true, deliveryFailed = true, selected = "npu-turbo", besidesTheGated = ladder),
+            // NOT OFFERED THE ONE TIER: the pre-ruling answer — everything on disk, plus the ladder
+            // after a failure (which `pickableFor` never reads on such a device anyway).
+            Row(oneTierOffered = false, deliveryFailed = false, selected = "medium-q8", besidesTheGated = cpuOnDisk),
+            Row(oneTierOffered = false, deliveryFailed = false, selected = "npu-turbo", besidesTheGated = cpuOnDisk),
+            Row(oneTierOffered = false, deliveryFailed = true, selected = "medium-q8", besidesTheGated = ladder),
+            Row(oneTierOffered = false, deliveryFailed = true, selected = "npu-turbo", besidesTheGated = ladder),
+        )
+        val gatedOnDiskStates = listOf(emptySet(), setOf("npu"), setOf("npu-turbo"), setOf("npu", "npu-turbo"))
+        var cells = 0
+        for (row in rows) for (gatedOnDisk in gatedOnDiskStates) {
+            // Both spellings of each gate answer: turbo alone (a MediaTek row, which has no small
+            // pack) or both gated tiers (the Qualcomm rows); `npu` without turbo, or nothing at all.
+            val offerSets =
+                if (row.oneTierOffered) listOf(setOf("npu-turbo"), setOf("npu", "npu-turbo"))
+                else listOf(setOf("npu"), emptySet())
+            for (offered in offerSets) {
+                cells++
+                assertEquals(
+                    "offered=$offered failed=${row.deliveryFailed} selected=${row.selected} " +
+                        "gatedOnDisk=$gatedOnDisk",
+                    row.besidesTheGated + gatedOnDisk,
+                    OnboardingLogic.chooserAlsoOfferedIds(
+                        installedIds = cpuOnDisk + gatedOnDisk,
+                        oneTierDeliveryFailed = row.deliveryFailed,
+                        offeredGatedIds = offered,
+                        selectedTierId = row.selected,
+                    ),
+                )
+            }
+        }
+        assertEquals("every cell of the table ran", 64, cells)
+    }
+
+    @Test fun the_exception_keeps_the_card_the_disk_already_earned_and_never_adds_one() {
+        val capable = setOf("npu", "npu-turbo")
+        // A selected CPU rung that is NOT on disk was never in a one-tier lineup, and the exception
+        // does not hand it a Download card now: it filters what is on disk, it adds nothing.
+        assertEquals(emptySet<String>(), OnboardingLogic.chooserAlsoOfferedIds(setOf("small-q8"), false, capable, "medium-q8"))
+        assertEquals(emptySet<String>(), OnboardingLogic.chooserAlsoOfferedIds(emptySet(), false, capable, "small-q8"))
+        // No selection on record, or one the catalog cannot resolve: no CPU rung joins.
+        assertEquals(emptySet<String>(), OnboardingLogic.chooserAlsoOfferedIds(setOf("small-q8", "ultra-q8"), false, capable, null))
+        assertEquals(emptySet<String>(), OnboardingLogic.chooserAlsoOfferedIds(setOf("small-q8", "ultra-q8"), false, capable, "nope"))
+        // A selected npu-class tier holds back every CPU rung on disk, and keeps its own place.
+        assertEquals(setOf("npu"), OnboardingLogic.chooserAlsoOfferedIds(setOf("npu", "small-q8"), false, capable, "npu"))
+        // A selected RETIRED tier on disk passes the rule (it is the selection)...
+        assertEquals(setOf("multi"), OnboardingLogic.chooserAlsoOfferedIds(setOf("multi", "small-q8"), false, capable, "multi"))
+        // ...and still has no card, because `pickableFor` runs `!retired` first — exactly as an
+        // installed retired tier has had none since 4.7. The exception resurrects nothing.
+        assertEquals(
+            listOf("npu-turbo"),
+            ModelTierCopy.orderedForLanguageTagFor(
+                "en-US", capable, OnboardingLogic.chooserAlsoOfferedIds(setOf("multi", "small-q8"), false, capable, "multi"),
+            ),
+        )
+    }
+
+    @Test fun the_tablet_the_ruling_was_made_on_shows_the_ai_chip_card_and_the_card_it_is_running_on() {
+        // The Tab S10+ (mt6989 — turbo only, no small pack) after the 2026-09-17 ladder session:
+        // all three Q8 rungs on disk beside the 1.89 GB turbo pair. Composed as both chooser
+        // surfaces compose it: the rule's answer, then the ordering.
+        val tab = setOf("npu-turbo")
+        val onDisk = setOf("small-q8", "medium-q8", "ultra-q8", "npu-turbo")
+        fun lineup(selected: String?) = ModelTierCopy.orderedForLanguageTagFor(
+            "en-US", tab, OnboardingLogic.chooserAlsoOfferedIds(onDisk, false, tab, selected),
+        )
+        // Before the ruling this was [npu-turbo, small-q8, medium-q8, ultra-q8] for every selection.
+        assertEquals(listOf("npu-turbo"), lineup("npu-turbo"))
+        assertEquals(listOf("npu-turbo"), lineup(null))
+        // THE EXCEPTION: running on a CPU rung, the user still sees the card they are running on,
+        // below the AI-chip card — and once they pick the AI chip, that card goes (the row above).
+        assertEquals(listOf("npu-turbo", "small-q8"), lineup("small-q8"))
+        assertEquals(listOf("npu-turbo", "medium-q8"), lineup("medium-q8"))
+        assertEquals(listOf("npu-turbo", "ultra-q8"), lineup("ultra-q8"))
+        // And the Qualcomm spelling of the same device state (both gated tiers offered, the small
+        // pair imported): `npu` keeps its 4.3 card through the ruling, selected or not.
+        val fold = setOf("npu", "npu-turbo")
+        val foldOnDisk = onDisk + "npu"
+        fun foldLineup(selected: String?) = ModelTierCopy.orderedForLanguageTagFor(
+            "en-US", fold, OnboardingLogic.chooserAlsoOfferedIds(foldOnDisk, false, fold, selected),
+        )
+        assertEquals(listOf("npu-turbo", "npu"), foldLineup("npu-turbo"))
+        assertEquals(listOf("npu-turbo", "npu", "medium-q8"), foldLineup("medium-q8"))
+    }
+
+    @Test fun off_the_one_tier_and_after_a_failed_delivery_the_answer_is_the_pre_ruling_one_byte_for_byte() {
+        // The pre-ruling body, written out — what `chooserAlsoOfferedIds` returned from 4.3 until
+        // 2026-09-25 — executed against the rule over every input the ruling must NOT touch: every
+        // offer set that does not name turbo (the whole non-capable fleet, and a device offered
+        // `npu` alone) and every failed delivery on any device (producer 2, the no-wedge escape).
+        fun preRuling(installed: Set<String>, failed: Boolean): Set<String> =
+            if (failed) installed + WhisperCatalog.pickable.map { it.id } else installed
+        val offerSets = listOf(
+            emptySet(), setOf("npu"), setOf("ultra"), setOf("NPU-TURBO"), setOf("npu-turbo-x"),
+            setOf("npu-turbo"), setOf("npu", "npu-turbo"),
+        )
+        val installedStates = listOf(
+            emptySet(), setOf("small-q8"), setOf("small-q8", "medium-q8", "ultra-q8"), setOf("npu"),
+            setOf("npu", "npu-turbo"), setOf("multi", "pro", "eco"), WhisperCatalog.entries.map { it.id }.toSet(),
+        )
+        val selections = listOf(null, "small-q8", "medium-q8", "ultra-q8", "npu-turbo", "npu", "multi", "nope")
+        var untouched = 0
+        var ruled = 0
+        for (offered in offerSets) for (installed in installedStates) for (selected in selections) {
+            for (failed in listOf(false, true)) {
+                val out = OnboardingLogic.chooserAlsoOfferedIds(installed, failed, offered, selected)
+                val cell = "offered=$offered installed=$installed selected=$selected failed=$failed"
+                if ("npu-turbo" !in offered || failed) {
+                    untouched++
+                    assertEquals("$cell: the ruling reached a cell it does not rule", preRuling(installed, failed), out)
+                } else {
+                    // Inside the ruling, over the same walk, its four sentences: nothing that is not
+                    // on disk, every gated tier on disk kept, of the rest only the selection — and
+                    // the selection itself, when it is on disk, never hidden.
+                    ruled++
+                    assertTrue("$cell: the rule added a card", installed.containsAll(out))
+                    assertTrue("$cell: an installed gated tier lost its card", out.containsAll(installed.intersect(setOf("npu", "npu-turbo"))))
+                    assertTrue("$cell: a rung that is not the selection joined", (out - setOf("npu", "npu-turbo")).all { it == selected })
+                    assertTrue("$cell: the selection on disk was hidden", selected == null || selected !in installed || selected in out)
+                }
+            }
+        }
+        assertTrue("both halves of the walk ran", untouched > 0 && ruled > 0)
     }
 
     // -------------------------------------------- 4.3 fix round: the pick the narrowing outran
@@ -574,7 +744,7 @@ class OnboardingLogicTest {
         // that now holds for every rung of the ladder, instruments included.
         val restored = ModelTierCopy.orderedForLanguageTagFor(
             "en-US", setOf("npu", "npu-turbo"),
-            OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true),
+            OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true, setOf("npu", "npu-turbo"), "npu-turbo"),
         )
         WhisperCatalog.pickable.forEach {
             assertEquals(
@@ -914,14 +1084,21 @@ class OnboardingLogicTest {
         for (ram in listOf(0L, 3_700_000_000L, gate - 1, gate, 12_000_000_000L, Long.MAX_VALUE)) {
             assertEquals(turboOnly, OnboardingLogic.firstRunLineup(turboOnly, ram, emptySet()))
         }
-        val turboPlusInstalled = ModelTierCopy.orderedForLanguageTagFor("en-US", setOf("npu", "npu-turbo"), setOf("small-q8"))
+        // (2026-09-25: an installed CPU rung rides alongside turbo only while it is the SELECTION —
+        // the owner's ruling and its one exception — so the lineup is composed the way both
+        // surfaces compose it, through the one rule.)
+        val capable = setOf("npu", "npu-turbo")
+        val turboPlusInstalled = ModelTierCopy.orderedForLanguageTagFor(
+            "en-US", capable,
+            OnboardingLogic.chooserAlsoOfferedIds(setOf("small-q8"), false, capable, "small-q8"),
+        )
         assertTrue("npu-turbo" in turboPlusInstalled && "small-q8" in turboPlusInstalled)
         assertEquals(turboPlusInstalled, OnboardingLogic.firstRunLineup(turboPlusInstalled, 0L, setOf("small-q8")))
         assertEquals(turboPlusInstalled, OnboardingLogic.firstRunLineup(turboPlusInstalled, Long.MAX_VALUE, setOf("small-q8")))
         // And the suspended lineup (the no-wedge escape restored the CPU ladder beside turbo)
         // is likewise untouched: turbo is in it, so the one-tier clause returns it whole.
         val suspended = ModelTierCopy.orderedForLanguageTagFor(
-            "en-US", setOf("npu", "npu-turbo"), OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true),
+            "en-US", capable, OnboardingLogic.chooserAlsoOfferedIds(emptySet(), true, capable, "npu-turbo"),
         )
         assertEquals(suspended, OnboardingLogic.firstRunLineup(suspended, 0L, emptySet()))
     }

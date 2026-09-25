@@ -175,9 +175,14 @@ fun OnboardingFlowScreen(
     // later. Collected, not remembered: the shared finalise clears the record the moment the pair
     // lands, and a pick of another tier moves the selection, and either one takes the sentence
     // away in the same composition. The family memo is a pure table lookup, so this is Main-safe.
+    //
+    // (2026-09-25) THE SELECTION HAS A SECOND READER: the engines step's chooser, where the owner's
+    // one exception to his ruling lives — the selected model's card is never hidden
+    // (OnboardingLogic.chooserAlsoOfferedIds). One collected read of the selection on this screen,
+    // handed to both, so the sentence and the lineup can never answer from two different reads.
     val notePrefs = (context.applicationContext as WhisperEverywhereApp).preferencesManager
     val refreshRecord by notePrefs.npuRedownloadFlow.collectAsState()
-    val selectedTierForNote by notePrefs.selectedModelIdFlow.collectAsState()
+    val selectedTierId by notePrefs.selectedModelIdFlow.collectAsState()
     val refreshPackBytes = remember(refreshRecord) {
         NpuRefreshNotice.downloadBytesFor(
             (context.applicationContext as WhisperEverywhereApp).npuSocFamily,
@@ -185,7 +190,7 @@ fun OnboardingFlowScreen(
         )
     }
     val showRefreshNote =
-        NpuRefreshNotice.showsInAppNote(refreshRecord, selectedTierForNote, refreshPackBytes)
+        NpuRefreshNotice.showsInAppNote(refreshRecord, selectedTierId, refreshPackBytes)
 
     // Permission state lives at flow level (3.5.x): the pinned footer gates Continue on the
     // bubble's two required permissions (mic, overlay — 4.3.3 made accessibility a
@@ -310,6 +315,9 @@ fun OnboardingFlowScreen(
                         languageTag = languageTag,
                         pickedTierId = pickedTierId,
                         oneTierDeliveryFailed = oneTierDeliveryFailed,
+                        // (2026-09-25) the screen's one read of the selection, for the ruling's
+                        // exception: the selected model's card is never hidden.
+                        selectedTierId = selectedTierId,
                         // 4.3 fix round (I-3): nullable, because the step must be able to DROP a
                         // pick whose card the narrowing removed under it.
                         onPick = { pickedTierId = it },
@@ -857,6 +865,7 @@ private fun EnginesStep(
     languageTag: String,
     pickedTierId: String?,
     oneTierDeliveryFailed: Boolean,
+    selectedTierId: String?,
     onPick: (String?) -> Unit,
     onChooseAgain: (deliveryFailed: Boolean) -> Unit,
 ) {
@@ -933,9 +942,11 @@ private fun EnginesStep(
                 app.offeredNpuTierIds() + app.fetchableNpuTierIds()
             }
         }
-        // 4.3: what is already ON DISK, so a capable device whose chooser is now one card long
-        // still shows a model the user already downloaded (the non-disturbance rule — deleting a
-        // gigabyte someone paid bandwidth for is not ours to do). Same producer shape and same
+        // 4.3: what is already ON DISK — one of the facts the lineup rule below is made of. Since
+        // the owner's ruling of 2026-09-25 a capable device's one-card chooser shows an installed
+        // tier only when it is a gated one or the SELECTION (the rule below); nothing is deleted
+        // either way — deleting a gigabyte someone paid bandwidth for is not ours to do — and the
+        // RAM cut's non-disturbance rule below reads the whole set. Same producer shape and same
         // key as the gate above: off Main because `isInstalled` stats one or two files per tier,
         // keyed on the install generation so a landing pack reaches the lineup without leaving
         // the screen. On the fresh install this step exists for it is empty, which is exactly
@@ -947,12 +958,17 @@ private fun EnginesStep(
                     .map { it.id }.toSet()
             }
         }
-        // 4.3: what joins the one-card lineup anyway — what is on disk, plus the CPU tiers once
-        // the one tier's delivery has failed here. The pure rule owns the decision; this surface
-        // owns only the two facts it is made of. Without the second producer a sideloaded capable
-        // device wedges the mandatory step behind one card Play will not deliver (F6 I-1).
-        val alsoOfferedIds =
-            OnboardingLogic.chooserAlsoOfferedIds(installedIds, oneTierDeliveryFailed)
+        // What joins the one-card lineup anyway — ONE pure rule, asked by both chooser surfaces
+        // (the Settings picker too): of what is on disk, the gated tiers and the selection (the
+        // owner's ruling of 2026-09-25 and its one exception), plus the whole CPU ladder once the
+        // one tier's delivery has failed here. The rule owns the decision; this surface owns only
+        // the facts it is made of — the disk, the latch, the SAME gate answer the ordering call
+        // reads, and the selection. Without the latch a sideloaded capable device wedges the
+        // mandatory step behind one card Play will not deliver (F6 I-1).
+        val alsoOfferedIds = OnboardingLogic.chooserAlsoOfferedIds(
+            installedIds, oneTierDeliveryFailed,
+            offeredGatedIds = npuTierIds, selectedTierId = selectedTierId,
+        )
         // 4.8.0: the device's RAM, read ONCE at flow level and off Main like the two producers
         // above (`ActivityManager.getMemoryInfo` is a binder call). It feeds the owner's
         // 2026-09-17 first-run rule below — since 4.9 CUMULATIVE: every Q8 rung whose own RAM

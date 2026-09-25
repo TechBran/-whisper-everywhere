@@ -250,7 +250,9 @@ class ChooserSteerWiringPinTest {
                 "        }",
             ),
             // 4.3: this surface's third argument is the RULE's answer, not the raw disk set —
-            // onboarding is the one place a narrowed lineup can wedge a mandatory step.
+            // onboarding is the one place a narrowed lineup can wedge a mandatory step. (Since the
+            // owner's ruling of 2026-09-25 the picker's is too: one rule, two callers —
+            // [bothChoosersAskTheOneRuleWhatJoinsAOneTierLineup].)
             alsoOfferedArg = "alsoOfferedIds",
         )
     }
@@ -269,19 +271,27 @@ class ChooserSteerWiringPinTest {
      *  - *The latch never set.* `onChooseAgain` without `oneTierDeliveryFailed = true` leaves the
      *    rule permanently answering "not failed", which is the wedge with a rule bolted beside it.
      *  - *The rule bypassed.* Passing `installedIds` straight to the ordering call — the picker's
-     *    own correct spelling — is one word, and it re-opens the wedge on this surface only.
+     *    own spelling until the owner's ruling of 2026-09-25 — is one word, and it re-opens the
+     *    wedge on this surface (and, since that ruling, un-hides every CPU rung on disk on both).
      */
     @Test
     fun theOnboardingChooserSuspendsTheOneTierRuleOnceDeliveryHasFailed() {
+        // (2026-09-25) RE-SPELLED in-commit — the two-argument needle tripped by name first, as a
+        // pin should: the rule gained the gate answer and the selection (the owner's ruling and its
+        // one exception). What this assertion is about is unchanged: the flow composes the pure
+        // rule, handing it the durable latch, rather than deciding the suspension itself. The two
+        // new arguments are NAMED, so the two `Set<String>`s cannot be transposed by a positional
+        // rewrite; [bothChoosersAskTheOneRuleWhatJoinsAOneTierLineup] pins where each comes from.
         assertEquals(
             "the flow composes the pure rule rather than deciding the suspension itself",
             1,
             count(
                 flow,
                 block(
-                    "        val alsoOfferedIds =",
-                    "            OnboardingLogic.chooserAlsoOfferedIds(installedIds, " +
-                        "oneTierDeliveryFailed)",
+                    "        val alsoOfferedIds = OnboardingLogic.chooserAlsoOfferedIds(",
+                    "            installedIds, oneTierDeliveryFailed,",
+                    "            offeredGatedIds = npuTierIds, selectedTierId = selectedTierId,",
+                    "        )",
                 ),
             ),
         )
@@ -442,14 +452,17 @@ class ChooserSteerWiringPinTest {
             2,
             count(source, "(languageTag, npuTierIds"),
         )
-        // 4.3: and the ordering call is the one that carries the installed set. Without it a
-        // capable device's lineup is `npu-turbo` ALONE even for a user who already has `multi` on
-        // disk — the card for a model they downloaded vanishes, which is the exact disturbance
-        // the branch's non-disturbance rule forbids. Compile-clean to drop (the parameter is
-        // defaulted, so that the gate-fail path stays one argument shorter), so it is pinned.
+        // 4.3: and the ordering call is the one that carries what joins a one-card lineup — since
+        // the owner's ruling of 2026-09-25, `OnboardingLogic.chooserAlsoOfferedIds`'s answer on
+        // both surfaces: the installed gated tiers and the SELECTION. Without it a capable
+        // device's lineup is `npu-turbo` ALONE even for a user whose selection is a CPU rung on
+        // disk — the card they are running on vanishes, which is the one exception the ruling
+        // keeps. Compile-clean to drop (the parameter is defaulted, so that the gate-fail path
+        // stays one argument shorter), so it is pinned.
         assertEquals(
-            "$surface hands the ordering the ids that join a one-card lineup anyway, so an " +
-                "existing install keeps its card on a device the 4.3 rule narrowed to one",
+            "$surface hands the ordering the ids that join a one-card lineup anyway, so the " +
+                "selected card and an installed gated tier keep their cards on a device the 4.3 " +
+                "rule narrowed to one",
             1,
             count(source, "orderedForLanguageTagFor(languageTag, npuTierIds, $alsoOfferedArg)"),
         )
@@ -825,13 +838,16 @@ class ChooserSteerWiringPinTest {
         // the steer rule and the lift read ONE list — the cards are that list with the steered
         // card lifted, resolved through the catalog. The claim is unchanged: never raw catalog
         // order.
+        // (2026-09-25) RE-SPELLED in-commit: the third argument is the one rule's answer now, not
+        // the raw disk set — the owner's ruling hides an installed CPU rung that is not the
+        // selection, and the picker asks the same rule the flow does. The claim is unchanged.
         assertEquals(
             "the Settings picker's lineup comes from orderedForLanguageTagFor, under one name",
             1,
             count(
                 picker,
                 "    val ordered = ModelTierCopy.orderedForLanguageTagFor(languageTag, " +
-                    "npuTierIds, installedIds)",
+                    "npuTierIds, alsoOfferedIds)",
             ),
         )
         assertEquals(
@@ -883,14 +899,93 @@ class ChooserSteerWiringPinTest {
                 "        value = withContext(Dispatchers.IO) { app.offeredNpuTierIds() + app.fetchableNpuTierIds() }",
                 "    }",
             ),
-            // 4.3: Settings' picker passes the DISK set directly and needs no suspension rule —
-            // it has no mandatory gate to wedge (a user reaches it with a model already chosen),
-            // and its own escape from an undeliverable tier is the per-card import route the
-            // F7 fix round put on every gated card.
-            alsoOfferedArg = "installedIds",
+            // 4.3 had Settings' picker pass the DISK set directly. Since the owner's ruling of
+            // 2026-09-25 it passes the one rule's answer, under the flow's own name for it — and
+            // still no suspension: it has no mandatory gate to wedge (a user reaches it with a
+            // model already chosen), and its routes past an undeliverable tier are the card's own
+            // Retry and, where the family is offered one, the per-card import the F7 fix round
+            // put on every gated card, so it hands the rule `false`.
+            alsoOfferedArg = "alsoOfferedIds",
             // 4.0 Q8: the picker's second device question, capability-only. Its own test below.
             booleanKeyedProducers = 1,
         )
+    }
+
+    /**
+     * The owner's ruling of 2026-09-25 — **ONE RULE, TWO CALLERS.**
+     *
+     * *"if the NPU multilingual is here, then we hide all of the other CPU models so users don't
+     * get confused about which model to download."* The Tab S10+ chooser showed the three Q8 rungs
+     * beside the AI-chip card because they were installed there. `OnboardingLogicTest` executes
+     * the rule — of what is on disk, only the gated tiers and the SELECTION join a lineup the one
+     * tier heads (the one exception, by controller ruling: the selected card is never hidden) — and
+     * `WhisperCatalogHelpersTest` executes the lineups it produces. What neither can see is
+     * whether BOTH surfaces ask it, and with which facts.
+     *
+     * **The mutations this closes**, all compile-clean and green everywhere else:
+     *  - *Either surface back on the raw disk set* — the picker's 4.3 spelling,
+     *    `orderedForLanguageTagFor(…, installedIds)` — and every CPU rung on disk is back beside
+     *    the AI-chip card there, on one surface only.
+     *  - *A second rule inlined on one surface* — the two surfaces then answer the same device
+     *    differently.
+     *  - *The gate answer re-derived for the rule* (`offeredNpuTierIds()` alone, or a literal) —
+     *    the rule and `pickableFor` then disagree about which device is ruled: a device whose
+     *    turbo pair is fetchable but not on disk (never fetched, or removed by the stale-pair
+     *    sweep) would keep every CPU rung on disk beside the AI-chip card.
+     *  - *The selection dropped or assumed* (`selectedTierId = null`) — the user running on a CPU
+     *    rung loses the card they are running on: the exception, deleted in one word.
+     *  - *A second read of the selection for the chooser* — the lineup and the flow's refresh
+     *    sentence could then answer from two different reads on one screen.
+     */
+    @Test
+    fun bothChoosersAskTheOneRuleWhatJoinsAOneTierLineup() {
+        // THE FLOW: the rule, once, handed its latch, the gate answer its ordering call reads, and
+        // the selection the screen passed down.
+        assertEquals("the flow asks the rule exactly once", 1, liveLineCount(flow, "OnboardingLogic.chooserAlsoOfferedIds("))
+        assertEquals(
+            "the flow hands the rule the SAME gate answer and the screen's one read of the selection",
+            1,
+            count(
+                flow,
+                block(
+                    "        val alsoOfferedIds = OnboardingLogic.chooserAlsoOfferedIds(",
+                    "            installedIds, oneTierDeliveryFailed,",
+                    "            offeredGatedIds = npuTierIds, selectedTierId = selectedTierId,",
+                    "        )",
+                ),
+            ),
+        )
+        // The selection is the flow's ONE collected read of the store — the refresh sentence's
+        // (NpuRefreshNoticeTest pins it as that sentence's) — handed down to the engines step.
+        assertEquals(
+            "the flow reads the selection once, collected: an in-memory StateFlow, Main-safe and live",
+            1,
+            liveLineCount(flow, "val selectedTierId by notePrefs.selectedModelIdFlow.collectAsState()"),
+        )
+        assertEquals("and collects the store's flow nowhere else", 1, liveLineCount(flow, "selectedModelIdFlow"))
+        assertEquals("the engines step is handed that read", 1, count(flow, "                        selectedTierId = selectedTierId,"))
+        assertEquals("and declares it", 1, count(flow, "    selectedTierId: String?,"))
+        // THE PICKER: the same rule, once, with no latch of its own.
+        assertEquals("the picker asks the rule exactly once", 1, liveLineCount(picker, "OnboardingLogic.chooserAlsoOfferedIds("))
+        assertEquals(
+            "the picker hands the rule the SAME gate answer its ordering call reads, its own read of " +
+                "the selection, and no delivery latch — it has no mandatory step to wedge",
+            1,
+            count(
+                picker,
+                block(
+                    "    val alsoOfferedIds = OnboardingLogic.chooserAlsoOfferedIds(",
+                    "        installedIds, oneTierDeliveryFailed = false,",
+                    "        offeredGatedIds = npuTierIds, selectedTierId = selectedTierId,",
+                    "    )",
+                ),
+            ),
+        )
+        // The picker's selection is the ONE off-Main read the decline note already uses (its block
+        // is pinned in theDeclineRecoveryAsksTheOneRuleAndRidesTheExistingDownloadPath): one read,
+        // two readers, never a second read for the lineup.
+        assertEquals("the picker reads the selection once", 1, liveLineCount(picker, "app.preferencesManager.selectedModelId"))
+        assertEquals("under one name", 1, liveLineCount(picker, "val selectedTierId by produceState<String?>("))
     }
 
     /**
