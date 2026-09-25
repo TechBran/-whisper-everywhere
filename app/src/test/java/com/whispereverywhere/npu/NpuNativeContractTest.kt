@@ -164,6 +164,16 @@ class NpuNativeContractTest {
     }
 
     /**
+     * The QNN engine (P1a, the engine seam) — since the seam, the ONE Kotlin file that calls
+     * [QnnAsrNative]. Every pin below that quoted a `QnnAsrNative.` symbol out of the backend now
+     * quotes it out of here, and holds the backend to the engine member that replaced the call,
+     * at the same place in the same order.
+     */
+    private val qnnEngine: String by lazy {
+        source("src/main/java/com/whispereverywhere/transcription/QnnAsrEngine.kt")
+    }
+
+    /**
      * The Kotlin half of the JNI seam, read as SOURCE for exactly the reason `NpuWhisperBackend` is:
      * `QnnAsrNative`'s `init` block runs `System.loadLibrary("qnnasr")`, so a test that *named* the
      * object would not fail on this classpath, it would die. The declarations are the only place
@@ -342,16 +352,27 @@ class NpuNativeContractTest {
             "fun isTierAvailable(socModel: String?, socManufacturer: String?, libDir: String): Boolean ="
         )
         val gate = liveOffsets(available, "NpuGate.isSocSupported(")
-        val probe = liveOffsets(available, "QnnAsrNative.nativeProbe(")
+        // (P1a) The probe is the QNN engine's since the seam — `QnnAsrEngine().probe(libDir)`,
+        // which IS nativeProbe (held just below) — so the needle names the engine call and the
+        // order claim is unchanged.
+        val probe = liveOffsets(available, "QnnAsrEngine().probe(libDir)")
         assertTrue("tier visibility must consult NpuGate on a live line", gate.isNotEmpty())
-        assertTrue("tier visibility must consult nativeProbe on a live line", probe.isNotEmpty())
+        assertTrue("tier visibility must consult the QNN probe on a live line", probe.isNotEmpty())
         assertTrue(
             "NpuGate.isSocSupported (${gate.first()}) must be the LEFT operand, evaluated before " +
-                "nativeProbe (${probe.first()}). The && short circuit is the mechanism: reversed, " +
+                "the probe (${probe.first()}). The && short circuit is the mechanism: reversed, " +
                 "every Tensor, Exynos and MediaTek device dlopens libQnnHtp.so to be told no, and " +
                 "a 7-series Snapdragon is told yes by a probe that cannot tell one Hexagon from " +
                 "another.",
             gate.first() < probe.first()
+        )
+        assertTrue(
+            "and the engine's probe IS nativeProbe, handed the same libDir — the gate's second " +
+                "operand did not change what it asks the device, only which file asks it",
+            liveOffsets(
+                kotlinMemberBody(qnnEngine, "override fun probe(dispatchOrLibDir: String): String"),
+                "QnnAsrNative.nativeProbe(dispatchOrLibDir)",
+            ).isNotEmpty()
         )
     }
 
@@ -714,13 +735,21 @@ class NpuNativeContractTest {
             "nativeSetDiag must set g.diag on a live line",
             liveOffsets(setter, "g.diag =").isNotEmpty()
         )
+        // (P1a) Through the engine: the backend decides, the engine hands the decision on.
         assertTrue(
             "NpuWhisperBackend must arm the instrumentation from BuildConfig.DEBUG on a live " +
                 "line — Kotlin owns that decision because that is where the flag exists, and a " +
                 "native build-type ifdef would be a second definition of \"debug build\" free to " +
-                "disagree with the app's.",
-            liveOffsets(backend, "nativeSetDiag(").isNotEmpty() &&
-                liveLines(backend, "nativeSetDiag(").single().contains("BuildConfig.DEBUG")
+                "disagree with the app's. Since the seam the call is the engine's setDiag.",
+            liveOffsets(backend, "engine.setDiag(").isNotEmpty() &&
+                liveLines(backend, "engine.setDiag(").single().contains("BuildConfig.DEBUG")
+        )
+        assertTrue(
+            "…and the QNN engine hands that decision to native UNCHANGED, on its one nativeSetDiag " +
+                "line: an engine that computed its own flag would be the second definition of " +
+                "\"debug build\" one file over. Found: " + liveLines(qnnEngine, "nativeSetDiag("),
+            liveLines(qnnEngine, "nativeSetDiag(").singleOrNull()
+                ?.contains("override fun setDiag(on: Boolean) = QnnAsrNative.nativeSetDiag(on)") == true
         )
 
         // ---- Q10a-D2: the ENCODER read ---------------------------------------------------------
@@ -850,17 +879,29 @@ class NpuNativeContractTest {
             liveOffsets(encode, "g.diag").size >= 2
         )
 
-        // The Kotlin half, and its gate.
+        // The Kotlin half, and its gate — in the QNN engine's encode since P1a, beside the
+        // quantiser whose block it describes. RE-POINTED AND TIGHTENED: the old gate claim was a
+        // COUNT (">= 2 live BuildConfig.DEBUG mentions in the backend", i.e. nativeSetDiag's and
+        // this one's), which an ungated melProbe beside a second DEBUG mention anywhere would
+        // have satisfied. Here it is CONTAINMENT: the emission sits inside the DEBUG block.
+        val encodeKt = kotlinMemberBody(qnnEngine, "override fun encode(melF32: ByteBuffer): Refusal? {")
         assertTrue(
-            "NpuWhisperBackend must emit NpuDiag.melProbe on a live line — native's layout and " +
+            "QnnAsrEngine.encode must emit NpuDiag.melProbe on a live line — native's layout and " +
                 "dequant readings are only decisive against an independently computed reference, " +
                 "and this is that reference.",
-            liveOffsets(backend, "NpuDiag.melProbe(").isNotEmpty()
+            liveOffsets(encodeKt, "NpuDiag.melProbe(").isNotEmpty()
         )
+        val debugBlock = kotlinMemberBody(encodeKt, "if (com.whispereverywhere.BuildConfig.DEBUG) {")
         assertTrue(
-            "the melProbe emission must be behind BuildConfig.DEBUG, like nativeSetDiag. It " +
-                "prints three spectrogram cells, and a release build has no business doing that.",
-            liveOffsets(backend, "BuildConfig.DEBUG").size >= 2
+            "the melProbe emission must be INSIDE `if (com.whispereverywhere.BuildConfig.DEBUG) {`, " +
+                "like the backend's setDiag call is behind the same flag. It prints three " +
+                "spectrogram cells, and a release build has no business doing that.",
+            liveOffsets(debugBlock, "NpuDiag.melProbe(").isNotEmpty()
+        )
+        assertEquals(
+            "and the backend emits it nowhere — one Kotlin half for one native half",
+            0,
+            liveOffsets(backend, "NpuDiag.melProbe(").size
         )
     }
 
@@ -2025,21 +2066,30 @@ class NpuNativeContractTest {
         val load = kotlinMemberBody(
             backend, "override fun load(modelPath: String, companionPath: String?): Long ="
         )
-        val armInit = liveOffsets(load, "QnnAsrNative.nativeInit(")
-        val record = liveOffsets(load, "armedEpoch = QnnAsrNative.nativeEpoch()")
+        // (P1a) The two crossings are the engine's now — init (for QNN, nativeInit) and epoch
+        // (nativeEpoch, held just below) — and the claims are the same claims about them.
+        val armInit = liveOffsets(load, "engine.init(")
+        val record = liveOffsets(load, "armedEpoch = engine.epoch()")
         val armed = liveOffsets(load, "armed = true")
-        assertTrue("load must call nativeInit on a live line", armInit.isNotEmpty())
+        assertTrue("load must call the engine's init on a live line", armInit.isNotEmpty())
         assertTrue(
-            "load must record the epoch it was armed with, from nativeEpoch(), on a live line",
+            "load must record the epoch it was armed with, from the engine's epoch(), on a live line",
             record.isNotEmpty()
         )
         assertTrue("load must set armed on a live line", armed.isNotEmpty())
         assertTrue(
-            "the epoch must be read AFTER nativeInit (${armInit.first()}) returned — before it, " +
+            "the epoch must be read AFTER the init (${armInit.first()}) returned — before it, " +
                 "nativeEpoch() answers the PREVIOUS session's number or 0, and the instance would " +
                 "spend its whole life holding a name that was never its own. Found at " +
                 "${record.first()}.",
             record.first() > armInit.first()
+        )
+        assertTrue(
+            "and the engine's epoch() IS nativeEpoch — a reader, and nothing else",
+            liveOffsets(
+                kotlinMemberBody(qnnEngine, "override fun epoch(): Long"),
+                "QnnAsrNative.nativeEpoch()",
+            ).isNotEmpty()
         )
         assertTrue(
             "and BEFORE `armed = true` (${armed.first()}). ORDER: between those two statements " +
@@ -2052,11 +2102,11 @@ class NpuNativeContractTest {
                 "the session it created, it does not re-ask — and it is also what makes " +
                 "kotlinMemberBody's indent rule load-bearing rather than decorative: load() is " +
                 "expression-bodied, so under the old fixed \"\\n    }\\n\" delimiter its \"body\" " +
-                "ran through the whole of `transcribe`, which reads nativeEpoch() too. Every " +
+                "ran through the whole of `transcribe`, which reads the epoch too. Every " +
                 "ordering claim above would then have been answered partly by a neighbour's code. " +
-                "Found: " + liveLines(load, "QnnAsrNative.nativeEpoch()"),
+                "Found: " + liveLines(load, "engine.epoch()"),
             1,
-            liveOffsets(load, "QnnAsrNative.nativeEpoch()").size
+            liveOffsets(load, "engine.epoch()").size
         )
         val teardown = kotlinMemberBody(backend, "private fun releaseNpuResources() {")
         assertTrue(
@@ -2104,20 +2154,23 @@ class NpuNativeContractTest {
      */
     @Test
     fun theBackendsReleaseNamesItsOwnSessionAndSkipsTheLibraryItNeverLoaded() {
+        // (P1a) The teardown is the engine's release now, and the claims move with it: ONE
+        // release site in the backend, named by this instance's own epoch, behind the Q6 M1
+        // guard — and ONE nativeRelease in the engine, handed that same epoch.
         assertEquals(
-            "exactly one live `QnnAsrNative.nativeRelease(` site in the whole file. A second " +
-                "spelling of the teardown is a second chance to omit the epoch. Found: " +
-                liveLines(backend, "QnnAsrNative.nativeRelease("),
+            "exactly one live `engine.release(` site in the whole backend. A second spelling of " +
+                "the teardown is a second chance to omit the epoch. Found: " +
+                liveLines(backend, "engine.release("),
             1,
-            liveOffsets(backend, "QnnAsrNative.nativeRelease(").size
+            liveOffsets(backend, "engine.release(").size
         )
         val teardown = kotlinMemberBody(backend, "private fun releaseNpuResources() {")
-        val call = liveOffsets(teardown, "QnnAsrNative.nativeRelease(armedEpoch)")
+        val call = liveOffsets(teardown, "engine.release(armedEpoch)")
         assertTrue(
-            "releaseNpuResources must pass armedEpoch to nativeRelease on a live line — passing " +
-                "0L, or a fresh nativeEpoch() read, would name the LIVE session rather than this " +
+            "releaseNpuResources must pass armedEpoch to the engine's release on a live line — " +
+                "passing 0L, or a fresh epoch() read, would name the LIVE session rather than this " +
                 "instance's own, which is the F4 teardown with an argument added to it. Found: " +
-                liveLines(teardown, "nativeRelease("),
+                liveLines(teardown, "release("),
             call.isNotEmpty()
         )
         val guard = liveOffsets(teardown, "if (armedEpoch != 0L || melCtx != 0L)")
@@ -2129,10 +2182,63 @@ class NpuNativeContractTest {
             guard.isNotEmpty()
         )
         assertTrue(
-            "the guard (${guard.first()}) must precede the native call (${call.first()}). ORDER, " +
+            "the guard (${guard.first()}) must precede the engine call (${call.first()}). ORDER, " +
                 "and the same order as every other guard in this file: a check that runs after the " +
                 "library has been loaded has not avoided loading it.",
             guard.first() < call.first()
+        )
+        assertEquals(
+            "exactly one live `QnnAsrNative.nativeRelease(` site in the whole QNN engine — its " +
+                "release, handed the epoch it was given, never a read of its own. (The one arm-time " +
+                "cleanup in init goes THROUGH release, with the receipt its own nativeInit just " +
+                "issued.) Found: " + liveLines(qnnEngine, "QnnAsrNative.nativeRelease("),
+            1,
+            liveOffsets(qnnEngine, "QnnAsrNative.nativeRelease(").size
+        )
+        assertTrue(
+            "and that site is `QnnAsrNative.nativeRelease(epoch)` inside `override fun release(epoch: Long)`",
+            liveOffsets(
+                kotlinMemberBody(qnnEngine, "override fun release(epoch: Long) {"),
+                "QnnAsrNative.nativeRelease(epoch)",
+            ).isNotEmpty()
+        )
+    }
+
+    /**
+     * **A refusal after a live arm tears down what that arm built (P1a).** The seam moved the
+     * quant read to arm time, directly after `nativeInit`, and that opened one path the old code
+     * did not have: a `quant` refusal while THIS engine's session is live and the backend has
+     * not yet recorded its epoch. The backend's fallback would then release epoch 0 — refused
+     * natively — and load the CPU tier beside a whole pair of NPU contexts: the transient the
+     * release-first fallback exists to forbid. So the engine releases its own session first, by
+     * the receipt `nativeEpoch()` answers right after its own `nativeInit` (under the load's
+     * gate hold, nothing else can arm in between), and reads the error text before it does.
+     */
+    @Test
+    fun aQuantRefusalAtArmReleasesTheSessionThatArmBuilt() {
+        val init = kotlinMemberBody(
+            qnnEngine,
+            "override fun init(spec: NpuModelSpec, files: NpuEngineFiles, dirs: NpuEngineDirs): Refusal? {"
+        )
+        val nativeInit = liveOffsets(init, "QnnAsrNative.nativeInit(")
+        val quant = liveOffsets(init, "val quant = QnnAsrNative.nativeInputQuant()")
+        val detail = liveOffsets(init, "val detail = QnnAsrNative.nativeLastError()")
+        val cleanup = liveOffsets(init, "release(QnnAsrNative.nativeEpoch())")
+        val refusal = liveOffsets(init, "return Refusal(NpuStage.QUANT, detail)")
+        assertTrue(
+            "init reads the quant pair once, after nativeInit, and on its refusal reads the error, " +
+                "releases its own session, then refuses — in that order. Found nativeInit=" +
+                "$nativeInit quant=$quant detail=$detail cleanup=$cleanup refusal=$refusal",
+            nativeInit.size == 1 && quant.size == 1 && detail.size == 1 && cleanup.size == 1 &&
+                refusal.size == 1 &&
+                nativeInit.first() < quant.first() && quant.first() < detail.first() &&
+                detail.first() < cleanup.first() && cleanup.first() < refusal.first()
+        )
+        assertEquals(
+            "the INIT refusal needs no cleanup and has none: every nativeInit failure path " +
+                "releases natively (or, at the spec stage, touches nothing) before it returns",
+            1,
+            liveOffsets(init, "return Refusal(NpuStage.INIT, initError)").size
         )
     }
 
@@ -2163,18 +2269,21 @@ class NpuNativeContractTest {
         val gate = liveOffsets(body, "NativeComputeGate.serialized {")
         val shortCircuit = liveOffsets(body, "fallbackBackend?.let")
         val guard = liveOffsets(body, "if (armedEpoch != 0L)")
-        val read = liveOffsets(body, "QnnAsrNative.nativeEpoch()")
+        // (P1a) The live epoch is read through the engine — for QNN, nativeEpoch (held in
+        // theBackendRecordsItsEpochBeforeItArmsItself) — at the same place, in the same order.
+        val read = liveOffsets(body, "engine.epoch()")
         val session = liveOffsets(body, "if (!armed ||")
         val mel = liveOffsets(body, "WhisperNative.pcmToMel(")
         assertTrue("transcribe must take the gate on a live line", gate.isNotEmpty())
         assertTrue("transcribe must short-circuit to the fallback on a live line", shortCircuit.isNotEmpty())
         assertTrue(
             "transcribe must guard the epoch read on `if (armedEpoch != 0L)` on a live line — an " +
-                "instance that never armed must not touch QnnAsrNative to find that out.",
+                "instance that never armed must not touch its engine (for QNN, QnnAsrNative) to " +
+                "find that out.",
             guard.isNotEmpty()
         )
         assertTrue(
-            "transcribe must read the live epoch through QnnAsrNative.nativeEpoch() on a live line",
+            "transcribe must read the live epoch through the engine's epoch() on a live line",
             read.isNotEmpty()
         )
         assertTrue("transcribe must still refuse an unarmed session on a live line", session.isNotEmpty())
@@ -2354,18 +2463,52 @@ class NpuNativeContractTest {
         val load = kotlinMemberBody(
             backend, "override fun load(modelPath: String, companionPath: String?): Long ="
         )
+        // RE-POINTED AT P1a, across the two files the call now spans. The spec travels from the
+        // backend's required constructor parameter into the engine's init AS THE OBJECT — never
+        // as five scalars assembled in the policy body — and the engine reads the five off THAT
+        // parameter at its one nativeInit call, in native's order.
+        val engineInitAt = liveOffsets(load, "engine.init(")
+        assertTrue("load must call the engine's init on a live line", engineInitAt.isNotEmpty())
+        val engineInitCall = load.substring(engineInitAt.first())
+            .split("\n").filterNot { it.trimStart().startsWith("//") }.joinToString(" ")
+            .replace(Regex("\\s+"), " ").trim()
+        assertTrue(
+            "the backend hands the engine ITS OWN spec, first, and the pair by name, encoder " +
+                "first: `engine.init( spec, NpuEngineFiles(encoderPath = modelPath, decoderPath = " +
+                "companionPath),`. Found: " + engineInitCall.take(160),
+            engineInitCall.startsWith(
+                "engine.init( spec, NpuEngineFiles(encoderPath = modelPath, decoderPath = companionPath),"
+            )
+        )
         // SCOPED TO THE nativeInit CALL, not the whole of load (4.1 L4, and this is the L1/L2
         // planned-red pattern resolved by STRENGTHENING). The claim was always "read off the spec
         // AT the nativeInit call" but the needles ran over the whole member — which went red the
         // moment L4's vocab stage legitimately added `expectedSize = spec.tokens.vocab,` three
         // stages earlier, and would otherwise have been satisfiable by spec reads anywhere in
         // load. Narrowing the scope to the call makes the needles mean what the message says.
-        val initCallAt = liveOffsets(load, "QnnAsrNative.nativeInit(")
-        assertTrue(
-            "load must call QnnAsrNative.nativeInit on a live line",
-            initCallAt.isNotEmpty()
+        // (P1a) The call is the QNN engine's init's now; the scope follows it there.
+        val engineInit = kotlinMemberBody(
+            qnnEngine,
+            "override fun init(spec: NpuModelSpec, files: NpuEngineFiles, dirs: NpuEngineDirs): Refusal? {"
         )
-        val initCall = load.substring(initCallAt.first())
+        val initCallAt = liveOffsets(engineInit, "QnnAsrNative.nativeInit(")
+        assertEquals(
+            "the QNN engine's init must call QnnAsrNative.nativeInit on exactly one live line",
+            1,
+            initCallAt.size
+        )
+        val initCall = engineInit.substring(initCallAt.first())
+        assertTrue(
+            "…handing it the encoder, then the decoder, then the lib dir — the files by the " +
+                "names the backend gave them, never by position",
+            liveOffsets(initCall, "files.encoderPath,").isNotEmpty() &&
+                liveOffsets(initCall, "files.encoderPath,").first() <
+                    liveOffsets(initCall, "files.decoderPath,").first() &&
+                liveOffsets(initCall, "files.decoderPath,").first() <
+                    liveOffsets(initCall, "dirs.libDir,").first() &&
+                liveOffsets(initCall, "dirs.libDir,").first() <
+                    liveOffsets(initCall, "spec.melBins,").first()
+        )
         assertTrue(
             "and the five scalars must be read OFF THAT SPEC at the nativeInit call, in native's " +
                 "own order - melBins, decLayers, heads, vocab, maxPositions. Assembling them from " +
@@ -2914,13 +3057,14 @@ class NpuNativeContractTest {
         )
         val melStage = liveOffsets(load, "melCtx = WhisperNative.initMelOnly(")
         val vocab = liveOffsets(load, "WhisperBpeDecoder.fromJson(")
-        val init = liveOffsets(load, "QnnAsrNative.nativeInit(")
+        // (P1a) nativeInit is reached through the engine's init now; the order is the same order.
+        val init = liveOffsets(load, "engine.init(")
         assertTrue("the mel stage must run on a live line", melStage.isNotEmpty())
         assertTrue("the vocabulary stage must run on a live line", vocab.isNotEmpty())
-        assertTrue("and nativeInit must run on a live line", init.isNotEmpty())
+        assertTrue("and the engine's init (nativeInit) must run on a live line", init.isNotEmpty())
         assertTrue(
             "ORDER: the companion refusal (${companion.first()}) must precede the mel load " +
-                "(${melStage.first()}), the vocabulary (${vocab.first()}) and nativeInit " +
+                "(${melStage.first()}), the vocabulary (${vocab.first()}) and the engine's init " +
                 "(${init.first()}). It is a null test on a String and the likeliest reason this " +
                 "tier does not come up; behind 563 KB of JSON it is the one place load's own " +
                 "cheapest-refusal-first principle is violated. Presence cannot see this: the move " +
@@ -3253,6 +3397,73 @@ class NpuNativeContractTest {
         assertTrue("floor entries carry no mass", liveLines(body, "if (logits[i] == kLogitFloor) continue;").size >= 1)
     }
 
+    /**
+     * **THE SEAM ITSELF (P1a): the backend reaches QNN only through its engine, the engine is the
+     * one Kotlin caller of [QnnAsrNative] in the app, and it reaches every entry point.**
+     *
+     * Three halves, and each defeats a different edit. A live `QnnAsrNative` in the backend is the
+     * vendor back in the policy body — the one thing a second vendor cannot share — and a call
+     * that bypassed the engine would skip whatever the engine does around it (the quant pair,
+     * the arm-time cleanup). A second caller anywhere in main is a second, unguarded path to a
+     * process-global session. And an entry point the engine never calls is either a dead native
+     * symbol or a call the refactor DROPPED — `nativeSetDiag` gone would silence every
+     * `npu-debug:` line with everything else still green.
+     */
+    @Test
+    fun theBackendReachesQnnOnlyThroughItsEngineAndTheEngineReachesEveryEntryPoint() {
+        assertEquals(
+            "no live line of NpuWhisperBackend.kt names QnnAsrNative. Found: " +
+                liveLines(backend, "QnnAsrNative"),
+            0,
+            liveLines(backend, "QnnAsrNative").size
+        )
+        val mainRoot = run {
+            var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+            var found: File? = null
+            while (dir != null && found == null) {
+                found = listOf(File(dir, "src/main/java"), File(dir, "app/src/main/java"))
+                    .firstOrNull { File(it, "com/whispereverywhere/npu/QnnAsrNative.kt").isFile }
+                dir = dir.parentFile
+            }
+            requireNotNull(found) { "cannot locate src/main/java from ${System.getProperty("user.dir")}" }
+        }
+        val callers = mainRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { liveOffsets(it.readText().replace("\r\n", "\n"), "QnnAsrNative.").isNotEmpty() }
+            .map { it.name }
+            .sorted()
+            .toList()
+        assertEquals(
+            "QnnAsrEngine.kt is the ONE main-source file with a live QnnAsrNative call. Found: $callers",
+            listOf("QnnAsrEngine.kt"),
+            callers
+        )
+        val externals = Regex("external fun (\\w+)\\(")
+            .findAll(seam.split("\n").filterNot { it.trimStart().startsWith("*") }.joinToString("\n"))
+            .map { it.groupValues[1] }
+            .toList()
+        assertEquals(
+            "QnnAsrNative declares the ten entry points the seam was cut against",
+            listOf(
+                "nativeProbe", "nativeInit", "nativeInputQuant", "nativeEncode", "nativeDecodeSegment",
+                "nativeDetectLanguage", "nativeSetDiag", "nativeLastError", "nativeEpoch", "nativeRelease",
+            ),
+            externals
+        )
+        externals.forEach { name ->
+            assertTrue(
+                "QnnAsrEngine must call QnnAsrNative.$name on a live line — an entry point no Kotlin " +
+                    "reaches is a call the seam dropped",
+                liveOffsets(qnnEngine, "QnnAsrNative.$name(").isNotEmpty()
+            )
+        }
+        assertTrue(
+            "and QnnAsrEngine is an NpuAsrEngine — the interface the backend holds, not a second " +
+                "shape beside it",
+            liveOffsets(qnnEngine, "class QnnAsrEngine : NpuAsrEngine {").isNotEmpty()
+        )
+    }
+
     /** The Kotlin declaration names every new argument, in native's order. */
     @Test
     fun theDecodeDeclarationCarriesTheGuardArgumentsInOrder() {
@@ -3268,6 +3479,26 @@ class NpuNativeContractTest {
             assertTrue("missing or out of order: $p", at > last)
             last = at
         }
+        // (P1a) And the QNN engine's delegate hands all twelve on in exactly that order, by the
+        // same names. Three thresholds are adjacent Floats and two counts adjacent Ints, so a
+        // transposition inside the one delegating call compiles and swaps, say, the entropy and
+        // log-prob guards — with nothing on either side of the seam able to see it.
+        val delegate = qnnEngine.substringAfter("override fun decodeSegment(")
+            .substringBefore("override fun detectLanguage(")
+        assertTrue(
+            "QnnAsrEngine.decodeSegment must delegate to QnnAsrNative.nativeDecodeSegment",
+            delegate.contains("QnnAsrNative.nativeDecodeSegment(")
+        )
+        val passed = delegate.substringAfter("QnnAsrNative.nativeDecodeSegment(")
+            .replace(Regex("\\s+"), " ").trim()
+        assertTrue(
+            "…passing its twelve parameters through in native's order, by name. Found: " +
+                passed.take(200),
+            passed.startsWith(
+                "prompt, suppress, beginSuppress, maxTokens, out, temperatures, entropyThold, " +
+                    "logprobThold, noSpeechThold, noSpeechToken, cycleMaxDistinct, stats, )"
+            )
+        )
     }
 
     /**

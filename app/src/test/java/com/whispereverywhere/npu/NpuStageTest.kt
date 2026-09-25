@@ -17,8 +17,14 @@ import java.io.File
  * holds the ENUM equal to the sites here, and `NpuDiagTest` holds the KDoc equal to the enum: the
  * KDoc, the enum and the source cannot drift apart pairwise.
  *
- * Source-anchored for the house reason: the backend reaches native code, so no JVM test may name
- * it; the enum itself is plain Kotlin and is executed.
+ * **Across the seam.** Since the QNN-shaped stages moved into `QnnAsrEngine`, five of them decline
+ * there, as [Refusal] values the backend routes through its one funnel. The derivation follows
+ * them: the backend's literal sites as before, and at each engine call the stages that member can
+ * refuse with, in order — so the ORDER pin still means "the order a session reaches them", which
+ * is how it caught `quant` moving to arm time.
+ *
+ * Source-anchored for the house reason: the backend and the QNN engine reach native code, so no
+ * JVM test may name them; the enum itself is plain Kotlin and is executed.
  */
 class NpuStageTest {
 
@@ -55,15 +61,70 @@ class NpuStageTest {
         source("src/main/java/com/whispereverywhere/npu/NpuStage.kt")
     }
 
+    /** The QNN engine — the other side of the seam, where five of the stages decline now. */
+    private val qnnEngine: String by lazy {
+        source("src/main/java/com/whispereverywhere/transcription/QnnAsrEngine.kt")
+    }
+
     /**
-     * The stages a session can decline at, in the order it reaches them: every decline funnels
-     * through `fallBackToCpuTier` / `fallBackAndRun` with the stage as its first argument (the
-     * one-funnel pins in `NpuDiagTest` prove the funnel), collected in source order, first
-     * occurrence wins — `NpuDiagTest`'s 4.2 F5 regex, verbatim, over live lines.
+     * One Kotlin member's body, bounded by the anchor's own indent (the house `kotlinMemberBody`
+     * rule, 4.1 L1). Loud when the anchor is missing: `indexOf() == -1` would rebase the scope.
+     */
+    private fun memberBody(kt: String, anchor: String): String {
+        val start = kt.indexOf(anchor)
+        assertTrue("anchor \"$anchor\" is missing", start >= 0)
+        val lineStart = kt.lastIndexOf('\n', start - 1) + 1
+        val indent = kt.substring(lineStart, start).takeWhile { it == ' ' }.length
+        val lines = kt.substring(start).split("\n")
+        val body = StringBuilder(lines.first())
+        var closed = false
+        for (line in lines.drop(1)) {
+            if (line.isNotBlank() && line.takeWhile { it == ' ' }.length <= indent) {
+                closed = true
+                break
+            }
+            body.append("\n").append(line)
+        }
+        assertTrue("nothing at or left of \"$anchor\"'s own indent follows it", closed)
+        return body.toString()
+    }
+
+    /** The engine members whose refusals the backend routes, keyed by the backend's call name. */
+    private val routedEngineMembers = mapOf(
+        "prepare" to "override fun prepare(appContext: Context, family: NpuSocFamily): Refusal? {",
+        "init" to "override fun init(spec: NpuModelSpec, files: NpuEngineFiles, dirs: NpuEngineDirs): Refusal? {",
+        "encode" to "override fun encode(melF32: ByteBuffer): Refusal? {",
+    )
+
+    private val refusalSite = Regex("Refusal\\(\\s*NpuStage\\.([A-Z_]+)")
+
+    /** The wire words one engine member can refuse with, in its own source order. */
+    private fun engineStages(member: String): List<String> =
+        refusalSite.findAll(memberBody(live(qnnEngine), routedEngineMembers.getValue(member)))
+            .map { NpuStage.valueOf(it.groupValues[1]).wire }
+            .toList()
+
+    /**
+     * The stages a session can decline at, in the order it reaches them — `NpuDiagTest`'s 4.2 F5
+     * derivation, carried across the engine seam (P1a).
+     *
+     * Every decline still funnels through `fallBackToCpuTier` / `fallBackAndRun` (the one-funnel
+     * pins in `NpuDiagTest` prove the funnel). The backend's own stages reach it with a literal
+     * first argument, exactly as before — the 4.2 F5 regex, verbatim, over live lines. The
+     * engine's reach it as a [Refusal] from `engine.prepare(`, `engine.init(` or `engine.encode(`,
+     * so at each of those call sites, in the backend's source order, the stages that engine member
+     * can refuse with are spliced in, in ITS source order. First occurrence wins.
      */
     private fun derivedDeclineOrder(): List<String> {
-        val declineSite = Regex("fallBack(?:ToCpuTier|AndRun)\\(\\s*\"([a-z-]+)\"")
-        return declineSite.findAll(live(backend)).map { it.groupValues[1] }.distinct().toList()
+        val site = Regex(
+            "fallBack(?:ToCpuTier|AndRun)\\(\\s*\"([a-z-]+)\"|engine\\.(prepare|init|encode)\\("
+        )
+        val out = mutableListOf<String>()
+        site.findAll(live(backend)).forEach { match ->
+            val literal = match.groups[1]?.value
+            if (literal != null) out += literal else out += engineStages(match.groupValues[2])
+        }
+        return out.distinct()
     }
 
     @Test
@@ -104,9 +165,75 @@ class NpuStageTest {
             "dispatch" in derivedDeclineOrder(),
         )
         assertEquals(
-            "and the backend names NpuStage.DISPATCH on no live line",
+            "and neither the backend nor the QNN engine names NpuStage.DISPATCH on a live line",
             0,
-            liveLineCount(backend, "NpuStage.DISPATCH"),
+            liveLineCount(backend, "NpuStage.DISPATCH") + liveLineCount(qnnEngine, "NpuStage.DISPATCH"),
+        )
+    }
+
+    /**
+     * THE DERIVATION'S OWN COMPLETENESS (P1a): it can only see the engine refusals it reads, so
+     * every `Refusal(` in the QNN engine must sit inside one of the three members the backend
+     * routes — a refusal built in a helper, or in a member the backend never checks, would be a
+     * stage the derivation cannot see and the funnel never prints.
+     */
+    @Test
+    fun everyEngineRefusalIsBuiltInAMemberTheBackendRoutes() {
+        val all = refusalSite.findAll(live(qnnEngine)).count()
+        val routed = routedEngineMembers.keys.sumOf { engineStages(it).size }
+        assertTrue("the engine refuses at all (got $all)", all > 0)
+        assertEquals(
+            "every Refusal(NpuStage.…) in QnnAsrEngine.kt is inside prepare, init or encode",
+            all,
+            routed,
+        )
+        assertEquals(
+            "and every `Refusal(` the engine builds names its stage from the closed set — none " +
+                "is built from a value the derivation cannot read",
+            all,
+            Regex("Refusal\\(").findAll(live(qnnEngine)).count(),
+        )
+    }
+
+    /**
+     * THE FUNNEL'S LITERAL SHAPE (P1a): each engine refusal reaches `fallBackToCpuTier` /
+     * `fallBackAndRun` as `refusal.stage.wire` and `refusal.detail`, so the diag readers — the
+     * `npu: unavailable stage=… detail=…` line, the card's `"stage: detail"`, `stageOf` — see
+     * exactly the text they saw before the seam. `stage.name` is the one spelling that would
+     * compile and print `stage=SKEL`.
+     */
+    @Test
+    fun theBackendRoutesEveryEngineRefusalThroughTheOneFunnelByItsWireWord() {
+        val flat = live(backend).replace(Regex("\\s+"), " ")
+        listOf(
+            "engine.prepare(appContext, family)?.let { refusal -> " +
+                "return@serialized fallBackToCpuTier(refusal.stage.wire, refusal.detail) }",
+            "engine.init( spec, NpuEngineFiles(encoderPath = modelPath, decoderPath = companionPath), " +
+                "NpuEngineDirs(libDir = libDir(), filesDir = appContext.filesDir.absolutePath), " +
+                ")?.let { refusal -> return@serialized fallBackToCpuTier(refusal.stage.wire, refusal.detail) }",
+            "engine.encode(mel)?.let { refusal -> " +
+                "return@serialized fallBackAndRun(refusal.stage.wire, refusal.detail, samples, lang, useVad) }",
+        ).forEach { needle ->
+            assertEquals(
+                "the backend routes `${needle.substringBefore("(")}`'s refusal through the one " +
+                    "funnel by its wire word, exactly once",
+                1,
+                flat.split(needle).size - 1,
+            )
+        }
+        listOf("engine.prepare(", "engine.init(", "engine.encode(").forEach { call ->
+            assertEquals("one live `$call` site in the backend", 1, liveLineCount(backend, call))
+        }
+        assertEquals(
+            "no live line of the backend prints an enum's NAME — `stage.name` is `SKEL`, and the " +
+                "line has always said `stage=skel`",
+            0,
+            liveLineCount(backend, ".stage.name") + liveLineCount(backend, "stage.name)"),
+        )
+        assertEquals(
+            "the funnel keeps its (String, String) shape, which every diag pin anchors on",
+            1,
+            liveLineCount(backend, "private fun fallBackToCpuTier(stage: String, detail: String): Long {"),
         )
     }
 
@@ -200,6 +327,7 @@ class NpuStageTest {
         listOf(
             "\"src/main/java/com/whispereverywhere/npu/NpuStage.kt\",",
             "\"src/main/java/com/whispereverywhere/transcription/NpuAsrEngine.kt\",",
+            "\"src/main/java/com/whispereverywhere/transcription/QnnAsrEngine.kt\",",
         ).forEach {
             assertEquals(
                 "app/build.gradle.kts must list $it among sourcePinnedInputs",

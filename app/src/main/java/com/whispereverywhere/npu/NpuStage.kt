@@ -38,10 +38,16 @@ enum class NpuStage(val wire: String) {
     DISPATCH("dispatch"),
 
     INIT("init"),
+
+    /**
+     * The encoder's input quantisation, read once per arm (P1a: `QnnAsrEngine.init`, directly
+     * after `nativeInit`). It declined per segment, after `mel`, until the seam moved the read.
+     */
+    QUANT("quant"),
+
     EPOCH("epoch"),
     SESSION("session"),
     MEL("mel"),
-    QUANT("quant"),
     ENCODE("encode"),
     LANG("lang"),
     DECODE("decode"),

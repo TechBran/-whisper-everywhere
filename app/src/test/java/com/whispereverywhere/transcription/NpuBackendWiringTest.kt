@@ -1035,20 +1035,42 @@ class NpuBackendWiringTest {
      */
     @Test
     fun theResolverConstructsTheTierWithTheResolvedFamilyExactlyOnce() {
+        // RE-SPELLED AT P1a for the fifth argument, the same way F2 re-spelled it for the
+        // fourth: the backend takes its runtime as a required NpuAsrEngine, and the resolver
+        // builds a fresh QnnAsrEngine for it on every family (the vendor switch is P2's, on the
+        // row this overload already resolved). The compile-red at this call site was, again,
+        // the no-default parameter working.
         assertEquals(
             "the selector's production overload constructs the tier exactly once, from the " +
-                "paths, the context, the SPEC it resolved (4.1 L2) and the FAMILY it resolved " +
-                "(4.2 F2). Neither has a default on the constructor, so this is also the " +
-                "assertion that a tier id with no spec row and a device with no census row can " +
-                "never reach the NPU backend at all.",
+                "paths, the context, the SPEC it resolved (4.1 L2), the FAMILY it resolved " +
+                "(4.2 F2) and a fresh QNN ENGINE (P1a). None has a default on the constructor, so " +
+                "this is also the assertion that a tier id with no spec row and a device with no " +
+                "census row can never reach the NPU backend at all.",
             1,
-            count(selector, "NpuWhisperBackend(p, appContext, spec, family)"),
+            count(selector, "NpuWhisperBackend(p, appContext, spec, family, QnnAsrEngine())"),
         )
         assertEquals(
             "exactly one NpuWhisperBackend( construction on a live line of the selector — a " +
                 "second site would be a second answer to which model on which silicon",
             1,
             liveOffsets(selector, "NpuWhisperBackend(").size,
+        )
+        assertEquals(
+            "and exactly one engine construction — inside that call, one engine per backend: the " +
+                "engine carries this arm's own state (the quant pair and its buffer), so an engine " +
+                "shared across backends would hand one instance's arm to another's teardown",
+            1,
+            liveOffsets(selector, "QnnAsrEngine(").size,
+        )
+        assertEquals(
+            "the backend's engine parameter is REQUIRED — no default, the spec/family doctrine " +
+                "one layer down: a defaulted engine is a runtime chosen by the backend instead of " +
+                "by the row that names the silicon",
+            listOf(1, 0),
+            listOf(
+                liveOffsets(backend, "private val engine: NpuAsrEngine,").size,
+                liveOffsets(backend, "engine: NpuAsrEngine =").size,
+            ),
         )
         assertEquals(
             "and it takes the spec from NpuModelSpec.forTier, on the npu arm only — a second " +
@@ -1118,7 +1140,9 @@ class NpuBackendWiringTest {
     fun theNpuTierBlanksANoSpeechSegmentFromTheReturnedStatsBeforeDetokenising() {
         val body = memberBody(backend, "    override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {")
         val stats = liveOffsets(body, "val stats = NpuDecodeStats.newArray()")
-        val call = liveOffsets(body, "QnnAsrNative.nativeDecodeSegment(")
+        // (P1a) The decode is the engine's decodeSegment — nativeDecodeSegment's contract,
+        // argument for argument (NpuAsrEngineSeamTest) — at the same place in the same order.
+        val call = liveOffsets(body, "engine.decodeSegment(")
         val gate = liveOffsets(body, "NpuDecodePolicy.isNoSpeech(stats[NpuDecodeStats.NO_SPEECH_PROB], stats[NpuDecodeStats.AVG_LOGPROB])")
         val decode = liveOffsets(body, "bpe.decode(out.copyOf(written))")
         val line = liveOffsets(body, "NpuDiag.line(")

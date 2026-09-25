@@ -53,12 +53,13 @@ import com.whispereverywhere.npu.NpuModelSpec
  * ### Testing
  *
  * The [backendFor] that takes a lambda is the JVM-testable form and it exists for one reason:
- * **no unit test may name `NpuWhisperBackend`** (its `QnnAsrNative` reference runs
- * `System.loadLibrary("qnnasr")`, and there is no `libqnnasr.so` on the test classpath), so a test
- * that asserted on the concrete type would be asserting by being killed. The table is therefore
- * executed against a stand-in backend, and the *production* overload's one construction call is
- * pinned as source text by `NpuBackendWiringTest` — the same split, for the same reason, that
- * `NpuDiag` uses for its format strings.
+ * **no unit test may name `NpuWhisperBackend`** (it reaches `libwhisper_jni.so` through
+ * `WhisperNative`, and its production engine `QnnAsrEngine` runs `System.loadLibrary("qnnasr")`
+ * through `QnnAsrNative`; neither library is on the test classpath), so a test that asserted on
+ * the concrete type would be asserting by being killed. The table is therefore executed against a
+ * stand-in backend, and the *production* overload's one construction call is pinned as source
+ * text by `NpuBackendWiringTest` — the same split, for the same reason, that `NpuDiag` uses for
+ * its format strings.
  */
 object NpuBackendSelector {
 
@@ -132,6 +133,13 @@ object NpuBackendSelector {
      * device requires three other objects to have answered inconsistently, and it is refused
      * anyway: that chain is a property of DIFFERENT objects, and "safe by a property of a
      * different object" is the shape this stack has paid for twice.
+     *
+     * **The engine is QNN's, for every family (P1a — the engine seam).** The backend takes its
+     * runtime as a required [NpuAsrEngine], and this is where it is chosen: a fresh
+     * [QnnAsrEngine] per backend, because every census row is a Qualcomm row today. The vendor
+     * switch arrives with the census's own `vendor` field (P2) and lands HERE, on the row this
+     * overload already resolved — so the runtime a session arms and the silicon the gate offered
+     * it on remain one reading of one census row.
      */
     fun backendFor(
         tierId: String?,
@@ -143,7 +151,7 @@ object NpuBackendSelector {
         val family = (appContext.applicationContext as? WhisperEverywhereApp)?.npuSocFamily
             ?: return WhisperNativeBackend
         return backendFor(tierId, offeredNpuTierIds, declinedTiers, paths) { p, spec ->
-            NpuWhisperBackend(p, appContext, spec, family)
+            NpuWhisperBackend(p, appContext, spec, family, QnnAsrEngine())
         }
     }
 }

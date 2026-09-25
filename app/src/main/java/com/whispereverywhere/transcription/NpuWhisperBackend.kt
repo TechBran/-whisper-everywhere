@@ -11,7 +11,6 @@ import com.whispereverywhere.npu.NpuGate
 import com.whispereverywhere.npu.NpuQuantize
 import com.whispereverywhere.npu.NpuSentences
 import com.whispereverywhere.npu.NpuTierStatus
-import com.whispereverywhere.npu.QnnAsrNative
 import com.whispereverywhere.npu.NpuModelSpec
 import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.npu.WhisperBpeDecoder
@@ -22,16 +21,30 @@ import java.util.Locale
 
 /**
  * The 4.0 NPU tier behind the ordinary [WhisperBackend] seam: mel on the CPU, encoder and decoder
- * on the Hexagon, and one CPU-tier fallback that is never silent.
+ * on the AI chip, and one CPU-tier fallback that is never silent.
  *
  * ```
- * load(encoder, decoder)   companion? -> mel (64 KB) -> vocab -> skel (the family's own, once)
- *                          -> nativeInit (376 MiB) -> nativeEpoch
- * transcribe(samples)      nativeEpoch (is this still my session?) -> pcmToMel -> nativeInputQuant
- *                          -> melToU16 -> nativeEncode -> nativeDetectLanguage
- *                          -> nativeDecodeSegment -> WhisperBpeDecoder
- * release(ctx)             nativeRelease(armedEpoch) + WhisperNative.free
+ * load(encoder, decoder)   companion? -> mel (64 KB) -> vocab -> engine.prepare (QNN: the
+ *                          family's own skel, once) -> engine.init (QNN: nativeInit, 376 MiB, and
+ *                          the input quant pair) -> engine.epoch
+ * transcribe(samples)      engine.epoch (is this still my session?) -> pcmToMel -> engine.encode
+ *                          (QNN: melToU16 -> nativeEncode) -> engine.detectLanguage
+ *                          -> engine.decodeSegment -> WhisperBpeDecoder
+ * release(ctx)             engine.release(armedEpoch) + WhisperNative.free
  * ```
+ *
+ * ### The engine seam: this file is the policy, [engine] is the vendor (P1a)
+ *
+ * Every decision a session takes lives here and is written once for every vendor: the
+ * cheapest-refusal-first order of [load], the arming epoch, the one loud fallback, the mel, the
+ * language resolution, the two blanks, the sentence slot and every diag line. What differs between
+ * NPU runtimes lives behind [NpuAsrEngine] — how the runtime is staged, how the pair is armed, and
+ * what the encoder is fed — and the engine's refusals come back as values naming an `NpuStage`,
+ * which this file routes through the same one funnel as its own, printing the stage's wire word.
+ * [QnnAsrEngine] owns what was QNN-shaped here until the seam: the skel stage, the input quant pair
+ * and its buffer, `melToU16` and the Q10a-D2 `melprobe` line (design
+ * `docs/superpowers/specs/2026-09-24-mediatek-apu-tier-design.md` §2.4). The lines a device prints
+ * did not change by one character.
  *
  * ### The 64 KB that must never become a whole CPU tier
  *
@@ -81,9 +94,9 @@ import java.util.Locale
  * ### The spec is required, and it has no default
  *
  * `spec` says which model's assets these paths point at: its mel width, its layer and head counts,
- * its vocabulary and its context window. Every one of those is passed to `nativeInit`, which
- * derives the graph census it refuses a mismatched asset on — so the spec is what makes the F2
- * guard a guard once more than one npu-class tier exists.
+ * its vocabulary and its context window. Every one of those is passed to the engine's init (for
+ * QNN, `nativeInit`), which derives the graph census it refuses a mismatched asset on — so the spec
+ * is what makes the F2 guard a guard once more than one npu-class tier exists.
  *
  * **It has no default value, deliberately.** A default would let a future call site arm one model's
  * 338 MB of context binaries under another model's census, and the outcomes run from a refusal at
@@ -108,7 +121,15 @@ import java.util.Locale
  * is a FastRPC mystery on a device, inside a loader whose search path this code only ever sets
  * up. `NpuBackendSelector` resolves the row from the app's one memo and answers
  * `WhisperNativeBackend` when there is none, so a device off the census cannot reach this
- * constructor at all.
+ * constructor at all. Since the seam the row reaches its stage through [NpuAsrEngine.prepare],
+ * whose QNN implementation is that skel stage, moved whole.
+ *
+ * ### The engine is required as well, with no default (P1a)
+ *
+ * `engine` is the runtime this tier's session runs on. The selector constructs it — [QnnAsrEngine]
+ * for every family until the census names a second vendor — and a default here would be the same
+ * silent wrong choice as a defaulted family, one layer down: a runtime chosen by this file instead
+ * of by the row that says which silicon it is on.
  *
  * ### Handles
  *
@@ -118,18 +139,21 @@ import java.util.Locale
  *
  * ### Testing
  *
- * **No JVM test may name this class.** It touches [QnnAsrNative], whose `init` block runs
- * `System.loadLibrary("qnnasr")`, and there is no `libqnnasr.so` on the unit-test classpath — the
- * mere reference kills the test. Its invariants are therefore pinned as SOURCE TEXT in
- * `NpuNativeContractTest` and `NpuDiagTest`, its pure parts live in `NpuGate`, `NpuDiag`,
- * `NpuQuantize` and `NpuDecodePolicy` where they are fully tested, and its runtime behaviour is
- * first executed on device at Q10a.
+ * **No JVM test may name this class.** It touches [WhisperNative] (directly and through
+ * [GgmlBackends]), whose `init` block runs `System.loadLibrary("whisper_jni")`, and its capability
+ * probe and its production engine touch `com.whispereverywhere.npu.QnnAsrNative`, whose `init`
+ * block runs `System.loadLibrary("qnnasr")`; neither library is on the unit-test classpath. Its
+ * invariants are therefore pinned as SOURCE TEXT in `NpuNativeContractTest`, `NpuDiagTest` and
+ * `NpuStageTest`, its pure parts live in `NpuGate`, `NpuDiag`, `NpuQuantize` and
+ * `NpuDecodePolicy` where they are fully tested, and its runtime behaviour is first executed on
+ * device at Q10a.
  */
 class NpuWhisperBackend(
     private val paths: ModelPathProvider,
     private val appContext: Context,
     private val spec: NpuModelSpec,
     private val family: NpuSocFamily,
+    private val engine: NpuAsrEngine,
 ) : WhisperBackend {
 
     // ---------------------------------------------------------------- session state
@@ -140,13 +164,14 @@ class NpuWhisperBackend(
     /** Built once at [load], over `spec.vocabAsset` — half a megabyte of JSON and ~52k strings is not a per-segment cost. */
     private var decoder: WhisperBpeDecoder? = null
 
-    /** `spec.melFloatBytes` direct, native order. Reused; [WhisperNative.pcmToMel] overwrites all of it. */
+    /**
+     * `spec.melFloatBytes` direct, native order. Reused; [WhisperNative.pcmToMel] overwrites all of
+     * it, and it is what [NpuAsrEngine.encode] is handed — the float mel, whatever the runtime
+     * makes of it (the QNN engine quantises it into its own `ufixed16` block).
+     */
     private var melBuffer: ByteBuffer? = null
 
-    /** `spec.inputFeaturesBytes` direct, native order — the `ufixed16` block `nativeEncode` copies in. */
-    private var quantBuffer: ByteBuffer? = null
-
-    /** True once `nativeInit` has succeeded and every artefact is in hand. */
+    /** True once the engine's init has succeeded and every artefact is in hand. */
     private var armed: Boolean = false
 
     /**
@@ -278,8 +303,8 @@ class NpuWhisperBackend(
     override fun load(modelPath: String): Long = load(modelPath, paths.companionModelPath())
 
     /**
-     * Arms the tier: the companion check, the mel context, the vocabulary, then the two QAIRT
-     * context binaries.
+     * Arms the tier: the companion check, the mel context, the vocabulary, the engine's own
+     * staging, then the two model files (for QNN, the two QAIRT context binaries).
      *
      * **The order is the design, and it is ordered by cost.** The companion check is first because
      * it is a null test on a `String?` and is the likeliest reason this tier does not come up
@@ -287,7 +312,8 @@ class NpuWhisperBackend(
      * context is next because it is ~64 KB and its failure is a clean "tier unavailable" **before**
      * 338 MB of NPU assets have been touched; the vocabulary follows for the same reason (563 KB,
      * and a decoder that failed to construct does not exist, so there is nothing to run degraded);
-     * `nativeInit` — the expensive one — is last. Every failure before it costs nothing.
+     * the engine's init — `nativeInit` for QNN, the expensive one — is last. Every failure before it
+     * costs nothing.
      *
      * **How expensive, measured on the shipped tier** (4.4.0 startup amendment S2; the old
      * "~342 MiB, ~525 ms" here and at stage (6) was a 127 MB encoder-only SPIKE figure and
@@ -310,11 +336,12 @@ class NpuWhisperBackend(
     override fun load(modelPath: String, companionPath: String?): Long =
         // ONE serialized hold spans this whole body, and that single hold is LOAD-BEARING for
         // the epoch handshake (4.1 L1; stated here per its m8 rider): stages (6) and (7) are two
-        // JNI crossings — nativeInit, then nativeEpoch — and it is this one gate hold that makes
-        // the pair atomic against every other arm. Split the hold, or move either crossing out
-        // of it, and another instance's nativeInit can land BETWEEN them, handing this instance
-        // the successor's epoch: a stale backend armed with a live identity, the exact shape the
-        // epoch exists to refuse. The hold, not source order, carries the invariant.
+        // JNI crossings — the engine's init, then its epoch (QNN: nativeInit, then nativeEpoch) —
+        // and it is this one gate hold that makes the pair atomic against every other arm. Split
+        // the hold, or move either crossing out of it, and another instance's init can land
+        // BETWEEN them, handing this instance the successor's epoch: a stale backend armed with a
+        // live identity, the exact shape the epoch exists to refuse. The hold, not source order,
+        // carries the invariant.
         NativeComputeGate.serialized {
             // FIRST STATEMENT, and it is an ORDER invariant (4.0, Q9b). The build is
             // GGML_BACKEND_DL, so the ggml backend registry starts EMPTY and only
@@ -421,39 +448,16 @@ class NpuWhisperBackend(
                 )
             }
 
-            // (5) THE DSP-SIDE SKEL — THIS FAMILY'S ROW, staged from the APK's assets into
-            // filesDir (4.1 L6 — the I5 answer; fleet-wide at 4.2 F2). packaging.jniLibs
-            // EXCLUDES every census family's skel: under extractNativeLibs="false" a lib/ copy
-            // is provably unopenable by the FastRPC loader, which needs a real file on disk and
-            // searches only ADSP_LIBRARY_PATH. The extractQnnSkel Gradle task re-materialises
-            // the census's skels from the resolved AAR into assets — five of them for six
-            // families, one per architecture (qcs8550 and 7gen4 share V73) — asserting the same
-            // census-pinned (bytes, sha256) pairs at build time, and this stage copies exactly
-            // ONE of them, the row this device resolved to, into filesDir, the FIRST
-            // ADSP_LIBRARY_PATH entry, where nativeInit's dlopen of libQnnHtp.so will have
-            // FastRPC find it. The three values are the family row's — the census is their one
-            // home, and a skel staged under another family's values is precisely the FastRPC
-            // mystery the required `family` parameter exists to prevent. The RETURN PATH IS
-            // DELIBERATELY UNUSED: FastRPC searches the environment, never Kotlin, so the
-            // call's value is its refusal gate.
-            //
-            // stagedPathWithMarker, NOT stagedPath — the L3 handoff's explicit warning to this
-            // stage: the plain arm full-hashes the destination on EVERY arm, free at the
-            // melbank's 103 KB and a per-session 12.5-19.7 MB flash read here (V69 12,529,660 B
-            // to V81 19,708,192 B at QNN 2.50). The first arm pays one verified write (once per
-            // install); every later arm is a handful of stats against the stored marker. A null
-            // is a stage refusal like any other stage's: without it the HTP backend would come
-            // up and then fail somewhere far less legible, inside FastRPC.
-            NpuAssetStage.stagedPathWithMarker(
-                appContext,
-                family.skelAsset,
-                family.skelBytes,
-                family.skelSha256,
-            ) ?: return@serialized fallBackToCpuTier(
-                "skel",
-                "${family.skelAsset} (family ${family.id}) could not be staged from the APK " +
-                    "into filesDir — the FastRPC loader would find no DSP-side skel to open"
-            )
+            // (5) THE RUNTIME'S OWN STAGING — THIS FAMILY'S ROW, through the engine (P1a). For the
+            // QNN engine this is the DSP-side skel stage, moved whole into QnnAsrEngine.prepare
+            // with its reasoning: the family row's one skel, staged into filesDir through the
+            // marker fast path, before the dlopen that makes FastRPC look for it. Here, after
+            // every cheap refusal and before the expensive stage, because the first arm of it
+            // writes ~18 MB — and its refusal leaves through the same funnel as every stage in
+            // this file, under the stage's own wire word.
+            engine.prepare(appContext, family)?.let { refusal ->
+                return@serialized fallBackToCpuTier(refusal.stage.wire, refusal.detail)
+            }
 
             // (6) THE EXPENSIVE STAGE, and its cost is now MEASURED ON THE SHIPPED TIER rather
             // than estimated from the spike (4.4.0 startup amendment S2). It used to read
@@ -480,33 +484,17 @@ class NpuWhisperBackend(
             // ordered LAST, and at 4.1 s it is also the entire reason 4.4.0 needed a startup ring
             // — the capture seam could not keep waiting on it (audio/StartupRing.kt).
             //
-            // runCatching, not try/catch on a named type: libqnnasr.so is
-            // absent by design on builds where the proprietary QNN headers could not be fetched, and
-            // the FIRST touch throws UnsatisfiedLinkError while every touch after it throws
-            // ExceptionInInitializerError / NoClassDefFoundError, because the <clinit> has already
-            // failed. Catching the first one by name would crash the tier-unavailable path on the
-            // second call rather than the first.
-            // THE FIVE VARYING SCALARS (4.1 L2). Native derives its own census from these and
-            // compares the graphs' own enumeration against it, so a spec that does not describe
-            // the asset on disk is refused HERE — at load, by name — instead of surfacing later as
-            // a session whose buffer sizing and whose model disagree. `headDim`, `audioCtx` and
-            // `melFrames` are deliberately NOT passed: they are identical on every published
-            // Whisper AI Hub asset, and an argument carrying a number that cannot vary is a number
-            // a caller can get wrong.
-            val initError = runCatching {
-                QnnAsrNative.nativeInit(
-                    modelPath,
-                    companionPath,
-                    libDir(),
-                    spec.melBins,
-                    spec.decLayers,
-                    spec.heads,
-                    spec.tokens.vocab,
-                    spec.maxPositions,
-                )
-            }.getOrElse { cause -> "init: ${cause.javaClass.simpleName}: ${cause.message}" }
-            if (initError.isNotEmpty()) {
-                return@serialized fallBackToCpuTier("init", initError)
+            // THROUGH THE ENGINE (P1a). QnnAsrEngine.init is nativeInit — wrapped in the same
+            // runCatching, for the libqnnasr-absent reason recorded there, and fed the five
+            // varying scalars off THIS spec, the constructor's required one — then the encoder's
+            // input quant pair, read once per arm. The spec travels as the object, never as
+            // scalars assembled here; the two files travel named, encoder first.
+            engine.init(
+                spec,
+                NpuEngineFiles(encoderPath = modelPath, decoderPath = companionPath),
+                NpuEngineDirs(libDir = libDir(), filesDir = appContext.filesDir.absolutePath),
+            )?.let { refusal ->
+                return@serialized fallBackToCpuTier(refusal.stage.wire, refusal.detail)
             }
 
             // (7) THE ARMING EPOCH, read the instant the session exists and BEFORE `armed = true`
@@ -514,16 +502,16 @@ class NpuWhisperBackend(
             // instance would be a live backend holding epoch 0 — i.e. one whose release names no
             // session — which is precisely the unguarded shape L1 removed. Native refuses 0
             // outright, so the window is not dangerous; it is simply a state that must not exist.
-            armedEpoch = QnnAsrNative.nativeEpoch()
+            armedEpoch = engine.epoch()
 
             // Q10a-D1. The decoder runs and emits nothing, and every hypothesis about why is a
             // statement about numbers only the native loop can see. Armed here, after init, because
             // there is no session to instrument before it — and with BuildConfig.DEBUG, so the
-            // owner's debug build talks and a release build does not.
-            QnnAsrNative.nativeSetDiag(com.whispereverywhere.BuildConfig.DEBUG)
+            // owner's debug build talks and a release build does not. The decision is this
+            // file's; the engine hands it to its runtime unchanged.
+            engine.setDiag(com.whispereverywhere.BuildConfig.DEBUG)
 
             melBuffer = NpuQuantize.newMelFloatBuffer(spec)
-            quantBuffer = NpuQuantize.newInputFeaturesBuffer(spec)
             armed = true
             HANDLE
         }
@@ -531,7 +519,8 @@ class NpuWhisperBackend(
     // ---------------------------------------------------------------- transcribe
 
     /**
-     * One 30 s segment: mel, quantise, encode, resolve the language, decode, detokenise.
+     * One 30 s segment: mel, encode (the engine quantises it first when its runtime needs a
+     * quantised block, as QNN's does), resolve the language, decode, detokenise.
      *
      * [useVad] is IGNORED, and that is correct rather than unimplemented: the encoder's
      * `input_features` is a fixed `[1,melBins,3000]`, so the window is 30 s whatever the VAD would have
@@ -540,11 +529,11 @@ class NpuWhisperBackend(
      *
      * Held under [NativeComputeGate] end to end — **including the fallback short-circuit**, which
      * is inside the hold rather than in front of it. `pcmToMel` REPLACES the mel context's internal
-     * state, so two segments on this one handle would race each other; the QNN session is a single
-     * process-global behind its own mutex and must not see an encode and a decode interleaved; and
-     * the routing decision itself is shared mutable state, so reading it outside the hold is how
-     * two threads both decide to fall back and one 60-874 MB whisper context is leaked. The lock is
-     * reentrant and the delegate takes it again, which costs nothing.
+     * state, so two segments on this one handle would race each other; the engine's native session
+     * is a single process-global behind its own mutex and must not see an encode and a decode
+     * interleaved; and the routing decision itself is shared mutable state, so reading it outside
+     * the hold is how two threads both decide to fall back and one 60-874 MB whisper context is
+     * leaked. The lock is reentrant and the delegate takes it again, which costs nothing.
      */
     override fun transcribe(ctx: Long, samples: FloatArray, lang: String?, useVad: Boolean): String {
         return NativeComputeGate.serialized {
@@ -568,12 +557,13 @@ class NpuWhisperBackend(
             // the shared mel context's state had already been replaced, on a segment already paid
             // for; the check costs one ~100 ns JNI crossing against a ~405 ms encode.
             //
-            // Guarded on `armedEpoch != 0L` so an instance that never armed does not touch
-            // QnnAsrNative — and therefore does not dlopen it — merely to find that out; and read
-            // ONCE, into a local, so the number the refusal reports is the number the branch was
-            // taken on rather than a second reading of a value that has no reason to agree.
+            // Guarded on `armedEpoch != 0L` so an instance that never armed does not touch its
+            // engine's runtime — for QNN, does not dlopen libqnnasr.so — merely to find that out;
+            // and read ONCE, into a local, so the number the refusal reports is the number the
+            // branch was taken on rather than a second reading of a value that has no reason to
+            // agree.
             if (armedEpoch != 0L) {
-                val liveEpoch = QnnAsrNative.nativeEpoch()
+                val liveEpoch = engine.epoch()
                 if (liveEpoch != armedEpoch) {
                     return@serialized fallBackAndRun(
                         "epoch",
@@ -586,9 +576,8 @@ class NpuWhisperBackend(
             }
 
             val mel = melBuffer
-            val quantised = quantBuffer
             val bpe = decoder
-            if (!armed || mel == null || quantised == null || bpe == null) {
+            if (!armed || mel == null || bpe == null) {
                 return@serialized fallBackAndRun(
                     "session", "transcribe on a tier that is not armed", samples, lang, useVad
                 )
@@ -611,11 +600,11 @@ class NpuWhisperBackend(
             // The three rows are 0, melBins/2 and melBins-1 — the spec's, not 0/40/79 — because a
             // fixed 79 names a row that does not exist on a 128-bin tier and, worse, would silently
             // report a row from the middle of one where the claim is about the last (4.1 L2).
-            //   - BEFORE melToU16. This must measure whisper's floats, not anything the quantiser
-            //     has been near; a bisector that cannot separate the mel from the quantisation is
-            //     not a bisector.
-            // A fresh asFloatBuffer() view, read absolutely, so the shared direct buffer handed to
-            // melToU16 and then to nativeEncode keeps its position untouched.
+            //   - BEFORE the engine's encode — for QNN, before melToU16, which now lives inside
+            //     it. This must measure whisper's floats, not anything the quantiser has been near;
+            //     a bisector that cannot separate the mel from the quantisation is not a bisector.
+            // A fresh asFloatBuffer() view, read absolutely, so the shared direct buffer handed on
+            // to the engine (for QNN: melToU16, then nativeEncode) keeps its position untouched.
             val melView = mel.asFloatBuffer()
             android.util.Log.i(
                 NpuDiag.TAG,
@@ -627,53 +616,15 @@ class NpuWhisperBackend(
                 ),
             )
 
-            // NEVER literals. The affine parameters belong to the asset and are read off
-            // input_features' own metadata; a hardcoded scale would survive an asset re-export and
-            // scale every spectrogram wrongly, which the encoder transcribes fluently into different
-            // words with nothing downstream able to notice.
-            val quant = QnnAsrNative.nativeInputQuant()
-            if (quant.size < 2) {
-                return@serialized fallBackAndRun("quant", QnnAsrNative.nativeLastError(), samples, lang, useVad)
-            }
-            NpuQuantize.melToU16(
-                spec, mel.asFloatBuffer(), quant[0], quant[1].toInt(), quantised.asShortBuffer()
-            )
-
-            // Q10a-D2. The KOTLIN half of the encoder read — the same two sums and the same three
-            // cells native is about to report from the buffer the DSP is bound to, computed here
-            // from the float mel by an independent route. One reading describes a buffer; the pair
-            // decides whether the block the graph sees is the block this code wrote, and in which
-            // orientation. Emitted BEFORE nativeEncode so the two halves land adjacent in the log.
-            //
-            // BuildConfig.DEBUG, like nativeSetDiag above it: `melBins + melFrames` extra quantise
-            // calls — 3,080 on this tier, 3,128 on a 128-bin one — and three float reads, which is
-            // nothing against a ~405 ms encode. (The 4.0 comment here said 6,000; it was double the
-            // real figure, corrected at 4.1 L3. This file's comments are read as measurements and
-            // one wrong measurement devalues the rest.) A release build has no business narrating
-            // the spectrogram it is working on.
-            if (com.whispereverywhere.BuildConfig.DEBUG) {
-                val probe = mel.asFloatBuffer()
-                val half = spec.melFrames / 2
-                android.util.Log.i(
-                    NpuDiag.TAG,
-                    NpuDiag.melProbe(
-                        spec,
-                        NpuQuantize.quantisedRowSum(spec, probe, 0, quant[0], quant[1].toInt()),
-                        NpuQuantize.quantisedColumnSum(spec, probe, 0, quant[0], quant[1].toInt()),
-                        floatArrayOf(
-                            probe.get(0),
-                            probe.get(half),
-                            probe.get(spec.melFrames * (spec.melBins / 2) + half),
-                        ),
-                        quant[0],
-                        quant[1].toInt(),
-                    ),
-                )
-            }
-
-            val encodeError = QnnAsrNative.nativeEncode(quantised)
-            if (encodeError.isNotEmpty()) {
-                return@serialized fallBackAndRun("encode", encodeError, samples, lang, useVad)
+            // THE ENCODE, THROUGH THE ENGINE (P1a), handed the float mel exactly as pcmToMel wrote
+            // it. For QNN it is the block that stood here until the seam, moved whole into
+            // QnnAsrEngine.encode: melToU16 against the quant pair read once at arm (the asset's
+            // own metadata, never literals), the Q10a-D2 `melprobe` line under BuildConfig.DEBUG,
+            // then nativeEncode — the same statements, in the same order, printing the same lines.
+            // A refusal leaves through the funnel under its own stage's wire word, and this
+            // segment still runs, on the CPU tier.
+            engine.encode(mel)?.let { refusal ->
+                return@serialized fallBackAndRun(refusal.stage.wire, refusal.detail, samples, lang, useVad)
             }
             val encodeMs = SystemClock.elapsedRealtime() - encodeStart
 
@@ -681,8 +632,8 @@ class NpuWhisperBackend(
 
             // The detect pass runs ONLY when the user has not chosen — one extra graphExecute,
             // ~4.5 ms against a ~405 ms encode. It does not consume the encode: this same encoded
-            // segment is what nativeDecodeSegment reads next, in place.
-            val detected = if (lang == null) QnnAsrNative.nativeDetectLanguage() else DETECT_NOT_RUN
+            // segment is what the engine's decodeSegment reads next, in place.
+            val detected = if (lang == null) engine.detectLanguage() else DETECT_NOT_RUN
             val resolution = try {
                 NpuDecodePolicy.resolveLangToken(
                     spec.tokens, lang, detected, Locale.getDefault().toLanguageTag()
@@ -699,7 +650,7 @@ class NpuWhisperBackend(
             // 4.3.1 A: the guards travel as data, like the suppress lists; the six stats come back
             // in this OUT array and the no-speech decision is taken HERE, from them.
             val stats = NpuDecodeStats.newArray()
-            val written = QnnAsrNative.nativeDecodeSegment(
+            val written = engine.decodeSegment(
                 prompt,
                 NpuDecodePolicy.suppressList(spec.tokens),
                 NpuDecodePolicy.beginSuppressList(spec.tokens),
@@ -714,7 +665,7 @@ class NpuWhisperBackend(
                 stats,
             )
             if (written < 0) {
-                return@serialized fallBackAndRun("decode", QnnAsrNative.nativeLastError(), samples, lang, useVad)
+                return@serialized fallBackAndRun("decode", engine.lastError(), samples, lang, useVad)
             }
             val decodeMs = SystemClock.elapsedRealtime() - decodeStart
 
@@ -975,8 +926,9 @@ class NpuWhisperBackend(
     // ---------------------------------------------------------------- teardown and fallback
 
     /**
-     * Frees everything the NPU tier holds: the QNN contexts and the sustained power vote, then the
-     * mel context, then the buffers and the decoder.
+     * Frees everything the NPU tier holds: the engine's session (for QNN, the contexts and the
+     * sustained power vote) and its per-arm state, then the mel context, then the buffer and the
+     * decoder.
      *
      * `runCatching` on both native calls because this runs on failure paths, where a partially
      * armed session is the normal case and a teardown that throws would strand the rest of it.
@@ -984,23 +936,23 @@ class NpuWhisperBackend(
     private fun releaseNpuResources() {
         // NAMED, and only when there is something to name.
         //
-        // `armedEpoch` rather than a fresh `nativeEpoch()` read: a fresh read names whatever is
-        // live NOW, which on the losing interleaving is the SUCCESSOR's session — the unguarded
-        // release with an argument added to it. Native ignores an epoch that is not the live one,
-        // so a stale instance's teardown becomes a WE-DIAG line instead of a destroyed session.
+        // `armedEpoch` rather than a fresh epoch read: a fresh read names whatever is live NOW,
+        // which on the losing interleaving is the SUCCESSOR's session — the unguarded release
+        // with an argument added to it. Native ignores an epoch that is not the live one, so a
+        // stale instance's teardown becomes a WE-DIAG line instead of a destroyed session.
         //
         // And the guard, which closes Q6 M1 — its claim stated NARROWLY (4.2 F2, the L1 m2
-        // correction): `armedEpoch != 0L` is the QNN-side fact; `melCtx != 0L` is a WHISPER-side
-        // fact and proves nothing about QnnAsrNative. What the disjunction guarantees is only
-        // that the refusals reached before ANY native touch — companion and mel-donor, the
-        // every-session path of every device with no ggml model installed — never dlopen
-        // ~25 MiB of Qualcomm runtime on their way out to release a session that was never
-        // created. A decline BETWEEN the mel arm and nativeInit (vocab, skel) still takes the
-        // release call holding only whisper-side state: that pays the dlopen for a release
-        // native refuses (epoch 0 is never live), which is bounded and deliberately preferred
-        // over a cleverer test that could learn to skip a real release.
+        // correction): `armedEpoch != 0L` is the engine-side fact; `melCtx != 0L` is a
+        // WHISPER-side fact and proves nothing about the engine. What the disjunction guarantees
+        // is only that the refusals reached before ANY native touch — companion and mel-donor, the
+        // every-session path of every device with no ggml model installed — never reach the
+        // engine (for QNN, never dlopen ~25 MiB of Qualcomm runtime) on their way out to release a
+        // session that was never created. A decline BETWEEN the mel arm and the engine's init
+        // (vocab, skel) still takes the release call holding only whisper-side state: that pays
+        // the dlopen for a release native refuses (epoch 0 is never live), which is bounded and
+        // deliberately preferred over a cleverer test that could learn to skip a real release.
         if (armedEpoch != 0L || melCtx != 0L) {
-            runCatching { QnnAsrNative.nativeRelease(armedEpoch) }
+            runCatching { engine.release(armedEpoch) }
         }
         armedEpoch = 0L
         if (melCtx != 0L) {
@@ -1008,7 +960,6 @@ class NpuWhisperBackend(
             melCtx = 0L
         }
         melBuffer = null
-        quantBuffer = null
         decoder = null
         armed = false
     }
@@ -1103,8 +1054,8 @@ class NpuWhisperBackend(
     companion object {
 
         /**
-         * The only non-zero handle this backend returns. There is one QNN session per process and
-         * it is native-side, so a handle has nothing to identify; 1L/0L simply matches
+         * The only non-zero handle this backend returns. There is one native session per process
+         * and it is the engine's, so a handle has nothing to identify; 1L/0L simply matches
          * [WhisperNativeBackend]'s success/failure convention at the seam.
          */
         const val HANDLE: Long = 1L
@@ -1121,16 +1072,22 @@ class NpuWhisperBackend(
          * Whether the npu tier may be OFFERED on this device: the right silicon, and a QNN stack
          * that actually loads.
          *
-         * **The SoC gate is first and the short circuit is load-bearing.** `nativeProbe` dlopens
-         * `libQnnSystem.so` and `libQnnHtp.so`; running it on a Tensor, an Exynos or a MediaTek is
-         * pointless work to reach a foregone answer, and asking a Snapdragon 7-series would get a
-         * yes — the probe reports whether the HTP *stack* is present, and cannot tell one Hexagon
-         * apart from another. Only [NpuGate] can, so it decides first and the probe merely confirms
-         * that the stack it needs is loadable.
+         * **The SoC gate is first and the short circuit is load-bearing.** The probe —
+         * [QnnAsrEngine.probe], which is `nativeProbe` — dlopens `libQnnSystem.so` and
+         * `libQnnHtp.so`; running it on a Tensor, an Exynos or a MediaTek is pointless work to
+         * reach a foregone answer, and asking a Snapdragon 7-series would get a yes — the probe
+         * reports whether the HTP *stack* is present, and cannot tell one Hexagon apart from
+         * another. Only [NpuGate] can, so it decides first and the probe merely confirms that the
+         * stack it needs is loadable.
+         *
+         * **The QNN engine's probe for every family (P1a)**, as the selector builds the QNN engine
+         * for every family: a throwaway [QnnAsrEngine], which holds no state until it is armed. The
+         * census names no second vendor yet; P2's vendor-dispatched gate is where a MediaTek family
+         * stops asking this question at all.
          *
          * `runCatching` covers [LinkageError] and everything downstream of it: on a build where
          * the proprietary QNN headers were unavailable, `libqnnasr.so` is deliberately absent, the
-         * first touch of [QnnAsrNative] throws `UnsatisfiedLinkError` and every touch afterwards
+         * first touch of `QnnAsrNative` throws `UnsatisfiedLinkError` and every touch afterwards
          * throws `ExceptionInInitializerError` instead. Both mean the same thing here — no tier.
          *
          * @param socModel `Build.SOC_MODEL`, or null below API 31. The version guard lives in the
@@ -1139,7 +1096,7 @@ class NpuWhisperBackend(
          */
         fun isTierAvailable(socModel: String?, socManufacturer: String?, libDir: String): Boolean =
             NpuGate.isSocSupported(socModel, socManufacturer) &&
-                runCatching { QnnAsrNative.nativeProbe(libDir).isEmpty() }.getOrDefault(false)
+                runCatching { QnnAsrEngine().probe(libDir).isEmpty() }.getOrDefault(false)
 
         /**
          * The `epoch` refusal's detail line, built in one place so that **both** numbers are always
@@ -1152,7 +1109,7 @@ class NpuWhisperBackend(
          * won — which is the single question the L8 device A/B has to answer about this mechanism.
          *
          * @param mine the epoch this backend was armed with.
-         * @param live what `nativeEpoch()` answered, i.e. the session that exists now.
+         * @param live what the engine's `epoch()` answered, i.e. the session that exists now.
          */
         private fun sessionReplacedDetail(mine: Long, live: Long): String =
             "this backend's session ($mine) was replaced by a newer arm ($live)"
