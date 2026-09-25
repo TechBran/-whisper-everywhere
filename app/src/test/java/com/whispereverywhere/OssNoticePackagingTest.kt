@@ -295,6 +295,99 @@ class OssNoticePackagingTest {
         }
     }
 
+    // ------------------------------------------------------- 5. the LiteRT libraries (P3a)
+
+    /**
+     * THE TWO LITERT LIBRARIES SHIP IN EVERY APK, SO THE PAGE NAMES THEM (P3a, the MediaTek APU
+     * tier). Since P2-6 every build packages LiteRT 2.1.1's `libLiteRt.so` into `lib/arm64-v8a/`
+     * (extracted from the litert AAR by the `litertRuntime` configuration into a generated jniLibs
+     * source) and its `libLiteRtDispatch_MediaTek.so` into the BASE module's assets
+     * (`extractLiteRtDispatch`, a generated assets source) — whatever chip the device has. Both are
+     * Google's, under Apache-2.0, whose full text is at the foot of the page (held by
+     * [OssNoticeTest]). This holds the two entries — each names its file, the release, the licence,
+     * the licensor and that it ships unmodified in every copy — and the one further notice
+     * LiteRT's own licence file carries: Caffe's BSD 2-Clause notice, for code TensorFlow derives
+     * from Caffe, whose second condition asks a BINARY redistribution to reproduce it. Byte for
+     * byte as that file gives it: the `LICENSE` entry of `com.google.ai.edge.litert:litert:2.1.1`
+     * (13,575 B, sha256 `71c6915d04265772…`), from its line `COPYRIGHT` to its end — 2,112 bytes,
+     * LF, pure ASCII (no `&`, `<` or `>`, so the bytes between the tags ARE the notice's bytes).
+     * That file's Apache-2.0 half is the ASF text already on the page, but for a leading and a
+     * trailing newline.
+     *
+     * And the placement reason is the build's own: the needles at the end are how
+     * `app/build.gradle.kts` puts both files in every APK.
+     *
+     * TODO(owner): the NeuroPilot Express notice for the compiled MediaTek pair waits on the
+     * owner's reading of that licence. The page carries a TODO(owner) beside the MediaTek entry,
+     * and this pins that it is there — the question cannot be lost by an edit to the page.
+     */
+    @Test fun theLiteRtLibrariesEveryApkShipsAreNamedWithTheNoticeTheirLicenceFileCarries() {
+        val page = File(repoRoot(), BASE_MODULE_NOTICE).readText().replace("\r\n", "\n")
+        val runtime = licenseEntry(page, "litert-runtime")
+        val dispatch = licenseEntry(page, "litert-dispatch-mediatek")
+        for ((entry, file) in listOf(runtime to "libLiteRt.so", dispatch to "libLiteRtDispatch_MediaTek.so")) {
+            for (needle in listOf(
+                "<code>$file</code>", "LiteRT 2.1.1", "Apache License 2.0", "(Google)", "unmodified",
+                "every copy of this app",
+            )) {
+                assertTrue("the $file entry does not carry <<$needle>>", entry.contains(needle))
+            }
+        }
+        val opening = "<pre class=\"licence-text\" id=\"litert-caffe\">"
+        assertTrue("the Caffe notice belongs to the runtime's entry — libLiteRt.so is what its licence file ships with", runtime.contains(opening))
+        val caffe = page.substringAfter(opening).substringBefore("</pre>")
+        assertEquals("the Caffe notice is not LiteRT's own, byte for byte (length)", 2_112, caffe.length)
+        assertEquals(
+            "the Caffe notice is not the one LiteRT 2.1.1's LICENSE carries, byte for byte. BSD " +
+                "2-Clause asks a binary redistribution to REPRODUCE the notice, its conditions and " +
+                "its disclaimer — a paraphrase is not a reproduction",
+            LITERT_CAFFE_NOTICE_SHA256,
+            sha256(caffe.toByteArray(Charsets.UTF_8)),
+        )
+        for (line in listOf(
+            "Copyright (c) 2014, The Regents of the University of California (Regents)",
+            "2. Redistributions in binary form must reproduce the above copyright notice,",
+            "BVLC/caffe",
+        )) {
+            assertTrue("the Caffe notice lost <<$line>>", caffe.contains(line))
+        }
+        // TODO(owner) — beside the MediaTek entry, before the next section begins.
+        val afterDispatch = page.substringAfter("id=\"litert-dispatch-mediatek\"")
+            .substringAfter("</div>")
+            .substringBefore("<h2")
+        assertTrue(
+            "the TODO(owner) for the NeuroPilot Express notice is no longer beside the MediaTek " +
+                "entry — the licence the owner is reading may ask for one, and the page is where it goes",
+            afterDispatch.contains("<!-- TODO(owner):") && afterDispatch.contains("NeuroPilot Express"),
+        )
+        // WHY both are on the page: every APK carries them — the build packages them this way.
+        val build = buildScript()
+        for (needle in listOf(
+            "val entry = zip.getEntry(\"jni/arm64-v8a/libLiteRt.so\")",
+            "getByName(\"main\") { jniLibs.srcDir(litertJniLibDir) }",
+            "\"mediatek_runtime/src/main/jni/arm64-v8a/libLiteRtDispatch_MediaTek.so\"",
+            "getByName(\"main\") { assets.srcDir(litertDispatchAssetDir) }",
+        )) {
+            assertTrue(
+                "app/build.gradle.kts no longer packages the LiteRT libraries by <<$needle>>. If " +
+                    "they stopped shipping, their entries go too; if they ship another way, re-point " +
+                    "this needle — the page must name what every APK carries",
+                build.contains(needle),
+            )
+        }
+    }
+
+    /**
+     * The `<div class="license" id="[id]">` entry's own text, up to its closing tag, with its
+     * whitespace COLLAPSED — the house rule for a prose needle, so a re-wrapped line in the page
+     * cannot fail a pin that is about the words.
+     */
+    private fun licenseEntry(page: String, id: String): String {
+        val opening = "<div class=\"license\" id=\"$id\">"
+        assertTrue("the licences page has no entry <<$opening>>", page.contains(opening))
+        return page.substringAfter(opening).substringBefore("</div>").replace(Regex("\\s+"), " ")
+    }
+
     // ------------------------------------------------------- the house source walker
 
     /** `app/build.gradle.kts`, LF-normalised so the needles above are written once. */
@@ -369,5 +462,14 @@ class OssNoticePackagingTest {
             "4a168f0a1794cb4fc2a13501ca382fd59d4b848516cd8d7a9c1f705782e2cd65"
         const val RELEASE_451_NOTICE_SHA256 =
             "7901187a688a45c0478e1b165b67d1e59ed5af86bc1e519bbb5172b89913e524"
+
+        /**
+         * Caffe's BSD 2-Clause notice as LiteRT 2.1.1's own `LICENSE` gives it (the litert AAR's
+         * `LICENSE` entry, 13,575 B, sha256 `71c6915d04265772a0339bed47276942c678b45cc01534210ebe6984fd1aec65`,
+         * read 2026-09-25): from its line `COPYRIGHT` to the end of the file, 2,112 bytes, LF, no
+         * trailing newline. History of a third party's file, so a literal.
+         */
+        const val LITERT_CAFFE_NOTICE_SHA256 =
+            "20b940720cbcfa7d6c1400b74794737062c2476bd89c6463cc263c966038ec32"
     }
 }
