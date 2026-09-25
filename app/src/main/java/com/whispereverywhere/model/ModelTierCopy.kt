@@ -110,10 +110,11 @@ import com.whispereverywhere.npu.NpuVendor
  * gained a MediaTek family (the Tab S10+ / S10 Ultra, `mt6989`), where `npu-turbo`'s "the fastest
  * on this device" is false: the tablet's CPU commits `small-q8` in 1,217 ms and the APU turbo in
  * ≈ 2.3 s. So the chooser surfaces render [forIdOn] — the card THIS DEVICE'S FAMILY reads — and
- * a MediaTek family reads [mediatekCopyById]'s turbo card: accuracy only, no speed claim, the
- * owner's wording for a MediaTek speed claim pending (a `TODO(owner)` there and a pin that fails
- * if the Qualcomm sentence ever renders on a MediaTek row). The same function badges every gated
- * card with the family's own pair bytes. [forId] stays the reference card, and no chooser calls it.
+ * a MediaTek family reads [mediatekCopyById]'s turbo card: accuracy only, no speed claim — ruled
+ * 2026-09-25: accuracy only (the owner: *"the MediaTek speed claim copy is fine for now."*; the
+ * ruling and its reason are recorded beside that card, and a pin fails if the Qualcomm sentence
+ * ever renders on a MediaTek row). The same function badges every gated card with the family's
+ * own pair bytes. [forId] stays the reference card, and no chooser calls it.
  */
 object ModelTierCopy {
 
@@ -484,11 +485,20 @@ object ModelTierCopy {
      * CPU (`ultra-q8`) was 4,849 ms and fell behind in the owner's evening sessions, so the APU
      * tier is much faster than THAT — a comparative the owner has not ruled on either.
      *
-     * TODO(owner): the speed claim on MediaTek families is PENDING his wording (plan P3-2; design
-     * §2.8 and §7 q3). Until he rules, this card carries NO speed claim at all — no headline
-     * "fastest", no body speed word — and `ModelTierCopyTest`'s TODO(owner) pin fails the moment
-     * the Qualcomm speed sentence renders on a MediaTek row. His ruling replaces the body, and the
-     * pin with it.
+     * **THE SPEED CLAIM ON MEDIATEK FAMILIES — ruled 2026-09-25: accuracy only** (plan P3-2;
+     * design §2.8 and §7 q3). The owner, at the end of the Tab S10+ ship session of 4.16.0/113,
+     * with this card in front of him: *"the MediaTek speed claim copy is fine for now."* So the
+     * card keeps its accuracy-only headline ("Best AI-chip accuracy") and body exactly as they
+     * are, and carries NO speed claim — no headline "fastest", no body speed word. The reason is
+     * the measurement above: on the Tab S10+ the CPU's small model commits in ~1.2 s (1,217 ms)
+     * against the APU's ~2.3 s, so speed is not what the AI chip wins there — the APU's win is
+     * accuracy: it runs large-v3-turbo, the model the owner's ladder on that tablet ranks highest
+     * for accuracy, and the rungs that beat it on speed are the smaller Whispers. (The ruling adds
+     * no comparative with `ultra-q8`, the same weights on the CPU, and neither does the card.)
+     * `ModelTierCopyTest`'s `the_qualcomm_speed_sentence_never_renders_on_a_mediatek_row_by_ruling`
+     * guards the ruling: it fails the moment the Qualcomm speed sentence renders on a MediaTek
+     * row. A speed claim here would be a new ruling, and it would replace the body and that pin
+     * together.
      */
     private val mediatekCopyById: Map<String, TierCopy> = mapOf(
         // THE ONE CLAIM THIS CARD MAKES — accuracy, scoped to the SET of models that run on this

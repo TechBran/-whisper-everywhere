@@ -573,7 +573,9 @@ class ChooserSteerWiringPinTest {
         // whole suite, and swaps the badge with the highlight. The named form IS the guard.
         // (P3a: the copy is the card THIS DEVICE'S FAMILY reads — forIdOn(id, family) — so a
         // MediaTek row never renders the Qualcomm turbo card's speed claim; ModelTierCopyTest's
-        // TODO(owner) pin holds both surfaces to it. The named-argument guard is unchanged.)
+        // the_qualcomm_speed_sentence_never_renders_on_a_mediatek_row_by_ruling — the owner's
+        // accuracy-only ruling of 2026-09-25 — holds both surfaces to it. The named-argument
+        // guard is unchanged.)
         assertEquals(
             "TierChoiceCard is called with every argument named, `steered` distinct from `selected`",
             1,

@@ -742,7 +742,8 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt",
         // (P3a) ModelTierCopy.kt joins by the list's stated rule — membership follows what the
         // tests READ. ModelTierCopyTest has read its KDoc since 4.9.1 (the evidence beside each
-        // card) and now also reads the MediaTek card's evidence and its TODO(owner); a comment-only
+        // card) and now also reads the MediaTek card's evidence and its speed ruling (2026-09-25,
+        // accuracy only), and pins that no owner question is left open there; a comment-only
         // edit to a plain Kotlin object compiles to a byte-identical class, so without this entry
         // deleting the evidence block would leave the suite UP-TO-DATE and those pins green.
         "src/main/java/com/whispereverywhere/model/ModelTierCopy.kt",
