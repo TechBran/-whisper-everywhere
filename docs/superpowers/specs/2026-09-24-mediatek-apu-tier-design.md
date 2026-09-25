@@ -408,6 +408,25 @@ not changed:** it names no device on any branch — its sections are device-neut
 list to add the tablets beside, and naming devices there would be a new claim for the owner to
 rule on.
 
+*Owner ruling, 2026-09-25, during the Tab S10+ ship session of 4.16.0/113:* **"if the NPU
+multilingual is here, then we hide all of the other CPU models so users don't get confused about
+which model to download."** The tablet's chooser showed `small-q8`, `medium-q8` and `ultra-q8`
+beside the AI-chip card because they were installed there (the 2026-09-17 ladder session):
+`WhisperCatalog.pickableFor`'s `alsoOfferedIds` let everything on disk into a one-tier lineup
+(producer 1, the 4.3 non-disturbance rule). The ruling supersedes that rule's display half only,
+at one pure rule both chooser surfaces now ask, `OnboardingLogic.chooserAlsoOfferedIds(installedIds,
+oneTierDeliveryFailed, offeredGatedIds, selectedTierId)`: when the gate set names `npu-turbo` and
+the delivery has not failed, of what is on disk only the gated tiers (an installed `npu` keeps its
+card) and the selection join. **One exception, by controller ruling: the currently selected model
+is never hidden** — a user whose selection is an installed CPU rung still sees the card they are
+running on, and once they pick the AI-chip tier that card goes; the exception filters the disk and
+adds nothing (a selected rung that is not on disk gets no Download card, a selected retired tier
+stays cardless). Nothing is deleted or switched: the files stay, routing reads the selection,
+`hasCpuFallback` and the decline recovery read the disk, the failed-delivery escape (producer 2)
+still brings the whole CPU ladder back, and every device not offered the one tier renders the
+pre-ruling lineup byte for byte. It keys on the gate set, not the vendor, so the MediaTek and
+Qualcomm rows follow it alike; `pickableFor`'s body and every card string are unchanged.
+
 ### 2.9 Cadence, calibration, the ring
 
 Per-commit cost on the tablet = 1,783 + 22.8 × tokens ms (t6), re-measured in-app at P3. The cold-arm budget,
