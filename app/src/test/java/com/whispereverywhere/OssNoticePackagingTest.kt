@@ -45,7 +45,8 @@ import java.io.File
  * commit that does it.
  *
  * **The pack-tree walk is the exception, and it is stale-blind by construction.** A pack module's
- * payload directory is a gitignored BUILD artefact — 4.7 GB across the ten when placed — so it is
+ * payload directory is a gitignored BUILD artefact — 4.7 GB across the ten when placed, and 1.9 GB more
+ * in the two MediaTek modules since P2-5 — so it is
  * not a declared input and must not become one: hashing gigabytes on every JVM test run is the cost
  * `verifyNpuPacks` was deliberately written to avoid. Confirmed the same way, in the other
  * direction: planting `preview_ko/src/main/assets/preview_ko/NOTICE.html` left the task UP-TO-DATE
@@ -60,7 +61,7 @@ class OssNoticePackagingTest {
     // ------------------------------------------------------- 1. base module, and no pack
 
     /**
-     * The notice is in `:app`'s assets, and nowhere in the ten asset-pack modules.
+     * The notice is in `:app`'s assets, and nowhere in the twelve asset-pack modules.
      *
      * The pack list is PARSED out of the `assetPacks` expression rather than typed, so an eleventh
      * pack is covered on the day it is added — which is the same reason [OssNoticeTest]'s
@@ -79,11 +80,11 @@ class OssNoticePackagingTest {
 
         val packs = assetPackModules()
         assertEquals(
-            "the assetPacks expression in app/build.gradle.kts no longer parses to the ten " +
-                "on-demand modules — if a pack was added, this test now covers it and nothing " +
-                "needs changing here; if the expression became conditional, PreviewPackLayoutTest " +
-                "is the pin that cares",
-            10,
+            "the assetPacks expression in app/build.gradle.kts no longer parses to the twelve " +
+                "on-demand modules (ten until P2-5 appended the mt6989 pair's two) — if a pack " +
+                "was added, this test now covers it and only this count moves; if the expression " +
+                "became conditional, PreviewPackLayoutTest is the pin that cares",
+            12,
             packs.size,
         )
         assertTrue(
