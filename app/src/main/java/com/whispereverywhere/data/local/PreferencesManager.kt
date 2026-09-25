@@ -421,8 +421,10 @@ class PreferencesManager(private val context: Context) : NpuApuVerdictStore {
         get() = readNpuApuVerdict { key, default -> deviceLocal.getString(key, default) }
 
     /**
-     * The driver walk's in-flight marker (P2-7, the P2a review's L4) — the key of a walk that
-     * started and has not finished, or null. Device-local with the verdict it guards.
+     * The driver walk's in-flight marker (P2-7, the P2a review's L4) — `key#n`: the walk's key
+     * (`NpuApuKey.marker`) and its attempt, 1 or 2 (`NpuApuDriverCheck.inFlightMarker`, the P2c
+     * review's kill-vs-crash item) — for a walk that started and has not finished, or null.
+     * Device-local with the verdict it guards.
      */
     override val npuApuProbeInFlight: String?
         get() = deviceLocal.getString(KEY_NPU_APU_PROBE_IN_FLIGHT, null)

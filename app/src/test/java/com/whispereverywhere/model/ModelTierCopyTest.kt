@@ -1280,7 +1280,10 @@ class ModelTierCopyTest {
         // controller ruling forbade exactly that re-pointing; a sentence can do it by shape as
         // well as by name, so the same-weights fact lives in the KDoc and not beside the speed
         // claim.
-        assertEquals("Runs on this phone's AI chip, much faster on this device.", copy.body)
+        // P3a review (small 3): "this device's AI chip", not "this phone's" — the card can render on
+        // a Galaxy Tab S8 (8gen1) after a small-pair import. The speed clause is byte-identical.
+        assertEquals("Runs on this device's AI chip, much faster on this device.", copy.body)
+        assertFalse("the npu body is device-neutral since the P3a review", copy.body.lowercase().contains("phone"))
         // The claim is scoped to the hardware in the user's hand, and the comparand it was
         // measured against is recorded beside the card — the two things that make "much faster"
         // a statement someone could check.

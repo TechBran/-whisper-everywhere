@@ -371,7 +371,12 @@ object ModelTierCopy {
             // transcripts compared, and the small-q8 rule above applies. The open item is
             // unchanged: a Fold6 session that times `small-q8` beside the two NPU tiers, after
             // which this body may name what it beats — or the headline may have to move.
-            body = "Runs on this phone's AI chip, much faster on this device.",
+            //
+            // P3a review (small 3): "this phone's AI chip" became "this device's AI chip", as the
+            // turbo body's did. The card renders on a Galaxy Tab S8 (the `8gen1` family) once a
+            // small pair is imported there, and a card may not call a tablet a phone. The measured
+            // speed claim is byte-identical; no MediaTek family offers this tier at all.
+            body = "Runs on this device's AI chip, much faster on this device.",
         ),
         // 4.1 wrote this card as "Best quality, slower" against the OTHER NPU card, back when no
         // WER existed for any w8a16 variant and the two NPU tiers were offered side by side. Both
@@ -568,8 +573,11 @@ object ModelTierCopy {
     /**
      * The family's measured pair for a gated tier — encoder plus decoder, what the user installs
      * — or null where the census cannot answer (no family, a CPU tier, a tier the family has no
-     * row for). One derivation for the badge ([forIdOn]) and the onboarding size line
-     * (`OnboardingLogic.speechModelSize`), so the two cannot state two sizes for one pair.
+     * row for). ONE DERIVATION OF THE BYTES for the badge ([forIdOn]) and the onboarding size line
+     * (`OnboardingLogic.speechModelSize`), so both state the same pair — ROUNDED TWO WAYS, by
+     * design: the badge truncates to whole SI megabytes, the rule every badge follows ("981 MB"),
+     * and the line rounds to the nearest with "about", the refresh notice's rule ("about 982 MB").
+     * The same 981,968,552 bytes, read twice; not two sizes.
      */
     fun familyPairBytes(family: NpuSocFamily?, tierId: String): Long? =
         family?.let { NpuFleetCensus.artifactFor(it.id, tierId) }
