@@ -853,7 +853,10 @@ class NpuPackFetchTest {
         // fail-safe): the pack "arrives" carrying no metadata and no model. The refusal states
         // that as Play's answer — not as corruption, not as a mystery — and names the way
         // forward, because a dead end on the fetch card is the failure the copy rules forbid.
-        val refusal = NpuPackFetch.emptyDeliveryRefusal()
+        // (P2-7, the P2b review's small 3) The refusal takes the pair's parts; a Qualcomm pair is
+        // device-targeted, and its sentence is the one this test has always read.
+        val gen3 = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("8gen3")))
+        val refusal = NpuPackFetch.emptyDeliveryRefusal(gen3)
         assertTrue(
             "the missing metadata IS the empty-default signature and the copy says so: $refusal",
             refusal.contains("Google Play delivered no model for this device"),
@@ -864,5 +867,40 @@ class NpuPackFetchTest {
         )
         assertTrue("and the no-install promise is stated, truthfully: $refusal",
             refusal.contains("Nothing was installed"))
+    }
+
+    /**
+     * THE P2b REVIEW'S SMALL 3 — the empty delivery is worded by the pair's TARGETING. A targeted
+     * (Qualcomm) pair's empty delivery is the F4 default variant, and "not in any device group" is
+     * its truth; an untargeted (MediaTek) pair has no default variant and no group to be outside
+     * of — its module carries the payload for every device — so that sentence would be false, and
+     * the truth is that the pack was not delivered.
+     */
+    @Test
+    fun theEmptyDeliveryIsWordedByThePairsTargeting() {
+        val gen3 = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("8gen3")))
+        val mt6989 = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("mt6989")))
+        assertTrue("a Qualcomm pair is device-targeted", NpuPackFetch.isDeviceTargeted(gen3))
+        assertFalse("the mt6989 pair's own modules are not", NpuPackFetch.isDeviceTargeted(mt6989))
+        assertFalse("and no parts at all is no targeted pair", NpuPackFetch.isDeviceTargeted(emptyList()))
+        for (a in NpuFleetCensus.artifacts) {
+            val family = requireNotNull(NpuFleetCensus.familyById(a.familyId))
+            assertEquals(
+                "${a.familyId}/${a.tierId}: targeted exactly on the Qualcomm rows",
+                family.vendor == NpuVendor.QUALCOMM,
+                NpuPackFetch.isDeviceTargeted(a.parts),
+            )
+        }
+        val targeted = NpuPackFetch.emptyDeliveryRefusal(gen3)
+        val untargeted = NpuPackFetch.emptyDeliveryRefusal(mt6989)
+        assertTrue("targeted: the device-group sentence", targeted.contains("not in any device group"))
+        assertFalse("untargeted: never the device-group sentence — it would be false", untargeted.contains("device group"))
+        assertTrue("untargeted: the pack was not delivered, and a retry is named", untargeted.contains("was not delivered") && untargeted.contains("Retry"))
+        for (sentence in listOf(targeted, untargeted)) {
+            assertTrue(sentence.startsWith("Google Play delivered no model for this device"))
+            assertTrue("the import path is named: $sentence", sentence.contains("'Import model pair…' below"))
+            assertTrue(sentence.endsWith("Nothing was installed."))
+            assertFalse("never the sideload family's sentence", sentence.contains("it wasn't installed from Play"))
+        }
     }
 }

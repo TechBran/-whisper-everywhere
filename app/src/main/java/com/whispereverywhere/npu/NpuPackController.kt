@@ -345,8 +345,9 @@ object NpuPackController {
             }.toMap()
             if (assetsPaths.size != parts.size) {
                 // Delivered, but Play answers no location for a part: treat as the empty
-                // delivery — the fail-safe reading, with the import path named.
-                NpuAssetImport.ImportState.Refused(NpuPackFetch.emptyDeliveryRefusal())
+                // delivery — the fail-safe reading, with the import path named, worded by how
+                // THIS pair's packs are delivered (targeted or not).
+                NpuAssetImport.ImportState.Refused(NpuPackFetch.emptyDeliveryRefusal(parts))
             } else {
                 try {
                     app.whisperModelManager.installFromPack(

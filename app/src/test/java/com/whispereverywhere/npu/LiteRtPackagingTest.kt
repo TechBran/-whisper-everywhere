@@ -141,9 +141,14 @@ class LiteRtPackagingTest {
     @Test
     fun theProductPackagesTheLibraryTheDeviceGateMeasured() {
         val stage = read("tools/mtk-apu/stage_litertasr_into_probe.py")
+        // (Corrected at P2-7, the P2b review's small 3: this message said "byte for byte". AGP
+        // strips native libraries on the way into lib/, in the product AND in the probe, so the
+        // pinned digest is the EXTRACTED file's, never the packaged one's.)
         assertEquals(
-            "P1b's device gate staged libLiteRt.so under the same pin — the product ships the file " +
-                "the tier was measured with, byte for byte",
+            "P1b's device gate staged libLiteRt.so under the same pin — the pin covers the file " +
+                "EXTRACTED from the 2.1.1 AAR, which the product and the probe both package; AGP " +
+                "strips it into lib/ in both, so what ships is the measured file through the same " +
+                "strip, not the pinned bytes as such",
             1, count(stage, "LITERT_SO_SHA256 = \"$libSha256\""),
         )
         assertEquals(1, count(stage, "LITERT_SO_BYTES = 5104832"))

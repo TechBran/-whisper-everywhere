@@ -465,17 +465,39 @@ object NpuPackFetch {
     }
 
     /**
-     * The refusal for a pack that arrived EMPTY — the F4 default variant, which is what a
-     * device outside every census group receives. A missing `metadata.json` in a delivered
-     * pack IS that signature: our build writes it as the first file of every real variant, so
-     * its absence means Play resolved this device to the empty default, and the refusal states
-     * Play's answer — not corruption, not a mystery — with the import fallback named as the
-     * path forward.
+     * Is the pair [parts] ship in DEVICE-TARGETED — the `#group_<g>` variant of a tier's shared
+     * module ([PACK_BY_TIER]'s `npu_small` / `npu_turbo`), which Play resolves per device group —
+     * rather than in UNTARGETED modules of its own family (the MediaTek rows since P2-5, which carry
+     * no `#group_` folder and are the same bytes for every device that fetches them)? The fact
+     * [emptyDeliveryRefusal]'s sentence turns on.
      */
-    fun emptyDeliveryRefusal(): String =
-        "Google Play delivered no model for this device — it is not in any device group this " +
-            "app publishes a pack for, so the pack arrived empty. Use 'Import model pair…' " +
-            "below instead. Nothing was installed."
+    fun isDeviceTargeted(parts: List<PackPart>): Boolean =
+        parts.isNotEmpty() && parts.all { it.packName in PACK_BY_TIER.values }
+
+    /**
+     * The refusal for a pair that arrived EMPTY, worded by how its packs are delivered ([parts],
+     * the pair's own — the P2b review's small 3):
+     *
+     *  - **device-targeted** (a Qualcomm pair): the F4 default variant, which is what a device
+     *    outside every census group receives. A missing `metadata.json` in a delivered pack IS
+     *    that signature — our build writes it as the first file of every real variant — so the
+     *    refusal states Play's answer, not corruption, not a mystery;
+     *  - **untargeted** (a MediaTek pair): there is no default variant and no group to be outside
+     *    of — the module carries its payload for every device — so "not in any device group" would
+     *    be false. What is true is that the pack was not delivered (Play gave a part no location,
+     *    or part 1 arrived without its `metadata.json`), and a retry is the first thing to try.
+     *
+     * Both name the import fallback as the path forward, and both say nothing was installed.
+     */
+    fun emptyDeliveryRefusal(parts: List<PackPart>): String =
+        if (isDeviceTargeted(parts)) {
+            "Google Play delivered no model for this device — it is not in any device group this " +
+                "app publishes a pack for, so the pack arrived empty. Use 'Import model pair…' " +
+                "below instead. Nothing was installed."
+        } else {
+            "Google Play delivered no model for this device — the model's pack was not delivered. " +
+                "Retry the download, or use 'Import model pair…' below instead. Nothing was installed."
+        }
 
     private fun mb(bytes: Long): Long = bytes / 1_000_000
 }
