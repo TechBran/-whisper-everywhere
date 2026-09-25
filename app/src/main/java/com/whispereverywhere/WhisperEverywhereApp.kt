@@ -107,9 +107,10 @@ class WhisperEverywhereApp : Application() {
      *
      * Memoised for IDENTITY, not for cost — `NpuGate.familyFor` is a pure table lookup and
      * cannot dlopen, so unlike [npuCapableDevice] this is Main-safe. Everything per-family
-     * downstream reads THIS one resolution: `NpuBackendSelector` hands it to the backend, which
-     * stages the row's own `skelAsset`/`skelBytes`/`skelSha256` — so the skel a session stages
-     * and the gate that offered the session can never come from two readings of the census.
+     * downstream reads THIS one resolution: `NpuBackendSelector` hands it to the backend, whose
+     * engine stages the row's own runtime needs (for QNN, the skel in its `runtime`) — so the
+     * skel a session stages and the gate that offered the session can never come from two
+     * readings of the census.
      *
      * It reads the two guarded getters above and adds NO new SOC read site — the API-31 guard
      * keeps exactly one site per field, and `ChooserSteerWiringPinTest` proves it by the same

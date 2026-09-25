@@ -113,9 +113,9 @@ import java.util.Locale
  * ### The family is required too, and it has no default either (4.2 F2)
  *
  * `family` is the census row this device resolved to ([com.whispereverywhere.npu.NpuGate.familyFor],
- * memoised once on the app), and it is what makes the skel stage a per-device decision: the row
- * names WHICH DSP-side skel this silicon's FastRPC loader can open (`skelAsset`) and the exact
- * bytes it must be (`skelBytes`/`skelSha256`). **No default value, the same doctrine as `spec`
+ * memoised once on the app), and it is what makes the skel stage a per-device decision: the row's
+ * QNN runtime needs name WHICH DSP-side skel this silicon's FastRPC loader can open (`skelAsset`)
+ * and the exact bytes it must be (`skelBytes`/`skelSha256`). **No default value, the same doctrine as `spec`
  * and for the same shape of reason:** a defaulted family would stage the default's skel under
  * another family's silicon, and the failure is not a compile error and not a named refusal — it
  * is a FastRPC mystery on a device, inside a loader whose search path this code only ever sets

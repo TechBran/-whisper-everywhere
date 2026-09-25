@@ -37,6 +37,18 @@ class NpuFleetCensusTest {
             "census must carry the $familyId/$tierId artifact"
         }
 
+    /**
+     * A row's QNN needs, or a named failure (P2 — the census reshape moved the HTP version and the
+     * skel off the row into its sealed `runtime`). The hard cast is the point: every pin that
+     * reads a skel value through it is a claim that the row IS a QNN row.
+     */
+    private fun qnn(f: NpuSocFamily): NpuRuntimeNeeds.Qnn =
+        f.runtime as? NpuRuntimeNeeds.Qnn ?: throw AssertionError("${f.id} is not a QNN row: ${f.runtime}")
+
+    /** The rows whose runtime is QNN — exactly the Qualcomm rows, since a row's vendor IS its runtime's. */
+    private val qnnFamilies: List<NpuSocFamily>
+        get() = families.filter { it.runtime is NpuRuntimeNeeds.Qnn }
+
     /** The house locator, so the script cross-pin finds the repo root from any test cwd. */
     private fun read(relative: String): String {
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
@@ -98,7 +110,7 @@ class NpuFleetCensusTest {
         // What must hold is the BIJECTION: two families share a skel if and only if they share
         // an architecture. Either half failing is the defect the old count was reaching for —
         // one family's skel staged under another family's silicon.
-        val skelByHtp = families.groupBy { it.htpVersion }
+        val skelByHtp = qnnFamilies.map { qnn(it) }.groupBy { it.htpVersion }
         for ((htp, group) in skelByHtp) {
             assertEquals(
                 "every family on HTP v$htp must name the SAME skel: the blob is the " +
@@ -114,7 +126,7 @@ class NpuFleetCensusTest {
         assertEquals(
             "and no skel may appear under two ARCHITECTURES — that is the original hazard, a " +
                 "v73 blob staged for a v75 device",
-            skelByHtp.size, families.map { it.skelAsset }.toSet().size
+            skelByHtp.size, qnnFamilies.map { qnn(it).skelAsset }.toSet().size
         )
     }
 
@@ -124,23 +136,90 @@ class NpuFleetCensusTest {
             "the five published architectures, nothing else — v69 joined on 2026-09-24 with the " +
                 "8gen1 family, read out of the vendor's own metadata by the measure gate",
             setOf(69, 73, 75, 79, 81),
-            families.map { it.htpVersion }.toSet()
+            qnnFamilies.map { qnn(it).htpVersion }.toSet()
         )
         // Per-row as well, because two rows SWAPPING versions keeps the set equal while every
         // context binary lands on the wrong Hexagon:
-        assertEquals("the 8 Gen 3 is HTP v75", 75, byId("8gen3").htpVersion)
-        assertEquals("the 8 Elite for Galaxy is HTP v79", 79, byId("8elite_galaxy").htpVersion)
-        assertEquals("the 8 Elite Gen 5 for Galaxy is HTP v81", 81, byId("8elite5_galaxy").htpVersion)
+        assertEquals("the 8 Gen 3 is HTP v75", 75, qnn(byId("8gen3")).htpVersion)
+        assertEquals("the 8 Elite for Galaxy is HTP v79", 79, qnn(byId("8elite_galaxy")).htpVersion)
+        assertEquals("the 8 Elite Gen 5 for Galaxy is HTP v81", 81, qnn(byId("8elite5_galaxy")).htpVersion)
         assertEquals(
             "the 7 Gen 4 is HTP v73 — the oldest arch on the newest part, which is why nothing " +
                 "orders these",
-            73, byId("7gen4").htpVersion
+            73, qnn(byId("7gen4")).htpVersion
         )
         assertEquals(
             "the 8 Gen 1 is HTP v69 — the oldest architecture in the census, and the only " +
                 "family on it",
-            69, byId("8gen1").htpVersion
+            69, qnn(byId("8gen1")).htpVersion
         )
+        assertEquals("the 8 Gen 2 (qcs8550) is HTP v73, 7gen4's architecture", 73, qnn(byId("qcs8550")).htpVersion)
+    }
+
+    // ------------------------------------------------------------------ the vendor per row (P2)
+
+    /**
+     * P2 — THE CENSUS RESHAPE (design §2.1): a row carries its vendor, the manufacturer spellings
+     * it admits, its sealed runtime needs and the tiers it offers. Hard literals per row, for the
+     * reason every value in this class is one: a row whose vendor or spellings drifted would flow,
+     * consistently, to the gate, the XML and the engine that stages its runtime.
+     */
+    @Test
+    fun everyQualcommRowIsAQnnRowAdmittingBothQualcommSpellingsAndOfferingBothTiers() {
+        val qualcomm = listOf("8gen3", "8elite_galaxy", "8elite5_galaxy", "7gen4", "qcs8550", "8gen1")
+        for (id in qualcomm) {
+            val f = byId(id)
+            assertEquals("$id is a Qualcomm row", NpuVendor.QUALCOMM, f.vendor)
+            assertTrue("$id's runtime is QNN — its HTP version and skel live there", f.runtime is NpuRuntimeNeeds.Qnn)
+            assertEquals(
+                "$id admits exactly the two spellings Qualcomm ships in Build.SOC_MANUFACTURER — " +
+                    "QTI (the common one) and Qualcomm — and nothing else (the doctrine the gate " +
+                    "held as one global set until P2 moved it onto the row)",
+                setOf("QTI", "Qualcomm"), f.manufacturers
+            )
+            assertEquals(
+                "$id offers both gated tiers — every Qualcomm family has a published small AND " +
+                    "turbo package (the 4.3 ruling hides small; it does not take its pack away)",
+                setOf("npu", "npu-turbo"), f.tiers
+            )
+        }
+        assertEquals(
+            "and those six ARE the Qualcomm rows — in census order, every one of them",
+            qualcomm,
+            families.filter { it.vendor == NpuVendor.QUALCOMM }.map { it.id }
+        )
+    }
+
+    @Test
+    fun aRowsVendorIsItsRuntimesAndNeverAFieldOfItsOwn() {
+        // The variant IS the vendor: a row cannot say QUALCOMM and carry LiteRT's needs, because
+        // NpuSocFamily.vendor has no field to disagree with — it reads runtime.vendor.
+        assertEquals(
+            NpuVendor.QUALCOMM,
+            NpuRuntimeNeeds.Qnn(htpVersion = 75, skelAsset = "s", skelBytes = 1L, skelSha256 = "h").vendor
+        )
+        assertEquals(
+            NpuVendor.MEDIATEK,
+            NpuRuntimeNeeds.LiteRtMediatek(neuronMajor = 8, socStamp = "mt6989").vendor
+        )
+        for (f in families) {
+            assertSame("${f.id}'s vendor is read off its runtime", f.runtime.vendor, f.vendor)
+        }
+    }
+
+    @Test
+    fun everyRowsTiersAreExactlyTheTiersItHasMeasuredPairsFor() {
+        // One fact, two spellings held equal: `tiers` says what a family OFFERS, the artifact rows
+        // say what it can VERIFY. A tier offered with no measured pair is a storefront for a pack
+        // nobody can check (the F3 disease); a measured pair for a tier not offered is coverage
+        // nothing reaches.
+        for (f in families) {
+            assertEquals(
+                "${f.id}: tiers == the tier ids of its measured artifact rows",
+                artifacts.filter { it.familyId == f.id }.map { it.tierId }.toSet(),
+                f.tiers
+            )
+        }
     }
 
     @Test
@@ -186,18 +265,18 @@ class NpuFleetCensusTest {
     @Test
     fun everySkelSha256IsSixtyFourLowercaseHexAndAllFiveDistinct() {
         val hex = Regex("^[0-9a-f]{64}$")
-        for (f in families) {
+        for (f in qnnFamilies) {
             assertTrue(
                 "family ${f.id}'s skelSha256 must be 64 lowercase hex characters — got " +
-                    "\"${f.skelSha256}\"; anything else is a placeholder that would refuse " +
+                    "\"${qnn(f).skelSha256}\"; anything else is a placeholder that would refuse " +
                     "every stage",
-                hex.matches(f.skelSha256)
+                hex.matches(qnn(f).skelSha256)
             )
         }
         assertEquals(
             "five architectures, five DISTINCT digests — a duplicate is a copy-paste, " +
                 "not a measurement (qcs8550 and 7gen4 share V73's, which is one architecture)",
-            5, families.map { it.skelSha256 }.toSet().size
+            5, qnnFamilies.map { qnn(it).skelSha256 }.toSet().size
         )
     }
 
@@ -209,7 +288,7 @@ class NpuFleetCensusTest {
         // measured out of qnn-runtime-2.50.0.aar (Maven Central, sha256 b507656e…). The Fold6
         // executed the OLD pair; this one is owed a device run. If the census's copy moves
         // again without a runtime bump, the fleet table is a new source, unmeasured.
-        val row = byId("8gen3")
+        val row = qnn(byId("8gen3"))
         assertEquals("libQnnHtpV75Skel.so", row.skelAsset)
         assertEquals(18_693_300L, row.skelBytes)
         assertEquals(
@@ -224,28 +303,28 @@ class NpuFleetCensusTest {
         // moved from the 2026-08-29 qnn-runtime-2.49.0 table, and V69 is new with the 8gen1
         // family. F2's extract task asserts the same pairs at build time; these are the census's
         // copies, and the two spellings meeting IS the check.
-        val v69 = byId("8gen1")
+        val v69 = qnn(byId("8gen1"))
         assertEquals("libQnnHtpV69Skel.so", v69.skelAsset)
         assertEquals(12_529_660L, v69.skelBytes)
         assertEquals(
             "262f3e8807ea969cfc446ea8717500475ea1ea1be6205201486a5431ffcb490e",
             v69.skelSha256
         )
-        val v73 = byId("7gen4")
+        val v73 = qnn(byId("7gen4"))
         assertEquals("libQnnHtpV73Skel.so", v73.skelAsset)
         assertEquals(18_709_712L, v73.skelBytes)
         assertEquals(
             "024a0aea3d8d44fc5b59ffab20bde4348d07d05ad7d23f27c8bd06aa3d240d8a",
             v73.skelSha256
         )
-        val v79 = byId("8elite_galaxy")
+        val v79 = qnn(byId("8elite_galaxy"))
         assertEquals("libQnnHtpV79Skel.so", v79.skelAsset)
         assertEquals(18_513_604L, v79.skelBytes)
         assertEquals(
             "860c9d2e7c937c9fb8f8f18daa9a79cab6c566066a2d36f235f6c8708fdc75bd",
             v79.skelSha256
         )
-        val v81 = byId("8elite5_galaxy")
+        val v81 = qnn(byId("8elite5_galaxy"))
         assertEquals("libQnnHtpV81Skel.so", v81.skelAsset)
         assertEquals(19_708_192L, v81.skelBytes)
         assertEquals(
@@ -323,14 +402,14 @@ class NpuFleetCensusTest {
 
     @Test
     fun everySkelAssetNamesItsOwnFamilysHtpArchitecture() {
-        for (f in families) {
+        for (f in qnnFamilies) {
             assertEquals(
-                "family ${f.id} (HTP v${f.htpVersion}) must stage the skel of its OWN " +
+                "family ${f.id} (HTP v${qnn(f).htpVersion}) must stage the skel of its OWN " +
                     "architecture — a mismatch stages a skel FastRPC cannot pair with the " +
                     "family's context binaries, and that failure is a device mystery, not a " +
                     "compile error",
-                "libQnnHtpV${f.htpVersion}Skel.so",
-                f.skelAsset
+                "libQnnHtpV${qnn(f).htpVersion}Skel.so",
+                qnn(f).skelAsset
             )
         }
     }
@@ -393,7 +472,7 @@ class NpuFleetCensusTest {
         // v73 and name the same blob, so the union is 29 rather than 30. Derived from the
         // census rather than spelled, because the two counts move independently — 8gen1 added
         // two artifact digests AND a skel, because it brought a new architecture (v69).
-        val skels = families.map { it.skelSha256 }.toSet()
+        val skels = qnnFamilies.map { qnn(it).skelSha256 }.toSet()
         assertEquals(
             "and none of them collides with a skel digest — every artifact digest and every " +
                 "architecture's skel digest is its own measurement",
@@ -431,10 +510,16 @@ class NpuFleetCensusTest {
 
     @Test
     fun everyVendorZipByteCountIsTheMeasuredExactValue() {
-        for (a in artifacts) {
+        // (P2) The field is `sourceBytes` now — for a vendor row the same number under a truer
+        // name, and null only for a LOCAL row, which has no vendor zip. Every Qualcomm row is a
+        // vendor row, so every Qualcomm artifact carries its zip's exact length.
+        val qualcommIds = families.filter { it.vendor == NpuVendor.QUALCOMM }.map { it.id }.toSet()
+        for (a in artifacts.filter { it.familyId in qualcommIds }) {
+            val zip = a.sourceBytes
             assertTrue(
-                "${a.familyId}/${a.tierId}: vendorZipBytes must be positive, measured, real",
-                a.vendorZipBytes > 0L
+                "${a.familyId}/${a.tierId}: a vendor row's sourceBytes is its zip's length — " +
+                    "positive, measured, real; got $zip",
+                zip != null && zip > 0L
             )
         }
         // All twelve zips, byte for byte (the values the measure run ASSERTS at HEAD).
@@ -444,18 +529,18 @@ class NpuFleetCensusTest {
         // archive wrapper, a re-release. At v0.63.0 (2026-09-24) EVERY zip moved by megabytes,
         // all smaller (small -2.7 to -3.3%, turbo -4.2 to -4.9%): a QAIRT 2.50 rebuild, and the
         // binary digests moved with them. The 8gen1 pair is new at this release.
-        assertEquals(823_721_812L, artifact("8gen3", "npu-turbo").vendorZipBytes)
-        assertEquals(823_685_860L, artifact("8elite_galaxy", "npu-turbo").vendorZipBytes)
-        assertEquals(824_020_866L, artifact("8elite5_galaxy", "npu-turbo").vendorZipBytes)
-        assertEquals(828_034_458L, artifact("7gen4", "npu-turbo").vendorZipBytes)
-        assertEquals(823_697_212L, artifact("qcs8550", "npu-turbo").vendorZipBytes)
-        assertEquals(821_903_663L, artifact("8gen1", "npu-turbo").vendorZipBytes)
-        assertEquals(285_197_039L, artifact("8gen3", "npu").vendorZipBytes)
-        assertEquals(285_116_926L, artifact("8elite_galaxy", "npu").vendorZipBytes)
-        assertEquals(285_450_230L, artifact("8elite5_galaxy", "npu").vendorZipBytes)
-        assertEquals(285_697_544L, artifact("7gen4", "npu").vendorZipBytes)
-        assertEquals(285_198_646L, artifact("qcs8550", "npu").vendorZipBytes)
-        assertEquals(284_581_383L, artifact("8gen1", "npu").vendorZipBytes)
+        assertEquals(823_721_812L, artifact("8gen3", "npu-turbo").sourceBytes)
+        assertEquals(823_685_860L, artifact("8elite_galaxy", "npu-turbo").sourceBytes)
+        assertEquals(824_020_866L, artifact("8elite5_galaxy", "npu-turbo").sourceBytes)
+        assertEquals(828_034_458L, artifact("7gen4", "npu-turbo").sourceBytes)
+        assertEquals(823_697_212L, artifact("qcs8550", "npu-turbo").sourceBytes)
+        assertEquals(821_903_663L, artifact("8gen1", "npu-turbo").sourceBytes)
+        assertEquals(285_197_039L, artifact("8gen3", "npu").sourceBytes)
+        assertEquals(285_116_926L, artifact("8elite_galaxy", "npu").sourceBytes)
+        assertEquals(285_450_230L, artifact("8elite5_galaxy", "npu").sourceBytes)
+        assertEquals(285_697_544L, artifact("7gen4", "npu").sourceBytes)
+        assertEquals(285_198_646L, artifact("qcs8550", "npu").sourceBytes)
+        assertEquals(284_581_383L, artifact("8gen1", "npu").sourceBytes)
     }
 
     @Test
@@ -540,7 +625,8 @@ class NpuFleetCensusTest {
                     script,
                     lines(
                         "    (\"${a.tierId}\", \"${a.familyId}\"): (",
-                        "        ${grouped(a.vendorZipBytes)},",
+                        // (P2) sourceBytes — the vendor zip's length, the field's old value.
+                        "        ${grouped(requireNotNull(a.sourceBytes) { "${a.familyId}/${a.tierId} has no vendor zip" })},",
                         "        ${grouped(a.encoder.bytes)}, \"${a.encoder.sha256}\",",
                         "        ${grouped(a.decoder.bytes)}, \"${a.decoder.sha256}\",",
                     ),

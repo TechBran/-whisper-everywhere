@@ -216,13 +216,20 @@ class NpuPackMetadataTest {
     @Test
     fun crossCheckAnswersNullForEveryMatchingFamilyAndTier() {
         // The whole fleet: a metadata document built FROM each artifact row cross-checks
-        // silently against its own family and tier — all eight, so no row's pack is refused
-        // by the peek that exists to protect it.
-        for (a in NpuFleetCensus.artifacts) {
+        // silently against its own family and tier — every QNN row's, so no row's pack is
+        // refused by the peek that exists to protect it. (P2: a version-1 document carries an
+        // HTP version, which is the row's QNN needs since the census reshape — so the loop is
+        // over the rows whose runtime is QNN, which is every Qualcomm row by construction.)
+        val qnnArtifacts = NpuFleetCensus.artifacts.filter {
+            NpuFleetCensus.familyById(it.familyId)!!.runtime is NpuRuntimeNeeds.Qnn
+        }
+        assertTrue("the QNN rows' artifacts were found", qnnArtifacts.isNotEmpty())
+        for (a in qnnArtifacts) {
             val f = NpuFleetCensus.familyById(a.familyId)!!
+            val htp = (f.runtime as NpuRuntimeNeeds.Qnn).htpVersion
             val meta = NpuPackMetadata.parse(
                 "{\"version\": 1, \"tierId\": \"${a.tierId}\", \"familyId\": \"${a.familyId}\"," +
-                    "\"htpVersion\": ${f.htpVersion}, \"packGroup\": \"${f.packGroup}\"," +
+                    "\"htpVersion\": $htp, \"packGroup\": \"${f.packGroup}\"," +
                     "\"entries\": [" +
                     "{\"fileName\": \"${a.encoder.fileName}\", \"bytes\": ${a.encoder.bytes}, " +
                     "\"sha256\": \"${a.encoder.sha256}\"}," +

@@ -164,9 +164,19 @@ class NpuSkelPackagingTest {
     private fun kotlinLongLiteral(value: Long): String =
         value.toString().reversed().chunked(3).joinToString("_").reversed() + "L"
 
-    /** One family's gradle table row, spelled exactly as the build script must spell it. */
-    private fun tripleRowFor(family: NpuSocFamily): String =
-        "Triple(\"${family.skelAsset}\", ${kotlinLongLiteral(family.skelBytes)}, \"${family.skelSha256}\")"
+    /**
+     * Every census family whose runtime is QNN, with its QNN needs (P2 — the census reshape moved
+     * the HTP version and the skel off the row and into its sealed `runtime`). These are exactly
+     * the Qualcomm rows, by construction: a row's vendor IS its runtime's
+     * (`NpuSocFamily.vendor` reads `runtime.vendor`), so no Qualcomm row can drop out of the pins
+     * below by being spelled another way, and a row of another vendor has no skel to pin.
+     */
+    private val qnnFamilies: List<Pair<NpuSocFamily, NpuRuntimeNeeds.Qnn>> =
+        NpuFleetCensus.families.mapNotNull { f -> (f.runtime as? NpuRuntimeNeeds.Qnn)?.let { f to it } }
+
+    /** One QNN row's gradle table row, spelled exactly as the build script must spell it. */
+    private fun tripleRowFor(qnn: NpuRuntimeNeeds.Qnn): String =
+        "Triple(\"${qnn.skelAsset}\", ${kotlinLongLiteral(qnn.skelBytes)}, \"${qnn.skelSha256}\")"
 
     // ------------------------------------------------------------------ the gradle contract
 
@@ -177,7 +187,8 @@ class NpuSkelPackagingTest {
      */
     @Test
     fun everyCensusFamilysSkelIsExtractedAndPinned() {
-        NpuFleetCensus.families.forEach { family ->
+        assertTrue("the census has QNN rows to stage skels for", qnnFamilies.isNotEmpty())
+        qnnFamilies.forEach { (family, qnn) ->
             assertEquals(
                 "family `${family.id}`'s skel row — asset, exact bytes, exact sha256 — must " +
                     "appear exactly once in extractQnnSkel's qnnSkels table. A family whose row " +
@@ -185,7 +196,7 @@ class NpuSkelPackagingTest {
                     "tier, the stage declines at arm, and every device of that family runs CPU " +
                     "under a card that promised the AI chip.",
                 1,
-                liveLineCount(extractTask, tripleRowFor(family)),
+                liveLineCount(extractTask, tripleRowFor(qnn)),
             )
         }
         // ONE ROW PER ARCHITECTURE, not per family — and until 2026-09-22 those were the same
@@ -201,7 +212,7 @@ class NpuSkelPackagingTest {
                 "skel no census row will ever stage (dead assets); a missing one is a family " +
                 "whose stage declines at arm. Either way the census and the build have parted " +
                 "company",
-            NpuFleetCensus.families.map { it.skelAsset }.toSet().size,
+            qnnFamilies.map { (_, qnn) -> qnn.skelAsset }.toSet().size,
             liveLineCount(extractTask, "Triple(\""),
         )
     }
@@ -224,8 +235,8 @@ class NpuSkelPackagingTest {
                 )
             }
             .toSet()
-        val census = NpuFleetCensus.families
-            .map { Triple(it.skelAsset, it.skelBytes, it.skelSha256) }
+        val census = qnnFamilies
+            .map { (_, qnn) -> Triple(qnn.skelAsset, qnn.skelBytes, qnn.skelSha256) }
             .toSet()
         assertEquals(
             "the build script's qnnSkels table and NpuFleetCensus.families must carry EXACTLY " +
@@ -288,17 +299,17 @@ class NpuSkelPackagingTest {
     @Test
     fun everyCensusFamilysSkelIsExcludedAndItsStubStaysInLib() {
         assertTrue("the jniLibs block was found", jniLibs.length < gradle.length)
-        NpuFleetCensus.families.forEach { family ->
-            val arch = "V${family.htpVersion}"
+        qnnFamilies.forEach { (family, qnn) ->
+            val arch = "V${qnn.htpVersion}"
             assertEquals(
-                "family `${family.id}`'s skel (${family.skelAsset}) is excluded from jniLibs " +
+                "family `${family.id}`'s skel (${qnn.skelAsset}) is excluded from jniLibs " +
                     "exactly once. Under this app's extractNativeLibs=\"false\" packaging the " +
                     "FastRPC loader — which needs a real file on disk and searches only " +
                     "ADSP_LIBRARY_PATH — could never open a lib/ copy, so a skel left in lib/ " +
                     "is ~18 MB of provably dead APK; the same bytes ship under assets/ " +
                     "(extractQnnSkel) and are staged into filesDir at first arm",
                 1,
-                count(jniLibs, "excludes += \"**/${family.skelAsset}\""),
+                count(jniLibs, "excludes += \"**/${qnn.skelAsset}\""),
             )
             assertEquals(
                 "family `${family.id}`'s STUB (libQnnHtp${arch}Stub.so) is NOT excluded: it is " +
@@ -332,7 +343,7 @@ class NpuSkelPackagingTest {
      */
     @Test
     fun noUncoveredArchitectureLosesItsExcludes() {
-        val covered = NpuFleetCensus.families.map { "V${it.htpVersion}" }.toSet()
+        val covered = qnnFamilies.map { (_, qnn) -> "V${qnn.htpVersion}" }.toSet()
         assertFalse(
             "an architecture listed as UNCOVERED here must not be a census architecture — its " +
                 "stub would be excluded from lib/ while a family stages its skel",
@@ -452,17 +463,17 @@ class NpuSkelPackagingTest {
             2,
             liveLineCount(gradle, "com.qualcomm.qti:qnn-runtime:2.50.0"),
         )
-        NpuFleetCensus.families.forEach { family ->
+        qnnFamilies.forEach { (family, qnn) ->
             assertEquals(
-                "family `${family.id}`'s byte length (${kotlinLongLiteral(family.skelBytes)}) " +
+                "family `${family.id}`'s byte length (${kotlinLongLiteral(qnn.skelBytes)}) " +
                     "appears exactly once in the build script — the qnnSkels row",
                 1,
-                liveLineCount(gradle, kotlinLongLiteral(family.skelBytes)),
+                liveLineCount(gradle, kotlinLongLiteral(qnn.skelBytes)),
             )
             assertEquals(
                 "and its sha256 exactly once",
                 1,
-                liveLineCount(gradle, family.skelSha256),
+                liveLineCount(gradle, qnn.skelSha256),
             )
             // The BACKEND carries NONE of these spellings: the census row travels as an object
             // and the stage call reads its fields. Whole-file and comment-inclusive, the same
@@ -473,13 +484,13 @@ class NpuSkelPackagingTest {
                 "the backend must not spell family `${family.id}`'s sha256 anywhere — not in " +
                     "code, not in a comment",
                 0,
-                count(backend, family.skelSha256),
+                count(backend, qnn.skelSha256),
             )
             assertEquals(
                 "nor must QnnAsrEngine, where the skel stage lives now — not in code, not in a " +
                     "comment",
                 0,
-                count(engine, family.skelSha256),
+                count(engine, qnn.skelSha256),
             )
         }
     }
@@ -595,11 +606,42 @@ class NpuSkelPackagingTest {
                 ),
             ),
         )
+        // RE-SPECCED AT P2 (the census reshape), from "exactly once" to "exactly twice, both
+        // inside prepare". The second site is a DIFFERENT failure, not a second story of this
+        // one: a row whose sealed runtime is not QNN (a MediaTek row) carries no skel, and prepare
+        // refuses it by name before anything is staged. What the old count guarded still holds
+        // exactly — the stage is spelled by its constant and by nothing else, and no member but
+        // the engine's own staging can produce it — and the count is still exact, so a third
+        // site anywhere in the engine fails here.
         assertEquals(
-            "and SKEL is the stage exactly once — the card and the WE-DIAG line name the stage, " +
-                "and two spellings would be two stories",
-            1,
+            "and SKEL is the stage at exactly two live sites in the engine — the staging call's " +
+                "elvis and the row with no skel to stage — the card and the WE-DIAG line name the " +
+                "stage, and a third spelling would be a third story",
+            2,
             liveLineCount(engine, "NpuStage.SKEL"),
+        )
+        assertEquals(
+            "…and both are prepare's: no other member of the engine refuses at the skel stage",
+            2,
+            liveLineCount(prepareBody, "NpuStage.SKEL"),
+        )
+        assertEquals(
+            "the row with no skel is refused on the runtime's own `when` arm, naming its stage",
+            1,
+            count(
+                prepareBody,
+                lines(
+                    "            is NpuRuntimeNeeds.LiteRtMediatek -> return Refusal(",
+                    "                NpuStage.SKEL,",
+                ),
+            ),
+        )
+        val noSkelArm = liveOffsets(prepareBody, "is NpuRuntimeNeeds.LiteRtMediatek -> return Refusal(")
+        val stage = liveOffsets(prepareBody, "NpuAssetStage.stagedPathWithMarker(")
+        assertTrue(
+            "ORDER: that refusal (${noSkelArm.firstOrNull()}) comes BEFORE the staging call " +
+                "(${stage.firstOrNull()}) — a row of another vendor writes no skel into filesDir",
+            noSkelArm.isNotEmpty() && stage.isNotEmpty() && noSkelArm.first() < stage.first(),
         )
         // RESTORED AND EXTENDED (P1a review): at 4a7c126 this pin held `"skel",` to exactly one
         // live line of load — the whole of the stage's spelling. The count of NpuStage.SKEL above
@@ -639,22 +681,32 @@ class NpuSkelPackagingTest {
      */
     @Test
     fun theSkelRefusalNamesTheFamilysAssetAndId() {
+        // RE-POINTED AT P2 (the census reshape): the asset name is read off the row's QNN needs
+        // (`qnn`, bound from `family.runtime` — pinned in the marker test below), and the text a
+        // device prints is the same text, character for character: `qnn.skelAsset` IS the value
+        // `family.skelAsset` was.
         assertEquals(
             "the skel refusal detail interpolates the family's own asset name and its census id",
             1,
-            liveLineCount(prepareBody, "\${family.skelAsset} (family \${family.id})"),
+            liveLineCount(prepareBody, "\${qnn.skelAsset} (family \${family.id})"),
         )
         assertEquals(
             "…in the moved text, verbatim — the detail a device prints did not change by a " +
-                "character when the stage moved into the engine",
+                "character when the stage moved into the engine, nor when the skel moved into the " +
+                "row's runtime",
             1,
             count(
                 prepareBody,
                 lines(
-                    "            \"\${family.skelAsset} (family \${family.id}) could not be staged from the APK \" +",
+                    "            \"\${qnn.skelAsset} (family \${family.id}) could not be staged from the APK \" +",
                     "                \"into filesDir — the FastRPC loader would find no DSP-side skel to open\"",
                 ),
             ),
+        )
+        assertEquals(
+            "and the no-skel refusal names the family too — the one line a wiring fault would print",
+            1,
+            liveLineCount(prepareBody, "\"family \${family.id} is a \${family.vendor} row (LiteRT, Neuron \" +"),
         )
     }
 
@@ -688,10 +740,25 @@ class NpuSkelPackagingTest {
         // asserted into assets at build time. A literal here is a fifth spelling, and a
         // DIFFERENT family's fields here is the wrong-skel stage the required parameter exists
         // to prevent. (P1a) The row reaches the call as prepare's own `family` parameter, which
-        // the backend hands its constructor's required one.
-        listOf("family.skelAsset,", "family.skelBytes,", "family.skelSha256,").forEach { field ->
+        // the backend hands its constructor's required one. (P2) The three values live in the
+        // row's sealed runtime now, so the pin is two halves: `qnn` is bound from THIS family's
+        // own `runtime`, exactly once, and the call reads each field off `qnn`, exactly once.
+        assertEquals(
+            "the stage's values are this family row's own QNN needs — `qnn` is bound from " +
+                "`family.runtime` and from nothing else",
+            1,
+            count(
+                prepareBody,
+                lines(
+                    "        val qnn = when (val needs = family.runtime) {",
+                    "            is NpuRuntimeNeeds.Qnn -> needs",
+                ),
+            ),
+        )
+        assertEquals("…and bound exactly once", 1, liveLineCount(prepareBody, "val qnn ="))
+        listOf("qnn.skelAsset,", "qnn.skelBytes,", "qnn.skelSha256,").forEach { field ->
             assertEquals(
-                "the stage call reads `$field` from the family row — exactly once",
+                "the stage call reads `$field` from the family row's QNN needs — exactly once",
                 1,
                 liveLineCount(prepareBody, field),
             )

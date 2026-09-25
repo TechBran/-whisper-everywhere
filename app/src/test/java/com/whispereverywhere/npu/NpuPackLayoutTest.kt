@@ -16,11 +16,13 @@ import javax.xml.parsers.DocumentBuilderFactory
  *
  * [renderedDeviceTargetingXml] is the generator: it renders `app/device_targeting_config.xml`
  * from `NpuFleetCensus.families` in table order — `packGroup` as the group name, `socModels`
- * as the exact selector strings, one selector per manufacturer spelling in
- * `NpuGate.SUPPORTED_SOC_MANUFACTURERS` (the gate's own {QTI, Qualcomm} doctrine, mirrored:
- * Play matches `Build.SOC_MANUFACTURER` literally too, and a "Qualcomm"-spelled OEM build
- * would otherwise pass the app gate and land in the empty default — fail-safe, but exactly
- * the lost-coverage trap the census exists to prevent). The committed file must equal the
+ * as the exact selector strings, one selector per manufacturer spelling in THE FAMILY'S OWN
+ * `manufacturers` (P2, the census reshape: it read the gate's one global
+ * `NpuGate.SUPPORTED_SOC_MANUFACTURERS` until the manufacturer moved onto the row; every
+ * Qualcomm row carries the same {QTI, Qualcomm} doctrine, so the rendering did not change by a
+ * byte — the move's own proof. Play matches `Build.SOC_MANUFACTURER` literally too, and a
+ * "Qualcomm"-spelled OEM build would otherwise pass the app gate and land in the empty default —
+ * fail-safe, but exactly the lost-coverage trap the census exists to prevent). The committed file must equal the
  * rendering BYTE FOR BYTE, which is what makes maintenance rule 1 mechanical: a census edit
  * (a new suffix bin, a fifth family) fails this suite until the XML is regenerated in the
  * SAME commit, and the failure message prints the exact regenerated text to commit.
@@ -51,7 +53,14 @@ import javax.xml.parsers.DocumentBuilderFactory
 class NpuPackLayoutTest {
 
     private val families = NpuFleetCensus.families
-    private val manufacturers = NpuGate.SUPPORTED_SOC_MANUFACTURERS.toList()
+
+    /**
+     * The families whose runtime is QNN, each with its QNN needs — the rows the build script's
+     * vendor FAMILIES table describes (their HTP version is the script's pairing column). A row
+     * of another vendor has no HTP version and no vendor zip, so it is no row of that table.
+     */
+    private val qnnFamilies: List<Pair<NpuSocFamily, NpuRuntimeNeeds.Qnn>> =
+        families.mapNotNull { f -> (f.runtime as? NpuRuntimeNeeds.Qnn)?.let { f to it } }
 
     /** tier id -> the pack MODULE that ships it (the brief's two names; F5's PACK_BY_TIER
      *  will spell the same mapping through the tier-id homes). */
@@ -102,7 +111,7 @@ class NpuPackLayoutTest {
         sb.append("<config:device-targeting-config xmlns:config=\"http://schemas.android.com/apk/config\">\n")
         for (family in families) {
             sb.append("  <config:device-group name=\"${family.packGroup}\">\n")
-            for (manufacturer in manufacturers) {
+            for (manufacturer in family.manufacturers) {
                 sb.append("    <config:device-selector>\n")
                 for (model in family.socModels) {
                     sb.append(
@@ -149,11 +158,11 @@ class NpuPackLayoutTest {
             val group = groups.item(index) as org.w3c.dom.Element
             val selectors = group.getElementsByTagNameNS(ns, "device-selector")
             assertEquals(
-                "${family.packGroup} carries one selector per manufacturer spelling " +
+                "${family.packGroup} carries one selector per spelling in ITS OWN manufacturers " +
                     "(selectors OR together; two is well under Play's 5-selector cap)",
-                manufacturers.size, selectors.length
+                family.manufacturers.size, selectors.length
             )
-            for ((mIndex, manufacturer) in manufacturers.withIndex()) {
+            for ((mIndex, manufacturer) in family.manufacturers.withIndex()) {
                 val selector = selectors.item(mIndex) as org.w3c.dom.Element
                 val chips = selector.getElementsByTagNameNS(ns, "system-on-chip")
                 assertEquals(
@@ -182,7 +191,7 @@ class NpuPackLayoutTest {
     }
 
     @Test
-    fun everyCensusStringAppearsUnderBothManufacturerSpellingsInItsOwnGroup() {
+    fun everyCensusStringAppearsUnderEachOfItsFamilysManufacturerSpellingsInItsOwnGroup() {
         for (family in families) {
             val start = xml.indexOf("name=\"${family.packGroup}\"")
             assertTrue("group ${family.packGroup} exists", start >= 0)
@@ -190,7 +199,7 @@ class NpuPackLayoutTest {
             assertTrue("group ${family.packGroup} is closed", end > start)
             val block = xml.substring(start, end)
             for (model in family.socModels) {
-                for (manufacturer in manufacturers) {
+                for (manufacturer in family.manufacturers) {
                     assertEquals(
                         "$model must appear exactly once under the '$manufacturer' spelling " +
                             "inside ${family.packGroup} — Play matches BOTH Build fields " +
@@ -206,13 +215,15 @@ class NpuPackLayoutTest {
 
     @Test
     fun nothingTheCensusDoesNotNameAppearsInTheXml() {
-        val censusStrings = families.flatMap { it.socModels }
+        // Each string once per spelling ITS family admits (P2: per row, where it was "twice"
+        // against one global Qualcomm pair — the same count on every Qualcomm row).
+        val censusStrings = families.flatMap { f -> f.socModels.flatMap { s -> f.manufacturers.map { s } } }
         val modelValues = Regex("model=\"([^\"]*)\"").findAll(xml).map { it.groupValues[1] }.toList()
         assertEquals(
-            "every census string appears exactly twice (once per manufacturer spelling) and " +
-                "the XML names NOTHING else — exact attribute values, never substrings, " +
+            "every census string appears exactly once per manufacturer spelling its family admits " +
+                "and the XML names NOTHING else — exact attribute values, never substrings, " +
                 "because SM8750-AC contains SM8750",
-            censusStrings.flatMap { s -> listOf(s, s) }.sorted(),
+            censusStrings.sorted(),
             modelValues.sorted()
         )
         // The research sketch's one string still outside the census, live-zero BY EXACT VALUE:
@@ -466,13 +477,16 @@ class NpuPackLayoutTest {
         // a fourth column after the group, the QNN soc_model metadata_gate holds the vendor's
         // chipset_attributes to. The census has no soc_model field to compare it with, so what
         // is pinned here is the pairing plus the column's SHAPE: one integer, on the pairing's
-        // own line, closing the tuple.
-        for (family in families) {
+        // own line, closing the tuple. (P2: the HTP version is the row's QNN needs now, so the
+        // loop is over the QNN rows — the vendor families that table exists to describe. The
+        // census test holds every Qualcomm row to QNN needs, so no Qualcomm row can leave it.)
+        assertTrue("the QNN rows were found", qnnFamilies.isNotEmpty())
+        for ((family, qnn) in qnnFamilies) {
             assertEquals(
                 "build_asset_packs.py pairs ${family.id}'s HTP with its packGroup, then its " +
                     "soc_model integer",
                 1,
-                Regex("""\b${family.htpVersion}, "${family.packGroup}", \d+\),""")
+                Regex("""\b${qnn.htpVersion}, "${family.packGroup}", \d+\),""")
                     .findAll(script).count()
             )
         }

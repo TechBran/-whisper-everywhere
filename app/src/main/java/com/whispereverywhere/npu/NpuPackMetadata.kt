@@ -132,10 +132,20 @@ object NpuPackMetadata {
                 "device is ${family.id}. Its binaries are compiled for different silicon, so " +
                 "get the ${family.id} pack instead. Nothing was installed."
         }
-        if (meta.htpVersion != family.htpVersion) {
-            return "That pack says HTP v${meta.htpVersion} where the ${family.id} family is " +
-                "v${family.htpVersion}, so it is not this family's published pack. Nothing " +
-                "was installed."
+        // The HTP arm reads the row's QNN needs (P2 moved the HTP version off the row). A
+        // version-1 document is a QUALCOMM pack's shape — `htpVersion` names a Hexagon — so on a
+        // row of another vendor it cannot describe this family's pack whatever its number says;
+        // the MediaTek twin of this arm is metadata version 2's, a later P2 task.
+        when (val runtime = family.runtime) {
+            is NpuRuntimeNeeds.Qnn -> if (meta.htpVersion != runtime.htpVersion) {
+                return "That pack says HTP v${meta.htpVersion} where the ${family.id} family is " +
+                    "v${runtime.htpVersion}, so it is not this family's published pack. Nothing " +
+                    "was installed."
+            }
+            is NpuRuntimeNeeds.LiteRtMediatek -> return "That pack says HTP " +
+                "v${meta.htpVersion}, which only a Qualcomm AI-chip pack does, and the " +
+                "${family.id} family runs on MediaTek's APU, so it is not this family's " +
+                "published pack. Nothing was installed."
         }
         if (meta.packGroup != family.packGroup) {
             return "That pack names group '${meta.packGroup}' where the ${family.id} family " +

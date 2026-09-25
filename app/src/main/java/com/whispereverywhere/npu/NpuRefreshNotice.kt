@@ -35,7 +35,7 @@ package com.whispereverywhere.npu
  * ### The size, and why it is a derivation
  *
  * The number is the device family's vendor zip length for the tier ([downloadBytesFor] —
- * `PackArtifact.vendorZipBytes`, asserted at HEAD on every measure run), rounded to the nearest SI
+ * `PackArtifact.sourceBytes`, asserted at HEAD on every measure run), rounded to the nearest SI
  * megabyte: 823,721,812 B on an 8 Gen 3's turbo row is "about 824 MB", 285,197,039 B on its small
  * row "about 285 MB", and the 7 Gen 4's turbo row says 828. Derived, never a literal, so the next
  * census moves the notice with it instead of leaving a number for a pin to chase. "About" is
@@ -79,14 +79,16 @@ object NpuRefreshNotice {
     fun downloadMb(bytes: Long): Long = (bytes + 500_000L) / 1_000_000L
 
     /**
-     * The tier's download on THIS device's family — its census row's vendor zip length — or null
-     * when there is no row: no family, no tier, or a family the census has no pack for. Null is
-     * also the "nothing to get here" answer [decide] and [showsInAppNote] refuse on, so neither
-     * surface can tell a user to download a pack their phone cannot be sent.
+     * The tier's download on THIS device's family — its census row's vendor zip length
+     * ([PackArtifact.sourceBytes]) — or null when there is no row: no family, no tier, or a
+     * family the census has no pack for. Null is also the "nothing to get here" answer [decide]
+     * and [showsInAppNote] refuse on, so neither surface can tell a user to download a pack their
+     * phone cannot be sent. A LOCAL row has no vendor zip and answers null too: this notice is the
+     * v0.63.0 vendor refresh's, and a pair compiled here was never part of that refresh.
      */
     fun downloadBytesFor(family: NpuSocFamily?, tierId: String?): Long? {
         if (family == null || tierId == null) return null
-        return NpuFleetCensus.artifactFor(family.id, tierId)?.vendorZipBytes
+        return NpuFleetCensus.artifactFor(family.id, tierId)?.sourceBytes
     }
 
     /** Which broadcast is asking. */
