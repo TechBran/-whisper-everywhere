@@ -76,6 +76,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -4380,10 +4382,27 @@ class FloatingBubbleService : Service(),
      *
      * Re-read rather than cached forever because the *installed* half can change under a live
      * service: Q8's importer writes a gated pair into files/models while the app is running.
+     *
+     * **SERIALISED (the P3a review, small 2).** Three sites refresh the memo — the boot chain, the
+     * model-switch collector, and the boot chain's one late refresh when a MediaTek driver verdict
+     * lands after the chain stopped waiting — and each evaluates the gate on IO. Unserialised, a
+     * refresh that evaluated EARLIER could write LATER: the boot chain's first refresh, having read
+     * "unknown" (not capable), finishing after the late refresh had written the verdict's answer —
+     * and every session would route to the CPU until the next model switch. So the evaluation and
+     * the write happen together under [npuTierRefreshLock]: refreshes run one at a time, so the
+     * memo always holds the answer evaluated last — and the late refresh evaluates after the
+     * verdict landed, so no refresh can write "unknown" after it. A caller waiting on the lock
+     * suspends (it blocks no thread) for at most one evaluation of the gate: a few `File` stats
+     * and a memoised or stored read — once per process, the probe's `dlopen`.
      */
     private suspend fun refreshNpuTierOffer() {
-        npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }
+        npuTierRefreshLock.withLock {
+            npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }
+        }
     }
+
+    /** One refresh of [npuTierIds] at a time — see [refreshNpuTierOffer]. */
+    private val npuTierRefreshLock = Mutex()
 
     /**
      * The boot chain's ONE extra offer refresh (the P2c review's later item). Armed only when the

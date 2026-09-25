@@ -663,7 +663,6 @@ class NpuBackendWiringTest {
         val settle = "val verdictSettle = launch(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }"
         val bounded = "if (withTimeoutOrNull(APU_VERDICT_WAIT_MS) { verdictSettle.join() } == null) {"
         val late = "launch { refreshNpuTierOfferWhenLanded(verdictSettle) }"
-        val first = block("            refreshNpuTierOffer()", "            delay(1500)", "            warmLocalEngine().prewarm()")
         assertEquals("the hop is gated on the family's vendor, once", 1, liveOffsets(service, gateLine).size)
         assertEquals(
             "…which is the app's Main-safe memo answering MediaTek — the service resolves no family itself",
@@ -673,6 +672,12 @@ class NpuBackendWiringTest {
         assertEquals("the settle is a job of its own, once", 1, liveOffsets(service, settle).size)
         assertEquals("the chain's wait for it is bounded, once", 1, liveOffsets(service, bounded).size)
         assertEquals("a late verdict earns exactly one more refresh, armed once", 1, liveOffsets(service, late).size)
+        assertEquals(
+            "…and the late refresh has exactly ONE caller — that launch — beside its declaration (the " +
+                "P3a review, small 2: a second caller would be a fourth refresh site nobody counted)",
+            2,
+            liveOffsets(service, "refreshNpuTierOfferWhenLanded(").size,
+        )
         assertEquals(
             "…which waits for the settle to land and then refreshes the memo",
             1,
@@ -694,8 +699,19 @@ class NpuBackendWiringTest {
         val gate = liveOffsets(service, gateLine).single()
         val at = liveOffsets(service, settle).single()
         val wait = liveOffsets(service, bounded).single()
-        val lateAt = service.indexOf(late)
-        val firstAt = service.indexOf(first)
+        // LIVE offsets only (the P3a review, small 2) — indexOf would measure a comment as happily
+        // as the code, the reason this file's ordering claims are built on liveOffsets. The chain's
+        // first refresh is the live refresh line directly above its one live `delay(1500)`.
+        val lateAt = liveOffsets(service, late).single()
+        val delayAt = liveOffsets(service, "            delay(1500)").single()
+        val firstAt = liveOffsets(service, "            refreshNpuTierOffer()").last { it < delayAt }
+        assertTrue(
+            "the refresh found is the chain's own, directly above its delay and prewarm",
+            service.startsWith(
+                block("            refreshNpuTierOffer()", "            delay(1500)", "            warmLocalEngine().prewarm()"),
+                firstAt,
+            ),
+        )
         assertTrue(
             "ORDER: the vendor gate ($gate), the settle job inside it ($at), the bounded wait ($wait), " +
                 "the late refresh armed only on a timeout ($lateAt) — all BEFORE the chain's first " +
@@ -708,6 +724,54 @@ class NpuBackendWiringTest {
                 "exactly as before, without the hop",
             gateBlock.count { it == '{' },
             gateBlock.count { it == '}' },
+        )
+    }
+
+    /**
+     * THE MEMO'S REFRESHES ARE SERIALISED (the P3a review, small 2). Three sites refresh
+     * [npuTierIds] — the boot chain, the model-switch collector, and the boot chain's late refresh
+     * when a MediaTek verdict lands after the bounded wait — and each evaluates the gate on IO. An
+     * unserialised refresh that evaluated EARLIER could write LATER: the chain's first refresh,
+     * having read "unknown" (not capable), finishing after the late refresh had written the
+     * verdict's answer, and every session would route to the CPU until the next model switch. So
+     * the one evaluation and the one write sit together under one lock, declared once and taken
+     * nowhere else: the memo always holds the answer evaluated last.
+     */
+    @Test
+    fun theMemosRefreshesAreSerialisedTheEvaluationAndTheWriteUnderOneLock() {
+        val refresh = memberBody(service, "    private suspend fun refreshNpuTierOffer() {")
+        assertEquals(
+            "the refresh's body is the lock around the one evaluation-and-write, and nothing else",
+            block(
+                "    private suspend fun refreshNpuTierOffer() {",
+                "        npuTierRefreshLock.withLock {",
+                "            npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }",
+                "        }",
+            ),
+            refresh,
+        )
+        assertEquals(
+            "the lock is ONE Mutex, declared once — a second lock would serialise nothing",
+            1,
+            liveOffsets(service, "private val npuTierRefreshLock = Mutex()").size,
+        )
+        assertEquals(
+            "…and it is taken only there: two live mentions, the declaration and that withLock",
+            2,
+            liveOffsets(service, "npuTierRefreshLock").size,
+        )
+        assertEquals(
+            "the memo is written nowhere else — a write outside the lock would race it again",
+            1,
+            liveOffsets(service, "npuTierIds = ").size,
+        )
+        assertEquals(
+            "the lock is the coroutine Mutex (it suspends a waiter on Main, it blocks no thread)",
+            listOf(1, 1),
+            listOf(
+                liveOffsets(service, "import kotlinx.coroutines.sync.Mutex").size,
+                liveOffsets(service, "import kotlinx.coroutines.sync.withLock").size,
+            ),
         )
     }
 
