@@ -257,20 +257,65 @@ class LiteRtPackagingTest {
         val fetch = dispatchTask.indexOf("uri(litertDispatchZipUrl).toURL().openStream()")
         val guard = dispatchTask.indexOf("check(!offline) {")
         assertTrue("the offline guard ($guard) comes before the fetch ($fetch)", guard in 0 until fetch)
+        // RE-SPELLED by the P2c review's later item: the .part is the download's OWN (pid +
+        // nanoTime — pinned in aDownloadLandsInAPartOfItsOwnAndIsMovedInOnlyOnceComplete, below)
+        // and moves in with Files.move, so the delete that made room for the old rename is gone.
+        // What this guards is unchanged: a download is moved in only once complete.
         assertEquals(
-            "a download lands in a .part and is renamed in only once complete",
+            "a download lands in a .part and is moved in only once complete",
             listOf(1, 1),
             listOf(
-                liveLineCount(dispatchTask, "val part = File(zip.parentFile, zip.name + \".part\")"),
-                liveLineCount(dispatchTask, "check(part.renameTo(zip)) {"),
+                liveLineCount(dispatchTask, "val part = File(zip.parentFile, \"\${zip.name}.\${ProcessHandle.current().pid()}-\${System.nanoTime()}.part\")"),
+                liveLineCount(dispatchTask, "Files.move("),
             ),
         )
         assertEquals(
-            "and a cached copy that fails either pin is removed by the check that refuses it (plus " +
-                "the one delete that makes room for the rename)",
-            3,
+            "and a cached copy that fails either pin is removed by the check that refuses it",
+            2,
             liveLineCount(dispatchTask, "zip.delete()"),
         )
+    }
+
+    /**
+     * (The P2c review, a later item) A DOWNLOAD LANDS IN A `.part` OF ITS OWN. The cache is shared
+     * by every checkout on the machine, and one fixed `.part` name let two cold builds at once write
+     * into one file: the digest check caught it, and the build failed for nothing — and on Windows
+     * the delete-then-rename could fail while another build held the zip open. The name carries this
+     * process's pid and a nanoTime; the copy moves in atomically only once complete; a build whose
+     * move loses to a complete copy already in place keeps that copy (and the pins judge it); and
+     * the `.part` is removed on every way out.
+     */
+    @Test
+    fun aDownloadLandsInAPartOfItsOwnAndIsMovedInOnlyOnceComplete() {
+        val part = liveLineCount(dispatchTask, "val part = File(zip.parentFile, \"\${zip.name}.\${ProcessHandle.current().pid()}-\${System.nanoTime()}.part\")")
+        assertEquals("the .part's name is this process's and this moment's", 1, part)
+        assertEquals("no fixed .part name is left", 0, liveLineCount(dispatchTask, "zip.name + \".part\""))
+        assertEquals(
+            "the move is atomic, replacing a copy it may",
+            listOf(1, 1),
+            listOf(
+                liveLineCount(dispatchTask, "StandardCopyOption.ATOMIC_MOVE,"),
+                liveLineCount(dispatchTask, "StandardCopyOption.REPLACE_EXISTING,"),
+            ),
+        )
+        assertEquals(
+            "a move that loses the race keeps the complete copy already in place, or says why not",
+            listOf(1, 1),
+            listOf(
+                liveLineCount(dispatchTask, "} catch (raced: IOException) {"),
+                liveLineCount(dispatchTask, "check(zip.isFile && zip.length() == 2_847_687L) {"),
+            ),
+        )
+        val fetch = dispatchTask.indexOf("uri(litertDispatchZipUrl).toURL().openStream()")
+        val move = dispatchTask.indexOf("Files.move(")
+        val cleanup = dispatchTask.indexOf("part.delete()")
+        assertTrue(
+            "ORDER: the download ($fetch), then the move ($move), and the .part removed in a finally " +
+                "after both ($cleanup) — on every way out, success or failure",
+            fetch in 0 until move && move < cleanup &&
+                dispatchTask.substring(move, cleanup).contains("} finally {"),
+        )
+        assertEquals("the old rename is gone", 0, liveLineCount(dispatchTask, "part.renameTo(zip)"))
     }
 
     @Test

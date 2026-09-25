@@ -1,6 +1,9 @@
 // 4.2 F4: verifyNpuPacks parses each pack variant's metadata.json; Groovy's JsonSlurper is
 // already on the buildscript classpath, so no new dependency rides in with the gate.
 import groovy.json.JsonSlurper
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Properties
 // 4.1 L6: extractQnnSkel reads the skel entry straight out of the resolved AAR. Imported here
@@ -1295,8 +1298,8 @@ tasks.named("preBuild") { dependsOn(extractLiteRtRuntime) }
 // the cache holds the pinned bytes. The pins are unchanged and apply to the cached copy every time:
 // a copy that fails its length or digest is deleted by the check that refuses it, so the next
 // build fetches it afresh rather than failing on the same bad bytes forever; a download lands in a
-// `.part` beside it and is renamed in only once complete; and an offline build with no cached copy
-// fails naming the path to put one.
+// `.part` of its own beside it (pid + nanoTime, so two cold builds never share one) and is moved in
+// only once complete; and an offline build with no cached copy fails naming the path to put one.
 val litertDispatchZipUrl =
     "https://github.com/google-ai-edge/LiteRT/releases/download/v2.1.1/litert_npu_runtime_libraries_jit.zip"
 val litertDispatchZip = File(System.getProperty("user.home"), ".androidbuild/litert-cache/litert_npu_runtime_libraries_jit-2.1.1.zip")
@@ -1313,13 +1316,32 @@ val extractLiteRtDispatch = tasks.register("extractLiteRtDispatch") {
                     "Run once with network access, or copy the v2.1.1 release zip there."
             }
             zip.parentFile.mkdirs()
-            val part = File(zip.parentFile, zip.name + ".part")
-            uri(litertDispatchZipUrl).toURL().openStream().use { input ->
-                part.outputStream().use { input.copyTo(it) }
-            }
-            zip.delete()
-            check(part.renameTo(zip)) {
-                "extractLiteRtDispatch: the download could not be moved into the cache at ${zip.absolutePath}"
+            // (The P2c review, a later item) A NAME OF ITS OWN for every download: this process's
+            // pid and a nanoTime. The cache is shared by every checkout on this machine, and a
+            // fixed `.part` let two cold builds at once write into one file — the digest check
+            // caught the corruption, but the build failed for nothing. The copy moves into place
+            // only once complete; a build that finds another's complete copy already there and
+            // cannot replace it (Windows refuses to replace a file another build holds open) keeps
+            // that copy, and the pins below judge whichever copy is in place.
+            val part = File(zip.parentFile, "${zip.name}.${ProcessHandle.current().pid()}-${System.nanoTime()}.part")
+            try {
+                uri(litertDispatchZipUrl).toURL().openStream().use { input ->
+                    part.outputStream().use { input.copyTo(it) }
+                }
+                try {
+                    Files.move(
+                        part.toPath(), zip.toPath(),
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE,
+                    )
+                } catch (raced: IOException) {
+                    check(zip.isFile && zip.length() == 2_847_687L) {
+                        "extractLiteRtDispatch: the download could not be moved into the cache at " +
+                            "${zip.absolutePath} (${raced.message})"
+                    }
+                }
+            } finally {
+                part.delete()
             }
         }
         check(zip.length() == 2_847_687L) {
