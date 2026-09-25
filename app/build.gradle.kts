@@ -1320,6 +1320,69 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
     .configureEach { dependsOn(extractLiteRtDispatch) }
 tasks.named("preBuild") { dependsOn(extractLiteRtDispatch) }
 
+// (P2-6; design §2.3's last paragraph) THE MERGED MANIFEST'S MEDIATEK SET, pinned over the BUILD
+// OUTPUT — the manifest every APK and AAB actually carries — not over the source file. The source
+// declares libneuronusdk_adapter.mtk.so alone; what this guards is everything that could add to it
+// on the way: a dependency whose own manifest declares the rest of the set (the litert AAR's does:
+// libneuron_sys_util.mtk.so — whose NeuroPilot magic-number read cost every P0 run a 5 s binder wait
+// on the cold arm, sheet §4b — libneuronusdk_adapter.9.mtk.so and libneuron_adapter_mgvi.so). So the
+// guard is also a guard on the tier's cold-arm time.
+//
+// A TRANSFORM of every variant's MERGED_MANIFEST, so no APK or bundle can be packaged without it
+// running: it reads the merged manifest (comments stripped — a commented-out element is not a
+// declaration), requires the adapter declared exactly once and the other three absent, and hands the
+// manifest on byte for byte. The probe app's stripAarMediatekDeclarations is its model; this one
+// strips nothing, because the product never merges that AAR in the first place — it only refuses.
+abstract class VerifyMediatekNativeLibraries : DefaultTask() {
+    @get:InputFile abstract val mergedManifest: RegularFileProperty
+    @get:OutputFile abstract val checkedManifest: RegularFileProperty
+    @get:Input abstract val declared: Property<String>
+    @get:Input abstract val undeclared: ListProperty<String>
+
+    @TaskAction
+    fun verify() {
+        val bytes = mergedManifest.get().asFile.readBytes()
+        val text = String(bytes, Charsets.UTF_8)
+            .replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
+        val names = Regex("<uses-native-library\\b[^>]*?android:name\\s*=\\s*\"([^\"]+)\"")
+            .findAll(text).map { it.groupValues[1] }.toList()
+        check(names.count { it == declared.get() } == 1) {
+            "the merged manifest must declare ${declared.get()} exactly once — the Neuron adapter " +
+                "the MediaTek tier reaches the APU through — but its native libraries are $names"
+        }
+        val present = undeclared.get().filter { it in names }
+        check(present.isEmpty()) {
+            "the merged manifest declares $present — a dependency's manifest merged them in. None " +
+                "may ship: libneuron_sys_util.mtk.so costs a 5 s binder wait on every cold arm " +
+                "(sheet §4b), and the others are not the driver the tier was measured on."
+        }
+        checkedManifest.get().asFile.writeBytes(bytes)
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val verifyMediatek = project.tasks.register<VerifyMediatekNativeLibraries>(
+            "verifyMediatekNativeLibraries${variant.name.replaceFirstChar { it.uppercase() }}"
+        ) {
+            declared.set("libneuronusdk_adapter.mtk.so")
+            undeclared.set(
+                listOf(
+                    "libneuron_sys_util.mtk.so",
+                    "libneuronusdk_adapter.9.mtk.so",
+                    "libneuron_adapter_mgvi.so",
+                )
+            )
+        }
+        variant.artifacts.use(verifyMediatek)
+            .wiredWithFiles(
+                VerifyMediatekNativeLibraries::mergedManifest,
+                VerifyMediatekNativeLibraries::checkedManifest,
+            )
+            .toTransform(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
+    }
+}
+
 // The Play pack gate (4.2 F4): every bundle build re-proves that the pack payload on disk IS
 // the census before AGP packages it. The payload is a BUILD artifact — tools/build_asset_packs.py
 // build assembles every #group_ variant the census names (twelve since 2026-09-24) from the

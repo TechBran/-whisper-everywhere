@@ -250,6 +250,88 @@ class LiteRtPackagingTest {
         assertEquals("…and of the zip the build caches", 1, liveLineCount(gradle, "litert_npu_runtime_libraries_jit-${LiteRtRuntime.VERSION}.zip"))
     }
 
+    // ------------------------------------------------------------------ the manifest (design §2.3)
+
+    /** The MediaTek set: the one the product declares, then the three it must never. */
+    private val adapter = "libneuronusdk_adapter.mtk.so"
+    private val neverDeclared = listOf(
+        "libneuron_sys_util.mtk.so", "libneuronusdk_adapter.9.mtk.so", "libneuron_adapter_mgvi.so",
+    )
+
+    @Test
+    fun theSourceManifestDeclaresTheAdapterAndNothingElseFromTheMediatekSet() {
+        val manifest = read("src/main/AndroidManifest.xml")
+        val live = manifest.replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
+        val appOpen = live.indexOf("<application")
+        val appClose = live.indexOf("</application>")
+        val elements = Regex("""<uses-native-library\b[^>]*/>""", RegexOption.DOT_MATCHES_ALL).findAll(live).toList()
+        val named = { lib: String ->
+            elements.filter { Regex("""android:name\s*=\s*"${Regex.escape(lib)}"""").containsMatchIn(it.value) }
+        }
+        val declaration = named(adapter)
+        assertEquals("the adapter is declared exactly once", 1, declaration.size)
+        assertTrue(
+            "…inside <application> — a top-level uses-native-library is silently ignored",
+            declaration.single().range.first in appOpen until appClose,
+        )
+        assertTrue(
+            "…and required=\"false\": this APK installs on every device, MediaTek or not",
+            Regex("""android:required\s*=\s*"false"""").containsMatchIn(declaration.single().value),
+        )
+        for (lib in neverDeclared) {
+            assertEquals("$lib is declared nowhere in the source manifest", 0, named(lib).size)
+            assertEquals("…and not even named in its text, comments included", 0, count(manifest, lib))
+        }
+    }
+
+    @Test
+    fun theMergedManifestIsHeldToThatSetByATransformOfEveryVariant() {
+        val task = gradleBlock("abstract class VerifyMediatekNativeLibraries : DefaultTask() {")
+        val wiring = gradleBlock("androidComponents {")
+        assertEquals(
+            "the adapter is the declared one",
+            1, liveLineCount(wiring, "declared.set(\"$adapter\")"),
+        )
+        assertEquals(
+            "…and the three the litert AAR's manifest would add are the refused ones, exactly",
+            1,
+            count(
+                wiring,
+                lines(
+                    "                listOf(",
+                    "                    \"${neverDeclared[0]}\",",
+                    "                    \"${neverDeclared[1]}\",",
+                    "                    \"${neverDeclared[2]}\",",
+                    "                )",
+                ),
+            ),
+        )
+        assertEquals(
+            "a TRANSFORM of the MERGED manifest — the build output, which no APK or bundle can be " +
+                "packaged without — registered for every variant",
+            1, liveLineCount(wiring, ".toTransform(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)"),
+        )
+        assertEquals("…in onVariants", 1, liveLineCount(wiring, "onVariants { variant ->"))
+        assertEquals(
+            "comments are stripped before the scan: a commented-out element is not a declaration",
+            1, liveLineCount(task, ".replace(Regex(\"<!--.*?-->\", RegexOption.DOT_MATCHES_ALL), \"\")"),
+        )
+        assertEquals(
+            "the adapter must be declared exactly once",
+            1, liveLineCount(task, "check(names.count { it == declared.get() } == 1) {"),
+        )
+        assertEquals("the refused ones must be absent", 1, liveLineCount(task, "check(present.isEmpty()) {"))
+        assertEquals(
+            "and the manifest is handed on byte for byte — the pin refuses, it never rewrites",
+            1, liveLineCount(task, "checkedManifest.get().asFile.writeBytes(bytes)"),
+        )
+        assertEquals(
+            "nothing in the build strips a declaration instead — there is nothing to strip, since " +
+                "the product never merges the AAR's manifest",
+            0, liveLineCount(gradle, "stripAarMediatekDeclarations"),
+        )
+    }
+
     @Test
     fun theFilesThisClassReadsAreInputsOfTheTestTask() {
         for (path in listOf(
@@ -257,6 +339,7 @@ class LiteRtPackagingTest {
             "rootProject.file(\"tools/mtk-apu/stage_litertasr_into_probe.py\"),",
             "rootProject.file(\"tools/probes/litertlm-probe/fetch_mediatek_runtime.py\"),",
             "\"src/main/cpp/CMakeLists.txt\",",
+            "\"src/main/AndroidManifest.xml\",",
         )) {
             assertEquals("sourcePinnedInputs lists $path", 1, liveLineCount(gradle, path))
         }
