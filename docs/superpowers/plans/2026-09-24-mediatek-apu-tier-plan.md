@@ -150,8 +150,10 @@ with P1a.
    the offer line itself was `Log.i`, stripped from release builds, and joined the `apu:` lines on native logging;
    the decline note's speed half and the small-pair import panel were false on a MediaTek row and were fixed.
 2. **The speed claim** on MediaTek families — the owner's wording (proposed: "the most accurate model this
-   device can run, on its AI chip"). *Still pending at P3a:* the MediaTek card carries no speed claim — that
-   proposal is its accuracy-only body — and a `TODO(owner)` pin guards it until he rules.
+   device can run, on its AI chip"). *Still pending at P3a:* the MediaTek card carries no speed claim, and a
+   `TODO(owner)` pin guards it until he rules. Its accuracy-only body is "The most accurate model that runs on
+   this device's AI chip." — *corrected by the P3a review (FIX-NOW 2):* the proposal above ranked every model the
+   device can run, CPU rungs included, which the claim rules forbid (design §2.8); the census now splits at ", ".
 3. **Version** 4.16.0 / 113 (or the next free code), `ReleaseIdentityTest` paragraph; internal track. (112 went
    out as 4.15.1 — the seam and the refresh-notice take-down, the regression gate of P1a-6 — by owner ruling
    2026-09-24: "you can seam it up for 112".)

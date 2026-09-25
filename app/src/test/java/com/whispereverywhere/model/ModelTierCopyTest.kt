@@ -1597,14 +1597,18 @@ class ModelTierCopyTest {
         NpuFleetCensus.families.filter { it.vendor == NpuVendor.MEDIATEK }
 
     /**
-     * THE MEDIATEK TURBO CARD, EXACTLY — and the claim rules over it. Accuracy only: "The most
-     * accurate model this device can run, on its AI chip" is the design's proposal (§2.8), a
-     * superlative scoped to THIS DEVICE that the claim rules allow with a measurement behind it —
-     * the tablet's ladder in the owner's words ("V3 turbo: highest accuracy",
-     * docs/measurements/2026-09-17-tab-cpu-ladder.md) and the APU running that model word-perfect
-     * in the product's engine (docs/measurements/2026-09-24-tab-apu-turbo-encoder.md §6); both are
-     * cited in the KDoc beside the card (held below). The badge is the mt6989 pair, 1,302,606,488 +
-     * 584,862,184 = 1,887,468,672 B, by the badge rule (SI MB, truncated): "1887 MB".
+     * THE MEDIATEK TURBO CARD, EXACTLY — and the claim rules over it. Accuracy only, and scoped to
+     * the SET it ranks against: "The most accurate model that runs on this device's AI chip." —
+     * 4.6 T2's scoped claim, which ranks nothing that runs on the CPU (on a MediaTek family the set
+     * is `npu-turbo` alone). The first P3a draft, the design's proposal "The most accurate model
+     * this device can run, on its AI chip.", ranked every model the device can run — `ultra-q8`'s
+     * same weights, a retired `large-v3` still installed on some internal-track phones — and was
+     * held off the census only because ", on its AI chip" was not a clause of its own; the census
+     * splits at ", " since the P3a review (FIX-NOW 2), and this test holds that the draft now fails
+     * it. The two sheets cited beside the card say what they show — the APU runs this model
+     * word-perfect (§6), the owner's order of the CPU rungs (the ladder) — and neither ranks the
+     * APU model against a CPU rung. The badge is the mt6989 pair, 1,302,606,488 + 584,862,184 =
+     * 1,887,468,672 B, by the badge rule (SI MB, truncated): "1887 MB".
      */
     @Test fun the_mediatek_turbo_card_is_pinned_exactly_and_claims_accuracy_alone() {
         assertEquals("the census has the mt6989 MediaTek family", listOf("mt6989"), mediatekFamilies.map { it.id })
@@ -1612,7 +1616,7 @@ class ModelTierCopyTest {
             val card = ModelTierCopy.forIdOn("npu-turbo", family)!!
             assertEquals("Best AI-chip accuracy", card.headline)
             assertEquals(listOf("90+ languages", "1887 MB"), card.badges)
-            assertEquals("The most accurate model this device can run, on its AI chip.", card.body)
+            assertEquals("The most accurate model that runs on this device's AI chip.", card.body)
             val all = (card.headline + " " + card.body + " " + card.badges.joinToString(" ")).lowercase()
             // The position the 3.7 census demands, in the headline where the eye lands first.
             assertTrue("the MediaTek turbo headline takes no position", POSITION_WORDS.any { card.headline.lowercase().contains(it) })
@@ -1631,10 +1635,27 @@ class ModelTierCopyTest {
                     isUnscopedAccuracyTopClaim(sentence),
                 )
             }
-            // The accuracy superlative carries its scope in its own clause (the device, and the
-            // AI chip it runs on) — the claim the evidence below is cited for.
+            // The accuracy superlative carries its scope in its own clause, and the scope is the
+            // SET it ranks against — the models that run on this device's AI chip — never the
+            // device as a whole (the P3a review's FIX-NOW 2).
             val accuracyClause = sentencesOf(card).single { it != card.headline.lowercase() }
-            assertTrue(accuracyClause.contains("this device can run") && accuracyClause.contains("ai chip"))
+            assertTrue(
+                "the clause names the set it ranks against: <<$accuracyClause>>",
+                accuracyClause.contains("that runs on this device's ai chip"),
+            )
+            assertFalse("…and ranks nothing the device runs on its CPU", accuracyClause.contains("this device can run"))
+            // THE DRAFT THE P3a REVIEW REJECTED is caught now: split at ", " as the census splits,
+            // its "the most accurate model this device can run" is an unscoped top claim — a
+            // second claimant beside ultra-q8 on the same screen.
+            val rejected = ModelTierCopy.TierCopy(
+                headline = card.headline,
+                badges = card.badges,
+                body = "The most accurate model this device can run, on its AI chip.",
+            )
+            assertTrue(
+                "the rejected draft must fail the census the card passes",
+                sentencesOf(rejected).any { isUnscopedAccuracyTopClaim(it) },
+            )
             // The plain-body rules (4.9.1), the absolutes and the cross-app list.
             TECHNICAL_TOKENS.forEach { token -> assertFalse("the MediaTek body carries <<$token>>", card.body.contains(token)) }
             assertTrue(card.body.split(". ").filter { it.isNotBlank() }.size in 1..3)
@@ -1745,9 +1766,9 @@ class ModelTierCopyTest {
     /**
      * The census rules that range over the lineup — one unscoped accuracy claimant, one headline
      * per card — hold on EVERY family's lineup, not only on the reference cards: a MediaTek device
-     * with `ultra-q8` installed renders both turbo cards together (the checkpoint tie is stated in
-     * the MediaTek card's KDoc; its clause carries the AI-chip scope, so ultra-q8 stays the one
-     * unscoped claimant).
+     * with `ultra-q8` installed renders both turbo cards together, and the MediaTek card ranks only
+     * the models that run on the AI chip, so `ultra-q8` stays the one unscoped claimant. (Run with
+     * the ", " split since the P3a review — the first MediaTek draft would fail here.)
      */
     @Test fun the_lineup_censuses_hold_on_every_familys_cards() {
         for (family in NpuFleetCensus.families + listOf(null)) {
@@ -1780,7 +1801,10 @@ class ModelTierCopyTest {
         listOf(
             "docs/measurements/2026-09-17-tab-cpu-ladder.md", "V3 turbo: highest accuracy", "1,217", "1,341",
             "docs/measurements/2026-09-24-tab-apu-turbo-encoder.md", "§6", "matches_reference=true",
-            "`ultra-q8` IS large-v3-turbo", "TODO(owner)", "plan P3-2", "1,887,468,672",
+            "the same large-v3-turbo weights at Q8_0", "It ranks it against nothing.",
+            "It does not compare the APU with any of them.",
+            "Neither sheet ranks the APU model against a CPU rung", "It ranks NOTHING that runs on",
+            "TODO(owner)", "plan P3-2", "1,887,468,672",
         ).forEach { needle ->
             assertTrue("the MediaTek card's KDoc no longer carries <<$needle>>", block.contains(needle))
         }
@@ -1964,9 +1988,18 @@ class ModelTierCopyTest {
          * model" passed the census as one sentence because the opener's "AI chip" counted as the
          * claim's scope, when it only names where the model RUNS, not the set it is ranked
          * against.
+         *
+         * **And at ", " since the P3a review (FIX-NOW 2), for the same reason one punctuation mark
+         * over.** The first MediaTek draft, "The most accurate model this device can run, on its AI
+         * chip.", ranked every model the device can run and passed only because its trailing
+         * ", on its AI chip" — where the model runs, again — rode in the claim's clause. Split at
+         * the comma, the claim stands alone and is read as what it is. Every card that ships still
+         * passes (the Qualcomm turbo body's accuracy clause, "the most accurate model that runs
+         * there", carries its own scope); the headline is not split, and never was.
          */
         fun sentencesOf(copy: ModelTierCopy.TierCopy): List<String> =
-            (listOf(copy.headline) + copy.body.split(". ").flatMap { it.split(" — ") }).map { it.lowercase() }
+            (listOf(copy.headline) + copy.body.split(". ").flatMap { it.split(" — ") }.flatMap { it.split(", ") })
+                .map { it.lowercase() }
 
         /** Superlative forms only — a COMPARATIVE ("sharper accuracy") claims no top. */
         val SUPERLATIVE = Regex("\\b(best|highest|most|sharpest|top)\\b")

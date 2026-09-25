@@ -387,9 +387,17 @@ this device can run, on its AI chip". Onboarding's size line reads the family's 
 badge rule (SI MB, truncated — mt6989 1,302,606,488 + 584,862,184 = 1,887,468,672 B, "1887 MB"),
 and a MediaTek family reads its own turbo card. The owner's wording for a MediaTek speed claim is
 still PENDING, so that card carries **no speed claim**: headline "Best AI-chip accuracy", body
-"The most accurate model this device can run, on its AI chip." (this proposal, accuracy only, with
-the tablet's ladder sheet and the APU sheet §6 cited beside it), and a `TODO(owner)` pin fails if
-the Qualcomm "the fastest on this device" ever renders on a MediaTek row. The Qualcomm body says
+**"The most accurate model that runs on this device's AI chip."** — 4.6 T2's scoped claim, ranking
+only the models that run on the AI chip (on a MediaTek family, turbo alone) — and a `TODO(owner)`
+pin fails if the Qualcomm "the fastest on this device" ever renders on a MediaTek row. *Corrected
+by the P3a review (FIX-NOW 2):* the first P3a body was this section's proposal, "The most accurate
+model this device can run, on its AI chip.", and it broke the claim rules — it ranked every model
+the device can run, the CPU rungs included (`ultra-q8` is the same weights; a retired `large-v3`
+is still installed on some internal-track phones), which is the draft the 4.9.1 review rejected,
+and it passed the census only because ", on its AI chip" was not split off; the census splits at
+", " now too. The sheets cited beside the card say what they show — the APU sheet §6, that the
+engine on the APU matches the app-mode reference; the tablet's ladder sheet, the owner's order of
+the three CPU rungs — and neither ranks the APU model against a CPU rung. The Qualcomm body says
 "this device's AI chip" (the census has tablets on both vendors). The onboarding size line states
 the family's pair, approximately: "about 1.9 GB" on mt6989. Two surfaces this section did not list
 made claims false on a MediaTek row and were fixed with it: the decline note's "It is slower" (the

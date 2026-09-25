@@ -485,29 +485,39 @@ object ModelTierCopy {
      * pin with it.
      */
     private val mediatekCopyById: Map<String, TierCopy> = mapOf(
-        // THE EVIDENCE for the one claim this card makes — accuracy, device-scoped:
-        //   "The most accurate model this device can run, on its AI chip" is the design's
-        //   proposal (§2.8) taken as the ACCURACY-ONLY wording while the speed ruling is pending.
-        //   It is a superlative scoped to THIS DEVICE, which the claim rules allow only with a
-        //   measurement behind it, and it has two:
-        //    * The tablet's own ladder, in the owner's words, after his dictation on all three
-        //      rungs on the Tab S10+ (2026-09-17, docs/measurements/2026-09-17-tab-cpu-ladder.md;
-        //      the 4.9 ruling in this file's KDoc): "For small, we say fast — fastest, less
-        //      accurate. Medium: balanced speed and accuracy. V3 turbo: highest accuracy". And the
-        //      same evening, on turbo: "we definitely wanna keep that one"; "this will be the best
-        //      for long form video that you want accurate". large-v3-turbo is the most accurate
-        //      model this device can run — whisper's own size order, and his ruling on it there.
-        //    * The APU runs THAT model correctly: the product's own engine on the tablet (P1's
-        //      device gate, docs/measurements/2026-09-24-tab-apu-turbo-encoder.md §6) transcribed
-        //      all seven utterances — three rounds of jfk and the canary, and one after a re-arm
-        //      — with `matches_reference=true`: word-perfect against the app-mode reference,
-        //      timestamps paired and monotonic. The recompiled pair did too (§7).
-        //   The tie is stated, not hidden: `ultra-q8` IS large-v3-turbo (Q8_0, on the CPU), so on
-        //   a MediaTek device with it installed two cards say "most accurate" of one checkpoint.
-        //   Both are true — a tie at the top is still the top — and this clause carries the
-        //   "AI chip" scope marker `exactly_one_card_claims_the_top_of_the_accuracy_order` reads,
-        //   so `ultra-q8` stays the one unscoped claimant. Nothing measured says the fp16 APU and
-        //   the Q8_0 CPU transcribe differently, and the card does not say so either way.
+        // THE ONE CLAIM THIS CARD MAKES — accuracy, scoped to the SET of models that run on this
+        // device's AI chip, and nothing else:
+        //   "The most accurate model that runs on this device's AI chip." is 4.6 T2's scoped
+        //   accuracy claim — the Qualcomm card's "the most accurate model that runs there" — in a
+        //   clause of its own that names the set it ranks against. It ranks NOTHING that runs on
+        //   the CPU. On a MediaTek family that set is one model: the census row offers `npu-turbo`
+        //   alone (the owner's turbo-only ruling, on the row), so the claim is true by
+        //   construction, and it would stay true of large-v3-turbo beside any smaller Whisper a
+        //   later MediaTek tier added (whisper's own size order).
+        //   WHY NOT THE DESIGN'S PROPOSAL (§2.8), "The most accurate model this device can run, on
+        //   its AI chip." — the first P3a draft. It ranked EVERY model the device can run, the CPU
+        //   rungs included: `ultra-q8` is the same large-v3-turbo weights at Q8_0, and the retired
+        //   `large-v3` — whisper's full checkpoint, more accurate — is still installed on some
+        //   internal-track phones. So it claimed the device-wide top beside `ultra-q8`'s "The most
+        //   accurate one.", which is the draft the 4.9.1 review rejected ("our most accurate
+        //   model"), and it passed the census only because ", on its AI chip" was not split off as
+        //   a clause of its own. The census splits at ", " now too (the P3a review, FIX-NOW 2).
+        //   WHAT THE TWO SHEETS SHOW, and what they do not:
+        //    * docs/measurements/2026-09-24-tab-apu-turbo-encoder.md §6 (P1's device gate): the
+        //      product's own engine on the tablet's APU transcribed all seven utterances — three
+        //      rounds of jfk and the canary, and one after a re-arm — with
+        //      `matches_reference=true`: word-perfect against the app-mode reference, timestamps
+        //      paired and monotonic; the recompiled pair did too (§7). It shows this model RUNS
+        //      CORRECTLY on the AI chip. It ranks it against nothing.
+        //    * docs/measurements/2026-09-17-tab-cpu-ladder.md: the owner's accuracy order of the
+        //      three CPU rungs on the same tablet, in his words after dictating on all three
+        //      ("For small, we say fast — fastest, less accurate. Medium: balanced speed and
+        //      accuracy. V3 turbo: highest accuracy") beside their timing (1,217 / 1,341 / 4,849 ms
+        //      per commit). It orders the CPU rungs. It does not compare the APU with any of them.
+        //   Neither sheet ranks the APU model against a CPU rung, and nothing in this repo compares
+        //   the fp16 APU transcripts with the Q8_0 CPU ones — which is why the body ranks only what
+        //   runs on the AI chip, and `ultra-q8` stays the one unscoped claimant
+        //   (`exactly_one_card_claims_the_top_of_the_accuracy_order` on every family's lineup).
         // The headline is the Qualcomm card's with its speed word taken out: "Best AI-chip
         // accuracy" is 4.6 T2's scoped accuracy claim, true of the one model that runs on a
         // MediaTek AI chip. The badge is the mt6989 pair's own bytes (1,302,606,488 +
@@ -517,7 +527,7 @@ object ModelTierCopy {
         "npu-turbo" to TierCopy(
             headline = "Best AI-chip accuracy",
             badges = listOf("90+ languages", "1887 MB"),
-            body = "The most accurate model this device can run, on its AI chip.",
+            body = "The most accurate model that runs on this device's AI chip.",
         ),
     )
 
