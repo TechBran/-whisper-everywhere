@@ -151,6 +151,21 @@ What, therefore:
    changes, because the answer depends on the build too (the adapter declaration and `libLiteRt.so`
    packaging arrive at P2-6, and a refusal stored by a build without them must not be inherited by one
    with them).
+   *Corrected again at P2-7, where the P2a review met the code (its L3 and L4):* the key (`NpuApuKey`)
+   gains the install's `PackageInfo.lastUpdateTime` — every debug and internal-sharing build of a cycle
+   shares one versionCode, and a stale REFUSAL never corrects itself (a stale pass does, at
+   `nativeInit`) — so the record is format 2; a refusal that came from an exception inside the probe
+   (an out-of-memory, a missing `liblitertasr.so`) is answered for the process and never stored; and the
+   walk is guarded against a crash loop: an in-flight marker is committed synchronously before the walk
+   and retired with the verdict in one write, and a launch that finds its own key's marker with no
+   verdict records `refuse(probe-crashed)` and never walks again under that key (a native crash in the
+   adapter walk is uncatchable, and would otherwise re-probe and die on every launch). The settle is one
+   per process (`WhisperEverywhereApp.awaitApuDriverVerdict`): `onCreate` publishes a reusable stored
+   verdict on Main and starts it on a thread of its own, and the service's boot prewarm awaits it — off
+   Main, outside `NativeComputeGate` — before its first read of the gate, so a service BootReceiver
+   starts milliseconds after `onCreate` never memoises "unknown" (the review's L1). The `apu: verdict`
+   line goes out through native logging (`WhisperNative.diag`), because release builds strip
+   `android.util.Log` and a launch that reuses a stored verdict runs no native probe (L5).
 4. **The chip check** (the half of the owner's ask the driver version does not answer): at `init`, the model's
    `LiteRtStamp` (`MediaTek` / `mt6989`, read from the file's metadata) must equal `family.runtime.socStamp`;
    the bytecode's compiler stamp is recorded at build time in the pack metadata (§2.7, provenance "host
@@ -170,7 +185,10 @@ What, therefore:
 
 A refusal is visible in logcat and on the offer line (`probe=fail:<reason>`); the tier is then simply not
 offered — there is no card to say why (`NpuTierStatus` is fed only by a backend that exists), which is the
-QNN behaviour today, stated rather than promised otherwise.
+QNN behaviour today, stated rather than promised otherwise. *Implemented at P2-7 (the P2a review's L6),
+with a third word the code needed:* `probe=unknown` while the verdict has not landed — which the first
+cut printed as `probe=fail` — and the offer line goes out once more when the verdict lands after an
+`unknown` one, so the install-epoch latch cannot leave `unknown` as the only record.
 
 The manifest declares `libneuronusdk_adapter.mtk.so` and nothing else from the MediaTek set — P0(c) (runs
 t10/t11, sheet §4c) showed the adapter loads its own `apuware` dependencies from the system namespace with
@@ -370,8 +388,11 @@ The Tab sheet records cold-tap audio loss.
 1. The service's mel path (whisper.cpp's, with the bundled 128-bin bank — unchanged) produces the float mel.
 2. `NpuWhisperBackend.transcribe` → `engine.encode(mel)`: the mel is written under lock into the encoder's
    managed input buffer; `LiteRtRunCompiledModel(encoder)` fills the eight shared cross-KV buffers (1.78 s).
-3. `engine.decodeSegment(...)`: the float loop runs the decoder step per token, alternating the two self-KV
-   sets, reading logits under lock, returning the token/timestamp structures the QNN engine returns.
+3. `engine.decodeSegment(...)`: the float loop runs the decoder step per token, reading logits under lock,
+   returning the token/timestamp structures the QNN engine returns. *Corrected at P2-7, where this met the
+   engine:* the self-KV cache advances by ONE set with the step's output copied back into it
+   (`selfKvStrategy = 1`, which `LiteRtAsrEngine` passes as a literal — P1's device gate chose it over
+   alternating two sets, §2.5), not by alternating.
 4. Everything after — sentence slots, speakers, the bubble — is the code that runs today.
 
 ## 4. Failure modes
