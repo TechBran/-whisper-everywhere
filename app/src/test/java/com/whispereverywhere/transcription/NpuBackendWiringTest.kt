@@ -542,13 +542,18 @@ class NpuBackendWiringTest {
             1,
             count(service, "npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }"),
         )
+        // RE-COUNTED by the P2c review's later item: a THIRD call site joined — the boot chain's one
+        // extra refresh when a MediaTek row's driver verdict lands after the chain's bounded wait
+        // (refreshNpuTierOfferWhenLanded, pinned in theBootChainsVerdictWaitIsBoundedAndMediatekOnly).
+        // The rule is unchanged: the memo is refreshed where it can change, and nowhere else.
         assertEquals(
-            "the memo is refreshed at BOTH points that can change it, and nowhere else: three " +
-                "live mentions — the declaration plus its two call sites. The second call site is " +
+            "the memo is refreshed at the THREE points that can change it, and nowhere else: four " +
+                "live mentions — the declaration plus its three call sites. The second call site is " +
                 "the one a start-time memo cannot see, because Q8's importer writes the 358 MB " +
                 "pair into files/models under a live service and the gate's installed half is a " +
-                "live stat.",
-            3,
+                "live stat; the third is a MediaTek driver verdict that landed after the boot " +
+                "chain stopped waiting for it.",
+            4,
             liveOffsets(service, "refreshNpuTierOffer()").size,
         )
         assertEquals(
@@ -595,7 +600,12 @@ class NpuBackendWiringTest {
      */
     @Test
     fun theBootPrewarmSettlesTheDriverVerdictBeforeTheGateIsFirstRead() {
-        val settle = "withContext(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }"
+        // RE-SPELLED by the P2c review's later item: the settle runs as a job of its own (the
+        // chain waits for it at most APU_VERDICT_WAIT_MS, then goes on and refreshes once more
+        // when it lands — pinned whole in theBootChainsVerdictWaitIsBoundedAndMediatekOnly, below).
+        // What this test guards is unchanged: asked once, on IO, wrapped, above the first refresh,
+        // outside NativeComputeGate.
+        val settle = "val verdictSettle = launch(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }"
         assertEquals(
             "the service asks for the verdict exactly once, on IO, wrapped so the tier can never " +
                 "cost the prewarm",
@@ -633,6 +643,71 @@ class NpuBackendWiringTest {
             "…and it is one settle per process, whoever asks first — the lock both callers take",
             1,
             liveOffsets(await, "synchronized(apuVerdictLock) {").size,
+        )
+    }
+
+    /**
+     * THE BOOT CHAIN'S WAIT FOR THE DRIVER VERDICT IS BOUNDED, AND A MEDIATEK ROW'S ALONE (the P2c
+     * review, a later item). The settle is blocking and cannot be cancelled, and the whole boot
+     * chain — the offer refresh, the 1.5 s, the prewarm, the previewer's warm — queued behind it.
+     * So it runs as a job of its own and the chain waits at most `APU_VERDICT_WAIT_MS` (3 s,
+     * against a walk measured at ~200 ms that no longer pays the old 5 s service wait — APU sheet
+     * §4b): in time, the first refresh reads the verdict; late, the chain goes on with it unknown
+     * and ONE more refresh runs when it lands, so the routing memo is never frozen on "unknown".
+     * And the hop is gated on the family's vendor — the Main-safe memo — so a Qualcomm start pays
+     * no IO hop and no Main turn for a check it never needs.
+     */
+    @Test
+    fun theBootChainsVerdictWaitIsBoundedAndMediatekOnly() {
+        val gateLine = "if (app.apuDriverCheckApplies) {"
+        val settle = "val verdictSettle = launch(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }"
+        val bounded = "if (withTimeoutOrNull(APU_VERDICT_WAIT_MS) { verdictSettle.join() } == null) {"
+        val late = "launch { refreshNpuTierOfferWhenLanded(verdictSettle) }"
+        val first = block("            refreshNpuTierOffer()", "            delay(1500)", "            warmLocalEngine().prewarm()")
+        assertEquals("the hop is gated on the family's vendor, once", 1, liveOffsets(service, gateLine).size)
+        assertEquals(
+            "…which is the app's Main-safe memo answering MediaTek — the service resolves no family itself",
+            1,
+            liveOffsets(app, "get() = npuSocFamily?.vendor == NpuVendor.MEDIATEK").size,
+        )
+        assertEquals("the settle is a job of its own, once", 1, liveOffsets(service, settle).size)
+        assertEquals("the chain's wait for it is bounded, once", 1, liveOffsets(service, bounded).size)
+        assertEquals("a late verdict earns exactly one more refresh, armed once", 1, liveOffsets(service, late).size)
+        assertEquals(
+            "…which waits for the settle to land and then refreshes the memo",
+            1,
+            service.split(
+                block(
+                    "    private suspend fun refreshNpuTierOfferWhenLanded(verdictSettle: Job) {",
+                    "        verdictSettle.join()",
+                    "        refreshNpuTierOffer()",
+                    "    }",
+                ),
+            ).size - 1,
+        )
+        assertEquals("…and the bound is 3 s, named once", 1, liveOffsets(service, "const val APU_VERDICT_WAIT_MS: Long = 3_000L").size)
+        assertEquals(
+            "no unbounded wait is left: the old blocking hop is gone",
+            0,
+            liveOffsets(service, "withContext(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }").size,
+        )
+        val gate = liveOffsets(service, gateLine).single()
+        val at = liveOffsets(service, settle).single()
+        val wait = liveOffsets(service, bounded).single()
+        val lateAt = service.indexOf(late)
+        val firstAt = service.indexOf(first)
+        assertTrue(
+            "ORDER: the vendor gate ($gate), the settle job inside it ($at), the bounded wait ($wait), " +
+                "the late refresh armed only on a timeout ($lateAt) — all BEFORE the chain's first " +
+                "refresh ($firstAt), which is no longer inside the gate",
+            gate < at && at < wait && wait < lateAt && lateAt < firstAt,
+        )
+        val gateBlock = service.substring(gate, firstAt)
+        assertEquals(
+            "the gate's block closes before the first refresh, so a Qualcomm start runs the chain " +
+                "exactly as before, without the hop",
+            gateBlock.count { it == '{' },
+            gateBlock.count { it == '}' },
         )
     }
 

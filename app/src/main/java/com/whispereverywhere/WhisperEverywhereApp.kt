@@ -160,6 +160,18 @@ class WhisperEverywhereApp : Application() {
         get() = StartupRing.capacityBytesFor(npuSocFamily?.vendor)
 
     /**
+     * DOES THIS DEVICE CARRY THE MEDIATEK DRIVER CHECK AT ALL? (The P2c review's later item.) True
+     * on a MediaTek row only — off the one census resolution above, a table lookup, Main-safe. The
+     * bubble service's boot chain gates its (bounded) wait for the driver verdict on this, so a
+     * Qualcomm or off-census start pays no IO hop and no Main turn for a check it never needs; the
+     * service asks this rather than resolving the family itself (it never does —
+     * `NpuBackendWiringTest.theServiceNeverResolvesTheFamilyItself`). The same question
+     * [awaitApuDriverVerdict]'s first lines ask.
+     */
+    val apuDriverCheckApplies: Boolean
+        get() = npuSocFamily?.vendor == NpuVendor.MEDIATEK
+
+    /**
      * The [ModelInstallSignal] generation the [NpuDiag.offer] line was last emitted at, or
      * [Int.MIN_VALUE] before the first emission.
      *
