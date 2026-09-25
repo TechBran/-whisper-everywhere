@@ -174,12 +174,17 @@ object NpuApuDriverCheck {
      * `liblitertasr.so` its first touch throws `UnsatisfiedLinkError` and every later one
      * `NoClassDefFoundError` — both mean the same thing here, no tier.
      *
-     * WHAT IT ANSWERS AT P2-2, stated so nobody mistakes it for a defect: a refusal. The dispatch
-     * library is not packaged or staged yet, the manifest does not yet declare
-     * `libneuronusdk_adapter.mtk.so`, and `libLiteRt.so` is not in `lib/` (all P2-6), so on a
-     * MediaTek device today the walk finds no loadable adapter (`adapter-missing`), or — were one
-     * to load — the runtime load fails (`runtime: …`). That is the correct answer for a build that
-     * cannot run the tier: the tier is not offered.
+     * WHAT IT ANSWERED AT P2-2, stated so nobody mistook it for a defect: a refusal. The dispatch
+     * library was not packaged or staged, the manifest did not declare
+     * `libneuronusdk_adapter.mtk.so`, and `libLiteRt.so` was not in `lib/` (all P2-6), so on a
+     * MediaTek device the walk found no loadable adapter (`adapter-missing`), or — were one to
+     * load — the runtime load failed (`runtime: …`).
+     *
+     * SINCE P2-6 the manifest declares the adapter and `libLiteRt.so` ships in `lib/`, so on the
+     * Tab S10+ this CAN PASS — and a pass makes the tier offered there, while the selector still
+     * builds the QNN engine for every family until P2-7's vendor switch (a MediaTek row's QNN
+     * prepare refuses at `stage=skel`, the loud CPU fallback). So no build between P2-6 and P2-7
+     * may reach a track.
      */
     fun probeNow(
         probe: (dispatchDir: String, libDir: String, wantMajor: Int) -> String,

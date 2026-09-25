@@ -157,6 +157,14 @@ What, therefore:
    adapter 8.2.30, NeuroPilot v8_0_10" — the version string of the host `libneuron_adapter.so` that compiled
    it, read and recorded once) and cross-checked against the census at install/import time, the MediaTek twin
    of today's htp arm (`NpuPackMetadata.crossCheckRefusal`, `:135`). Nothing at capability time reads a pack.
+   *Corrected at P2-5, where this met the files:* the `LiteRtStamp` carries the vendor and chip only
+   (`MediaTek` / `mt6989`); the compiler's version is in the bytecode itself, whose DLA trailer (the last
+   bytes of each file) is `{"Compiler": "adapter 8.2.30", "Neuron SHA1": "76b05e138c"}`. So the pack build
+   READS both from every file at every build — the stamp against the row's `socStamp`, the compiler against
+   a pinned `adapter 8.2.30` whose major must equal the row's `neuronMajor` — and writes them into metadata
+   version 2 (`socStamp: "mt6989"`, `compiler: "adapter 8.2.30"`, `neuronMajor: 8`); the install-time twin
+   compares `socStamp` and `neuronMajor` with the row, and `compiler` is recorded, not compared (the census
+   has no compiler field, and the digests already name the bytes).
 5. The diag line, on the same channel as the QNN probe:
    `apu: driver=libneuronusdk_adapter.mtk.so 8.2.26 want=8 device=<name> stamp=mt6989 pass`.
 

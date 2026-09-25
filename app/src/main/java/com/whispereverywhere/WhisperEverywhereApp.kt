@@ -350,11 +350,13 @@ class WhisperEverywhereApp : Application() {
      *     not-yet-capable.
      *
      * The dispatch directory it hands the probe is [NpuApuDriverCheck.dispatchDir] — the name's one
-     * home, which the dispatch staging and the LiteRT engine reuse. At P2-2 nothing is staged there
-     * and the manifest does not yet declare the adapter, so on a MediaTek device the answer is a
-     * refusal (`adapter-missing`, or `runtime: …`): the correct answer for a build that cannot run
-     * the tier, and one this build's successor re-probes rather than inherits (the verdict is keyed
-     * on the build as well as the ROM).
+     * home, which the dispatch staging and the LiteRT engine reuse. At P2-2 nothing was staged there
+     * and the manifest did not declare the adapter, so on a MediaTek device the answer was a
+     * refusal (`adapter-missing`, or `runtime: …`), which a later build re-probes rather than
+     * inherits (the verdict is keyed on the build as well as the ROM). Since P2-6 (the adapter
+     * declared, `libLiteRt.so` in `lib/`) the Tab S10+ can PASS — and until P2-7's selector picks
+     * the LiteRT engine, an offered tier arms through the QNN one and falls back loudly at
+     * `stage=skel`, which is why no build between the two may reach a track.
      *
      * The service's boot prewarm running the probe when this has not (design §2.3 item 1) is
      * P2-7's; the `apu:` driver line is the native probe's own, and this adds one
