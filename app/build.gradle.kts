@@ -30,6 +30,16 @@ val keystoreProps = Properties().apply {
 // structurally cannot be committed.
 val qnnSkelAssetDir = layout.buildDirectory.dir("generated/qnnSkel/assets")
 
+// (P2-6, the MediaTek APU tier) THE LITERT RUNTIME'S TWO GENERATED SOURCE DIRS, declared here for
+// the reason qnnSkelAssetDir is: the source set inside android{} reads them. libLiteRt.so lands in
+// a generated JNILIBS dir (extractLiteRtRuntime, below the android block) and ships in
+// lib/arm64-v8a/ like every library the app loads by name; the MediaTek dispatch lands in a
+// generated ASSETS dir (extractLiteRtDispatch) because it must be staged as a real file into the
+// directory LiteRT scans, and because AGP's strip rewrites a lib/ copy (same length, other bytes)
+// while the stage verifies the release zip's own. Both in the BUILD directory, outside the repo.
+val litertJniLibDir = layout.buildDirectory.dir("generated/litertRuntime/jniLibs")
+val litertDispatchAssetDir = layout.buildDirectory.dir("generated/litertDispatch/assets")
+
 // ============================ PER-MACHINE TOOLCHAIN LOCATIONS ============================
 // Resolved rather than hardcoded, since the 2026-09-22 Linux port. Three of these paths were
 // absolute Windows paths, and `file()` resolves a RELATIVE path against the project directory
@@ -300,6 +310,14 @@ android {
         // merge never sees the dir, the APK ships without the skel, and every device dies at
         // stage=skel while the build looks green.
         getByName("main") { assets.srcDir(qnnSkelAssetDir) }
+        // (P2-6) libLiteRt.so's generated JNILIBS dir — a jniLibs source like any other, so it is
+        // merged, aligned and packaged into lib/arm64-v8a/ with the app's own libraries, and ordered
+        // before merge*JniLibFolders beside its task (NOT the skels' assets route: their comment
+        // above and at extractQnnSkel records why the order is against the consuming task).
+        getByName("main") { jniLibs.srcDir(litertJniLibDir) }
+        // (P2-6) The MediaTek dispatch's generated ASSETS dir, ordered before merge*Assets beside
+        // its task, exactly as the skels' is.
+        getByName("main") { assets.srcDir(litertDispatchAssetDir) }
     }
 
     testOptions {
@@ -811,6 +829,12 @@ tasks.withType<Test>().configureEach {
         // task would notice. A clip is a verdict input: if the two tables drift, the record of
         // where a verdict input came from stops describing the file that is shipping.
         rootProject.file("tools/build_canary_clips.py"),
+        // (P2-6) The two scripts that staged the LiteRT runtime into P1b's device gate, by the same
+        // rule: LiteRtPackagingTest holds their pinned libLiteRt.so digest and dispatch zip/member
+        // digests equal to this build's, so the product ships the files the tier was measured with,
+        // and a pure-Python edit to either is one no compile task would notice.
+        rootProject.file("tools/mtk-apu/stage_litertasr_into_probe.py"),
+        rootProject.file("tools/probes/litertlm-probe/fetch_mediatek_runtime.py"),
         // (4.2 F4) The device-group XML — the sharpest asset case since the melbank: it is an
         // input to no compile task (it enters the AAB, not the APK), and NpuPackLayoutTest holds
         // it byte-equal to the census rendering. Without this entry, an edit confined to the XML
@@ -1170,6 +1194,131 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
     .configureEach { dependsOn(extractQnnSkel) }
 // preBuild too, so a build that never reaches the merge still leaves the blob materialised.
 tasks.named("preBuild") { dependsOn(extractQnnSkel) }
+
+// (P2-6, the MediaTek APU tier; design §2.6) THE LITERT RUNTIME: libLiteRt.so 2.1.1, the library
+// liblitertasr.so dlopens (by path from nativeLibraryDir, then by SONAME — the form that resolves
+// straight out of the APK under extractNativeLibs="false"). It lives in the litert AAR, and the AAR
+// is resolved through a configuration of its OWN and is NEVER an implementation dependency, for two
+// reasons that are each sufficient: its manifest would be MERGED — re-adding
+// libneuron_sys_util.mtk.so, whose magic-number read costs a 5 s binder wait on every cold arm
+// (sheet §4b), plus .9 and mgvi — and its transitive graph (lifecycle 2.10, guava, ai-delivery) would
+// ride into the app. isTransitive = false keeps that graph out of even this configuration.
+//
+// Pinned three ways: the AAR's length as published, the library's exact length and sha256 (the
+// file P1b's device gate ran — tools/mtk-apu/stage_litertasr_into_probe.py pins the same digest),
+// and "the two coordinates agree": this coordinate's version and the dispatch zip's release tag
+// below are one LiteRT release, LiteRtRuntime.VERSION, because the v2.1.1 dispatch loads only
+// against its own release's libLiteRt.so. LiteRtPackagingTest holds all of it. No compiler plugin
+// and no OpenCL accelerator: the extraction takes the one library and the generated dir holds
+// nothing else.
+val litertRuntime: Configuration by configurations.creating {
+    isTransitive = false
+    isCanBeConsumed = false
+}
+
+val extractLiteRtRuntime = tasks.register("extractLiteRtRuntime") {
+    description = "Extracts libLiteRt.so (LiteRT 2.1.1) from the resolved litert AAR into generated jniLibs."
+    inputs.files(litertRuntime)
+    outputs.dir(litertJniLibDir)
+    doLast {
+        val aar = litertRuntime.singleFile
+        check(aar.length() == 7_569_479L) {
+            "extractLiteRtRuntime: ${aar.name} is ${aar.length()} bytes, expected 7_569_479 (the " +
+                "litert 2.1.1 AAR as published). A coordinate bump is a new runtime: re-measure " +
+                "libLiteRt.so, and move the dispatch with it — they are one release."
+        }
+        val outDir = litertJniLibDir.get().asFile
+        outDir.deleteRecursively()
+        val lib = File(outDir, "arm64-v8a/libLiteRt.so")
+        lib.parentFile.mkdirs()
+        ZipFile(aar).use { zip ->
+            val entry = zip.getEntry("jni/arm64-v8a/libLiteRt.so")
+                ?: throw GradleException(
+                    "extractLiteRtRuntime: jni/arm64-v8a/libLiteRt.so is missing from ${aar.name}"
+                )
+            zip.getInputStream(entry).use { input -> lib.outputStream().use { input.copyTo(it) } }
+        }
+        check(lib.length() == 5_104_832L) {
+            "extractLiteRtRuntime: libLiteRt.so is ${lib.length()} bytes, expected 5_104_832 " +
+                "(LiteRT 2.1.1, the runtime P1b's device gate measured)."
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(lib.readBytes())
+            .joinToString("") { b -> "%02x".format(b) }
+        check(digest == "6ddc1b3df38f3f0e039558c023f3bd9ec2f7bec55b67cfd6be4131130481a5d5") {
+            "extractLiteRtRuntime: libLiteRt.so sha256 mismatch ($digest) — not the 2.1.1 runtime " +
+                "the tier was measured on."
+        }
+    }
+}
+// Ordered before the task that actually CONSUMES the jniLibs source — merge*JniLibFolders — and
+// not merely preBuild, the lesson extractQnnSkel's comment records one source class over.
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }
+    .configureEach { dependsOn(extractLiteRtRuntime) }
+tasks.named("preBuild") { dependsOn(extractLiteRtRuntime) }
+
+// (P2-6) THE MEDIATEK DISPATCH: libLiteRtDispatch_MediaTek.so v2.1.1, which LiteRT loads out of
+// the directory it is told to scan (filesDir/litert_dispatch/, staged by LiteRtRuntime). It is not
+// on Maven — Google Maven's litert group carries no vendor runtime — and v2.1.1's
+// litert_npu_runtime_libraries_jit.zip is the LAST release zip that ships the MediaTek pair
+// (tools/probes/litertlm-probe/fetch_mediatek_runtime.py, the probe's copy of the same three pins).
+// The zip is fetched once into the build directory, held to its length and sha256, and the one
+// member is extracted into the generated ASSETS dir and held to LiteRtRuntime's DISPATCH_BYTES and
+// DISPATCH_SHA256 — the zip member's own digest. An asset is packaged as it is; a lib/ copy would be
+// stripped into a different file of the same length, which is why this is not jniLibs.
+val litertDispatchZipUrl =
+    "https://github.com/google-ai-edge/LiteRT/releases/download/v2.1.1/litert_npu_runtime_libraries_jit.zip"
+val litertDispatchZip = layout.buildDirectory.file("litertDispatch/litert_npu_runtime_libraries_jit-2.1.1.zip")
+val extractLiteRtDispatch = tasks.register("extractLiteRtDispatch") {
+    description = "Fetches LiteRT v2.1.1's NPU runtime zip and extracts the MediaTek dispatch into generated assets."
+    inputs.property("url", litertDispatchZipUrl)
+    outputs.dir(litertDispatchAssetDir)
+    outputs.file(litertDispatchZip)
+    doLast {
+        val zip = litertDispatchZip.get().asFile
+        if (!zip.isFile || zip.length() != 2_847_687L) {
+            zip.parentFile.mkdirs()
+            uri(litertDispatchZipUrl).toURL().openStream().use { input ->
+                zip.outputStream().use { input.copyTo(it) }
+            }
+        }
+        check(zip.length() == 2_847_687L) {
+            "extractLiteRtDispatch: ${zip.name} is ${zip.length()} bytes, expected 2_847_687 (the " +
+                "v2.1.1 release asset). Delete it and re-run."
+        }
+        val zipDigest = MessageDigest.getInstance("SHA-256")
+            .digest(zip.readBytes())
+            .joinToString("") { b -> "%02x".format(b) }
+        check(zipDigest == "4d6433eceb0e9c97388e5d10af9c71a1f97cf93f4a0f21acc492b97a342d45c3") {
+            "extractLiteRtDispatch: ${zip.name} sha256 mismatch ($zipDigest) — the release asset moved."
+        }
+        val outDir = litertDispatchAssetDir.get().asFile
+        outDir.deleteRecursively()
+        outDir.mkdirs()
+        val dispatch = File(outDir, "libLiteRtDispatch_MediaTek.so")
+        ZipFile(zip).use { z ->
+            val entry = z.getEntry("mediatek_runtime/src/main/jni/arm64-v8a/libLiteRtDispatch_MediaTek.so")
+                ?: throw GradleException(
+                    "extractLiteRtDispatch: the MediaTek dispatch is missing from ${zip.name}"
+                )
+            z.getInputStream(entry).use { input -> dispatch.outputStream().use { input.copyTo(it) } }
+        }
+        check(dispatch.length() == 409_728L) {
+            "extractLiteRtDispatch: libLiteRtDispatch_MediaTek.so is ${dispatch.length()} bytes, " +
+                "expected 409_728 — LiteRtRuntime.DISPATCH_BYTES, which the stage verifies at arm time."
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(dispatch.readBytes())
+            .joinToString("") { b -> "%02x".format(b) }
+        check(digest == "9e963c56a65b6146b0e94aed82dd0f73dbaee6805fc6ae090580565b57680706") {
+            "extractLiteRtDispatch: libLiteRtDispatch_MediaTek.so sha256 mismatch ($digest) — " +
+                "LiteRtRuntime.DISPATCH_SHA256 is the zip member's, which the stage verifies at arm time."
+        }
+    }
+}
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }
+    .configureEach { dependsOn(extractLiteRtDispatch) }
+tasks.named("preBuild") { dependsOn(extractLiteRtDispatch) }
 
 // The Play pack gate (4.2 F4): every bundle build re-proves that the pack payload on disk IS
 // the census before AGP packages it. The payload is a BUILD artifact — tools/build_asset_packs.py
@@ -1599,6 +1748,12 @@ dependencies {
     // the census families' skels out of the AAR (see the task above the dependencies block).
     // The restated coordinate is pinned equal to the line above by NpuSkelPackagingTest.
     qnnSkelSource("com.qualcomm.qti:qnn-runtime:2.50.0")
+
+    // (P2-6, the MediaTek APU tier) libLiteRt.so's source: the litert AAR, through its OWN
+    // configuration and never as an implementation dependency — see extractLiteRtRuntime for why
+    // (its manifest's MediaTek declarations, its transitive graph). The one coordinate of it, and
+    // LiteRtPackagingTest holds its version equal to the dispatch zip's release tag.
+    litertRuntime("com.google.ai.edge.litert:litert:2.1.1")
 
     // Play Asset Delivery (4.2 F5): the on-demand fetch of the two NPU pack modules the F4
     // bundle declares. The pure state machine (NpuPackFetch) mirrors AssetPackStatus /
