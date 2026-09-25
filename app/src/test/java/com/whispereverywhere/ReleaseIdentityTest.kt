@@ -185,6 +185,21 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 112 = 4.16.0 — the MediaTek APU gets the AI chip: the Tab S10+.** 112 because
+ * 111 = 4.15.0 went to the internal track on 2026-09-24 (the owner's upload, for the Z Fold6), so
+ * the code is spent. The name takes a MINOR because a whole silicon VENDOR gains the best tier —
+ * one step past 4.12.0–4.15.0, each of which was a Qualcomm generation.
+ *
+ * The owner's rulings of 2026-09-24: build the tier ("the biggest, best model we can get on
+ * there"), and check the driver's version so the dispatch never binds a mismatched adapter. The
+ * engine was measured before the tier was written — `liblitertasr.so` in the product's shape on
+ * his Tab S10+ (docs/measurements/2026-09-24-tab-apu-turbo-encoder.md §6): encode 1.72 s,
+ * ~30 ms a token, a 2.8–3.6 s cold arm with no service wait, every utterance token-identical to
+ * the reference decode, a 20-token commit ≈ 2.3–2.4 s. This bump OPENS the branch: the engine
+ * seam beside the Qualcomm one, the mt6989 census row, the two MediaTek-only pack modules and the
+ * copy follow it, and a bundle from this branch is not for a track until its ship sheet says so.
+ * Every bump still re-arms GpuPolicy's canary latches (below).
+ *
  * **versionCode 111 = 4.15.0 — the AI chip's first rebuild, and the 8 Gen 1 gets it.** 111
  * because 110 is 4.14.2, the bubble branch, merged to main on 2026-09-24 by owner ruling and on
  * the internal track, so 111 is the next code. The name takes a MINOR because a whole silicon
@@ -446,17 +461,17 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_15_0_at_version_code_111() {
+    fun release_identity_is_4_16_0_at_version_code_112() {
         assertEquals(
-            "versionName must be 4.15.0 for this release (app/build.gradle.kts defaultConfig)",
-            "4.15.0",
+            "versionName must be 4.16.0 for this release (app/build.gradle.kts defaultConfig)",
+            "4.16.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 111 for this release (app/build.gradle.kts defaultConfig). " +
-                "110 = 4.14.2 (the bubble branch, merged to main 2026-09-24) is on the internal " +
-                "track, and a spent code is refused; 105 = 4.11.3 is in production",
-            111,
+            "versionCode must be 112 for this release (app/build.gradle.kts defaultConfig). " +
+                "111 = 4.15.0 (QNN 2.50, the v0.63.0 packs, the 8 Gen 1) went to the internal " +
+                "track on 2026-09-24, and a spent code is refused; 105 = 4.11.3 is in production",
+            112,
             BuildConfig.VERSION_CODE,
         )
     }
