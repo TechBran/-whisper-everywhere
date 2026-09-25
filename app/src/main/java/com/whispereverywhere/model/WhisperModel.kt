@@ -819,7 +819,12 @@ object WhisperCatalog {
      *           and the recovery then makes it the selection, so its card is back. The rule is
      *           `OnboardingLogic.chooserAlsoOfferedIds`, one for both chooser surfaces; every
      *           device NOT offered the one tier gets the pre-ruling answer, which this function
-     *           never reads there anyway.
+     *           never reads there anyway. **What it does not give a capable device, by the
+     *           owner's ruling of the same day:** a CPU rung to swap in on purpose for a turbo
+     *           that keeps declining. The automatic CPU fallback and the declining card's
+     *           recovery button are the whole answer there — *"we deliver these asset packs
+     *           ourselves, so it should always work. And CPU only for devices that can't do the
+     *           NPU."* P3b flagged that consequence; it is his ruling, not an open question.
      *        2. **The CPU tiers when the one tier could not be DELIVERED** —
      *           `OnboardingLogic.chooserAlsoOfferedIds`, the no-wedge escape (4.2 F6 fix round 1,
      *           I-1) carried into 4.3. A sideloaded capable device is offered turbo (the census

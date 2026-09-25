@@ -247,6 +247,19 @@ object OnboardingLogic {
      * first, so a selected retired tier (`multi`, `pro`, `eco`, `base`) keeps no card, as it has
      * had none since it retired.
      *
+     * **NO CPU CARDS ON A CAPABLE DEVICE EVEN WHILE ITS AI-CHIP TIER KEEPS DECLINING — the
+     * owner's ruling, not an open question.** The consequence P3b flagged: on a device offered the
+     * one tier whose delivery worked, a turbo that keeps declining (each launch re-tries it,
+     * because a decline lasts only for its process) cannot be swapped for a CPU rung on purpose
+     * here — no CPU card renders unless it is the selection. The automatic fallback (the backend's
+     * loud fallback to an eligible CPU model already on disk, `WhisperCatalog.hasCpuFallback`,
+     * which the declining card announces through `NpuTierStatus.cardNote`) and the recovery
+     * button on that card (`NpuTierStatus.RECOVERY_ACTION`, which downloads `small-q8` and makes
+     * it the selection, so its card is back) are the whole answer. The owner, 2026-09-25, at the
+     * end of the Tab S10+ ship session: *"we deliver these asset packs ourselves, so it should
+     * always work. And CPU only for devices that can't do the NPU."* So there is no gap here to
+     * widen: a manual CPU route on a capable device would be a new ruling.
+     *
      * Everywhere else the answer is the pre-ruling one byte for byte: on a device whose gate set
      * does not name the one tier (which `pickableFor` then never reads at all), and after a failed
      * delivery on any device — the escape below. `OnboardingLogicTest` executes both halves.
