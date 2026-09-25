@@ -187,15 +187,15 @@ object NpuPackController {
         mgr.fetch(parts.map { it.packName })
             .addOnSuccessListener { states -> onFetchAnswered(generation, states.packStates()) }
             .addOnFailureListener { failure ->
-            // The Task can fail before any AssetPackState update exists (a sideloaded install
-            // fails HERE). The error code flows through the same table as everything else.
-            val code = (failure as? AssetPackException)?.errorCode
-                ?: NpuPackFetch.ERROR_INTERNAL_ERROR
-            publish(
-                tierId, packName,
-                NpuPackFetch.FetchState.Failed(NpuPackFetch.failureReason(code)),
-            )
-        }
+                // The Task can fail before any AssetPackState update exists (a sideloaded install
+                // fails HERE). The error code flows through the same table as everything else.
+                val code = (failure as? AssetPackException)?.errorCode
+                    ?: NpuPackFetch.ERROR_INTERNAL_ERROR
+                publish(
+                    tierId, packName,
+                    NpuPackFetch.FetchState.Failed(NpuPackFetch.failureReason(code)),
+                )
+            }
         true
     }
 
