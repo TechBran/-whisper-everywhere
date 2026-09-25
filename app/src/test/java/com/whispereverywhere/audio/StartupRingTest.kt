@@ -62,6 +62,71 @@ class StartupRingTest {
         assertEquals(32L, StartupRing.msOf(1024))
     }
 
+    /**
+     * P2-7 (design §2.9) — THE RING IS SIZED PER FAMILY: 12 s on a MediaTek row, whose cold arm is
+     * two bytecode restores on the APU (2,752–3,632 ms of `nativeInit` at P1's device gate, plus
+     * the walk and `load`'s ~1.6 s — ≈ 4.5–5.9 s, too thin a margin under 6 s), and the 6 s every
+     * other device has always had. Until P3's in-app cold-arm number decides it.
+     */
+    @Test
+    fun theRingIsSizedPerFamilyTwelveSecondsOnAMediatekRowSixEverywhereElse() {
+        assertEquals(12_000L, StartupRing.MEDIATEK_CAPACITY_MS)
+        assertEquals(384_000, StartupRing.MEDIATEK_CAPACITY_BYTES)
+        assertEquals(
+            "the MediaTek byte cap and millisecond cap describe the same audio",
+            StartupRing.MEDIATEK_CAPACITY_BYTES.toLong(),
+            StartupRing.MEDIATEK_CAPACITY_MS * StartupRing.BYTES_PER_SECOND / 1000L,
+        )
+        assertEquals(
+            "a MediaTek row's ring is the 12 s one",
+            StartupRing.MEDIATEK_CAPACITY_BYTES,
+            StartupRing.capacityBytesFor(com.whispereverywhere.npu.NpuVendor.MEDIATEK),
+        )
+        assertEquals(
+            "a Qualcomm row keeps 6 s — the ring 4.4.0 sized for the measured 4,107 ms turbo arm",
+            StartupRing.CAPACITY_BYTES,
+            StartupRing.capacityBytesFor(com.whispereverywhere.npu.NpuVendor.QUALCOMM),
+        )
+        assertEquals(
+            "and so does every device off the census",
+            StartupRing.CAPACITY_BYTES,
+            StartupRing.capacityBytesFor(null),
+        )
+        assertEquals(
+            "every census row gets a ring, and exactly one of the two",
+            setOf(StartupRing.CAPACITY_BYTES, StartupRing.MEDIATEK_CAPACITY_BYTES),
+            com.whispereverywhere.npu.NpuFleetCensus.families.map { StartupRing.capacityBytesFor(it.vendor) }.toSet(),
+        )
+        assertEquals("a ring reports its own cap", 12_000L, StartupRing(StartupRing.MEDIATEK_CAPACITY_BYTES).capacityMs)
+        assertEquals("…the default ring its 6 s", 6_000L, StartupRing().capacityMs)
+    }
+
+    @Test
+    fun aMediatekRingHoldsTwelveSecondsAndItsOverflowLineSaysSo() {
+        val ring = StartupRing(StartupRing.MEDIATEK_CAPACITY_BYTES)
+        val fits = StartupRing.MEDIATEK_CAPACITY_BYTES / chunkBytes          // 375 chunks of 32 ms
+        assertEquals(375, fits)
+        for (seq in 1..fits) assertEquals(0, ring.append(chunk(seq), 0, seq.toLong()))
+        assertEquals("twice what the default ring holds", 2 * (StartupRing.CAPACITY_BYTES / chunkBytes) + 1, fits)
+        assertEquals("the oldest goes first here too", chunkBytes, ring.append(chunk(fits + 1), 0, (fits + 1).toLong()))
+        assertEquals(
+            "the overflow line names THIS ring's cap — a 12 s ring saying 6000ms would be false",
+            "startup ring: FULL at 12000ms - dropping the oldest audio (first drop 32ms)",
+            StartupRing.overflowLine(firstDropMs = 32L, capacityMs = ring.capacityMs),
+        )
+        // The paced drain levels a FULL 12 s ring under live audio, exactly once and in order —
+        // the 6 s ring's executed property, at twice the depth: 3 chunks net per tick, ~4 s.
+        val delivered = ArrayList<Int>()
+        var seq = fits + 1
+        repeat(200) {
+            seq++
+            ring.drainSlice(StartupRing.DRAIN_CHUNKS_PER_TICK) { pcm, _, _ -> delivered += seqOf(pcm) }
+            if (ring.isEmpty()) delivered += seq else ring.append(chunk(seq), 0, seq.toLong())
+        }
+        assertTrue("the backlog is level inside 200 live chunks (6.4 s)", ring.isEmpty())
+        assertEquals((2..seq).toList(), delivered)
+    }
+
     @Test
     fun aFreshRingIsEmptyAndHasDroppedNothing() {
         val ring = StartupRing()

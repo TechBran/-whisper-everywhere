@@ -28,9 +28,10 @@ import android.content.Context
  * tag, the dispatch's length and digest — equal to these, the two coordinates to one version
  * ([VERSION]), and the merged manifest's MediaTek set to exactly the one adapter.
  *
- * NOTHING CALLS [stagedDispatchDir] YET (P2-6): the LiteRT engine's prepare stage is P2-7's, with
- * the selector's vendor switch. This object exists so the packaging and its identity are in place
- * and pinned before any code path loads them.
+ * [stagedDispatchDir] has ONE caller: the LiteRT engine's prepare stage (`LiteRtAsrEngine.prepare`,
+ * P2-7), which `NpuWhisperBackend.load` runs inside `NativeComputeGate` after every cheap refusal
+ * and before `nativeInit` binds the process's environment to the directory. (At P2-6 nothing called
+ * it: the packaging and its identity landed, pinned, before any code path loaded them.)
  */
 object LiteRtRuntime {
 

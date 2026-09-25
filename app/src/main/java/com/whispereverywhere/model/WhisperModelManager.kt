@@ -997,12 +997,14 @@ class WhisperModelManager(
         // THE EMPTY-DEFAULT SIGNATURE. Every real variant carries metadata.json (F4 writes it
         // and self-verifies it) — in PART 1, for the whole pair (P2-4); a delivered pack WITHOUT
         // one is the empty default variant — Play's answer for a device in no census group —
-        // refused by name, with the import fallback named as the path forward.
+        // refused by name, with the import fallback named as the path forward. (An UNTARGETED
+        // pair has no default variant; its refusal says the pack was not delivered — the
+        // sentence is the pair's own, by its parts.)
         val metaFile = NpuPackFetch.deliveredMetadataDir(packParts, packAssetsPaths)
             ?.let { File(it, NpuPackMetadata.ENTRY_NAME) }
         if (metaFile == null || !metaFile.isFile) {
             return@withContext NpuAssetImport.ImportState.Refused(
-                NpuPackFetch.emptyDeliveryRefusal()
+                NpuPackFetch.emptyDeliveryRefusal(packParts)
             )
         }
         // The peek's own bound, kept on this route too: a huge file wearing the metadata name

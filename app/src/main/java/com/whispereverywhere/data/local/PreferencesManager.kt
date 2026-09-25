@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.whispereverywhere.model.ModelInstallSignal
 import com.whispereverywhere.npu.NpuApuVerdict
+import com.whispereverywhere.npu.NpuApuVerdictStore
 import com.whispereverywhere.npu.NpuRedownload
 import com.whispereverywhere.provider.ProviderId
 import com.whispereverywhere.service.BubbleColours
@@ -18,7 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-class PreferencesManager(private val context: Context) {
+class PreferencesManager(private val context: Context) : NpuApuVerdictStore {
 
     private val secureStore = SecureStore(context)
 
@@ -413,15 +414,47 @@ class PreferencesManager(private val context: Context) {
      * stored or the stored one is unreadable — both of which mean "probe again". Device-local by
      * this store's rule: it is a fact about THIS device's driver, and restored onto another it
      * would answer for a ROM it was never taken on (its fingerprint would refuse it anyway — two
-     * walls, not one). Read once per process by `WhisperEverywhereApp.settleApuDriverVerdict`,
-     * which decides whether it still answers (`NpuApuDriverCheck.reusableOrNull`).
+     * walls, not one). Read by `WhisperEverywhereApp`'s settle, which decides whether it still
+     * answers (`NpuApuDriverCheck.reusableOrNull`).
      */
-    val npuApuVerdict: NpuApuVerdict?
+    override val npuApuVerdict: NpuApuVerdict?
         get() = readNpuApuVerdict { key, default -> deviceLocal.getString(key, default) }
 
-    /** Store the driver check's verdict — one key, one JSON document, so it cannot tear. */
-    fun recordNpuApuVerdict(verdict: NpuApuVerdict) {
-        deviceLocal.edit().putString(KEY_NPU_APU_VERDICT, verdict.encode()).apply()
+    /**
+     * The driver walk's in-flight marker (P2-7, the P2a review's L4) — the key of a walk that
+     * started and has not finished, or null. Device-local with the verdict it guards.
+     */
+    override val npuApuProbeInFlight: String?
+        get() = deviceLocal.getString(KEY_NPU_APU_PROBE_IN_FLIGHT, null)
+
+    /**
+     * Marks a walk as started — `commit()`, not `apply()`: the marker must be on disk BEFORE the
+     * walk, because the crash it exists to detect kills the process before an asynchronous write
+     * lands (`GpuPolicy`'s crash sentinel, the same rule). Called off Main, on the settle's thread.
+     */
+    @android.annotation.SuppressLint("ApplySharedPref")
+    override fun markNpuApuProbeInFlight(marker: String) {
+        deviceLocal.edit().putString(KEY_NPU_APU_PROBE_IN_FLIGHT, marker).commit()
+    }
+
+    /**
+     * Store the driver check's verdict — one key, one JSON document, so it cannot tear — and retire
+     * the in-flight marker IN THE SAME WRITE, synchronously: a verdict whose marker survived it
+     * (or the reverse, a marker retired with the verdict still in flight) would make the next launch
+     * read a finished walk as a crashed one.
+     */
+    @android.annotation.SuppressLint("ApplySharedPref")
+    override fun recordNpuApuVerdict(verdict: NpuApuVerdict) {
+        deviceLocal.edit()
+            .putString(KEY_NPU_APU_VERDICT, verdict.encode())
+            .remove(KEY_NPU_APU_PROBE_IN_FLIGHT)
+            .commit()
+    }
+
+    /** Retire the in-flight marker and store nothing — a walk that threw, not one that crashed (L3). */
+    @android.annotation.SuppressLint("ApplySharedPref")
+    override fun clearNpuApuProbeInFlight() {
+        deviceLocal.edit().remove(KEY_NPU_APU_PROBE_IN_FLIGHT).commit()
     }
 
     /**
@@ -998,6 +1031,9 @@ class PreferencesManager(private val context: Context) {
 
         /** The driver check's stored verdict (P2) — device-local, like the re-download record. */
         internal const val KEY_NPU_APU_VERDICT = "npu_apu_verdict"
+
+        /** The driver walk's in-flight marker (P2-7, L4) — device-local, beside the verdict. */
+        internal const val KEY_NPU_APU_PROBE_IN_FLIGHT = "npu_apu_probe_in_flight"
 
         /**
          * The one production read of the stored driver verdict, as a pure function of a

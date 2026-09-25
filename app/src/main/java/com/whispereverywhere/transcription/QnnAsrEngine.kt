@@ -61,10 +61,10 @@ class QnnAsrEngine : NpuAsrEngine {
         // THE ROW'S QNN NEEDS, or no stage at all (P2 — the census reshape moved the HTP
         // version and the skel off the row and into its sealed `runtime`). A row of another
         // vendor carries no DSP-side skel, and handing one to THIS engine is a wiring fault —
-        // yet the selector builds the QNN engine for every family until P2-7's vendor switch,
-        // so whatever keeps such a row from routing here is a property of other objects. Safe
-        // by a property of a different object is the shape this stack has paid for twice, so
-        // the engine refuses it by name, at the stage it is — its own staging — before
+        // since P2-7 the selector builds LiteRtAsrEngine for a MediaTek row, so what keeps such
+        // a row from arming here is the selector's vendor switch, a property of another object.
+        // Safe by a property of a different object is the shape this stack has paid for twice,
+        // so the engine still refuses it by name, at the stage it is — its own staging — before
         // anything QNN is touched: no skel is written and libQnnHtp.so is never dlopened on a
         // chip that is not a Hexagon. The `when` is exhaustive on purpose: a third runtime
         // variant fails to compile HERE rather than falling through to a cast.

@@ -278,20 +278,40 @@ object NpuPackFetch {
      * which is "furthest from delivered", with the three that need the USER on top: a failure the
      * card must name (the first failing part's, in part order), the user's own stop, and Play's
      * consent dialog — which covers every pack waiting on it, so one confirmation serves all
-     * parts. What the order buys, as rules:
+     * parts.
+     *
+     * **Once EVERY part has a reading, bytes moving outrank waiting** (the P2b review's small 1):
+     *
+     * ```
+     *   Failed > Cancelled > NeedsConfirmation > Downloading > Transferring > Pending > Idle > Verifying
+     * ```
+     *
+     * Play may download the parts one after another, and under the first order a part still queued
+     * (Pending) or not started (Idle) beside a part downloading showed a bar-less Pending for the
+     * whole 1.3 GB encoder — or, for Idle, the card's Get button while bytes were moving. With every
+     * part answered the summed total covers the pair, so the bar is honest; while ANY part is
+     * unanswered the first order holds, and the pair stays Pending (never a bar over half its
+     * bytes, never a second Get). Delivery gating is the same in both: Verifying is the best rank,
+     * answered only when every part is COMPLETED. What the order buys, as rules:
      *
      *  - **Install begins only when EVERY part is delivered.** [FetchState.Verifying] — the state
      *    the controller launches the install on — is the best rank, so the fold answers it only
      *    when every part reads COMPLETED. One part delivered and the other failed is Failed, never
-     *    a partial install; the retry fetches the pair again, and Play answers the part it already
-     *    holds with COMPLETED at once, so only the failed part moves bytes.
+     *    a partial install; the retry fetches the pair again, and only the failed part moves
+     *    bytes. The part Play already holds reports COMPLETED in the fetch TASK's own result — the
+     *    `AssetPackStates` of every requested pack — and NOT through the state listener, which
+     *    fires on changes alone and has none to report for a finished pack; so the controller
+     *    fills that part's reading from the Task's answer ([unansweredParts]). (Corrected at P2-7:
+     *    this line once said Play answered "at once", which is true of the Task result only, and
+     *    the controller read nothing but the listener — the P2b review's FIX-NOW.)
      *  - **Bytes are summed.** Downloading and Verifying carry the sum over every part's reported
      *    bytes, so one progress bar covers the pair (a delivered part counts as all of its bytes).
      *    The pair's total also stands in for the part's in the per-part mapping, so a storage
      *    refusal names what the PAIR needs.
      *  - **Re-attach re-queries every part.** After process death the controller starts with no
-     *    readings — every part Pending — and fetching the pair makes Play replay each part's
-     *    status into this fold.
+     *    readings — every part Pending — and fetching the pair answers each part's status into
+     *    this fold: the fetch Task's result for a part Play already holds, the listener for one
+     *    still moving.
      *
      * For ONE part the fold is the per-part [advance], status for status — executed in
      * `NpuPackFetchTest` over every documented status and two off-table ones — which is what
@@ -306,23 +326,51 @@ object NpuPackFetch {
             if (reading == null) FetchState.Pending
             else advance(reading.status, reading.errorCode, reading.soFar, total)
         }
+        val everyPartAnswered = parts.all { it != null }
         // maxBy keeps the FIRST element of the highest rank: the first failing part, in part order.
-        return when (val worst = each.maxBy { rank(it) }) {
+        return when (val worst = each.maxBy { rank(it, everyPartAnswered) }) {
             is FetchState.Downloading -> FetchState.Downloading(soFar, total)
             is FetchState.Verifying -> FetchState.Verifying(0, total)
             else -> worst
         }
     }
 
-    /** The fold's order (see the list [advance]): higher is worse. */
-    private fun rank(state: FetchState): Int = when (state) {
+    /**
+     * WHICH PARTS THE FETCH TASK'S OWN ANSWER FILLS (the P2b review's FIX-NOW) — the pack names,
+     * in part order, of every part Play answered for in the Task result ([answered]: the result's
+     * `packStates()` keys) whose reading is still null in this fetch.
+     *
+     * Why the Task's answer matters at all: Play's state listener fires on CHANGES — its per-pack
+     * session updates — and a pack that is already COMPLETED (the encoder that landed before the
+     * decoder failed, was cancelled, or lost its process) has no change to report. Its COMPLETED
+     * arrives in exactly one place, the result of the `fetch` Task: the `AssetPackStates` of every
+     * requested pack as it stood at the request. A controller that read only the listener folded
+     * [null, …] to Pending for good — `isBusy()` true, every retry tap refused.
+     *
+     * Why only the null ones: a listener reading is never OLDER than the request's snapshot, so it
+     * is never overwritten — which also keeps the one-part path exactly what it was whenever the
+     * listener answers first. (bundletool's `--local-testing` fake replays PENDING, DOWNLOADING,
+     * TRANSFERRING for every pack on every fetch, so local testing cannot show the difference; a
+     * Play delivery can.)
+     */
+    fun unansweredParts(parts: List<PackPart>, readings: List<PartReading?>, answered: Set<String>): List<String> =
+        parts.withIndex()
+            .filter { (i, part) -> i < readings.size && readings[i] == null && part.packName in answered }
+            .map { it.value.packName }
+
+    /**
+     * The fold's order (see the list [advance]): higher is worse. The top three and the bottom one
+     * never move; the four in-flight states reorder once [everyPartAnswered] — activity outranks
+     * waiting, so a part moving bytes names the pair's state.
+     */
+    private fun rank(state: FetchState, everyPartAnswered: Boolean): Int = when (state) {
         // Installed is never produced by a Play status (NpuPackFetchTest proves it for every
         // one), so it cannot reach the fold; ranked with Verifying for totality.
         is FetchState.Verifying, is FetchState.Installed -> 0
-        is FetchState.Transferring -> 1
-        is FetchState.Downloading -> 2
-        is FetchState.Pending -> 3
-        is FetchState.Idle -> 4
+        is FetchState.Transferring -> if (everyPartAnswered) 3 else 1
+        is FetchState.Downloading -> if (everyPartAnswered) 4 else 2
+        is FetchState.Pending -> if (everyPartAnswered) 2 else 3
+        is FetchState.Idle -> if (everyPartAnswered) 1 else 4
         is FetchState.NeedsConfirmation -> 5
         is FetchState.Cancelled -> 6
         is FetchState.Failed -> 7
@@ -417,17 +465,39 @@ object NpuPackFetch {
     }
 
     /**
-     * The refusal for a pack that arrived EMPTY — the F4 default variant, which is what a
-     * device outside every census group receives. A missing `metadata.json` in a delivered
-     * pack IS that signature: our build writes it as the first file of every real variant, so
-     * its absence means Play resolved this device to the empty default, and the refusal states
-     * Play's answer — not corruption, not a mystery — with the import fallback named as the
-     * path forward.
+     * Is the pair [parts] ship in DEVICE-TARGETED — the `#group_<g>` variant of a tier's shared
+     * module ([PACK_BY_TIER]'s `npu_small` / `npu_turbo`), which Play resolves per device group —
+     * rather than in UNTARGETED modules of its own family (the MediaTek rows since P2-5, which carry
+     * no `#group_` folder and are the same bytes for every device that fetches them)? The fact
+     * [emptyDeliveryRefusal]'s sentence turns on.
      */
-    fun emptyDeliveryRefusal(): String =
-        "Google Play delivered no model for this device — it is not in any device group this " +
-            "app publishes a pack for, so the pack arrived empty. Use 'Import model pair…' " +
-            "below instead. Nothing was installed."
+    fun isDeviceTargeted(parts: List<PackPart>): Boolean =
+        parts.isNotEmpty() && parts.all { it.packName in PACK_BY_TIER.values }
+
+    /**
+     * The refusal for a pair that arrived EMPTY, worded by how its packs are delivered ([parts],
+     * the pair's own — the P2b review's small 3):
+     *
+     *  - **device-targeted** (a Qualcomm pair): the F4 default variant, which is what a device
+     *    outside every census group receives. A missing `metadata.json` in a delivered pack IS
+     *    that signature — our build writes it as the first file of every real variant — so the
+     *    refusal states Play's answer, not corruption, not a mystery;
+     *  - **untargeted** (a MediaTek pair): there is no default variant and no group to be outside
+     *    of — the module carries its payload for every device — so "not in any device group" would
+     *    be false. What is true is that the pack was not delivered (Play gave a part no location,
+     *    or part 1 arrived without its `metadata.json`), and a retry is the first thing to try.
+     *
+     * Both name the import fallback as the path forward, and both say nothing was installed.
+     */
+    fun emptyDeliveryRefusal(parts: List<PackPart>): String =
+        if (isDeviceTargeted(parts)) {
+            "Google Play delivered no model for this device — it is not in any device group this " +
+                "app publishes a pack for, so the pack arrived empty. Use 'Import model pair…' " +
+                "below instead. Nothing was installed."
+        } else {
+            "Google Play delivered no model for this device — the model's pack was not delivered. " +
+                "Retry the download, or use 'Import model pair…' below instead. Nothing was installed."
+        }
 
     private fun mb(bytes: Long): Long = bytes / 1_000_000
 }

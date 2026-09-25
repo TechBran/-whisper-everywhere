@@ -127,10 +127,10 @@ import java.util.Locale
  *
  * ### The engine is required as well, with no default (P1a)
  *
- * `engine` is the runtime this tier's session runs on. The selector constructs it — [QnnAsrEngine]
- * for every family until the census names a second vendor — and a default here would be the same
- * silent wrong choice as a defaulted family, one layer down: a runtime chosen by this file instead
- * of by the row that says which silicon it is on.
+ * `engine` is the runtime this tier's session runs on. The selector constructs it by the row's
+ * vendor — [QnnAsrEngine] for a Qualcomm row, [LiteRtAsrEngine] for a MediaTek one (P2-7) — and a
+ * default here would be the same silent wrong choice as a defaulted family, one layer down: a
+ * runtime chosen by this file instead of by the row that says which silicon it is on.
  *
  * ### Handles
  *
@@ -142,8 +142,9 @@ import java.util.Locale
  *
  * **No JVM test may name this class.** It touches [WhisperNative] (directly and through
  * [GgmlBackends]), whose `init` block runs `System.loadLibrary("whisper_jni")`, and its capability
- * probe and its production engine touch `com.whispereverywhere.npu.QnnAsrNative`, whose `init`
- * block runs `System.loadLibrary("qnnasr")`; neither library is on the unit-test classpath. Its
+ * probe and its production engines touch `com.whispereverywhere.npu.QnnAsrNative`, whose `init`
+ * block runs `System.loadLibrary("qnnasr")` — and, on a MediaTek row, `LiteRtAsrNative`
+ * (`"litertasr"`); none of those libraries is on the unit-test classpath. Its
  * invariants are therefore pinned as SOURCE TEXT in `NpuNativeContractTest`, `NpuDiagTest` and
  * `NpuStageTest`, its pure parts live in `NpuGate`, `NpuDiag`, `NpuQuantize` and
  * `NpuDecodePolicy` where they are fully tested, and its runtime behaviour is first executed on
@@ -452,9 +453,11 @@ class NpuWhisperBackend(
             // (5) THE RUNTIME'S OWN STAGING — THIS FAMILY'S ROW, through the engine (P1a). For the
             // QNN engine this is the DSP-side skel stage, moved whole into QnnAsrEngine.prepare
             // with its reasoning: the family row's one skel, staged into filesDir through the
-            // marker fast path, before the dlopen that makes FastRPC look for it. Here, after
-            // every cheap refusal and before the expensive stage, because the first arm of it
-            // writes ~18 MB — and its refusal leaves through the same funnel as every stage in
+            // marker fast path, before the dlopen that makes FastRPC look for it. For the LiteRT
+            // engine (P2-7) it is the MediaTek dispatch, staged into the directory the LiteRT
+            // environment is bound to at init. Here, after every cheap refusal and before the
+            // expensive stage, because the first arm of it writes ~18 MB (the skel) or ~400 KB
+            // (the dispatch) — and its refusal leaves through the same funnel as every stage in
             // this file, under the stage's own wire word.
             engine.prepare(appContext, family)?.let { refusal ->
                 return@serialized fallBackToCpuTier(refusal.stage.wire, refusal.detail)
@@ -1094,7 +1097,9 @@ class NpuWhisperBackend(
          * dlopens anything here: neither the QNN stack, which is not its chip's, nor its own
          * adapter, whose walk holds bionic's loader lock on the chooser's path. An unknown verdict
          * (not probed yet) answers false — which is why the MediaTek half of the caller's memo is
-         * re-read rather than memoised (`WhisperEverywhereApp.npuCapableDevice`).
+         * re-read rather than memoised (`WhisperEverywhereApp.npuCapableDevice`). The verdict is
+         * deferred too (P2-7), into the lambda only the MediaTek arm invokes, so a Qualcomm
+         * process never creates the driver check's flow on this path.
          *
          * `runCatching` covers [LinkageError] and everything downstream of it: on a build where
          * the proprietary QNN headers were unavailable, `libqnnasr.so` is deliberately absent, the
@@ -1112,7 +1117,7 @@ class NpuWhisperBackend(
                     qnnProbePasses = {
                         runCatching { QnnAsrEngine().probe(libDir).isEmpty() }.getOrDefault(false)
                     },
-                    apuVerdict = NpuApuDriverCheck.verdict.value,
+                    apuVerdict = { NpuApuDriverCheck.verdict.value },
                 )
 
         /**

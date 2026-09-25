@@ -31,7 +31,8 @@ import kotlinx.coroutines.launch
  * process-scoped owner: a recreation re-collects [state] and finds the fetch exactly where it
  * was. Play's own download additionally survives the PROCESS (the Play Store service owns it),
  * so a relaunch that calls [start] again simply re-attaches to a download already in flight —
- * the listener replays the current status and the card catches up.
+ * the listener reports the parts still moving, the fetch Task's own result the parts Play already
+ * holds ([onFetchAnswered]), and the card catches up.
  *
  * ### The split, stated honestly
  *
@@ -117,6 +118,13 @@ object NpuPackController {
      */
     private val readings: MutableList<NpuPackFetch.PartReading?> = mutableListOf()
 
+    /**
+     * Which fetch [readings] belong to — bumped at every [start] (the P2b review's FIX-NOW), so the
+     * fetch Task's answer to an EARLIER fetch (a retry tapped before it arrived) never fills a later
+     * fetch's readings. Guarded by this object's monitor.
+     */
+    private var fetchGeneration: Int = 0
+
     /** The last progress percentage a `pack:` line carried; negative = none this phase. */
     @Volatile
     private var lastLoggedPct: Int = -1
@@ -162,10 +170,13 @@ object NpuPackController {
         appContext = appCtx
         activeParts = parts
         // Every part unanswered: this fetch — or the re-attach after a process death — re-queries
-        // each one, and Play replays each part's status (a delivered part answers COMPLETED at
-        // once, so a retry moves only the bytes still missing).
+        // each one. A part still moving answers through the listener; a part Play ALREADY holds
+        // answers COMPLETED only in the fetch Task's own result, because the listener fires on
+        // changes and a finished pack has none (onFetchAnswered — the P2b review's FIX-NOW). So a
+        // retry moves only the bytes still missing, and the delivered part is counted.
         readings.clear()
         repeat(parts.size) { readings += null }
+        val generation = ++fetchGeneration
         val packName = NpuPackFetch.packLabel(parts)
         lastLoggedPct = -1
         val mgr = manager ?: AssetPackManagerFactory.getInstance(appCtx).also {
@@ -173,16 +184,18 @@ object NpuPackController {
             manager = it
         }
         publish(tierId, packName, NpuPackFetch.FetchState.Pending)
-        mgr.fetch(parts.map { it.packName }).addOnFailureListener { failure ->
-            // The Task can fail before any AssetPackState update exists (a sideloaded install
-            // fails HERE). The error code flows through the same table as everything else.
-            val code = (failure as? AssetPackException)?.errorCode
-                ?: NpuPackFetch.ERROR_INTERNAL_ERROR
-            publish(
-                tierId, packName,
-                NpuPackFetch.FetchState.Failed(NpuPackFetch.failureReason(code)),
-            )
-        }
+        mgr.fetch(parts.map { it.packName })
+            .addOnSuccessListener { states -> onFetchAnswered(generation, states.packStates()) }
+            .addOnFailureListener { failure ->
+                // The Task can fail before any AssetPackState update exists (a sideloaded install
+                // fails HERE). The error code flows through the same table as everything else.
+                val code = (failure as? AssetPackException)?.errorCode
+                    ?: NpuPackFetch.ERROR_INTERNAL_ERROR
+                publish(
+                    tierId, packName,
+                    NpuPackFetch.FetchState.Failed(NpuPackFetch.failureReason(code)),
+                )
+            }
         true
     }
 
@@ -215,6 +228,31 @@ object NpuPackController {
     }
 
     private val listener = AssetPackStateUpdateListener { packState -> onPackState(packState) }
+
+    /**
+     * THE FETCH TASK'S OWN ANSWER (the P2b review's FIX-NOW): the `AssetPackStates` of every pack
+     * this fetch requested, as they stood when Play took the request — the ONLY report of a part
+     * Play already holds, since the listener fires on changes and a pack that is already COMPLETED
+     * has none. Without it, a retry after the encoder's 1.3 GB landed and the decoder failed, was
+     * cancelled or lost its process folded [null, …] to Pending for good: [isBusy] stayed true and
+     * [start] refused every tap.
+     *
+     * Each answer fills only a part the listener has not spoken for in THIS fetch
+     * ([NpuPackFetch.unansweredParts]: a listener reading is never older than the request's), and
+     * goes through [onPackState] — the one fold, so it is re-folded, published and, on Verifying,
+     * installed exactly as a listener update would be. Held under the monitor across the check and
+     * the fill, so a listener update cannot land between them; an answer to an earlier fetch is
+     * dropped by [fetchGeneration]. When the listener answered first this does nothing, which keeps
+     * the one-part path what it was.
+     */
+    private fun onFetchAnswered(generation: Int, states: Map<String, AssetPackState>) {
+        synchronized(this) {
+            if (generation != fetchGeneration) return
+            for (name in NpuPackFetch.unansweredParts(activeParts, readings, states.keys)) {
+                states[name]?.let { onPackState(it) }
+            }
+        }
+    }
 
     private fun onPackState(packState: AssetPackState) {
         val tierId = _activeTier.value ?: return
@@ -307,8 +345,9 @@ object NpuPackController {
             }.toMap()
             if (assetsPaths.size != parts.size) {
                 // Delivered, but Play answers no location for a part: treat as the empty
-                // delivery — the fail-safe reading, with the import path named.
-                NpuAssetImport.ImportState.Refused(NpuPackFetch.emptyDeliveryRefusal())
+                // delivery — the fail-safe reading, with the import path named, worded by how
+                // THIS pair's packs are delivered (targeted or not).
+                NpuAssetImport.ImportState.Refused(NpuPackFetch.emptyDeliveryRefusal(parts))
             } else {
                 try {
                     app.whisperModelManager.installFromPack(

@@ -413,16 +413,23 @@ class NpuPackFetchTest {
      * `P` Pending, `I` Idle, `D` Downloading (the pair's summed bytes), `T` Transferring, `V`
      * Verifying (the pair's summed total — delivery complete, the install begins), `N`
      * NeedsConfirmation, `C` Cancelled, `F1`/`F2` Failed with part 1's / part 2's own reason.
-     * Written out, not derived: the worst status wins — Failed > Cancelled > NeedsConfirmation >
-     * Idle > Pending > Downloading > Transferring > Verifying — and the first failing part names it.
+     * Written out, not derived: the worst status wins and the first failing part names it — by
+     * Failed > Cancelled > NeedsConfirmation > Idle > Pending > Downloading > Transferring >
+     * Verifying while either part is unanswered (the `-` row and column), and, RE-SPECCED by the
+     * P2b review's small 1, by Failed > Cancelled > NeedsConfirmation > Downloading > Transferring
+     * > Pending > Idle > Verifying once BOTH have answered: a part moving bytes outranks one queued
+     * or idle, so sequential downloads show the pair's bar (the DOWN+PEND cell was a bar-less `P`
+     * for the whole 1.3 GB encoder) and a part downloading beside an idle one is never the Get
+     * button (IDLE+DOWN was `I`). Only cells inside the IDLE/PEND/DOWN/XFER square moved — ten of
+     * its sixteen; every other row and column, the DONE ones included, is what P2-4 wrote.
      */
     private val pairTable: List<String> = listOf(
         //       -    IDLE PEND DOWN XFER DONE FAIL CANC WIFI CONF UNKN    <- part 2
         /* -    */ "P    I    P    P    P    P    F2   C    N    N    F2",
-        /* IDLE */ "I    I    I    I    I    I    F2   C    N    N    F2",
-        /* PEND */ "P    I    P    P    P    P    F2   C    N    N    F2",
-        /* DOWN */ "P    I    P    D    D    D    F2   C    N    N    F2",
-        /* XFER */ "P    I    P    D    T    T    F2   C    N    N    F2",
+        /* IDLE */ "I    I    P    D    T    I    F2   C    N    N    F2",
+        /* PEND */ "P    P    P    D    T    P    F2   C    N    N    F2",
+        /* DOWN */ "P    D    D    D    D    D    F2   C    N    N    F2",
+        /* XFER */ "P    T    T    D    T    T    F2   C    N    N    F2",
         /* DONE */ "P    I    P    D    T    V    F2   C    N    N    F2",
         /* FAIL */ "F1   F1   F1   F1   F1   F1   F1   F1   F1   F1   F1",
         /* CANC */ "C    C    C    C    C    C    F2   C    C    C    F2",
@@ -471,6 +478,36 @@ class NpuPackFetchTest {
             }
         }
         assertEquals("all 121 combinations were executed", 121, cells)
+    }
+
+    /**
+     * The P2b review's small 1, as the two cells it named: Play downloading the parts one after
+     * another must show the pair's bar, not a bar-less Pending for the whole encoder; and a part
+     * downloading beside one Play reports idle must never show the Get button. Both only once
+     * every part has answered — an unanswered part keeps the pair Pending.
+     */
+    @Test
+    fun onceEveryPartHasAnsweredAPartMovingBytesNamesThePairsState() {
+        assertEquals(
+            "DOWN + PEND: the pair's bar, both parts' bytes",
+            NpuPackFetch.FetchState.Downloading(400_000_000L + 100_000_000L, 1_900_000_000L),
+            NpuPackFetch.advance(listOf(readingOf(0, "DOWN"), readingOf(1, "PEND"))),
+        )
+        assertEquals(
+            "IDLE + DOWN: busy, never the Get button",
+            NpuPackFetch.FetchState.Downloading(400_000_000L + 100_000_000L, 1_900_000_000L),
+            NpuPackFetch.advance(listOf(readingOf(0, "IDLE"), readingOf(1, "DOWN"))),
+        )
+        assertEquals(
+            "…but with part 2 unanswered the pair stays Pending — no bar over half its bytes",
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.advance(listOf(readingOf(0, "DOWN"), null)),
+        )
+        assertEquals(
+            "and the gating is unchanged: one part delivered, the other queued, is not delivered",
+            NpuPackFetch.FetchState.Pending,
+            NpuPackFetch.advance(listOf(readingOf(0, "DONE"), readingOf(1, "PEND"))),
+        )
     }
 
     @Test
@@ -557,6 +594,136 @@ class NpuPackFetchTest {
             "no parts at all is nothing requested",
             NpuPackFetch.FetchState.Idle,
             NpuPackFetch.advance(emptyList()),
+        )
+    }
+
+    // ------------------------------------------------ the fetch Task's own answer (P2b review FIX-NOW)
+
+    /**
+     * The controller's readings, as a list the test drives the way `NpuPackController` does: the
+     * listener OVERWRITES a part's slot ([listener]); the fetch Task's answer fills only the slots
+     * [NpuPackFetch.unansweredParts] names ([taskAnswered]). Every fold is the machine's own.
+     */
+    private class Readings(private val parts: List<PackPart>) {
+        val slots: MutableList<NpuPackFetch.PartReading?> = MutableList(parts.size) { null }
+
+        fun listener(name: String, reading: NpuPackFetch.PartReading) {
+            slots[parts.indexOfFirst { it.packName == name }] = reading
+        }
+
+        fun taskAnswered(answer: Map<String, NpuPackFetch.PartReading>) {
+            for (name in NpuPackFetch.unansweredParts(parts, slots, answer.keys)) {
+                slots[parts.indexOfFirst { it.packName == name }] = answer.getValue(name)
+            }
+        }
+
+        fun fold(): NpuPackFetch.FetchState = NpuPackFetch.advance(slots.toList())
+    }
+
+    private val mt6989Parts: List<PackPart> by lazy {
+        NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("mt6989")))
+    }
+
+    private fun reading(status: Int, soFar: Long, total: Long) = NpuPackFetch.PartReading(status, 0, soFar, total)
+
+    /**
+     * THE FIX-NOW, executed as the review described it: the encoder (1.3 GB) landed in an earlier
+     * fetch, the decoder did not; the user retries. Play's listener fires on CHANGES, and a pack
+     * already COMPLETED has none — so part 1's reading arrives ONLY through the fetch Task's result,
+     * and part 2's through the listener. Folding the listener alone left [null, DONE] at Pending
+     * for good (asserted first, as the defect it was); counting the Task's answer reaches Verifying.
+     */
+    @Test
+    fun aPartPlayAlreadyHoldsIsCountedFromTheFetchTasksOwnAnswer() {
+        val (enc, dec) = mt6989Parts.map { it.packName }
+        val encTotal = 1_310_000_000L
+        val decTotal = 590_000_000L
+        // The defect: the listener alone never reports the finished encoder.
+        val listenerOnly = Readings(mt6989Parts)
+        listenerOnly.listener(dec, reading(NpuPackFetch.STATUS_COMPLETED, decTotal, decTotal))
+        assertEquals(
+            "listener alone: the delivered encoder is never counted — Pending forever, every tap refused",
+            NpuPackFetch.FetchState.Pending,
+            listenerOnly.fold(),
+        )
+        // The fix: the Task's answer (every requested pack, at the request) fills the encoder.
+        val fixed = Readings(mt6989Parts)
+        fixed.taskAnswered(
+            mapOf(
+                enc to reading(NpuPackFetch.STATUS_COMPLETED, encTotal, encTotal),
+                dec to reading(NpuPackFetch.STATUS_PENDING, 0L, decTotal),
+            ),
+        )
+        assertEquals("the retry is queued for the decoder alone", NpuPackFetch.FetchState.Pending, fixed.fold())
+        fixed.listener(dec, reading(NpuPackFetch.STATUS_DOWNLOADING, 100_000_000L, decTotal))
+        assertEquals(
+            "the decoder moves through the listener, and the bar counts the delivered encoder in full",
+            NpuPackFetch.FetchState.Downloading(encTotal + 100_000_000L, encTotal + decTotal),
+            fixed.fold(),
+        )
+        fixed.listener(dec, reading(NpuPackFetch.STATUS_COMPLETED, decTotal, decTotal))
+        assertEquals(
+            "…and the install begins: part 1 from the Task's answer, part 2 from the listener",
+            NpuPackFetch.FetchState.Verifying(0, encTotal + decTotal),
+            fixed.fold(),
+        )
+    }
+
+    @Test
+    fun theTaskAnswerNeverOverwritesAReadingTheListenerAlreadyGave() {
+        val (enc, dec) = mt6989Parts.map { it.packName }
+        val moving = reading(NpuPackFetch.STATUS_DOWNLOADING, 700_000_000L, 1_310_000_000L)
+        val r = Readings(mt6989Parts)
+        r.listener(enc, moving)
+        assertEquals(
+            "only the part the listener has not spoken for is filled — a listener reading is never " +
+                "older than the request's snapshot",
+            listOf(dec),
+            NpuPackFetch.unansweredParts(mt6989Parts, r.slots, setOf(enc, dec)),
+        )
+        r.taskAnswered(
+            mapOf(
+                enc to reading(NpuPackFetch.STATUS_PENDING, 0L, 1_310_000_000L),
+                dec to reading(NpuPackFetch.STATUS_PENDING, 0L, 590_000_000L),
+            ),
+        )
+        assertEquals("the encoder keeps its newer reading", moving, r.slots[0])
+        assertEquals(
+            "a pack the Task did not answer for is left unanswered",
+            emptyList<String>(),
+            NpuPackFetch.unansweredParts(mt6989Parts, listOf(null, null), emptySet()),
+        )
+        assertEquals(
+            "…and a part name that is not this fetch's is ignored",
+            emptyList<String>(),
+            NpuPackFetch.unansweredParts(mt6989Parts, listOf(null, null), setOf("npu_turbo")),
+        )
+    }
+
+    /**
+     * The ONE-PART regression cases: a Qualcomm pair is one pack. When the listener answers first
+     * (every fetch that moves bytes), the Task's answer changes nothing; when the pack was already
+     * delivered — an install refused and retried, the pack left in place — the Task's COMPLETED is
+     * what starts the verify (the same defect, one part wide).
+     */
+    @Test
+    fun forOnePartTheTaskAnswerChangesNothingWhenTheListenerAnsweredFirst() {
+        val one = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("8gen3")))
+        val name = one.single().packName
+        val first = Readings(one)
+        first.listener(name, reading(NpuPackFetch.STATUS_DOWNLOADING, 5L, 10L))
+        first.taskAnswered(mapOf(name to reading(NpuPackFetch.STATUS_PENDING, 0L, 10L)))
+        assertEquals(
+            "the listener's reading stands — the one-part path is what it was",
+            NpuPackFetch.FetchState.Downloading(5L, 10L),
+            first.fold(),
+        )
+        val held = Readings(one)
+        held.taskAnswered(mapOf(name to reading(NpuPackFetch.STATUS_COMPLETED, 10L, 10L)))
+        assertEquals(
+            "a pack Play already holds is delivered by the Task's answer alone",
+            NpuPackFetch.FetchState.Verifying(0, 10L),
+            held.fold(),
         )
     }
 
@@ -686,7 +853,10 @@ class NpuPackFetchTest {
         // fail-safe): the pack "arrives" carrying no metadata and no model. The refusal states
         // that as Play's answer — not as corruption, not as a mystery — and names the way
         // forward, because a dead end on the fetch card is the failure the copy rules forbid.
-        val refusal = NpuPackFetch.emptyDeliveryRefusal()
+        // (P2-7, the P2b review's small 3) The refusal takes the pair's parts; a Qualcomm pair is
+        // device-targeted, and its sentence is the one this test has always read.
+        val gen3 = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("8gen3")))
+        val refusal = NpuPackFetch.emptyDeliveryRefusal(gen3)
         assertTrue(
             "the missing metadata IS the empty-default signature and the copy says so: $refusal",
             refusal.contains("Google Play delivered no model for this device"),
@@ -697,5 +867,40 @@ class NpuPackFetchTest {
         )
         assertTrue("and the no-install promise is stated, truthfully: $refusal",
             refusal.contains("Nothing was installed"))
+    }
+
+    /**
+     * THE P2b REVIEW'S SMALL 3 — the empty delivery is worded by the pair's TARGETING. A targeted
+     * (Qualcomm) pair's empty delivery is the F4 default variant, and "not in any device group" is
+     * its truth; an untargeted (MediaTek) pair has no default variant and no group to be outside
+     * of — its module carries the payload for every device — so that sentence would be false, and
+     * the truth is that the pack was not delivered.
+     */
+    @Test
+    fun theEmptyDeliveryIsWordedByThePairsTargeting() {
+        val gen3 = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("8gen3")))
+        val mt6989 = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("mt6989")))
+        assertTrue("a Qualcomm pair is device-targeted", NpuPackFetch.isDeviceTargeted(gen3))
+        assertFalse("the mt6989 pair's own modules are not", NpuPackFetch.isDeviceTargeted(mt6989))
+        assertFalse("and no parts at all is no targeted pair", NpuPackFetch.isDeviceTargeted(emptyList()))
+        for (a in NpuFleetCensus.artifacts) {
+            val family = requireNotNull(NpuFleetCensus.familyById(a.familyId))
+            assertEquals(
+                "${a.familyId}/${a.tierId}: targeted exactly on the Qualcomm rows",
+                family.vendor == NpuVendor.QUALCOMM,
+                NpuPackFetch.isDeviceTargeted(a.parts),
+            )
+        }
+        val targeted = NpuPackFetch.emptyDeliveryRefusal(gen3)
+        val untargeted = NpuPackFetch.emptyDeliveryRefusal(mt6989)
+        assertTrue("targeted: the device-group sentence", targeted.contains("not in any device group"))
+        assertFalse("untargeted: never the device-group sentence — it would be false", untargeted.contains("device group"))
+        assertTrue("untargeted: the pack was not delivered, and a retry is named", untargeted.contains("was not delivered") && untargeted.contains("Retry"))
+        for (sentence in listOf(targeted, untargeted)) {
+            assertTrue(sentence.startsWith("Google Play delivered no model for this device"))
+            assertTrue("the import path is named: $sentence", sentence.contains("'Import model pair…' below"))
+            assertTrue(sentence.endsWith("Nothing was installed."))
+            assertFalse("never the sideload family's sentence", sentence.contains("it wasn't installed from Play"))
+        }
     }
 }

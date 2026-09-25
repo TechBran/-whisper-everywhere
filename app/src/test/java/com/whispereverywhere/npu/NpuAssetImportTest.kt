@@ -1411,7 +1411,7 @@ class NpuAssetImportTest {
             1,
             liveLineCount(pack, "NpuAssetImport.requiredEntriesFor(model, artifact)"),
         )
-        val empty = liveIndexOfOrFail(pack, "installFromPack", "NpuPackFetch.emptyDeliveryRefusal()")
+        val empty = liveIndexOfOrFail(pack, "installFromPack", "NpuPackFetch.emptyDeliveryRefusal(packParts)")
         val parse = liveIndexOfOrFail(pack, "installFromPack", "NpuPackMetadata.parse(")
         val cross = liveIndexOfOrFail(
             pack, "installFromPack", "NpuPackMetadata.crossCheckRefusal(meta, family, artifact, tierId)"
@@ -1441,15 +1441,18 @@ class NpuAssetImportTest {
         // with the import fallback named — not a crash on a missing file and not a mystery
         // "missing entries" after a copy loop that had nothing to copy.
         val pack = body(manager, "WhisperModelManager.kt", "    suspend fun installFromPack(")
+        // (P2-7, the P2b review's small 3) The refusal takes the pair's parts: an UNTARGETED
+        // (MediaTek) pair has no default variant, so its sentence says the pack was not delivered
+        // rather than "not in any device group". Still one site, still before the copy.
         assertEquals(
-            "the empty-delivery refusal has exactly one site",
+            "the empty-delivery refusal has exactly one site, worded by this pair's own parts",
             1,
-            liveLineCount(pack, "NpuPackFetch.emptyDeliveryRefusal()"),
+            liveLineCount(pack, "NpuPackFetch.emptyDeliveryRefusal(packParts)"),
         )
         assertTrue(
             "and it fires BEFORE the copy machinery — the refusal is about what Play delivered, " +
                 "not about what a copy failed to find",
-            liveIndexOfOrFail(pack, "installFromPack", "NpuPackFetch.emptyDeliveryRefusal()") <
+            liveIndexOfOrFail(pack, "installFromPack", "NpuPackFetch.emptyDeliveryRefusal(packParts)") <
                 liveIndexOfOrFail(pack, "installFromPack", "MessageDigest.getInstance(\"SHA-256\")"),
         )
         assertEquals(

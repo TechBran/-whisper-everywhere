@@ -116,18 +116,23 @@ object NpuGate {
      *    adapter walk holds bionic's loader lock. Null is "unknown — not probed yet" and answers
      *    false: not-yet-capable, never an optimistic yes that a later probe has to take back.
      *
+     * Both vendors' checks arrive DEFERRED and each arm invokes its own alone: a MediaTek device
+     * never runs the QNN probe, and a Qualcomm process never reads — so never creates — the driver
+     * check's flow (P2-7, the P2a review's note: the verdict used to be read eagerly at the call).
+     *
      * @param family [familyFor]'s answer for this device.
      * @param qnnProbePasses the QNN probe (`QnnAsrEngine().probe(libDir)` is `""`), deferred so
      *        only the Qualcomm arm pays it.
-     * @param apuVerdict [NpuApuDriverCheck.verdict]'s current value.
+     * @param apuVerdict [NpuApuDriverCheck.verdict]'s current value, deferred so only the MediaTek
+     *        arm reads it.
      */
     fun runtimeAvailable(
         family: NpuSocFamily?,
         qnnProbePasses: () -> Boolean,
-        apuVerdict: NpuApuVerdict?,
+        apuVerdict: () -> NpuApuVerdict?,
     ): Boolean = when (family?.vendor) {
         null -> false
         NpuVendor.QUALCOMM -> qnnProbePasses()
-        NpuVendor.MEDIATEK -> apuVerdict?.passed == true
+        NpuVendor.MEDIATEK -> apuVerdict()?.passed == true
     }
 }

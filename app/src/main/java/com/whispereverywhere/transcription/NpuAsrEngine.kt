@@ -17,8 +17,9 @@ import java.nio.ByteBuffer
  * behind this interface: how the runtime is staged ([prepare]: QNN's DSP-side skel, LiteRT's
  * dispatch library), how the pair is armed ([init]), and what the encoder is fed ([encode]: QNN
  * quantises the float mel to its `ufixed16` block inside; LiteRT takes the float mel as it is).
- * Two engines: `QnnAsrEngine` over `QnnAsrNative`, and — P1b's Kotlin half — a LiteRT one over
- * `LiteRtAsrNative`, whose native signatures this interface was shaped against.
+ * Two engines: `QnnAsrEngine` over `QnnAsrNative` for Qualcomm rows, and `LiteRtAsrEngine` over
+ * `LiteRtAsrNative` for MediaTek rows (P2-7 — P1b's Kotlin half, whose native signatures this
+ * interface was shaped against); `NpuBackendSelector` picks one by the census row's vendor.
  *
  * **Two error conventions, one per shape of answer, both the native seams' own.** A stage that can
  * decline answers a [Refusal] — its stage from the closed `NpuStage` set, and a one-line detail the

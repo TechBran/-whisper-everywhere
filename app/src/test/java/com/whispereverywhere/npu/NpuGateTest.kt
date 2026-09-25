@@ -66,6 +66,7 @@ class NpuGateTest {
     private fun verdict(refusal: String?) = NpuApuVerdict(
         fingerprint = "test/fingerprint",
         appBuild = 112,
+        appUpdatedAtMs = 1L,
         wantMajor = 8,
         refusal = refusal,
         probedAtMs = 1L,
@@ -324,7 +325,9 @@ class NpuGateTest {
             NpuGate.SUPPORTED_SOCS
         )
         // (P2) The fleet-wide set is DERIVED now — the union of the rows' own spellings — and it
-        // survives only for the device-group XML's equality pin; familyFor asks the row.
+        // survives as the fleet-wide derived set these lines pin. Nothing decides on it: familyFor
+        // asks the row, and since P2-5 the device-group XML no longer reads it either (the XML
+        // renders the device-TARGETED families only, and its spelling pin reads their own union).
         assertEquals(
             "and the fleet-wide spellings are exactly the union of the rows' own: the two " +
                 "Qualcomm spellings the platform ships, on every Qualcomm row, and the one the " +
@@ -428,17 +431,17 @@ class NpuGateTest {
             var probes = 0
             assertTrue(
                 "${family.id}: a passing QNN probe is capability",
-                NpuGate.runtimeAvailable(family, { probes++; true }, null)
+                NpuGate.runtimeAvailable(family, { probes++; true }, { null })
             )
             assertFalse(
                 "${family.id}: a failing QNN probe is none — whatever a driver verdict says",
-                NpuGate.runtimeAvailable(family, { probes++; false }, verdict(refusal = null))
+                NpuGate.runtimeAvailable(family, { probes++; false }, { verdict(refusal = null) })
             )
             assertEquals("${family.id}: the probe ran once per question", 2, probes)
         }
         assertFalse(
             "no family: nothing is capable, and nothing is asked",
-            NpuGate.runtimeAvailable(null, { throw AssertionError("the probe ran for no family") }, verdict(null))
+            NpuGate.runtimeAvailable(null, { throw AssertionError("the probe ran for no family") }, { verdict(null) })
         )
     }
 
@@ -447,25 +450,49 @@ class NpuGateTest {
         val neverQnn: () -> Boolean = { throw AssertionError("the QNN probe ran for a MediaTek row") }
         assertFalse(
             "UNKNOWN — no verdict yet — is not-yet-capable, never an optimistic yes",
-            NpuGate.runtimeAvailable(mediatekRow, neverQnn, null)
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, { null })
         )
         assertFalse(
             "a refused driver check is not capable",
-            NpuGate.runtimeAvailable(mediatekRow, neverQnn, verdict(refusal = "adapter-missing"))
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, { verdict(refusal = "adapter-missing") })
         )
         assertFalse(
             "…whatever the refusal",
-            NpuGate.runtimeAvailable(mediatekRow, neverQnn, verdict(refusal = "driver-major-9-want-8"))
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, { verdict(refusal = "driver-major-9-want-8") })
         )
         assertTrue(
             "a passed driver check is capable",
-            NpuGate.runtimeAvailable(mediatekRow, neverQnn, verdict(refusal = null))
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, { verdict(refusal = null) })
         )
         // And the census's own MediaTek row answers identically: the dispatch is the vendor's.
         val mt6989 = requireNotNull(NpuFleetCensus.familyById("mt6989"))
-        assertFalse(NpuGate.runtimeAvailable(mt6989, neverQnn, null))
-        assertFalse(NpuGate.runtimeAvailable(mt6989, neverQnn, verdict(refusal = "adapter-missing")))
-        assertTrue(NpuGate.runtimeAvailable(mt6989, neverQnn, verdict(refusal = null)))
+        assertFalse(NpuGate.runtimeAvailable(mt6989, neverQnn, { null }))
+        assertFalse(NpuGate.runtimeAvailable(mt6989, neverQnn, { verdict(refusal = "adapter-missing") }))
+        assertTrue(NpuGate.runtimeAvailable(mt6989, neverQnn, { verdict(refusal = null) }))
+    }
+
+    /**
+     * P2-7 (the P2a review's note) — THE TWIN OF THE TEST ABOVE: a Qualcomm row never READS the
+     * driver verdict, so a Qualcomm process never creates the driver check's flow on the gate's
+     * path. The verdict used to be read eagerly at the call (`NpuApuDriverCheck.verdict.value` as
+     * an argument), which initialised the check's object — and its StateFlow — on every device the
+     * bubble service started on; it is a lambda now, and this fake fails the test if a Qualcomm or
+     * off-census row invokes it.
+     */
+    @Test
+    fun runtimeAvailableNeverReadsTheDriverVerdictOnAQualcommRowOrOffTheCensus() {
+        val neverRead: () -> NpuApuVerdict? = { throw AssertionError("the driver verdict was read for a non-MediaTek row") }
+        for (family in NpuFleetCensus.families.filter { it.vendor == NpuVendor.QUALCOMM }) {
+            assertTrue("${family.id}: the QNN probe decides", NpuGate.runtimeAvailable(family, { true }, neverRead))
+            assertFalse("${family.id}: …either way", NpuGate.runtimeAvailable(family, { false }, neverRead))
+        }
+        assertFalse("off the census: nothing is read at all", NpuGate.runtimeAvailable(null, { true }, neverRead))
+        var reads = 0
+        assertTrue(
+            "and a MediaTek row reads it exactly once per question",
+            NpuGate.runtimeAvailable(mediatekRow, { throw AssertionError("QNN probe") }, { reads++; verdict(null) }),
+        )
+        assertEquals(1, reads)
     }
 
     @Test
@@ -478,12 +505,12 @@ class NpuGateTest {
         assertNull("a process starts with no verdict", NpuApuDriverCheck.verdict.value)
         assertFalse(
             "and reads not-yet-capable until the check answers",
-            NpuGate.runtimeAvailable(mediatekRow, neverQnn, NpuApuDriverCheck.verdict.value)
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, { NpuApuDriverCheck.verdict.value })
         )
         NpuApuDriverCheck.publish(verdict(refusal = null))
         assertTrue(
             "the check passed: the same read is now capable",
-            NpuGate.runtimeAvailable(mediatekRow, neverQnn, NpuApuDriverCheck.verdict.value)
+            NpuGate.runtimeAvailable(mediatekRow, neverQnn, { NpuApuDriverCheck.verdict.value })
         )
     }
 
@@ -661,9 +688,13 @@ class NpuGateTest {
             liveLines(gate, "NpuVendor.QUALCOMM -> qnnProbePasses()").size
         )
         assertEquals(
-            "…the MediaTek arm is the stored verdict, unknown reading false",
-            1,
-            liveLines(gate, "NpuVendor.MEDIATEK -> apuVerdict?.passed == true").size
+            "…the MediaTek arm is the stored verdict, unknown reading false — read through its " +
+                "deferred lambda (P2-7), on that arm and nowhere else in the gate",
+            listOf(1, 1),
+            listOf(
+                liveLines(gate, "NpuVendor.MEDIATEK -> apuVerdict()?.passed == true").size,
+                liveLines(gate, "apuVerdict()").size,
+            ),
         )
         assertEquals(
             "…and the QNN probe is invoked nowhere else in the gate",

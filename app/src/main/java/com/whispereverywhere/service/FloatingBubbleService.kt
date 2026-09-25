@@ -1346,8 +1346,14 @@ class FloatingBubbleService : Service(),
      * what the cap is, and which end overflow eats. Touched by the capture thread (append, paced
      * drain) and by Main (clear, and the stop path's flush behind the capture joins); the ring
      * synchronises itself.
+     *
+     * (P2-7; design §2.9) SIZED PER FAMILY: the app answers this device's ring — 12 s on a
+     * MediaTek row, whose cold arm is two bytecode restores on the APU, 6 s everywhere else — and
+     * the service asks it rather than resolving a family itself. Lazy because the app answers from
+     * its census memo, and the first touch is session open's `clear()` on Main, long after
+     * `Application.onCreate`; the lazy is synchronised, so the capture thread's reads are safe.
      */
-    private val startupRing = StartupRing()
+    private val startupRing by lazy { StartupRing(app.startupRingCapacityBytes) }
 
     /**
      * Has the session's engine reported `onOpen`? The capture thread's only readiness question,
@@ -1537,6 +1543,18 @@ class FloatingBubbleService : Service(),
         // cloud/local question ~1.5 s after boot and then cache that answer for the service's
         // whole life, and (b) toast about a degraded mode before the user has asked for anything.
         serviceScope.launch {
+            // (P2-7, the P2a review's L1) THE DRIVER VERDICT BEFORE THE GATE'S FIRST READ. On a
+            // MediaTek row the gate's capability half IS the driver check's verdict, and it is
+            // UNKNOWN until the walk Application.onCreate started lands, ~200 ms in — while
+            // BootReceiver starts this service within milliseconds of onCreate on an update (and
+            // every first launch and OTA re-probes too). Read then, the memo below would say "not
+            // capable" for the whole service life and every session would run on the CPU, because
+            // nothing else refreshes it until a model switch. So the boot prewarm settles the
+            // verdict first: it waits for the launch thread's walk, or walks itself if that thread
+            // never ran (design §2.3 item 1) — on IO and OUTSIDE NativeComputeGate, for the verdict
+            // only; there is no wait left in the walk to hide. Every other device returns on the
+            // call's first lines, untouched. Wrapped: the tier may never cost the prewarm.
+            withContext(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }
             // (4.0, Q9) The offer gate BEFORE the prewarm it decides, and off Main — its first
             // evaluation dlopens two QNN libraries. Without this the first engine of every process
             // is built on the CPU backend and an npu user pays a rebuild for it.
@@ -3477,7 +3495,7 @@ class FloatingBubbleService : Service(),
         val dropped = startupRing.append(chunk, amp, nowMs)
         if (dropped > 0 && !startupOverflowLogged) {
             startupOverflowLogged = true
-            android.util.Log.w("WE-DIAG", StartupRing.overflowLine(StartupRing.msOf(dropped)))
+            android.util.Log.w("WE-DIAG", StartupRing.overflowLine(StartupRing.msOf(dropped), startupRing.capacityMs))
         }
     }
 

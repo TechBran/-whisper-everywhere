@@ -581,6 +581,62 @@ class NpuBackendWiringTest {
     }
 
     /**
+     * THE P2a REVIEW'S L1 (P2-7) — **the routing memo is never taken before a MediaTek device's
+     * driver verdict exists.** The memo ([npuTierIds]) is refreshed at service start and on a model
+     * switch or install, and nowhere else; on a MediaTek row its capability half is the driver
+     * check's verdict, UNKNOWN for the ~200 ms the walk takes after `Application.onCreate` — and
+     * BootReceiver starts this service within milliseconds of `onCreate` on every update. A memo
+     * taken in that window says "not capable" for the whole service life: every session on the
+     * CPU, with the tier installed and the driver passing. So the service-start coroutine settles
+     * the verdict BEFORE its refresh — the app's one settle, which waits for the launch thread's
+     * walk or walks itself when that thread never ran (design §2.3 item 1: the boot prewarm runs
+     * the probe if `onCreate` has not) — off Main and outside `NativeComputeGate`, whose fair lock
+     * would otherwise park a live session's native work behind a driver walk.
+     */
+    @Test
+    fun theBootPrewarmSettlesTheDriverVerdictBeforeTheGateIsFirstRead() {
+        val settle = "withContext(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }"
+        assertEquals(
+            "the service asks for the verdict exactly once, on IO, wrapped so the tier can never " +
+                "cost the prewarm",
+            listOf(1, 1),
+            listOf(liveOffsets(service, settle).size, liveOffsets(service, "awaitApuDriverVerdict(").size),
+        )
+        val startRefresh = liveOffsets(
+            service,
+            block("            refreshNpuTierOffer()", "            delay(1500)", "            warmLocalEngine().prewarm()")
+                .substringBefore("\n"),
+        )
+        val at = liveOffsets(service, settle).single()
+        val launch = service.lastIndexOf("        serviceScope.launch {", at)
+        assertTrue(
+            "…in the SAME service-start coroutine as the boot refresh, and ABOVE it: the settle " +
+                "($at) precedes the first refresh (${startRefresh.firstOrNull()}), with no other " +
+                "coroutine opened between them",
+            startRefresh.isNotEmpty() && at < startRefresh.first() && launch in 0 until at &&
+                service.indexOf("serviceScope.launch", at) > startRefresh.first(),
+        )
+        assertEquals(
+            "…and the service never takes NativeComputeGate itself — the walk must not sit behind " +
+                "(or in front of) a session's native work",
+            0,
+            liveOffsets(service, "NativeComputeGate.").size,
+        )
+        val await = app.substringAfter("    fun awaitApuDriverVerdict() {").substringBefore("\n    }\n")
+        assertTrue("the app's settle was found", await.length in 1 until app.length)
+        assertEquals(
+            "the settle the service awaits takes no NativeComputeGate either",
+            0,
+            liveOffsets(await, "NativeComputeGate").size,
+        )
+        assertEquals(
+            "…and it is one settle per process, whoever asks first — the lock both callers take",
+            1,
+            liveOffsets(await, "synchronized(apuVerdictLock) {").size,
+        )
+    }
+
+    /**
      * C1 (Q9 review) — **only a session start may tear the cached engine down.**
      *
      * `warmLocalEngine` used to be `localEngine ?: LocalWhisperEngine(…)`: pure, idempotent, safe
@@ -1036,18 +1092,19 @@ class NpuBackendWiringTest {
     @Test
     fun theResolverConstructsTheTierWithTheResolvedFamilyExactlyOnce() {
         // RE-SPELLED AT P1a for the fifth argument, the same way F2 re-spelled it for the
-        // fourth: the backend takes its runtime as a required NpuAsrEngine, and the resolver
-        // builds a fresh QnnAsrEngine for it on every family (the vendor switch is P2's, on the
-        // row this overload already resolved). The compile-red at this call site was, again,
-        // the no-default parameter working.
+        // fourth: the backend takes its runtime as a required NpuAsrEngine. RE-SPELLED AGAIN AT
+        // P2-7 for the vendor switch that P1a named as this needle's next trigger: the fifth
+        // argument is the ROW'S VENDOR'S engine now, chosen by `engineFor` on the row this
+        // overload already resolved — the switch itself is pinned whole in
+        // [theEngineIsTheRowsVendorsAndTheRowTheBackendIsBuiltFrom].
         assertEquals(
             "the selector's production overload constructs the tier exactly once, from the " +
                 "paths, the context, the SPEC it resolved (4.1 L2), the FAMILY it resolved " +
-                "(4.2 F2) and a fresh QNN ENGINE (P1a). None has a default on the constructor, so " +
-                "this is also the assertion that a tier id with no spec row and a device with no " +
-                "census row can never reach the NPU backend at all.",
+                "(4.2 F2) and a fresh engine for that family's vendor (P1a; P2-7). None has a " +
+                "default on the constructor, so this is also the assertion that a tier id with no " +
+                "spec row and a device with no census row can never reach the NPU backend at all.",
             1,
-            count(selector, "NpuWhisperBackend(p, appContext, spec, family, QnnAsrEngine())"),
+            count(selector, "NpuWhisperBackend(p, appContext, spec, family, engineFor(family, appContext))"),
         )
         assertEquals(
             "exactly one NpuWhisperBackend( construction on a live line of the selector — a " +
@@ -1077,6 +1134,80 @@ class NpuBackendWiringTest {
                 "resolution site would be a second answer to \"which model is this tier\"",
             1,
             count(selector, "val spec = NpuModelSpec.forTier(tierId) ?: return WhisperNativeBackend"),
+        )
+    }
+
+    /**
+     * THE VENDOR SWITCH (P2-7; design §2.4) — the one decision the seam was cut for. A MediaTek
+     * row built on the QNN engine (the P1a shape, every family QNN's) is refused at `skel` AFTER
+     * its 1.88 GB pair was fetched; a Qualcomm row built on the LiteRT engine would dlopen a
+     * runtime its chip does not have. So: one exhaustive switch on the ROW'S vendor, one
+     * construction of each engine, nowhere else — and the LiteRT engine is built from the SAME
+     * row the backend is, so the chip stamp and major it arms against are the silicon the gate
+     * resolved (its prepare refuses any other row, pinned in `LiteRtAsrEngineContractTest`).
+     *
+     * Source, not executed, for the house reason: both engines load a native library the unit
+     * classpath does not have, and the doctrine is that no JVM test names either.
+     */
+    @Test
+    fun theEngineIsTheRowsVendorsAndTheRowTheBackendIsBuiltFrom() {
+        assertEquals(
+            "the switch is one exhaustive `when` on the row's vendor, one engine per arm",
+            1,
+            count(
+                selector,
+                block(
+                    "    private fun engineFor(family: NpuSocFamily, appContext: Context): NpuAsrEngine = when (family.vendor) {",
+                    "        NpuVendor.QUALCOMM -> QnnAsrEngine()",
+                    "        NpuVendor.MEDIATEK -> LiteRtAsrEngine(family, appContext.applicationInfo.nativeLibraryDir)",
+                    "    }",
+                ),
+            ),
+        )
+        assertEquals(
+            "exactly one construction of each engine on a live line of the selector — a second " +
+                "site would be a second answer to which runtime a row arms on",
+            listOf(1, 1),
+            listOf(
+                liveOffsets(selector, "QnnAsrEngine(").size,
+                liveOffsets(selector, "LiteRtAsrEngine(").size,
+            ),
+        )
+        assertEquals(
+            "…and no `else` arm: a third vendor must fail to compile at the switch, not fall into " +
+                "one of the two engines",
+            0,
+            liveOffsets(memberBody(selector, "    private fun engineFor("), "else ->").size,
+        )
+        assertEquals(
+            "the switch is consulted once, from the construction, with the family the backend " +
+                "gets — one object, two readers",
+            listOf(1, 2),
+            listOf(
+                liveOffsets(selector, "engineFor(family, appContext)").size,
+                liveOffsets(selector, "engineFor(").size,
+            ),
+        )
+        // And no other main file builds an engine for a session: the selector is the one site.
+        val mainRoot = run {
+            var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+            var found: File? = null
+            while (dir != null && found == null) {
+                found = listOf(File(dir, "src/main/java"), File(dir, "app/src/main/java"))
+                    .firstOrNull { File(it, "com/whispereverywhere/transcription/NpuBackendSelector.kt").isFile }
+                dir = dir.parentFile
+            }
+            requireNotNull(found) { "cannot locate src/main/java from ${System.getProperty("user.dir")}" }
+        }
+        val qnnBuilders = mainRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { liveOffsets(it.readText().replace("\r\n", "\n"), "QnnAsrEngine(").isNotEmpty() }
+            .map { it.name }.sorted().toList()
+        assertEquals(
+            "QnnAsrEngine is constructed by the selector and by the tier-visibility probe (a " +
+                "throwaway, never armed) — nowhere else. Found: $qnnBuilders",
+            listOf("NpuBackendSelector.kt", "NpuWhisperBackend.kt"),
+            qnnBuilders,
         )
     }
 

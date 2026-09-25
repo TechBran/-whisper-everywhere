@@ -445,6 +445,39 @@ class StartupRingWiringPinTest {
         assertEquals("the third is the mute toggle's", 1, liveLines(toggle, "vibrateTap()").size)
     }
 
+    /**
+     * P2-7 (design §2.9) — THE RING IS SIZED PER FAMILY, and the service does not decide how. It
+     * builds its one ring from the app's answer (`StartupRing.capacityBytesFor` over the app's one
+     * census memo — 12 s on a MediaTek row, 6 s everywhere else; `StartupRingTest` executes the
+     * table), lazily, because the app answers from a memo the service must not read before
+     * `Application.onCreate` has run; and the overflow line states THIS ring's cap, so a 12 s ring
+     * never logs "FULL at 6000ms".
+     */
+    @Test
+    fun theRingIsTheFamilysSizeAndItsOverflowLineNamesItsOwnCap() {
+        assertEquals(
+            "one ring, built lazily from the app's per-family capacity",
+            1,
+            liveLines(text, "private val startupRing by lazy { StartupRing(app.startupRingCapacityBytes) }").size,
+        )
+        assertEquals(
+            "and no other construction of a ring in the service",
+            1,
+            liveLines(text, "StartupRing(").size,
+        )
+        assertEquals(
+            "the overflow line is handed the ring's own cap",
+            1,
+            liveLines(text, "StartupRing.overflowLine(StartupRing.msOf(dropped), startupRing.capacityMs)").size,
+        )
+        val app = source("src/main/java/com/whispereverywhere/WhisperEverywhereApp.kt").readText().replace("\r\n", "\n")
+        assertEquals(
+            "the app's answer is the ring's table over the one census memo",
+            1,
+            liveLines(app, "get() = StartupRing.capacityBytesFor(npuSocFamily?.vendor)").size,
+        )
+    }
+
     @Test
     fun theReadinessFlagIsSetOnceInOnOpenAndTheDrainLineIsEmittedBesideIt() {
         assertEquals("one writer for true, one for false-at-open, one for false-at-teardown", 1, count("engineReady = true"))

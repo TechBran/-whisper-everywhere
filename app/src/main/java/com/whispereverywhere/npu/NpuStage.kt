@@ -15,9 +15,11 @@ package com.whispereverywhere.npu
  * **The set is derived, never retyped.** It is the set `NpuDiagTest` used to re-derive from the
  * backend's `fallBackToCpuTier`/`fallBackAndRun` call sites (4.2 F5, folding 4.1 L1 m5), plus
  * [DISPATCH]. `NpuStageTest` now carries that derivation — over the decline sites on both sides of
- * the seam, the backend's own literals and each engine's [Refusal]s — and holds this enum equal to
- * it, in this declaration order; `NpuDiagTest` holds [NpuDiag.unavailable]'s KDoc equal to this
- * enum. A new stage, a renamed one or a retired one fails there by name instead of rotting here.
+ * the seam, the backend's own literals and each engine's [Refusal]s, once per engine (a Qualcomm
+ * session through `QnnAsrEngine`, a MediaTek one through `LiteRtAsrEngine`, P2-7) — and holds this
+ * enum equal to the two sessions together, each in this declaration order; `NpuDiagTest` holds
+ * [NpuDiag.unavailable]'s KDoc equal to this enum. A new stage, a renamed one or a retired one
+ * fails there by name instead of rotting here.
  */
 enum class NpuStage(val wire: String) {
     COMPANION("companion"),
@@ -30,10 +32,12 @@ enum class NpuStage(val wire: String) {
     SKEL("skel"),
 
     /**
-     * The LiteRT engine's prepare (P1b/P2): its MediaTek dispatch library, staged. **RESERVED** —
-     * no Qualcomm session produces it, and `NpuStageTest` says so until an engine does. It sits
-     * beside [SKEL] because the two are one stage of `load` for two vendors: the runtime's own
-     * staging, after every cheap refusal and before the expensive init.
+     * The LiteRT engine's prepare (`LiteRtAsrEngine.prepare`, P2-7): its MediaTek dispatch
+     * library, staged into `filesDir/litert_dispatch/`. Reserved at P1a for an engine that did not
+     * exist yet; a MediaTek session produces it now, and no Qualcomm session ever does —
+     * `NpuStageTest` holds both halves. It sits beside [SKEL] because the two are one stage of
+     * `load` for two vendors: the runtime's own staging, after every cheap refusal and before the
+     * expensive init.
      */
     DISPATCH("dispatch"),
 

@@ -239,10 +239,18 @@ class OnboardingLogicTest {
         // app-version causes) and the empty delivery (a device-group cause). "This install
         // can't fetch" would be FALSE for each — the F6 re-review's finding — so they render
         // the neutral copy whose leading claim is true for all of them.
+        // (P2-7, the P2b review's small 3) The empty delivery has two sentences since the
+        // MediaTek pair's untargeted modules — a targeted pair's device-group cause and an
+        // untargeted pair's "not delivered" — and both belong to this family.
         val undeliveredReasons = listOf(
             NpuPackFetch.failureReason(NpuPackFetch.ERROR_APP_UNAVAILABLE),
             NpuPackFetch.failureReason(NpuPackFetch.ERROR_PACK_UNAVAILABLE),
-            NpuPackFetch.emptyDeliveryRefusal(),
+            NpuPackFetch.emptyDeliveryRefusal(
+                NpuPackFetch.packsFor("npu-turbo", com.whispereverywhere.npu.NpuFleetCensus.familyById("8gen3")),
+            ),
+            NpuPackFetch.emptyDeliveryRefusal(
+                NpuPackFetch.packsFor("npu-turbo", com.whispereverywhere.npu.NpuFleetCensus.familyById("mt6989")),
+            ),
         )
         for (reason in undeliveredReasons) {
             assertTrue(
@@ -326,14 +334,23 @@ class OnboardingLogicTest {
                 OnboardingLogic.engineStateForFetch(NpuPackFetch.FetchState.Cancelled)
             ),
         )
-        assertTrue(
-            "and the empty delivery",
-            OnboardingLogic.showChooseDifferentModel(
-                OnboardingLogic.engineStateForFetch(
-                    NpuPackFetch.FetchState.Failed(NpuPackFetch.emptyDeliveryRefusal())
-                )
-            ),
-        )
+        for (family in listOf("8gen3", "mt6989")) {
+            assertTrue(
+                "and the empty delivery, targeted or not ($family)",
+                OnboardingLogic.showChooseDifferentModel(
+                    OnboardingLogic.engineStateForFetch(
+                        NpuPackFetch.FetchState.Failed(
+                            NpuPackFetch.emptyDeliveryRefusal(
+                                NpuPackFetch.packsFor(
+                                    "npu-turbo",
+                                    com.whispereverywhere.npu.NpuFleetCensus.familyById(family),
+                                ),
+                            ),
+                        )
+                    )
+                ),
+            )
+        }
         // No other state grows the escape — Working keeps its guard, Ready needs none, and
         // the mandatory gate is untouched either way.
         assertFalse(OnboardingLogic.showChooseDifferentModel(EngineState.Ready))
