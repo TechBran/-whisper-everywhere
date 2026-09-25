@@ -519,8 +519,8 @@ constexpr LiteRtHwAcceleratorSet kDecoderAccelerators = kLiteRtHwAcceleratorNpu 
 /// That run is ruled out structurally (kDecoderAccelerators says how); this catches the gross case.
 constexpr double kApuStepCeilingMs = 250.0;
 
-/// THE SELF-KV STRATEGIES, nativeInit's selfKvStrategy (P1b review, finding 4). Both stay until the
-/// device gate has timed them; the faster becomes the default in a later commit.
+/// THE SELF-KV STRATEGIES, nativeInit's selfKvStrategy (P1b review, finding 4). P1's device gate timed
+/// both; the copy is the default (kSelfKvDefault, below) and the re-bind stays as the measured alternative.
 ///   0 = TWO SETS RE-BOUND PER STEP. Each step reads one set and writes the other, and the sets swap
 ///       roles by re-binding the run arrays' handles. No byte moves - but it is not free: at the next
 ///       run the v2.1.1 dispatch kernel finds each of the 2 x 2L self-KV tensors bound to a different
@@ -532,6 +532,21 @@ constexpr double kApuStepCeilingMs = 250.0;
 ///       cache tensors the decoder wrote are copied back into set 0 under lock (~8 MB on turbo).
 constexpr int kSelfKvRebind = 0;
 constexpr int kSelfKvCopy = 1;
+
+/// THE DEFAULT IS THE COPY - chosen from P1's device gate on the Tab S10+ (the d49d88e probe, logs on the
+/// MS-02 under ~/.androidbuild/probe-logs/). Both runs passed: probe pass, no "Waiting for service" line,
+/// every utterance - the one after the re-arm too - equal to t8's ids with paired, monotonic timestamps,
+/// nsp=0.000, lp=-0.087 jfk / -0.114 canary, ent unmeasured, rung 0, EOT. The data:
+///   p1b2_litertasr_kv0 (two sets re-bound): probe 207.2 ms; init 3,554.9 ms; encode warm mean 1,725.4 ms
+///       (sd 14.6, n=5); step mean 32.5 ms (30.0-35.8, utt0 33.3); decode jfk 930-1,109 ms for 28 tokens;
+///       re-arm init 3,557.8 ms; the utterance after the re-arm 45.67 ms/step (a fresh init's first run).
+///   p1b2_litertasr_kv1 (one set, copy): probe 191.7 ms; init 2,752.3 ms; encode warm mean 1,718.2 ms
+///       (sd 5.0); step mean 30.0 ms (25.6-33.2, utt0 23.45); decode jfk 727-999 ms; re-arm init
+///       3,354.3 ms; after the re-arm 29.72 ms/step.
+/// The copy is faster and steadier, and the re-bind's first-run steps are its worst - after a fresh init
+/// every re-bound buffer meets the dispatch for the first time. 0 stays one argument away, measured.
+/// This value is what the session holds until nativeInit sets the caller's, and what callers pass.
+constexpr int kSelfKvDefault = kSelfKvCopy;
 
 /// THE STEPTIME BOUND: `npu-debug: steptime` is logged for the first kStepTimeLines positions of a
 /// segment's first rung and once more for the segment's last step - qnn_asr.cpp's
@@ -618,8 +633,8 @@ struct AsrState {
     int32_t langTokenLast = 0;
     /// Passed through to LiteRT's MediaTek options and INERT on 2.1.1 (buildOptionsLocked says why).
     int performanceMode = -1;
-    /// kSelfKvRebind or kSelfKvCopy: how the self-KV cache advances a step.
-    int selfKvStrategy = kSelfKvRebind;
+    /// kSelfKvCopy (the default) or kSelfKvRebind: how the self-KV cache advances a step.
+    int selfKvStrategy = kSelfKvDefault;
 
     // ---- the buffers. EVERY one is a managed buffer typed and sized by requirements and made
     // unstrided (createBufferLocked), and listed in `owned`, which is the only thing releaseLocked
@@ -1717,7 +1732,7 @@ void releaseLocked() {
     g.melBins = g.layers = g.heads = g.vocab = g.maskLen = 0;
     g.langTokenFirst = g.langTokenLast = 0;
     g.performanceMode = -1;
-    g.selfKvStrategy = kSelfKvRebind;
+    g.selfKvStrategy = kSelfKvDefault;
     g.encoded = false;
     g.initialised = false;
     g.epoch = 0;
@@ -1783,8 +1798,9 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(
               "0..3 (LiteRtMediatekNeuronAdapterPerformanceMode)";
     }
     if (err.empty() && selfKvStrategy != kSelfKvRebind && selfKvStrategy != kSelfKvCopy) {
-        err = "spec: selfKvStrategy is " + std::to_string(selfKvStrategy) + "; expected 0 (two self-KV sets " +
-              "re-bound per step) or 1 (one set, copied back per step)";
+        err = "spec: selfKvStrategy is " + std::to_string(selfKvStrategy) + "; expected 0 or 1 (" +
+              std::to_string(kSelfKvDefault) + " is the default; 1 = one self-KV set copied back per step, " +
+              "0 = two sets re-bound per step)";
     }
     if (err.empty() && socStamp.empty()) err = "spec: socStamp is empty; the family names the chip its bytecode is for";
     if (err.empty() && (wantMajor < 1 || wantMajor > 255)) {
@@ -1876,12 +1892,12 @@ Java_com_whispereverywhere_npu_LiteRtAsrNative_nativeInit(
     g.lastError.clear();
     LOGI("nativeInit OK - encoder '%s' (%zu in / %zu out, accelerators %s, restore %.0f ms), decoder '%s' "
          "(%zu in / %zu out, accelerators %s, restore %.0f ms), %zu buffers, APU check %.1f ms, "
-         "selfKvStrategy=%d (%s), perfmode=%d (inert on LiteRT 2.1.1 AOT)", kEncodeSignature,
+         "selfKvStrategy=%d (%s - %s), perfmode=%d (inert on LiteRT 2.1.1 AOT)", kEncodeSignature,
          g.enc.inNames.size(), g.enc.outNames.size(), accelName(g.enc.accelerators).c_str(), encMs,
          kDecodeSignature, g.dec.inNames.size(), g.dec.outNames.size(), accelName(g.dec.accelerators).c_str(),
          decMs, g.owned.size(), apuMs, g.selfKvStrategy,
          g.selfKvStrategy == kSelfKvCopy ? "one set, copied back per step" : "two sets, re-bound per step",
-         performanceMode);
+         g.selfKvStrategy == kSelfKvDefault ? "the default" : "the measured alternative", performanceMode);
     LOGDIAG("nativeInit: session armed with epoch %llu", (unsigned long long) g.epoch);
     return env->NewStringUTF("");
 }

@@ -44,9 +44,10 @@ import android.content.Intent
  *                  1 PreferFastSingleAnswer, 2 PreferSustainedSpeed, 3 PreferTurboBoost. INERT on LiteRT 2.1.1 with
  *                  the AOT pair: the dispatch never reads it (its bytecode load hard-codes PREFER_SUSTAINED_SPEED),
  *                  so no comparison between values is measurable on this runtime
- *   --ei kvstrategy litertasr: nativeInit's selfKvStrategy - 0 = two self-KV sets re-bound per step (the dispatch
- *                  re-registers each re-bound buffer), 1 = one set and a native copy of the 8 cache tensors per
- *                  step (default 0). The device gate runs both
+ *   --ei kvstrategy litertasr: nativeInit's selfKvStrategy - 1 = one self-KV set and a native copy of the 8 cache
+ *                  tensors per step (default: the engine's default, chosen at P1's gate, p1b2_litertasr_kv1),
+ *                  0 = two sets re-bound per step (the dispatch re-registers each re-bound buffer; the measured
+ *                  alternative)
  *   --ei wantmajor litertasr: the Neuron major the family expects (default 8)
  *   --es socstamp  litertasr: the chip the files' LiteRtStamp must name (default mt6989)
  *   --ez diag      litertasr: nativeSetDiag - the npu-debug lines incl. `steptime` for each segment's first four
@@ -154,7 +155,7 @@ data class ProbeArgs(
             beginSuppress = intent?.getStringExtra("beginsuppress"),
             topk = intent?.getIntExtra("topk", 0) ?: 0,
             perfMode = intent?.getIntExtra("perfmode", -1) ?: -1,
-            kvStrategy = intent?.getIntExtra("kvstrategy", 0) ?: 0,
+            kvStrategy = intent?.getIntExtra("kvstrategy", 1) ?: 1,
             wantMajor = intent?.getIntExtra("wantmajor", 8) ?: 8,
             socStamp = intent?.getStringExtra("socstamp") ?: "mt6989",
             diag = intent?.getBooleanExtra("diag", true) ?: true,

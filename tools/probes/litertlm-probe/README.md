@@ -97,18 +97,21 @@ Run it with the AOT pair and the two mels already in `files/` (push recipe above
 
 ```
 F=/data/user/0/com.whispereverywhere.probe/files
-python drive.py --serial R52XC00LL9K --pid --tag p1b_litertasr_rebind mode=litertasr \
+python drive.py --serial R52XC00LL9K --pid --tag p1b_litertasr_copy mode=litertasr \
     model=$F/turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite \
     dec=$F/turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite mels=jfk_mel128.bin,canary_mel128.bin utts=3
-python drive.py ... --tag p1b_litertasr_copy ... kvstrategy=1      # the one-set arm: a native copy per step
+python drive.py ... --tag p1b_litertasr_rebind ... kvstrategy=0    # the measured alternative: two sets re-bound
 ```
 
-The two self-KV strategies are the plan's "per-step time with one and with two self-KV sets", and both runs are
-the gate: `kvstrategy=0` (default) swaps two sets by RE-BINDING — no byte moves, but the v2.1.1 dispatch
+The two self-KV strategies are the plan's "per-step time with one and with two self-KV sets". The gate ran both
+(`p1b2_litertasr_kv1` / `_kv0`, both passing) and **`kvstrategy=1` is the default** — the engine's, and this
+probe's: it keeps one input set and copies the step's 8 cache tensors (~8 MB) back into it natively, with no
+binding ever changed — step mean 30.0 ms (25.6–33.2), init 2,752 ms, 29.7 ms/step after the re-arm.
+`kvstrategy=0`, the measured alternative, swaps two sets by RE-BINDING — no byte moves, but the v2.1.1 dispatch
 re-registers each of the 16 re-bound buffers at the next run, a cost inside the run's time (so the JSON's
-`cache_copy_ms_mean` is `null`, not a 0.0 it never was); `kvstrategy=1` keeps one input set and copies the step's
-8 cache tensors (~8 MB) back into it natively, with no binding ever changed. Compare `step_ms_mean`, which includes
-either advance; the faster one becomes the default in a later commit.
+`cache_copy_ms_mean` is `null`, not a 0.0 it never was) — step mean 32.5 ms (30.0–35.8), init 3,555 ms, and
+45.7 ms/step after the re-arm, where every re-bound buffer meets the dispatch for the first time. Compare
+`step_ms_mean`, which includes either advance.
 
 **`perfmode` is not a comparison this runtime can make.** On LiteRT 2.1.1 with the AOT pair the MediaTek dispatch
 never reads the performance mode: it hands its options to the adapter loader (which reads only the SDK version
@@ -124,7 +127,7 @@ APU check: the decoder's first step on zeroed caches, refused over 250 ms) → p
 `nativeRelease` → with `rearm=true` (default) a second `nativeInit` + one window + release: the re-arm after a trim,
 which pays the restores and must not walk the adapter again. The result JSON is checkpointed after every
 utterance, and a non-finite number (the stats' documented NaN for "not measured") is written as `null` with a
-`litertasr|nonfinite|field=…` line. Extras: `kvstrategy` (0 | 1), `perfmode` (-1 default | 0..3, inert), `wantmajor` (8), `socstamp`
+`litertasr|nonfinite|field=…` line. Extras: `kvstrategy` (1 default | 0), `perfmode` (-1 default | 0..3, inert), `wantmajor` (8), `socstamp`
 (mt6989), `diag` (true: native `npu-debug: steptime` lines for each segment's first four steps and its last),
 `lang` (en | auto).
 

@@ -41,12 +41,15 @@ import java.security.MessageDigest
  * lines on WE-DIAG (diag=true) time each segment's first four steps and its last; the driver line and the APU
  * check are native's `apu:` lines there too; drive.py's filter keeps them all.
  *
- * "Per-step time with one and with two self-KV sets" is `kvstrategy` (nativeInit's selfKvStrategy), run twice:
- *  - `kvstrategy=0` (default): two sets swapping roles by RE-BINDING. No byte moves, and it is NOT free - the
- *    v2.1.1 dispatch re-registers each re-bound buffer (16 per step) at the next run, inside the run's time.
- *    Nothing in Kotlin can separate that cost, so it is reported as what it is, never as a 0.0 copy.
- *  - `kvstrategy=1`: one input set and a native copy of the step's 8 cache tensors (~8 MB) back into it; no
- *    binding ever changes. The copy's own time is native's decode line (`kv copy N`).
+ * "Per-step time with one and with two self-KV sets" is `kvstrategy` (nativeInit's selfKvStrategy):
+ *  - `kvstrategy=1` (default - the engine's, chosen at P1's device gate: p1b2_litertasr_kv1, step mean 30.0 ms,
+ *    init 2,752 ms, 29.7 ms/step after the re-arm): one input set and a native copy of the step's 8 cache
+ *    tensors (~8 MB) back into it; no binding ever changes. The copy's own time is native's decode line
+ *    (`kv copy N ms xC`).
+ *  - `kvstrategy=0`, the measured alternative (p1b2_litertasr_kv0: 32.5 ms, 3,555 ms, 45.7 ms/step after the
+ *    re-arm): two sets swapping roles by RE-BINDING. No byte moves, and it is NOT free - the v2.1.1 dispatch
+ *    re-registers each re-bound buffer (16 per step) at the next run, inside the run's time. Nothing in Kotlin
+ *    can separate that cost, so it is reported as what it is, never as a 0.0 copy.
  * `step_ms_mean` (decode wall time / steps) includes the run, the io and either advance, so it is the number to
  * compare between the two runs. `mode=e2eqc` on the same pair is the Kotlin-API arm (a Kotlin copy per step).
  *

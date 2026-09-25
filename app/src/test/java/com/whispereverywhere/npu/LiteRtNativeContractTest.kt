@@ -345,11 +345,12 @@ class LiteRtNativeContractTest {
      * sizes may differ and the buffer takes the larger, the join's own rule. Each self-KV set plays both
      * roles only through the join of its `_in` / `_out` requirements.
      *
-     * The advance is one switch with two arms, both kept until the device gate has timed them:
-     * `kSelfKvRebind` swaps the two sets' roles - no byte moves, but it is NOT the free pointer swap the
+     * The advance is one switch with two arms, both kept: `kSelfKvCopy` - THE DEFAULT since P1's device
+     * gate timed both (p1b2_litertasr_kv1 against _kv0: faster and steadier) - keeps set 0 the input for
+     * good and copies the step's output back into it under lock; `kSelfKvRebind`, the measured
+     * alternative, swaps the two sets' roles - no byte moves, but it is NOT the free pointer swap the
      * code once claimed, because the v2.1.1 dispatch kernel re-registers every re-bound buffer at the
-     * next run - and `kSelfKvCopy` keeps set 0 the input for good and copies the step's output back into
-     * it under lock. The loop reaches either only through `advanceSelfKvLocked`, so the two cannot mix.
+     * next run. The loop reaches either only through `advanceSelfKvLocked`, so the two cannot mix.
      */
     @Test
     fun theSharedBuffersAreJoinedAndTheSelfKvCacheAdvancesByTheStrategyInitNames() {
@@ -384,6 +385,17 @@ class LiteRtNativeContractTest {
             "the two strategies are the two literals nativeInit accepts",
             liveLines(cpp, "constexpr int kSelfKvRebind = 0;").size == 1 &&
                 liveLines(cpp, "constexpr int kSelfKvCopy = 1;").size == 1
+        )
+        assertTrue(
+            "THE DEFAULT IS THE COPY, chosen at P1's device gate: kSelfKvDefault names it once, the session starts " +
+                "and resets to it, the Kotlin KDoc tells callers to pass it, and the choice's data (both runs, by tag) " +
+                "sits at the declaration",
+            liveLines(cpp, "constexpr int kSelfKvDefault = kSelfKvCopy;").size == 1 &&
+                liveLines(cpp, "int selfKvStrategy = kSelfKvDefault;").size == 1 &&
+                liveLines(functionBody("void releaseLocked() {"), "g.selfKvStrategy = kSelfKvDefault;").size == 1 &&
+                seam.contains("@param selfKvStrategy `1` — THE DEFAULT, chosen at P1's device gate") &&
+                cpp.contains("///   p1b2_litertasr_kv0 (two sets re-bound): probe 207.2 ms; init 3,554.9 ms;") &&
+                cpp.contains("///   p1b2_litertasr_kv1 (one set, copy): probe 191.7 ms; init 2,752.3 ms;")
         )
         assertTrue(
             "the advance is the one switch: strategy 1 copies, strategy 0 re-binds",

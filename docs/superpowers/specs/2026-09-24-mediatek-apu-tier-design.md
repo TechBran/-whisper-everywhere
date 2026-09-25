@@ -222,7 +222,8 @@ moves, but the v2.1.1 dispatch kernel re-registers every re-bound buffer at the 
 (`dispatch_delegate_kernel.cc`), 16 per step, so it is not the free pointer swap of the QNN engine's ping-pong
 (`bindSelfKvLocked`, `qnn_asr.cpp:1883-1890`); and `1`, one input set with the step's 8 cache tensors (~8 MB)
 copied back into it natively and no binding ever changed. The probe's 22.8 ms included one Kotlin copy per step;
-the faster strategy becomes the default.
+the faster strategy becomes the default — and P1's gate chose `1`, the copy (runs `p1b2_litertasr_kv1` / `_kv0`,
+sheet §6): faster and steadier, with `0` kept as the measured alternative (`kSelfKvDefault` in `litert_asr.cpp`).
 Options: the encoder on the NPU alone (it is one `DISPATCH_OP`; a refusal is an error); the decoder on NPU + CPU,
 because its two embedding lookups and their guards stay on the CPU and 2.1.1's `LiteRtCreateCompiledModel`
 refuses a partly delegated model without CPU in the set ("Some ops are not accelerated") — the Kotlin API had

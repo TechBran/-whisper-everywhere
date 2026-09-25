@@ -30,11 +30,15 @@ package com.whispereverywhere.npu
  *    whatever is passed, and "PreferSustainedSpeed vs default" cannot be measured on this runtime.
  *    Kept so P2 can pin a value for a runtime that reads it; the init line says `(inert on LiteRT
  *    2.1.1 AOT)` beside it, and no encode or decode line reports it.
- *  - **The self-KV strategy.** [nativeInit] takes `selfKvStrategy`, how the decode loop advances the
- *    cache after each step: `0` swaps two buffer sets by re-binding (no byte moves, but the dispatch
- *    re-registers every re-bound buffer on the next run — 16 per step on turbo), `1` keeps one input
- *    set and copies the step's output back into it (~8 MB per step, no binding ever changes). Both
- *    exist so P1's device gate can time them; the faster one becomes the default.
+ *  - **The self-KV strategy — pass `1`, the default.** [nativeInit] takes `selfKvStrategy`, how the
+ *    decode loop advances the cache after each step: `1` keeps one input set and copies the step's
+ *    output back into it (~8 MB per step, no binding ever changes); `0` swaps two buffer sets by
+ *    re-binding (no byte moves, but the dispatch re-registers every re-bound buffer on the next run —
+ *    16 per step on turbo). P1's device gate timed both on the Tab S10+ and chose `1` (runs
+ *    `p1b2_litertasr_kv1` / `_kv0`): step mean 30.0 ms against 32.5, init 2,752 ms against 3,555,
+ *    29.7 ms/step after a re-arm against 45.7 — faster and steadier, where the re-bind's first-run
+ *    steps are its worst. `0` stays as the measured alternative; the full data is at the default's
+ *    declaration, `kSelfKvDefault` in `litert_asr.cpp`.
  *  - **Two accelerator sets.** The encoder is created on the NPU alone; the decoder on NPU + CPU,
  *    because its two embedding lookups stay on the CPU and LiteRT 2.1.1 refuses a partly delegated
  *    model without CPU in the set. (Kotlin's `CompiledModel` adds CPU to a lone NPU silently, which
@@ -154,8 +158,9 @@ object LiteRtAsrNative {
      * @param performanceMode `-1` (LiteRT's default) or `0..3`, see the object KDoc. **INERT on LiteRT
      *        2.1.1 with AOT files**: validated and passed through, never read by the dispatch, whose
      *        bytecode load hard-codes `NEURON_PREFER_SUSTAINED_SPEED`.
-     * @param selfKvStrategy `0` (two self-KV sets re-bound per step) or `1` (one set, the step's
-     *        output copied back into it), see the object KDoc.
+     * @param selfKvStrategy `1` — THE DEFAULT, chosen at P1's device gate: one self-KV set, the step's
+     *        output copied back into it — or `0`, the measured alternative: two sets re-bound per step.
+     *        See the object KDoc.
      * @return `""` on success, else `"init: <stage>: <detail>"`.
      */
     external fun nativeInit(
@@ -201,9 +206,9 @@ object LiteRtAsrNative {
      * `-infinity` before the argmax, timestamps emitted (and kept out of the text-only entropy window
      * and out of avg_logprob), the temperature ladder re-decoding against the same encode, positions
      * `0..maxPositions-2` executing (the 199-slot window), the self-KV cache advanced after every step
-     * by [nativeInit]'s `selfKvStrategy` — the two sets swapping roles by re-binding (`0`), or set 0
-     * staying the input and the step's output copied back into it (`1`) — both sets zeroed at every
-     * rung's start.
+     * by [nativeInit]'s `selfKvStrategy` — set 0 staying the input and the step's output copied back
+     * into it (`1`, the default), or the two sets swapping roles by re-binding (`0`) — both sets zeroed
+     * at every rung's start.
      *
      * What differs from the QNN engine is below the contract: p(nospeech) is always computed (scale
      * 1.0, never "unreadable"), so `NO_SPEECH_PROB` is never `-1` on this engine; every step's raw
