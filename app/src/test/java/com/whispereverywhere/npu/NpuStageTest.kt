@@ -172,6 +172,64 @@ class NpuStageTest {
     }
 
     /**
+     * ONE HOME PER STAGE WORD, across the seam (P1a review). The derivation above ends in
+     * `.distinct()` — first occurrence wins — so on its own it cannot see a stage produced on BOTH
+     * sides: a `fallBackToCpuTier("skel", …)` added to the backend's load would merge with the
+     * engine's SKEL refusal and pass. At 4a7c126 the skel pin held `"skel",` to exactly one live
+     * line ("two spellings would be two stories"), and this is that guarantee for every stage the
+     * seam split: the words the backend spells as literals and the words any engine member refuses
+     * with are DISJOINT — `skel`, `init`, `quant` and `encode` live on the engine side only, and
+     * the rest on the backend's.
+     */
+    @Test
+    fun theBackendsLiteralStagesAndTheEnginesRefusalStagesAreDisjoint() {
+        val literals = Regex("fallBack(?:ToCpuTier|AndRun)\\(\\s*\"([a-z-]+)\"")
+            .findAll(live(backend)).map { it.groupValues[1] }.toSet()
+        val engineWords = refusalSite.findAll(live(qnnEngine))
+            .map { NpuStage.valueOf(it.groupValues[1]).wire }.toSet()
+        assertTrue(
+            "both sides decline at something (backend $literals, engine $engineWords)",
+            literals.isNotEmpty() && engineWords.isNotEmpty(),
+        )
+        assertEquals(
+            "no stage word is produced on both sides of the seam — a word spelled as a literal in " +
+                "the backend AND refused with by the engine is one stage telling two stories, and " +
+                "the derivation's distinct() would merge them silently. Shared: " +
+                "${literals intersect engineWords}",
+            emptySet<String>(),
+            literals intersect engineWords,
+        )
+        assertEquals(
+            "the engine's side is exactly the four stages the seam moved there",
+            setOf("skel", "init", "quant", "encode"),
+            engineWords,
+        )
+    }
+
+    /**
+     * `"${refusal.stage}"` IS THE WIRE WORD (P1a review). `Enum.toString()` defaults to `name`, so
+     * a template that interpolated the stage itself — or a [Refusal] logged whole — would print
+     * `SKEL` beside every `stage=skel` a device has ever printed. The override closes that; `.name`
+     * stays the one spelling of the identifier, and the funnel pin below keeps it off the backend.
+     */
+    @Test
+    fun aStageRendersAsItsWireWordWhereverItIsInterpolated() {
+        NpuStage.entries.forEach { stage ->
+            assertEquals("`\$stage` for ${stage.name} is its wire word", stage.wire, "$stage")
+        }
+        assertEquals(
+            "and a Refusal rendered whole carries the word too",
+            "Refusal(stage=skel, detail=libQnnHtpV75Skel.so could not be staged)",
+            Refusal(NpuStage.SKEL, "libQnnHtpV75Skel.so could not be staged").toString(),
+        )
+        assertEquals(
+            "the override is declared once, as the wire word itself",
+            1,
+            liveLineCount(stages, "override fun toString(): String = wire"),
+        )
+    }
+
+    /**
      * THE DERIVATION'S OWN COMPLETENESS (P1a): it can only see the engine refusals it reads, so
      * every `Refusal(` in the QNN engine must sit inside one of the three members the backend
      * routes — a refusal built in a helper, or in a member the backend never checks, would be a

@@ -148,8 +148,18 @@ class NpuAsrEngineSeamTest {
         )
     }
 
+    /**
+     * ENCODER FIRST, and it is a fact about WHERE the two paths come from, so it is checked there
+     * (P1a review: the getter round-trip that stood here tested only that a data class stores its
+     * arguments). The declaration names the fields encoder first; the backend fills them from
+     * `load`'s two paths by name; and those two paths are the catalog's delivery names, as the
+     * model manager resolves them — the tier row's own `fileName` for the first, its
+     * `pairedArtifact` for the second. So the engine's `encoderPath` is the encoder only if, for
+     * every tier the spec table routes, the row's primary file IS the encoder and its paired
+     * artifact IS the decoder — executed here against the catalog, not assumed.
+     */
     @Test
-    fun theFilesAndDirsAreNamedFieldsEncoderFirst() {
+    fun theEncoderPathIsTheCatalogsEncoderAndTheDecoderPathItsPairedDecoder() {
         assertEquals(
             1,
             liveLines(seamFile, "data class NpuEngineFiles(val encoderPath: String, val decoderPath: String)").size,
@@ -158,11 +168,55 @@ class NpuAsrEngineSeamTest {
             1,
             liveLines(seamFile, "data class NpuEngineDirs(val libDir: String, val filesDir: String)").size,
         )
-        val files = NpuEngineFiles(encoderPath = "/models/enc.bin", decoderPath = "/models/dec.bin")
-        assertEquals("/models/enc.bin", files.encoderPath)
-        assertEquals("/models/dec.bin", files.decoderPath)
-        val dirs = NpuEngineDirs(libDir = "/data/app/lib/arm64", filesDir = "/data/user/0/files")
-        assertEquals("/data/app/lib/arm64", dirs.libDir)
-        assertEquals("/data/user/0/files", dirs.filesDir)
+        val backend = source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
+        assertEquals(
+            "the backend's one NpuEngineFiles names load's first path the encoder and its second the " +
+                "decoder, by field name — a positional call could swap them and still compile",
+            1,
+            liveLines(backend, "NpuEngineFiles(encoderPath = modelPath, decoderPath = companionPath)").size,
+        )
+        assertEquals(
+            "load's second path is the ModelPathProvider's companion — the one-path form resolves it",
+            1,
+            liveLines(backend, "override fun load(modelPath: String): Long = load(modelPath, paths.companionModelPath())").size,
+        )
+        val manager = collapsed(source("src/main/java/com/whispereverywhere/model/WhisperModelManager.kt"))
+        assertTrue(
+            "the first path is the installed row's own fileName (installedModelPath -> fileFor)",
+            manager.contains("private fun fileFor(model: WhisperModel): File = File(modelsDir(), model.fileName)") &&
+                manager.contains(
+                    "override fun installedModelPath(): String? { val model = installedModel() ?: " +
+                        "return null return fileFor(model).absolutePath }"
+                ),
+        )
+        assertTrue(
+            "…and the second the SAME row's pairedArtifact (companionModelPath)",
+            manager.contains(
+                "override fun companionModelPath(): String? { val model = installedModel() ?: return " +
+                    "null val paired = model.pairedArtifact ?: return null return File(modelsDir(), " +
+                    "paired.fileName).absolutePath }"
+            ),
+        )
+        // Every catalog row the spec table routes — derived, so a third npu-class row is checked the
+        // day it lands rather than the day someone remembers this list.
+        val routed = com.whispereverywhere.model.WhisperCatalog.entries.filter {
+            com.whispereverywhere.npu.NpuModelSpec.forTier(it.id) != null
+        }
+        assertTrue(
+            "the routed rows include both shipping npu-class tiers (got ${routed.map { it.id }})",
+            routed.map { it.id }.containsAll(listOf("npu", "npu-turbo")),
+        )
+        routed.forEach { row ->
+            val primary = row.fileName
+            val paired = row.pairedArtifact?.fileName
+            assertTrue(
+                "`${row.id}`'s primary file is its ENCODER, so it is what reaches encoderPath: $primary",
+                primary.contains("encoder") && !primary.contains("decoder"),
+            )
+            assertTrue(
+                "…and its paired artifact is its DECODER, so it is what reaches decoderPath: $paired",
+                paired != null && paired.contains("decoder") && !paired.contains("encoder"),
+            )
+        }
     }
 }

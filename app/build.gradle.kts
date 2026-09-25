@@ -604,6 +604,13 @@ tasks.withType<Test>().configureEach {
         // stale evidence.
         "src/main/java/com/whispereverywhere/transcription/NpuBackendSelector.kt",
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
+        // (P1a review) TranscriptionEngine.kt — overdue, by this list's stated rule. Three pins read
+        // it as text: NpuBackendWiringTest's whole-file, comment-inclusive zero-count (the CPU tier
+        // never names HallucinationPolicy), SpeakerWiringPinTest's publishesGeometry defaults and
+        // NativeSegmentStatsSeamTest's declarations. The first is exactly the shape a comment-only
+        // edit breaks while compiling to identical bytes, so without this entry the one edit that
+        // pin exists to catch is the one that leaves :app:testDebugUnitTest UP-TO-DATE.
+        "src/main/java/com/whispereverywhere/transcription/TranscriptionEngine.kt",
         // (P1a, the engine seam) The seam's files, by this list's stated rule — membership follows
         // what the tests READ. NpuStageTest reads NpuStage.kt as text for the spelling rule the
         // derivation cannot see (each wire word a literal beside its constant, `Refusal` the

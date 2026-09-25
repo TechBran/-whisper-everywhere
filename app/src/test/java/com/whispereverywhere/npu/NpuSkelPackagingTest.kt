@@ -601,6 +601,23 @@ class NpuSkelPackagingTest {
             1,
             liveLineCount(engine, "NpuStage.SKEL"),
         )
+        // RESTORED AND EXTENDED (P1a review): at 4a7c126 this pin held `"skel",` to exactly one
+        // live line of load — the whole of the stage's spelling. The count of NpuStage.SKEL above
+        // is the engine's half only, and NpuStageTest's derivation merges duplicates, so a
+        // `fallBackToCpuTier("skel", …)` added back to the backend passed both. The word's one
+        // home is NpuStage.kt's `SKEL("skel"),` (NpuStageTest pins that line); a quoted `"skel"`
+        // anywhere in the backend or the engine is the second story.
+        assertEquals(
+            "the quoted stage word `\"skel\"` appears on NO live line of the backend — the stage is " +
+                "the engine's now, spelled NpuStage.SKEL",
+            0,
+            liveLineCount(backend, "\"skel\""),
+        )
+        assertEquals(
+            "…nor of the engine, which names the stage by its constant",
+            0,
+            liveLineCount(engine, "\"skel\""),
+        )
         assertEquals(
             "the backend routes the prepare refusal through the one funnel, printing its wire word",
             1,

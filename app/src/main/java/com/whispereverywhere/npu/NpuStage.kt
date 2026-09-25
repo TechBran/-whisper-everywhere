@@ -51,6 +51,16 @@ enum class NpuStage(val wire: String) {
     ENCODE("encode"),
     LANG("lang"),
     DECODE("decode"),
+    ;
+
+    /**
+     * The wire word — never the identifier (P1a review). `Enum.toString()` is `name` by default,
+     * so a template that interpolated the stage itself — `"${refusal.stage}"`, or a [Refusal]
+     * logged whole — would print `SKEL` where every device prints `skel`, and nothing about such a
+     * line would look wrong in review. Overridden, the only spelling left that yields the
+     * identifier is `.name`, which `NpuStageTest` holds off the backend's live lines.
+     */
+    override fun toString(): String = wire
 }
 
 /**

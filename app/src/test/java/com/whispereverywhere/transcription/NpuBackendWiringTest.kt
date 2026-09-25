@@ -1195,5 +1195,16 @@ class NpuBackendWiringTest {
         // CPU tier untouched: whisper.cpp's backend knows nothing of the policy.
         val cpu = read("src/main/java/com/whispereverywhere/transcription/TranscriptionEngine.kt")
         assertEquals(0, count(cpu, "HallucinationPolicy"))
+        // …and that zero-count is whole-file and comment-inclusive, so the file must be an input of
+        // the test task (P1a review): a comment naming the policy compiles to identical bytes, and
+        // without the entry it would never re-run this line.
+        assertEquals(
+            "app/build.gradle.kts must list TranscriptionEngine.kt among sourcePinnedInputs",
+            1,
+            liveOffsets(
+                read("build.gradle.kts"),
+                "\"src/main/java/com/whispereverywhere/transcription/TranscriptionEngine.kt\",",
+            ).size,
+        )
     }
 }
