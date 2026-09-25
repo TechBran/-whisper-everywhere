@@ -51,7 +51,6 @@ import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
 import com.whispereverywhere.ui.theme.Primary
 import com.whispereverywhere.ui.theme.Success
 import com.whispereverywhere.ui.theme.Warning
-import com.whispereverywhere.util.formatBytes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -872,9 +871,10 @@ private fun EnginesStep(
     // for the step in a remember — it reads Play's delivery state and the disk — and the answer
     // does not depend on the tier pick, so the choose phase may quote it too.
     val voiceClause = remember { vm.voiceSourceClause() }
-    // (P3a, the MediaTek APU tier) THE DEVICE'S CENSUS FAMILY: the choose phase's cards are
-    // ModelTierCopy.forIdOn(id, family) — a MediaTek family reads its own turbo card, with no
-    // speed claim, and every gated card's badge states the family's pair. The memo is a pure
+    // (P3a, the MediaTek APU tier) THE DEVICE'S CENSUS FAMILY, for both phases: the choose phase's
+    // cards are ModelTierCopy.forIdOn(id, family) — a MediaTek family reads its own turbo card,
+    // with no speed claim, and every gated card's badge states the family's pair — and the
+    // download phase's size line is the family's pair (OnboardingLogic.speechModelSubtitle). The memo is a pure
     // table lookup, Main-safe (the refresh sentence reads it the same way), so a remember and not
     // a producer: a card must never render a frame of another vendor's claim while a producer is
     // in flight.
@@ -1060,7 +1060,9 @@ private fun EnginesStep(
         Spacer(Modifier.height(16.dp))
         EngineRow(
             title = "Speech model — ${chosen.displayName}",
-            subtitle = "Transcribes your dictation on-device (${formatBytes(chosen.approxBytes)})",
+            // (P3a) The family's pair for a gated tier ("about 1.9 GB" on a Tab S10+, where the
+            // catalog's figure is the 8gen3 pair), the catalog's exact file otherwise.
+            subtitle = OnboardingLogic.speechModelSubtitle(chosen, npuFamily),
             state = speech,
             onRetry = { vm.ensureSpeech() },
         )

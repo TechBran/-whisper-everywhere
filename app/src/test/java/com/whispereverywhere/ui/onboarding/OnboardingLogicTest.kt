@@ -3,9 +3,12 @@ package com.whispereverywhere.ui.onboarding
 import com.whispereverywhere.data.local.PreferencesManager
 import com.whispereverywhere.model.ModelTierCopy
 import com.whispereverywhere.model.WhisperCatalog
+import com.whispereverywhere.npu.NpuFleetCensus
 import com.whispereverywhere.npu.NpuPackFetch
+import com.whispereverywhere.npu.NpuRefreshNotice
 import com.whispereverywhere.ui.onboarding.OnboardingLogic.Step
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
+import com.whispereverywhere.util.formatBytes
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -1304,5 +1307,86 @@ class OnboardingLogicTest {
                 assertFalse("<<$s>> calls the service required", s.lowercase().contains("required"))
             }
         }
+    }
+
+    // ------------------------------------------------ P3a: the speech model's size line, per family
+
+    /**
+     * THE DOWNLOAD PHASE'S SIZE LINE STATES THE FAMILY'S PAIR (P3a; design §2.8). It read the
+     * CATALOG's figure on every device — the 8gen3 pair, "982 MB", on a Tab S10+ whose pair is
+     * 1,887,468,672 B. A gated tier on a census family now states that family's own pair (the
+     * card badge's derivation, `ModelTierCopy.familyPairBytes`), approximately, by the refresh
+     * notice's rounding carried up to gigabytes: for the MediaTek row the pair IS the download —
+     * no vendor zip — and it reads "about 1.9 GB". Every other tier keeps its catalog figure.
+     */
+    @Test fun theSpeechModelLineStatesTheFamilysPairOnAGatedTierAndTheCatalogFigureOtherwise() {
+        val turbo = WhisperCatalog.byId("npu-turbo")!!
+        val npu = WhisperCatalog.byId("npu")!!
+        val small = WhisperCatalog.byId("small-q8")!!
+        val mt6989 = NpuFleetCensus.familyById("mt6989")!!
+        assertEquals(
+            "the MediaTek line, exactly: the mt6989 pair, 1,302,606,488 + 584,862,184 B",
+            "Transcribes your dictation on-device (about 1.9 GB)",
+            OnboardingLogic.speechModelSubtitle(turbo, mt6989),
+        )
+        assertEquals(1_887_468_672L, ModelTierCopy.familyPairBytes(mt6989, "npu-turbo"))
+        // A Qualcomm family's own pair, by the same rounding.
+        assertEquals(
+            "Transcribes your dictation on-device (about 982 MB)",
+            OnboardingLogic.speechModelSubtitle(turbo, NpuFleetCensus.familyById("8gen3")),
+        )
+        assertEquals("about 1 GB", OnboardingLogic.speechModelSize(turbo, NpuFleetCensus.familyById("7gen4")))
+        assertEquals("about 976 MB", OnboardingLogic.speechModelSize(turbo, NpuFleetCensus.familyById("8gen1")))
+        assertEquals("about 338 MB", OnboardingLogic.speechModelSize(npu, NpuFleetCensus.familyById("8gen3")))
+        // No census answer: the catalog's figure, as before P3a — a CPU rung's exact file on any
+        // device, an off-census device, and a tier the family has no row for (mt6989 has no npu).
+        assertEquals("Transcribes your dictation on-device (264.5 MB)", OnboardingLogic.speechModelSubtitle(small, mt6989))
+        assertEquals("Transcribes your dictation on-device (264.5 MB)", OnboardingLogic.speechModelSubtitle(small, null))
+        assertEquals(formatBytes(turbo.approxBytes), OnboardingLogic.speechModelSize(turbo, null))
+        assertEquals(formatBytes(npu.approxBytes), OnboardingLogic.speechModelSize(npu, mt6989))
+        // The rounding is the refresh notice's (SI MB, nearest) — its own example — carried to
+        // one decimal of an SI gigabyte from a thousand megabytes up, and never "1.0".
+        assertEquals("about 824 MB", OnboardingLogic.approxSize(823_721_812L))
+        assertEquals(824L, NpuRefreshNotice.downloadMb(823_721_812L))
+        assertEquals("about 999 MB", OnboardingLogic.approxSize(999_499_999L))
+        assertEquals("about 1 GB", OnboardingLogic.approxSize(999_500_000L))
+        assertEquals("about 1.9 GB", OnboardingLogic.approxSize(1_887_468_672L))
+        assertEquals("about 2 GB", OnboardingLogic.approxSize(1_950_000_000L))
+        // The claim rules over every line a census family can read: a size, no speed, no device.
+        for (family in NpuFleetCensus.families + listOf(null)) {
+            for (model in WhisperCatalog.entries.filter { !it.retired }) {
+                val line = OnboardingLogic.speechModelSubtitle(model, family).lowercase()
+                listOf("fast", "quick", "instant", "real-time", "phone", "tablet").forEach {
+                    assertFalse("${family?.id}/${model.id}: <<$line>> says <<$it>>", line.contains(it))
+                }
+            }
+        }
+    }
+
+    @Test fun theDownloadPhaseRendersTheSpeechModelLineFromTheDevicesFamily() {
+        val flow = flowSource()
+        assertEquals(
+            "the engine row's subtitle is the pure line, handed the device's family memo",
+            1,
+            flow.lines().count { it.trim() == "subtitle = OnboardingLogic.speechModelSubtitle(chosen, npuFamily)," },
+        )
+        assertEquals(
+            "and the catalog-only spelling is gone — it told a Tab S10+ the 8gen3 pair's size",
+            0,
+            flow.split("formatBytes(chosen.approxBytes)").size - 1,
+        )
+    }
+
+    /** `OnboardingFlowScreen.kt`, LF-normalised — a declared input of the test task. */
+    private fun flowSource(): String {
+        val relative = "src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt"
+        var dir: java.io.File? = java.io.File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(java.io.File(dir, relative), java.io.File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate.readText().replace("\r\n", "\n")
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
     }
 }
