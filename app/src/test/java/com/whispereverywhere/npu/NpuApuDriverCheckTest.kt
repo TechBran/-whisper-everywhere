@@ -425,6 +425,33 @@ class NpuApuDriverCheckTest {
         assertEquals(listOf("mark", "walk", "clear", "mark", "walk", "record"), store.writes)
     }
 
+    /**
+     * THE MARKER IS WRITTEN WITH `commit()` (the P2c review, a later item). The crash-loop guard is
+     * worthless without it: `apply()` queues the write, and the native crash the marker exists to
+     * catch kills the process before a queued write lands — the next launch would find no marker
+     * and walk into the same crash, forever. `PreferencesManager.kt` is a declared input, so an
+     * edit to `.apply()` re-runs this.
+     */
+    @Test
+    fun theInFlightMarkerIsWrittenWithCommitNeverApply() {
+        val prefs = read("src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt")
+        assertEquals(
+            "the marker is written by commit() — synchronous, on disk BEFORE the walk; with apply() " +
+                "a crash in the walk leaves no marker, and the crash-loop guard is worthless",
+            1,
+            liveLineCount(prefs, "deviceLocal.edit().putString(KEY_NPU_APU_PROBE_IN_FLIGHT, marker).commit()"),
+        )
+        for (writer in listOf(
+            "override fun markNpuApuProbeInFlight(marker: String) {",
+            "override fun recordNpuApuVerdict(verdict: NpuApuVerdict) {",
+            "override fun clearNpuApuProbeInFlight() {",
+        )) {
+            val body = prefs.substringAfter(writer).substringBefore("\n    }")
+            assertEquals("$writer commits", 1, liveLineCount(body, ".commit()"))
+            assertEquals("$writer never applies", 0, liveLineCount(body, ".apply()"))
+        }
+    }
+
 
     @Test
     fun theDispatchDirectoryHasOneNameUnderFilesDir() {
