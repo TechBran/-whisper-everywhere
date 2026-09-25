@@ -443,6 +443,17 @@ still brings the whole CPU ladder back, and every device not offered the one tie
 pre-ruling lineup byte for byte. It keys on the gate set, not the vendor, so the MediaTek and
 Qualcomm rows follow it alike; `pickableFor`'s body and every card string are unchanged.
 
+*Owner ruling, 2026-09-25, at the end of the same session — no CPU cards on a capable device, even
+while the AI-chip tier keeps declining:* **"we deliver these asset packs ourselves, so it should
+always work. And CPU only for devices that can't do the NPU."** The consequence the P3b
+implementation flagged — on a device offered the one tier, a turbo that keeps declining cannot be
+swapped for a CPU rung on purpose, because no CPU card renders there unless it is the selection —
+is the owner's ruling, not an open question. The automatic fallback (the backend's loud fallback
+to an eligible CPU model on disk, which the declining card announces) and the recovery button on
+that card ("Download the standard model", which fetches `small-q8` and makes it the selection) are
+the whole answer. No code changed: `OnboardingLogic.chooserAlsoOfferedIds` and
+`WhisperCatalog.pickableFor` (producer 1) record the ruling beside the rule.
+
 ### 2.9 Cadence, calibration, the ring
 
 Per-commit cost on the tablet = 1,783 + 22.8 × tokens ms (t6), re-measured in-app at P3. The cold-arm budget,
