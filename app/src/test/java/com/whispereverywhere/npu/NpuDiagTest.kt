@@ -843,26 +843,20 @@ class NpuDiagTest {
     /**
      * FOLDED 4.1 ITEM (L1 m5), closed the way the finding demanded: [NpuDiag.unavailable]'s
      * KDoc stage enumeration had rotted — eight stages listed, six missing, one RETIRED stage
-     * (`assets`) still named — so the list is now RE-DERIVED from the backend's own decline
-     * sites and this test holds the KDoc equal to the derivation. A new stage, a renamed
-     * stage or a retired one now fails here by name instead of rotting silently. (The
+     * (`assets`) still named — so the list is RE-DERIVED from source, never retyped. (The
      * re-derivation itself caught the rot's true size: the stale list was off by SEVEN — the
      * brief's six plus the unlisted `session` — which is exactly why the rule is "derive from
      * source, never retype from memory".)
+     *
+     * RE-POINTED AT P1a, and made one link longer rather than looser. The stage names' one home
+     * is now [NpuStage], a closed enum, and the regex derivation over the decline sites moved
+     * with it to `NpuStageTest`, which holds the enum equal to the sites — in decline order,
+     * across the engine seam. This test holds the KDoc equal to the ENUM, reserved member
+     * included. So: KDoc == enum == decline sites; a new, renamed or retired stage still fails
+     * by name, now in whichever of the three it was changed without the others.
      */
     @Test
-    fun theUnavailableStageEnumerationIsReDerivedFromTheBackendsOwnDeclineSites() {
-        val backend =
-            source("src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt")
-        // Every decline funnels through fallBackToCpuTier/fallBackAndRun with a literal stage
-        // as its first argument (the one-funnel pin above proves the funnel); collect them in
-        // source order, first occurrence wins.
-        val declineSite = Regex("fallBack(?:ToCpuTier|AndRun)\\(\\s*\"([a-z-]+)\"")
-        val derived = declineSite.findAll(backend).map { it.groupValues[1] }.distinct().toList()
-        assertTrue(
-            "the derivation found a real population (got $derived)",
-            derived.size >= 10 && "encode" in derived && "decode" in derived,
-        )
+    fun theUnavailableStageEnumerationIsTheClosedStageEnumInDeclineOrder() {
         // The KDoc's own enumeration: the backticked lowercase tokens between @param stage and
         // @param detail. (CamelCase references in the same block don't match [a-z-]+.)
         val diag = source("src/main/java/com/whispereverywhere/npu/NpuDiag.kt")
@@ -870,9 +864,10 @@ class NpuDiagTest {
         val documented = Regex("`([a-z-]+)`").findAll(stageBlock)
             .map { it.groupValues[1] }.toList()
         assertEquals(
-            "the KDoc enumerates exactly the stages the backend can produce, in decline-site " +
-                "order — re-derived, never retyped",
-            derived,
+            "the KDoc enumerates exactly NpuStage's wire words, in the enum's declaration order — " +
+                "which NpuStageTest holds equal to the decline sites, so this is still re-derived, " +
+                "never retyped",
+            NpuStage.entries.map { it.wire },
             documented,
         )
     }

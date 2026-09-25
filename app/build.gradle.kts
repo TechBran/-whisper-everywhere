@@ -604,6 +604,14 @@ tasks.withType<Test>().configureEach {
         // stale evidence.
         "src/main/java/com/whispereverywhere/transcription/NpuBackendSelector.kt",
         "src/main/java/com/whispereverywhere/transcription/NpuWhisperBackend.kt",
+        // (P1a, the engine seam) The seam's files, by this list's stated rule — membership follows
+        // what the tests READ. NpuStageTest reads NpuStage.kt as text for the spelling rule the
+        // derivation cannot see (each wire word a literal beside its constant, `Refusal` the
+        // design's exact shape). Stated honestly, the QnnAsrNative.kt discipline: today's needles
+        // there are live declarations, so an edit to them changes the class and re-runs the suite
+        // anyway — the entry is here because the rule is about what the tests READ, and the next
+        // needle added there is not required to remember the distinction.
+        "src/main/java/com/whispereverywhere/npu/NpuStage.kt",
         // (4.1 L7) LocalWhisperEngine.kt joins because PerUtteranceLanguageTest now READS it:
         // the languageFor-exactly-once-inside-the-conditional claim is what stops a second,
         // unconditional pin consult from reinstating the 3.7 latch under a per-utterance
