@@ -353,7 +353,7 @@ Before promoting a release from the internal track to production:
    **The page CHANGED at 4.10.0/100, after both inspections above, and neither of them describes
    it any more.** 4.10.0 bundles NVIDIA NeMo TitaNet-small for the speaker labels; CC-BY-4.0 makes
    attribution a term, so the page gained a **Speaker labels** section paying it. The committed
-   page is now **40,899 B**, `sha256 e52b058adafd89bf5412ac2d3ac1704d1fca800f4b01a15abe31374c3d8b5319`
+   page was then **40,899 B**, `sha256 e52b058adafd89bf5412ac2d3ac1704d1fca800f4b01a15abe31374c3d8b5319`
    in the CRLF working-tree form the asset merge copies. **Both numbers have now been READ OUT OF THE 4.10.0 ARTEFACT**, not derived: the controller's
    `bundleRelease` of 2026-09-19 14:32 (5,476,001,464 B) was opened and its
    `base/assets/oss_licenses.html` is **40,899 B**, `sha256 e52b058adafd89bf5412ac2d3ac1704d1fca800f4b01a15abe31374c3d8b5319`
@@ -362,6 +362,28 @@ Before promoting a release from the internal track to production:
    the shipped filename, the `sha256`, the licence link and the model card) and a deliberately
    wrong control probe MISSING. The 2026-09-13 rows above stand as what they always were:
    observations on the page as it stood at `0663afe`.
+
+   **The page CHANGED again at 4.16.0/113 (the MediaTek APU tier, P3a), and the 4.10.0 read no
+   longer describes it.** Since P2-6 every APK carries LiteRT 2.1.1 — `libLiteRt.so` in
+   `lib/arm64-v8a/` and `libLiteRtDispatch_MediaTek.so` in the base module's assets, whatever chip
+   the device has — so the page names both (Google, Apache License 2.0, unmodified) under
+   **Speech recognition**, and reproduces the one further notice LiteRT's own licence file carries:
+   Caffe's BSD 2-Clause notice, for code TensorFlow derives from Caffe, byte for byte as the litert
+   2.1.1 AAR's `LICENSE` gives it (`OssNoticePackagingTest` holds the entries, the notice's digest
+   and the packaging needles). A `TODO(owner)` sits beside the MediaTek entry: the **NeuroPilot
+   Express** notice for the compiled mt6989 pair waits on the owner's reading of that licence, which
+   gates the tier's first Play upload. The committed page is now **44,799 B**,
+   `sha256 8505b13a3e38ce989093fc2642708129d06d5559a81fb0fbba0d2927389fca09` in its CRLF working-tree
+   form, and **both numbers were READ OUT OF AN ARTEFACT**, not derived: the 4.16.0/113 **debug APK**
+   (`:app:assembleDebug` of 2026-09-25 02:52 on `feat/mediatek-apu-tier-p3a`, 203,338,313 B,
+   `sha256 e992156c63ac94cde0a1e25a090c740407dabc7efb963fad510d367b5206c8a2`) was opened and its
+   `assets/oss_licenses.html` is **44,799 B**, `sha256 8505b13a3e38ce989093fc2642708129d06d5559a81fb0fbba0d2927389fca09`
+   — byte-identical to the committed page. Both LiteRT entries, the Caffe notice and the
+   `TODO(owner)` comment probed PRESENT inside the packaged entry, and a deliberately wrong control
+   probe MISSING; the same APK carries `lib/arm64-v8a/libLiteRt.so` (5,104,832 B, `6ddc1b3d…`) and
+   `assets/libLiteRtDispatch_MediaTek.so` (409,728 B, `9e963c56…`), the pinned 2.1.1 bytes. **A
+   debug APK is not a release bundle**: no 4.16.0 `bundleRelease` has been opened, and one read of
+   its `base/assets/oss_licenses.html` is what closes that gap before the upload.
 
    **And the gap, stated as a gap: no release bundle of 4.5.2 has been opened, because none has been
    built.** A debug bundle is not a release bundle — different build type, no R8, the payload gates

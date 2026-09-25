@@ -93,6 +93,72 @@
         <a href="https://huggingface.co/openai/whisper-large-v3-turbo">huggingface.co/openai/whisper-large-v3-turbo</a></div>
     <div class="license"><b>Silero VAD</b> — MIT License. Voice-activity detection model.
         <a href="https://github.com/snakers4/silero-vad">github.com/snakers4/silero-vad</a></div>
+    <div class="license" id="litert-runtime"><b>LiteRT runtime</b> (Google) — Apache License 2.0.
+        <code>libLiteRt.so</code>, from LiteRT 2.1.1, unmodified: the on-device runtime the AI-chip
+        speech model runs on in MediaTek devices. It ships in every copy of this app, whichever chip
+        the device has.
+        <a href="https://github.com/google-ai-edge/LiteRT">github.com/google-ai-edge/LiteRT</a>
+        The licence file LiteRT publishes with this library carries one further notice — for code
+        TensorFlow derives from Caffe, under the BSD 2-Clause terms the notice itself states — and
+        it is reproduced here as that file gives it:
+        <pre class="licence-text" id="litert-caffe">COPYRIGHT
+
+All contributions by the University of California:
+
+Copyright (c) 2014, The Regents of the University of California (Regents)
+All rights reserved.
+
+All other contributions:
+
+Copyright (c) 2014, the respective contributors
+All rights reserved.
+
+Caffe uses a shared copyright model: each contributor holds copyright over
+their contributions to Caffe. The project versioning records all such
+contribution and copyright details. If a contributor wants to further mark
+their specific copyright on a particular contribution, they should indicate
+their copyright solely in the commit message of the change when it is
+committed.
+
+LICENSE
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+   ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+   WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+   ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+   LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+   ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+CONTRIBUTION AGREEMENT
+
+By contributing to the BVLC/caffe repository through pull-request, comment,
+or otherwise, the contributor releases their content to the
+license and copyright terms herein.</pre></div>
+    <div class="license" id="litert-dispatch-mediatek"><b>LiteRT MediaTek dispatch</b> (Google) —
+        Apache License 2.0. <code>libLiteRtDispatch_MediaTek.so</code>, from LiteRT 2.1.1's NPU
+        runtime release, unmodified: the bridge from the LiteRT runtime to the MediaTek AI chip's
+        driver, which is part of the device and not of this app. It ships in every copy of
+        this app, whichever chip the device has.
+        <a href="https://github.com/google-ai-edge/LiteRT/releases/tag/v2.1.1">github.com/google-ai-edge/LiteRT/releases/tag/v2.1.1</a></div>
+    <!-- TODO(owner): the NeuroPilot Express notice for the compiled MediaTek pair (the mt6989
+         turbo encoder and decoder, compiled ahead of time by MediaTek's NeuroPilot compiler)
+         waits on the owner's reading of the NeuroPilot Express SDK licence, which gates the
+         tier's first Play upload. If that licence asks for a notice, it goes here, beside the
+         MediaTek entry. -->
 
     <h2>Live words (the streaming preview)</h2>
     <p>When you pick a language, a second, small speech model can run beside the one above and put

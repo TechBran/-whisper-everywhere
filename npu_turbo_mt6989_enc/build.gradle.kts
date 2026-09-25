@@ -19,8 +19,11 @@
 // under the tier's catalog name, gated on the pinned length and digest, the file's own
 // LiteRtStamp, the bytecode's compiler self-description and the IO census against
 // NpuModelSpec.TURBO; :app's verifyNpuPacks re-checks what landed before every bundle build. The
-// committed tree carries only this file, the .gitignore that keeps the payload uncommittable, and
-// the payload directory's .gitkeep anchor.
+// committed tree carries only this file and the .gitignore that keeps the whole packaged tree,
+// src/main/assets/, uncommittable. (P3a) No anchor file: this plugin zips src/main/assets whole,
+// with no filter and no DSL to add one, so the tracked .gitkeep the payload directory carried
+// until P3a shipped as a zero-byte asset (sheet §8 of 2026-09-24-tab-apu-turbo-encoder.md); the
+// delivered pack holds exactly its payload files.
 //
 // A standard asset pack, not an AI pack — the same decision as npu_turbo's, stated there.
 plugins {

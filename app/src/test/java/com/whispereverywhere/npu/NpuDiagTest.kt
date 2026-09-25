@@ -695,16 +695,30 @@ class NpuDiagTest {
         // every other assertion in this class green — while making the line invisible to the ONE
         // grep the Q10a run-book tells an owner with no adb to run. The tag is the whole
         // distribution mechanism, so it is pinned as the symbol and not merely as "some tag".
+        //
+        // RE-SPECCED AT P3a: this pinned `Log.i(` with `NpuDiag.TAG,` — and proguard-rules.pro
+        // strips every android.util.Log call from release builds, so on a Play build the offer
+        // line never printed at all, on any vendor; the Tab S10+'s ship sheet reads it first. It
+        // goes out through WhisperNative.diag now, the channel the apu: lines use. The TAG is
+        // still what is pinned — natively: the export logs through whisper_jni.cpp's LOGDIAG,
+        // whose tag is the house WE-DIAG, so one grep still finds every tier line, and a private
+        // tag would now need a native export of its own.
         assertEquals(
-            "the line goes to the house tag BY NAME, so one grep finds every tier line",
+            "the line goes out through the native route, exactly once — the one R8 does not strip",
             1,
-            liveLineCount(gate, "NpuDiag.TAG,"),
+            liveLineCount(gate, "WhisperNative.diag("),
         )
         assertEquals(
-            "and it is emitted at Log.i — a diagnostic the owner is asked to read must not sit " +
-                "below the default logcat filter",
-            1,
-            liveLineCount(gate, "Log.i("),
+            "and never through android.util.Log, which every release build strips",
+            listOf(0, 0, 0, 0),
+            listOf("Log.i(", "Log.d(", "Log.w(", "Log.v(").map { liveLineCount(gate, it) },
+        )
+        val jni = source("src/main/cpp/whisper_jni.cpp")
+        assertTrue(
+            "the native export logs under the house tag, so the line still lands under WE-DIAG",
+            jni.contains("#define LOGDIAG(...) __android_log_print(ANDROID_LOG_INFO, \"WE-DIAG\", __VA_ARGS__)") &&
+                jni.substringAfter("Java_com_whispereverywhere_whisper_WhisperNative_diag(")
+                    .substringBefore("\n}").contains("LOGDIAG(\"%s\", chars);"),
         )
     }
 
@@ -844,7 +858,7 @@ class NpuDiagTest {
         // WITH a CPU model, which is what "says what is running instead" below is about. The
         // no-fallback arm 4.3 adds is the subject of NpuTierStatusTest, where the assertion is
         // that this paragraph's claim is exactly the one it must NOT make.
-        val note = NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), true, stillSelected = true)!!
+        val note = NpuTierStatus.cardNote(NpuTierStatus.reasonFor("npu"), true, stillSelected = true, vendor = NpuVendor.QUALCOMM)!!
         assertTrue("the note names the stage: $note", note.contains(stage))
         assertTrue(
             "AND it says what is running instead. A card that only says \"unavailable\" leaves " +
@@ -892,10 +906,10 @@ class NpuDiagTest {
         assertEquals("no decline, no stage", null, NpuTierStatus.stageOf(null))
         // 4.3: no decline means no note on EITHER arm — the absence of a CPU model is not itself
         // a decline, and a device that never armed the tier has no measurement to report.
-        assertEquals("no decline, no note", null, NpuTierStatus.cardNote(null, true, true))
-        assertEquals("nor with nothing to fall back to", null, NpuTierStatus.cardNote(null, false, false))
-        assertEquals("nor for an empty reason", null, NpuTierStatus.cardNote("   ", true, true))
-        assertEquals("on either arm", null, NpuTierStatus.cardNote("   ", false, false))
+        assertEquals("no decline, no note", null, NpuTierStatus.cardNote(null, true, true, NpuVendor.QUALCOMM))
+        assertEquals("nor with nothing to fall back to", null, NpuTierStatus.cardNote(null, false, false, NpuVendor.QUALCOMM))
+        assertEquals("nor for an empty reason", null, NpuTierStatus.cardNote("   ", true, true, NpuVendor.QUALCOMM))
+        assertEquals("on either arm", null, NpuTierStatus.cardNote("   ", false, false, NpuVendor.QUALCOMM))
         // A malformed reason degrades to the whole string rather than to an empty label: a card
         // reading "unavailable (stage: )" is worse than one repeating something odd.
         assertEquals("truncated", NpuTierStatus.stageOf("truncated"))

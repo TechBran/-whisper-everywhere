@@ -62,7 +62,9 @@ MS-02 and held in the private artefact store (``<local-root>/mtk-artefacts-2026-
 aot_mt6989/`` with its SHA256SUMS), into the two UNTARGETED modules ``npu_turbo_mt6989_enc``
 (the encoder + OUR version-2 ``metadata.json``) and ``npu_turbo_mt6989_dec`` (the decoder), each
 one payload directory ``<module>/src/main/assets/<module>/`` with no ``#group_`` folder
-(bundletool's DeviceGroupParityValidator). Before a byte moves, every file passes the LOCAL gate
+(bundletool's DeviceGroupParityValidator) and, since P3a, no ``.gitkeep`` anchor -- the asset-pack
+plugin zips ``src/main/assets`` whole, so an anchor there shipped in the pack as a zero-byte
+asset; each payload directory holds exactly its part's files. Before a byte moves, every file passes the LOCAL gate
 (LOCAL_FAMILIES): the store's SHA256SUMS, the census length, its own LiteRtStamp, the bytecode's
 compiler self-description and its Neuron major, and the IO gate -- the tflite signatures' names,
 shapes and dtypes against LOCAL_IO_SPEC (NpuModelSpec.TURBO). The digest rides the copy, and
@@ -751,7 +753,9 @@ def verify_variant_dir(tier: str, family: str, out_dir: str, part: int = 0) -> "
     TWO RULES since P2-5, the second beside the first and weakening nothing of it. A vendor
     family's variant is a #group_ directory of exactly three files: metadata.json and both
     bins. A LOCAL family's [part] is an UNTARGETED module's one payload directory: exactly that
-    part's bin, metadata.json in part 0 only, and the tracked .gitkeep anchor."""
+    part's bin and metadata.json in part 0 only -- and, since P3a, no anchor: the asset-pack
+    plugin zips src/main/assets whole, so the .gitkeep that used to sit here shipped in the
+    pack as a zero-byte asset (sheet 8 of the 2026-09-24 APU sheet)."""
     import json
 
     _, enc_bytes, enc_sha, dec_bytes, dec_sha = CENSUS[(tier, family)]
@@ -764,7 +768,7 @@ def verify_variant_dir(tier: str, family: str, out_dir: str, part: int = 0) -> "
     if family in LOCAL_FAMILIES:
         _, delivery, _, _ = LOCAL_FAMILIES[family]["tiers"][tier][part]
         carried = [delivery]
-        want = sorted(carried + ([VENDOR_METADATA] if part == 0 else []) + [PREVIEW_ANCHOR])
+        want = sorted(carried + ([VENDOR_METADATA] if part == 0 else []))
         if names != want:
             return f"carries {names}; this untargeted part is exactly {want}"
     else:
@@ -1207,19 +1211,17 @@ def build_local(local_root: str, dry_run: bool = False) -> tuple:
                               f"{local['stamp'][1]}, compiler '{local['compiler']}'")
                     continue
                 print(f"BUILD tier={tier} family={family} part {index + 1} -> {rel}")
+                # (P3a) No anchor is written: the asset-pack plugin zips src/main/assets whole, so
+                # an anchor here would ship in the pack as a zero-byte asset (it did, until P3a).
                 os.makedirs(out_dir, exist_ok=True)
-                anchor = os.path.join(out_dir, PREVIEW_ANCHOR)
-                if not os.path.isfile(anchor):
-                    with open(anchor, "w", encoding="utf-8"):
-                        pass
                 if verify_variant_dir(tier, family, out_dir, index) is None:
                     print("  already the census (re-hashed from disk), rewrite skipped")
                     current += 1
                     continue
-                # Anything but the anchor would ride into the AAB: cleared, not kept.
+                # Everything here rides into the AAB -- the retired .gitkeep anchor included, on a
+                # checkout that still holds one: cleared, not kept.
                 for stale in os.listdir(out_dir):
-                    if stale != PREVIEW_ANCHOR:
-                        os.remove(os.path.join(out_dir, stale))
+                    os.remove(os.path.join(out_dir, stale))
                 stream_pinned(open(source, "rb"), os.path.join(out_dir, delivery), delivery,
                               want_bytes, want_sha, "artefact store")
                 print(f"  {delivery}: {want_bytes:,} B from the artefact store, census digest "

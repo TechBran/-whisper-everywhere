@@ -185,6 +185,56 @@ import org.junit.Test
  * transcript view can be grabbed and slid. What a user sees changes, so the last place moves by
  * one. Every bump still re-arms GpuPolicy's canary latches (below).
  *
+ * **versionCode 113 = 4.16.0 — the MediaTek APU gets the AI chip.** The Galaxy Tab S10+ and S10
+ * Ultra (MT6989): for the first time a second silicon VENDOR gains the app's best tier, so the
+ * name takes a MINOR, as whole Qualcomm generations did at 4.12.0, 4.13.0 and 4.15.0. 113 because
+ * 112 = 4.15.1 — the seam, the tier's regression gate (owner ruling 2026-09-24, "you can seam it
+ * up for 112") — was BUILT for the internal track on 2026-09-24 at 22:49 (AAB sha256
+ * `6dd87c90…`), so its code is spent whether or not the upload has happened.
+ *
+ * The owner's rulings of 2026-09-24 ride in it: build the tier; turbo only on the tablets; a driver
+ * version check; and his own reading of MediaTek's NeuroPilot Express SDK licence before the first
+ * Play upload — not given at this build, so nothing of it reaches Play before he accepts it.
+ * large-v3-turbo runs on the APU through LiteRT 2.1.1 behind 4.15.1's `NpuAsrEngine` seam
+ * (`LiteRtAsrEngine`, chosen by the census row's vendor). What the product's engine MEASURED on
+ * the owner's tablet — in the probe app, P1's device gate, not in this build
+ * (docs/measurements/2026-09-24-tab-apu-turbo-encoder.md §6): encode 1,718-1,725 ms warm, about
+ * 30 ms a token, a 20-token commit about 2.3 s, a 2.8-3.6 s cold arm with no 5 s wait, every
+ * transcript identical to the app-mode reference. The pair is a LOCAL compile and its provenance
+ * rule is §7's: NeuroPilot's bytecode is not byte-reproducible, so the pinned bytes in the private
+ * store ARE the artefact and the recipe reproduces the model, not the file. Its 1.89 GB ships in
+ * two UNTARGETED modules of the family's own because bundletool's `DeviceGroupParityValidator`
+ * refuses group-targeted modules whose group sets differ (§8: bundletool accepts the bundle,
+ * 9.16 GB). The driver verdict is probed once, off Main, and stored per ROM, build, install and
+ * Neuron major. On a MediaTek row the turbo card claims accuracy alone — its Qualcomm "fastest"
+ * is false on the tablet — and the owner's wording for a MediaTek speed claim is pending. No
+ * import is shown or named on its row: the import takes the small pair's zip, and a turbo-only
+ * family has none.
+ *
+ * On the six Qualcomm families the copy moves too, to what is true of each device: both AI-chip
+ * cards say "this device's AI chip", not "this phone's", because they also render on a Qualcomm
+ * tablet (the Tab S8 is an 8gen1 row); each gated card's badge states its own family's pair where
+ * it stated the 8gen3 literal, "981 MB" / "338 MB" (turbo 983 MB on 8elite5_galaxy, 999 on 7gen4,
+ * 976 on 8gen1; small 339, 340 and 335 on the same three), because a badge is what that device
+ * downloads and stores; and the onboarding size line states the same pair rounded the refresh
+ * notice's way ("about 982 MB", "about 338 MB", "about 1 GB" on 7gen4) where it printed the
+ * catalog's "982 MB" / "338.4 MB" on every family — headlines and claims unchanged.
+ *
+ * From the P2c review, in this build too: a Play fetch answer that lands after a Cancel is
+ * dropped; one killed driver walk is walked again instead of hiding the tier (two unfinished
+ * walks in a row are still recorded as `probe-crashed`); the service's boot chain waits at most
+ * 3 s for the verdict, refreshes the offer once more if it lands later (the memo's refreshes
+ * serialised since the P3a review, so the chain's first "unknown" can never land over that one),
+ * and skips the hop on a Qualcomm start; the shared LiteRT download cache writes under a name of
+ * its own.
+ *
+ * **What this paragraph must not be read as:** nothing here has run from a Play build. Before
+ * promotion the ship sheet (plan P3-4, the owner's Tab S10+ through the internal track) must show
+ * the offer line `soc=MT6989:pass`, the `apu:` driver line, the cold arm with no "Waiting for
+ * service" line, cold-tap loss, per-commit timing against the P1 gate, canary and jfk equal to the
+ * reference, and a 30-minute session with no lmkd kill. Every bump still re-arms GpuPolicy's
+ * canary latches (below).
+ *
  * **versionCode 112 = 4.15.1 — the AI-chip engine gets a seam, and the refresh notice comes
  * down.** 112 because 111 = 4.15.0 went to the internal track on 2026-09-24 (the owner's upload,
  * for the Z Fold6), so the code is spent. The name takes a PATCH because nothing a user is offered
@@ -460,19 +510,22 @@ import org.junit.Test
 class ReleaseIdentityTest {
 
     @Test
-    fun release_identity_is_4_15_1_at_version_code_112() {
+    fun release_identity_is_4_16_0_at_version_code_113() {
         assertEquals(
-            "versionName must be 4.15.1 for this release (app/build.gradle.kts defaultConfig): " +
-                "the seam and the notice take-down are a PATCH on 4.15.0; the MediaTek tier is 4.16.0 " +
-                "at the next free code",
-            "4.15.1",
+            "versionName must be 4.16.0 for this release (app/build.gradle.kts defaultConfig): " +
+                "the MediaTek APU tier is a MINOR, because a whole silicon VENDOR gains the best tier " +
+                "(the Galaxy Tab S10+ / S10 Ultra, MT6989) — as whole Qualcomm generations did at " +
+                "4.12.0, 4.13.0 and 4.15.0",
+            "4.16.0",
             BuildConfig.VERSION_NAME,
         )
         assertEquals(
-            "versionCode must be 112 for this release (app/build.gradle.kts defaultConfig). " +
-                "111 = 4.15.0 (QNN 2.50, the v0.63.0 packs, the 8 Gen 1) went to the internal " +
-                "track on 2026-09-24, and a spent code is refused; 105 = 4.11.3 is in production",
-            112,
+            "versionCode must be 113 for this release (app/build.gradle.kts defaultConfig). " +
+                "112 = 4.15.1 (the seam, the tier's regression gate) was built for the internal " +
+                "track on 2026-09-24 22:49, so its code is spent whether or not it was uploaded — " +
+                "Play refuses a second upload at a spent code; 111 = 4.15.0 went to the internal " +
+                "track; 105 = 4.11.3 is in production",
+            113,
             BuildConfig.VERSION_CODE,
         )
     }

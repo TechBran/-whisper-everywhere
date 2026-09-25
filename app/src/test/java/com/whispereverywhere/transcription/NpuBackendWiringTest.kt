@@ -542,13 +542,18 @@ class NpuBackendWiringTest {
             1,
             count(service, "npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }"),
         )
+        // RE-COUNTED by the P2c review's later item: a THIRD call site joined — the boot chain's one
+        // extra refresh when a MediaTek row's driver verdict lands after the chain's bounded wait
+        // (refreshNpuTierOfferWhenLanded, pinned in theBootChainsVerdictWaitIsBoundedAndMediatekOnly).
+        // The rule is unchanged: the memo is refreshed where it can change, and nowhere else.
         assertEquals(
-            "the memo is refreshed at BOTH points that can change it, and nowhere else: three " +
-                "live mentions — the declaration plus its two call sites. The second call site is " +
+            "the memo is refreshed at the THREE points that can change it, and nowhere else: four " +
+                "live mentions — the declaration plus its three call sites. The second call site is " +
                 "the one a start-time memo cannot see, because Q8's importer writes the 358 MB " +
                 "pair into files/models under a live service and the gate's installed half is a " +
-                "live stat.",
-            3,
+                "live stat; the third is a MediaTek driver verdict that landed after the boot " +
+                "chain stopped waiting for it.",
+            4,
             liveOffsets(service, "refreshNpuTierOffer()").size,
         )
         assertEquals(
@@ -595,7 +600,12 @@ class NpuBackendWiringTest {
      */
     @Test
     fun theBootPrewarmSettlesTheDriverVerdictBeforeTheGateIsFirstRead() {
-        val settle = "withContext(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }"
+        // RE-SPELLED by the P2c review's later item: the settle runs as a job of its own (the
+        // chain waits for it at most APU_VERDICT_WAIT_MS, then goes on and refreshes once more
+        // when it lands — pinned whole in theBootChainsVerdictWaitIsBoundedAndMediatekOnly, below).
+        // What this test guards is unchanged: asked once, on IO, wrapped, above the first refresh,
+        // outside NativeComputeGate.
+        val settle = "val verdictSettle = launch(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }"
         assertEquals(
             "the service asks for the verdict exactly once, on IO, wrapped so the tier can never " +
                 "cost the prewarm",
@@ -633,6 +643,135 @@ class NpuBackendWiringTest {
             "…and it is one settle per process, whoever asks first — the lock both callers take",
             1,
             liveOffsets(await, "synchronized(apuVerdictLock) {").size,
+        )
+    }
+
+    /**
+     * THE BOOT CHAIN'S WAIT FOR THE DRIVER VERDICT IS BOUNDED, AND A MEDIATEK ROW'S ALONE (the P2c
+     * review, a later item). The settle is blocking and cannot be cancelled, and the whole boot
+     * chain — the offer refresh, the 1.5 s, the prewarm, the previewer's warm — queued behind it.
+     * So it runs as a job of its own and the chain waits at most `APU_VERDICT_WAIT_MS` (3 s,
+     * against a walk measured at ~200 ms that no longer pays the old 5 s service wait — APU sheet
+     * §4b): in time, the first refresh reads the verdict; late, the chain goes on with it unknown
+     * and ONE more refresh runs when it lands, so the routing memo is never frozen on "unknown".
+     * And the hop is gated on the family's vendor — the Main-safe memo — so a Qualcomm start pays
+     * no IO hop and no Main turn for a check it never needs.
+     */
+    @Test
+    fun theBootChainsVerdictWaitIsBoundedAndMediatekOnly() {
+        val gateLine = "if (app.apuDriverCheckApplies) {"
+        val settle = "val verdictSettle = launch(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }"
+        val bounded = "if (withTimeoutOrNull(APU_VERDICT_WAIT_MS) { verdictSettle.join() } == null) {"
+        val late = "launch { refreshNpuTierOfferWhenLanded(verdictSettle) }"
+        assertEquals("the hop is gated on the family's vendor, once", 1, liveOffsets(service, gateLine).size)
+        assertEquals(
+            "…which is the app's Main-safe memo answering MediaTek — the service resolves no family itself",
+            1,
+            liveOffsets(app, "get() = npuSocFamily?.vendor == NpuVendor.MEDIATEK").size,
+        )
+        assertEquals("the settle is a job of its own, once", 1, liveOffsets(service, settle).size)
+        assertEquals("the chain's wait for it is bounded, once", 1, liveOffsets(service, bounded).size)
+        assertEquals("a late verdict earns exactly one more refresh, armed once", 1, liveOffsets(service, late).size)
+        assertEquals(
+            "…and the late refresh has exactly ONE caller — that launch — beside its declaration (the " +
+                "P3a review, small 2: a second caller would be a fourth refresh site nobody counted)",
+            2,
+            liveOffsets(service, "refreshNpuTierOfferWhenLanded(").size,
+        )
+        assertEquals(
+            "…which waits for the settle to land and then refreshes the memo",
+            1,
+            service.split(
+                block(
+                    "    private suspend fun refreshNpuTierOfferWhenLanded(verdictSettle: Job) {",
+                    "        verdictSettle.join()",
+                    "        refreshNpuTierOffer()",
+                    "    }",
+                ),
+            ).size - 1,
+        )
+        assertEquals("…and the bound is 3 s, named once", 1, liveOffsets(service, "const val APU_VERDICT_WAIT_MS: Long = 3_000L").size)
+        assertEquals(
+            "no unbounded wait is left: the old blocking hop is gone",
+            0,
+            liveOffsets(service, "withContext(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }").size,
+        )
+        val gate = liveOffsets(service, gateLine).single()
+        val at = liveOffsets(service, settle).single()
+        val wait = liveOffsets(service, bounded).single()
+        // LIVE offsets only (the P3a review, small 2) — indexOf would measure a comment as happily
+        // as the code, the reason this file's ordering claims are built on liveOffsets. The chain's
+        // first refresh is the live refresh line directly above its one live `delay(1500)`.
+        val lateAt = liveOffsets(service, late).single()
+        val delayAt = liveOffsets(service, "            delay(1500)").single()
+        val firstAt = liveOffsets(service, "            refreshNpuTierOffer()").last { it < delayAt }
+        assertTrue(
+            "the refresh found is the chain's own, directly above its delay and prewarm",
+            service.startsWith(
+                block("            refreshNpuTierOffer()", "            delay(1500)", "            warmLocalEngine().prewarm()"),
+                firstAt,
+            ),
+        )
+        assertTrue(
+            "ORDER: the vendor gate ($gate), the settle job inside it ($at), the bounded wait ($wait), " +
+                "the late refresh armed only on a timeout ($lateAt) — all BEFORE the chain's first " +
+                "refresh ($firstAt), which is no longer inside the gate",
+            gate < at && at < wait && wait < lateAt && lateAt < firstAt,
+        )
+        val gateBlock = service.substring(gate, firstAt)
+        assertEquals(
+            "the gate's block closes before the first refresh, so a Qualcomm start runs the chain " +
+                "exactly as before, without the hop",
+            gateBlock.count { it == '{' },
+            gateBlock.count { it == '}' },
+        )
+    }
+
+    /**
+     * THE MEMO'S REFRESHES ARE SERIALISED (the P3a review, small 2). Three sites refresh
+     * [npuTierIds] — the boot chain, the model-switch collector, and the boot chain's late refresh
+     * when a MediaTek verdict lands after the bounded wait — and each evaluates the gate on IO. An
+     * unserialised refresh that evaluated EARLIER could write LATER: the chain's first refresh,
+     * having read "unknown" (not capable), finishing after the late refresh had written the
+     * verdict's answer, and every session would route to the CPU until the next model switch. So
+     * the one evaluation and the one write sit together under one lock, declared once and taken
+     * nowhere else: the memo always holds the answer evaluated last.
+     */
+    @Test
+    fun theMemosRefreshesAreSerialisedTheEvaluationAndTheWriteUnderOneLock() {
+        val refresh = memberBody(service, "    private suspend fun refreshNpuTierOffer() {")
+        assertEquals(
+            "the refresh's body is the lock around the one evaluation-and-write, and nothing else",
+            block(
+                "    private suspend fun refreshNpuTierOffer() {",
+                "        npuTierRefreshLock.withLock {",
+                "            npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }",
+                "        }",
+            ),
+            refresh,
+        )
+        assertEquals(
+            "the lock is ONE Mutex, declared once — a second lock would serialise nothing",
+            1,
+            liveOffsets(service, "private val npuTierRefreshLock = Mutex()").size,
+        )
+        assertEquals(
+            "…and it is taken only there: two live mentions, the declaration and that withLock",
+            2,
+            liveOffsets(service, "npuTierRefreshLock").size,
+        )
+        assertEquals(
+            "the memo is written nowhere else — a write outside the lock would race it again",
+            1,
+            liveOffsets(service, "npuTierIds = ").size,
+        )
+        assertEquals(
+            "the lock is the coroutine Mutex (it suspends a waiter on Main, it blocks no thread)",
+            listOf(1, 1),
+            listOf(
+                liveOffsets(service, "import kotlinx.coroutines.sync.Mutex").size,
+                liveOffsets(service, "import kotlinx.coroutines.sync.withLock").size,
+            ),
         )
     }
 
@@ -1208,6 +1347,56 @@ class NpuBackendWiringTest {
                 "throwaway, never armed) — nowhere else. Found: $qnnBuilders",
             listOf("NpuBackendSelector.kt", "NpuWhisperBackend.kt"),
             qnnBuilders,
+        )
+    }
+
+    /**
+     * THE LITERT ENGINE'S CONSTRUCTION SITES, COUNTED ACROSS MAIN (the P2c review, a later item) —
+     * the walk above, for the other vendor. `LiteRtAsrEngine` is built in exactly two places: the
+     * selector's MediaTek arm (the engine a session arms) and the app's driver settle, whose probe
+     * goes through a throwaway engine so the app never names `LiteRtAsrNative` itself
+     * (`LiteRtAsrEngineContractTest`). A third construction is a second route to the APU — an
+     * engine armed outside the backend's policy body, or a walk outside the one settle per process
+     * — and every other test would stay green beside it. The class's own declaration is not a
+     * construction and is not counted.
+     */
+    @Test
+    fun theLiteRtEngineIsConstructedByTheSelectorAndTheDriverSettleOnly() {
+        val mainRoot = run {
+            var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+            var found: File? = null
+            while (dir != null && found == null) {
+                found = listOf(File(dir, "src/main/java"), File(dir, "app/src/main/java"))
+                    .firstOrNull { File(it, "com/whispereverywhere/transcription/NpuBackendSelector.kt").isFile }
+                dir = dir.parentFile
+            }
+            requireNotNull(found) { "cannot locate src/main/java from ${System.getProperty("user.dir")}" }
+        }
+        val constructions = mainRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .flatMap { file ->
+                val text = file.readText().replace("\r\n", "\n")
+                liveOffsets(text, "LiteRtAsrEngine(")
+                    .map { at -> text.substring(at, text.indexOf('\n', at).let { if (it < 0) text.length else it }) }
+                    .filterNot { it.contains("class LiteRtAsrEngine(") }
+                    .map { file.name }
+            }
+            .sorted().toList()
+        assertEquals(
+            "LiteRtAsrEngine is constructed by the selector's MediaTek arm and by the app's driver " +
+                "settle (a throwaway, for its probe) — once each, nowhere else. Found: $constructions",
+            listOf("NpuBackendSelector.kt", "WhisperEverywhereApp.kt"),
+            constructions,
+        )
+        assertEquals(
+            "the selector's site is the MediaTek arm, handed the row and the native library dir",
+            1,
+            liveOffsets(selector, "NpuVendor.MEDIATEK -> LiteRtAsrEngine(family, appContext.applicationInfo.nativeLibraryDir)").size,
+        )
+        assertEquals(
+            "the app's site is the settle's probe, and nothing else of the engine is used there",
+            1,
+            liveOffsets(app, "probe = { dispatchDir, lib, _ -> LiteRtAsrEngine(family, lib).probe(dispatchDir) },").size,
         )
     }
 

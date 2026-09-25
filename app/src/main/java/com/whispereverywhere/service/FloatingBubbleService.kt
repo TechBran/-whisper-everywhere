@@ -76,7 +76,10 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Which engine a session should use, decided from three inputs that are otherwise entangled with
@@ -1554,7 +1557,23 @@ class FloatingBubbleService : Service(),
             // never ran (design §2.3 item 1) — on IO and OUTSIDE NativeComputeGate, for the verdict
             // only; there is no wait left in the walk to hide. Every other device returns on the
             // call's first lines, untouched. Wrapped: the tier may never cost the prewarm.
-            withContext(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }
+            //
+            // (The P2c review's later item) BOUNDED, AND ON A MEDIATEK ROW ONLY. The settle is
+            // blocking and cannot be cancelled, and the whole chain below — the refresh, the 1.5 s,
+            // the prewarm, the previewer's warm — queued behind it. So it runs as a job of its own
+            // and the chain waits for it at most APU_VERDICT_WAIT_MS (3 s, against a walk measured
+            // at ~200 ms that no longer pays the old 5 s service wait — APU sheet §4b): in time,
+            // the first refresh reads the verdict, as before; late, the chain goes on with the
+            // verdict unknown (not capable, the fail-safe side) and ONE more refresh runs when it
+            // lands, so the memo is never frozen on "unknown" for the service's life. And the hop
+            // itself is gated on the family's vendor — the app's Main-safe memo, a table lookup —
+            // so a Qualcomm or off-census start takes no extra IO hop and no extra Main turn.
+            if (app.apuDriverCheckApplies) {
+                val verdictSettle = launch(Dispatchers.IO) { runCatching { app.awaitApuDriverVerdict() } }
+                if (withTimeoutOrNull(APU_VERDICT_WAIT_MS) { verdictSettle.join() } == null) {
+                    launch { refreshNpuTierOfferWhenLanded(verdictSettle) }
+                }
+            }
             // (4.0, Q9) The offer gate BEFORE the prewarm it decides, and off Main — its first
             // evaluation dlopens two QNN libraries. Without this the first engine of every process
             // is built on the CPU backend and an npu user pays a rebuild for it.
@@ -4363,9 +4382,39 @@ class FloatingBubbleService : Service(),
      *
      * Re-read rather than cached forever because the *installed* half can change under a live
      * service: Q8's importer writes a gated pair into files/models while the app is running.
+     *
+     * **SERIALISED (the P3a review, small 2).** Three sites refresh the memo — the boot chain, the
+     * model-switch collector, and the boot chain's one late refresh when a MediaTek driver verdict
+     * lands after the chain stopped waiting — and each evaluates the gate on IO. Unserialised, a
+     * refresh that evaluated EARLIER could write LATER: the boot chain's first refresh, having read
+     * "unknown" (not capable), finishing after the late refresh had written the verdict's answer —
+     * and every session would route to the CPU until the next model switch. So the evaluation and
+     * the write happen together under [npuTierRefreshLock]: refreshes run one at a time, so the
+     * memo always holds the answer evaluated last — and the late refresh evaluates after the
+     * verdict landed, so no refresh can write "unknown" after it. A caller waiting on the lock
+     * suspends (it blocks no thread) for at most one evaluation of the gate: a few `File` stats
+     * and a memoised or stored read — once per process, the probe's `dlopen`.
      */
     private suspend fun refreshNpuTierOffer() {
-        npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }
+        npuTierRefreshLock.withLock {
+            npuTierIds = withContext(Dispatchers.IO) { app.offeredNpuTierIds() }
+        }
+    }
+
+    /** One refresh of [npuTierIds] at a time — see [refreshNpuTierOffer]. */
+    private val npuTierRefreshLock = Mutex()
+
+    /**
+     * The boot chain's ONE extra offer refresh (the P2c review's later item). Armed only when the
+     * chain's bounded wait for a MediaTek row's driver verdict ran out (`APU_VERDICT_WAIT_MS`): it
+     * waits for that settle to land, then refreshes the memo once more — so a verdict that arrived
+     * after the chain went on is read, rather than the service keeping "unknown" (not capable) for
+     * its whole life. The third of the memo's three refresh sites, beside the boot chain's and the
+     * model-switch collector's.
+     */
+    private suspend fun refreshNpuTierOfferWhenLanded(verdictSettle: Job) {
+        verdictSettle.join()
+        refreshNpuTierOffer()
     }
 
     /** One shared client for the service's life — see the [httpTransport] field comment. */
@@ -6738,6 +6787,15 @@ class FloatingBubbleService : Service(),
          * partial line from the end means "keep going" as plainly as one exactly on it.
          */
         const val PANEL_FOLLOW_SLACK_DP: Float = 24f
+
+        /**
+         * How long the boot chain waits for a MediaTek row's driver verdict before it goes on with
+         * the verdict unknown (the P2c review's later item): 3 s, against a walk measured at
+         * 169–239 ms in the product's shape (APU sheet §4b — the old 5 s service wait was a library
+         * the product never declares). Past it the chain continues and one more offer refresh runs
+         * when the verdict lands.
+         */
+        const val APU_VERDICT_WAIT_MS: Long = 3_000L
 
         fun start(context: Context) {
             val intent = Intent(context, FloatingBubbleService::class.java)

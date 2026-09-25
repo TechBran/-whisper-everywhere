@@ -294,7 +294,10 @@ class LiteRtAsrEngineContractTest {
             0,
             liveLines(engine, "\"litert_dispatch").size,
         )
-        listOf("9e963c56", "409_728", "409728", "f47bd9c0").forEach { copy ->
+        // (The P2c review, a later item) "409,728" joined the list: the engine's prepare comment
+        // carried the dispatch's size in its comma spelling, and the needles spelled only the
+        // underscore and the bare digits — so the copy the rule forbids sat there, green.
+        listOf("9e963c56", "409_728", "409728", "409,728", "f47bd9c0").forEach { copy ->
             assertEquals(
                 "no copy of the dispatch's identity (`$copy`) anywhere in the engine — not in code, " +
                     "not in a comment: LiteRtRuntime holds it once",

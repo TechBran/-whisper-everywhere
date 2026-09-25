@@ -160,6 +160,18 @@ class WhisperEverywhereApp : Application() {
         get() = StartupRing.capacityBytesFor(npuSocFamily?.vendor)
 
     /**
+     * DOES THIS DEVICE CARRY THE MEDIATEK DRIVER CHECK AT ALL? (The P2c review's later item.) True
+     * on a MediaTek row only — off the one census resolution above, a table lookup, Main-safe. The
+     * bubble service's boot chain gates its (bounded) wait for the driver verdict on this, so a
+     * Qualcomm or off-census start pays no IO hop and no Main turn for a check it never needs; the
+     * service asks this rather than resolving the family itself (it never does —
+     * `NpuBackendWiringTest.theServiceNeverResolvesTheFamilyItself`). The same question
+     * [awaitApuDriverVerdict]'s first lines ask.
+     */
+    val apuDriverCheckApplies: Boolean
+        get() = npuSocFamily?.vendor == NpuVendor.MEDIATEK
+
+    /**
      * The [ModelInstallSignal] generation the [NpuDiag.offer] line was last emitted at, or
      * [Int.MIN_VALUE] before the first emission.
      *
@@ -230,7 +242,9 @@ class WhisperEverywhereApp : Application() {
      * did not load" and "nothing installed" — three different next actions. See [NpuDiag.offer].
      * On a MediaTek row the probe half is the driver check — `probe=unknown` until it answers,
      * `probe=fail:<reason>` on a refusal — and the line goes out once more when the verdict lands
-     * after an `unknown` one ([npuOfferSaidUnknown]; P2-7, the P2a review's L6).
+     * after an `unknown` one ([npuOfferSaidUnknown]; P2-7, the P2a review's L6). Since P3a the line
+     * goes out through `WhisperNative.diag` — native logging, the `apu:` lines' channel — because
+     * release builds strip `android.util.Log`, and a Play build is where the ship sheet reads it.
      */
     fun offeredNpuTierIds(): Set<String> {
         val installed = WhisperCatalog.entries
@@ -268,16 +282,29 @@ class WhisperEverywhereApp : Application() {
             // lookup, it cannot dlopen, and the DECISION is `capable` above. The gate is not
             // re-run and is not duplicated: this only recovers which HALF of `capable` answered,
             // which the value itself has thrown away.
-            Log.i(
-                NpuDiag.TAG,
-                NpuDiag.offer(
-                    socModel = npuSocModel,
-                    socSupported = NpuGate.isSocSupported(npuSocModel, npuSocManufacturer),
-                    capable = capable,
-                    installedTierIds = installed,
-                    driverCheck = driverCheck,
-                ),
-            )
+            //
+            // (P3a) THROUGH NATIVE LOGGING — the apu: lines' route, so the offer line and the
+            // MediaTek driver lines are ONE channel in the build that ships. It was
+            // android.util.Log.i, which proguard-rules.pro strips from every release build
+            // ("Release log hygiene"): on a Play build this line never printed at all, on any
+            // vendor, and the Tab S10+'s ship sheet reads it first (`soc=MT6989:pass`, plan P3-4).
+            // WhisperNative.diag logs under the same WE-DIAG tag (whisper_jni.cpp's LOGDIAG) and
+            // survives R8, as the apu: verdict, stale-pair and refresh-notice lines already do.
+            // ONE route, not a second: the Log.i is gone, so a debug build prints it once too.
+            // Off Main (this function forces the gate, which dlopens) — the diag loads the whisper
+            // JNI library, which is never loaded on Main — and wrapped, because a line may never
+            // cost the gate its answer.
+            runCatching {
+                WhisperNative.diag(
+                    NpuDiag.offer(
+                        socModel = npuSocModel,
+                        socSupported = NpuGate.isSocSupported(npuSocModel, npuSocManufacturer),
+                        capable = capable,
+                        installedTierIds = installed,
+                        driverCheck = driverCheck,
+                    ),
+                )
+            }
         }
         return offered
     }

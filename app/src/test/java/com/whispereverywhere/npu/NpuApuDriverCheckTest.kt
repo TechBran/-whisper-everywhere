@@ -296,7 +296,11 @@ class NpuApuDriverCheckTest {
     @Test
     fun aWalkThatNeverFinishedIsRecordedAsProbeCrashedAndNeverWalkedAgainOnThatKey() {
         // The previous launch marked the walk and died inside it: no verdict, the marker standing.
-        val store = FakeStore(npuApuProbeInFlight = tabKey.marker())
+        // RE-SPECCED by the P2c review's later item (kill vs crash): the marker carries the
+        // attempt, and it takes TWO unfinished walks in a row — the second attempt's marker — to
+        // record probe-crashed; one may be a kill and is walked again
+        // (aSingleUnfinishedWalkIsWalkedAgainAndOnlyTheSecondRecordsProbeCrashed, below).
+        val store = FakeStore(npuApuProbeInFlight = NpuApuDriverCheck.inFlightMarker(tabKey, NpuApuDriverCheck.CRASH_FINDS))
         val settled = settle(store) { throw AssertionError("a crashed key must never be walked again") }
         assertEquals(NpuApuDriverCheck.PROBE_CRASHED, settled.verdict.refusal)
         assertEquals("probe-crashed", NpuApuDriverCheck.PROBE_CRASHED)
@@ -338,6 +342,116 @@ class NpuApuDriverCheckTest {
         settle(answered) { "probe: adapter-missing" }
         assertEquals("adapter-missing", answered.npuApuVerdict?.refusal)
     }
+
+    // ---------------------------------------- the P2c review's later items: kill vs crash, the commit
+
+    /**
+     * KILL VS CRASH (the P2c review, a later item). A process KILLED inside the ~200 ms walk leaves
+     * the same marker a crash does, and the walk runs exactly when a kill is likeliest — the first
+     * launch after an update or an OTA, often a BOOT_COMPLETED / MY_PACKAGE_REPLACED start under
+     * memory pressure — so recording `probe-crashed` on the FIRST find hid the tier until the next
+     * update. The marker carries the attempt now: the launch that finds ONE unfinished walk under its
+     * key walks again, as attempt 2, and only a SECOND unfinished walk in a row records the crash —
+     * a real crash loop costs one extra crash.
+     */
+    @Test
+    fun aSingleUnfinishedWalkIsWalkedAgainAndOnlyTheSecondRecordsProbeCrashed() {
+        // The first walk under a key is attempt 1, marked before the walk.
+        val fresh = FakeStore()
+        var markedAtFirstWalk: String? = null
+        NpuApuDriverCheck.settle(
+            store = fresh, key = tabKey,
+            probe = { _, _, _ -> markedAtFirstWalk = fresh.npuApuProbeInFlight; "" },
+            filesDir = File("f"), libDir = "l", clock = { 7L },
+        )
+        assertEquals("the first walk's marker is attempt 1", NpuApuDriverCheck.inFlightMarker(tabKey, 1), markedAtFirstWalk)
+
+        // Launch 1 died inside its walk — killed or crashed, one marker cannot say which.
+        val store = FakeStore(npuApuProbeInFlight = NpuApuDriverCheck.inFlightMarker(tabKey, 1))
+        var markedAtSecondWalk: String? = null
+        val second = NpuApuDriverCheck.settle(
+            store = store, key = tabKey,
+            probe = { _, _, _ -> markedAtSecondWalk = store.npuApuProbeInFlight; store.writes += "walk"; "" },
+            filesDir = File("f"), libDir = "l", clock = { 7L },
+        )
+        assertEquals("ONE unfinished walk is walked again, as attempt 2", NpuApuDriverCheck.inFlightMarker(tabKey, 2), markedAtSecondWalk)
+        assertTrue("a kill forgiven: the tier is back on this launch", second.verdict.passed)
+        assertEquals("mark, walk, record — the ordinary walk", listOf("mark", "walk", "record"), store.writes)
+        assertNull("and the marker retired with the verdict", store.npuApuProbeInFlight)
+
+        // A crash loop: launch 2 died inside its walk too — the second attempt's marker stands.
+        val loop = FakeStore(npuApuProbeInFlight = NpuApuDriverCheck.inFlightMarker(tabKey, 2))
+        val third = settle(loop) { throw AssertionError("a second unfinished walk is the crash loop — never walked again") }
+        assertEquals(NpuApuDriverCheck.PROBE_CRASHED, third.verdict.refusal)
+        assertEquals("recorded without a walk", listOf("record"), loop.writes)
+        assertEquals("two in a row, exactly", 2, NpuApuDriverCheck.CRASH_FINDS)
+
+        // The reading: nothing, another key's marker, this key's, an unreadable attempt.
+        assertEquals(0, NpuApuDriverCheck.unfinishedWalks(null, tabKey))
+        assertEquals(0, NpuApuDriverCheck.unfinishedWalks(NpuApuDriverCheck.inFlightMarker(tabKey.copy(appUpdatedAtMs = 1L), 2), tabKey))
+        assertEquals(1, NpuApuDriverCheck.unfinishedWalks(NpuApuDriverCheck.inFlightMarker(tabKey, 1), tabKey))
+        assertEquals(2, NpuApuDriverCheck.unfinishedWalks(NpuApuDriverCheck.inFlightMarker(tabKey, 2), tabKey))
+        assertEquals("a bare marker (the P2-7 spelling) is one unfinished walk", 1, NpuApuDriverCheck.unfinishedWalks(tabKey.marker(), tabKey))
+        assertEquals("an unreadable attempt walks again rather than giving up", 1, NpuApuDriverCheck.unfinishedWalks("${tabKey.marker()}#x", tabKey))
+    }
+
+    /**
+     * NOT A DEATH, SO NOT A CRASH (the P2c review, a later item). [NpuApuDriverCheck.probeNow]
+     * turns anything the probe throws into a named refusal — but building that name can itself
+     * throw (an `Error` out of its `getOrElse`, an out-of-memory while naming the cause), AFTER the
+     * marker is on disk. The process is still alive to see it, so the marker must not outlive that
+     * exit: the settle retires it (`finally`), and the same process's retry — the boot prewarm
+     * settling after the launch thread's settle threw — walks cleanly instead of reading its own
+     * marker as an unfinished walk.
+     */
+    @Test
+    fun anErrorOutOfTheSettleRetiresTheMarkerSoThisProcesssRetryWalksCleanly() {
+        val store = FakeStore()
+        val unnameable = object : Throwable() {
+            override val message: String get() = throw OutOfMemoryError("while naming the refusal")
+        }
+        var escaped: Throwable? = null
+        try {
+            settle(store) { throw unnameable }
+        } catch (e: OutOfMemoryError) {
+            escaped = e
+        }
+        assertTrue("the Error still propagates — the settle does not swallow it", escaped is OutOfMemoryError)
+        assertEquals("mark, walk, and the marker retired on the way out", listOf("mark", "walk", "clear"), store.writes)
+        assertNull("no marker for this process's retry to read as a crash", store.npuApuProbeInFlight)
+        assertNull("and nothing stored", store.npuApuVerdict)
+        val retry = settle(store) { "" }
+        assertTrue("the retry walks as a first attempt, and passes", retry.verdict.passed)
+        assertEquals(listOf("mark", "walk", "clear", "mark", "walk", "record"), store.writes)
+    }
+
+    /**
+     * THE MARKER IS WRITTEN WITH `commit()` (the P2c review, a later item). The crash-loop guard is
+     * worthless without it: `apply()` queues the write, and the native crash the marker exists to
+     * catch kills the process before a queued write lands — the next launch would find no marker
+     * and walk into the same crash, forever. `PreferencesManager.kt` is a declared input, so an
+     * edit to `.apply()` re-runs this.
+     */
+    @Test
+    fun theInFlightMarkerIsWrittenWithCommitNeverApply() {
+        val prefs = read("src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt")
+        assertEquals(
+            "the marker is written by commit() — synchronous, on disk BEFORE the walk; with apply() " +
+                "a crash in the walk leaves no marker, and the crash-loop guard is worthless",
+            1,
+            liveLineCount(prefs, "deviceLocal.edit().putString(KEY_NPU_APU_PROBE_IN_FLIGHT, marker).commit()"),
+        )
+        for (writer in listOf(
+            "override fun markNpuApuProbeInFlight(marker: String) {",
+            "override fun recordNpuApuVerdict(verdict: NpuApuVerdict) {",
+            "override fun clearNpuApuProbeInFlight() {",
+        )) {
+            val body = prefs.substringAfter(writer).substringBefore("\n    }")
+            assertEquals("$writer commits", 1, liveLineCount(body, ".commit()"))
+            assertEquals("$writer never applies", 0, liveLineCount(body, ".apply()"))
+        }
+    }
+
 
     @Test
     fun theDispatchDirectoryHasOneNameUnderFilesDir() {

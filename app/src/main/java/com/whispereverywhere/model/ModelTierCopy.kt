@@ -1,5 +1,9 @@
 package com.whispereverywhere.model
 
+import com.whispereverywhere.npu.NpuFleetCensus
+import com.whispereverywhere.npu.NpuSocFamily
+import com.whispereverywhere.npu.NpuVendor
+
 /**
  * The single source of truth for tier descriptions — consumed by BOTH the guided onboarding's
  * model-choice cards and the Settings manual picker (OnboardingModelScreen), so the two surfaces
@@ -101,6 +105,15 @@ package com.whispereverywhere.model
  *    the measurement, see that card), "the fastest on this device" and 4.6 T2's chip-scoped
  *    accuracy superlative ("the most accurate model that runs there") on `npu-turbo` — and the
  *    comparands the measurements were made against are in the KDoc, not the body.
+ *
+ * **P3a — A CLAIM IS TRUE OF A VENDOR'S SILICON, OR IT IS NOT ON THAT VENDOR'S CARD.** The census
+ * gained a MediaTek family (the Tab S10+ / S10 Ultra, `mt6989`), where `npu-turbo`'s "the fastest
+ * on this device" is false: the tablet's CPU commits `small-q8` in 1,217 ms and the APU turbo in
+ * ≈ 2.3 s. So the chooser surfaces render [forIdOn] — the card THIS DEVICE'S FAMILY reads — and
+ * a MediaTek family reads [mediatekCopyById]'s turbo card: accuracy only, no speed claim, the
+ * owner's wording for a MediaTek speed claim pending (a `TODO(owner)` there and a pin that fails
+ * if the Qualcomm sentence ever renders on a MediaTek row). The same function badges every gated
+ * card with the family's own pair bytes. [forId] stays the reference card, and no chooser calls it.
  */
 object ModelTierCopy {
 
@@ -358,7 +371,12 @@ object ModelTierCopy {
             // transcripts compared, and the small-q8 rule above applies. The open item is
             // unchanged: a Fold6 session that times `small-q8` beside the two NPU tiers, after
             // which this body may name what it beats — or the headline may have to move.
-            body = "Runs on this phone's AI chip, much faster on this device.",
+            //
+            // P3a review (small 3): "this phone's AI chip" became "this device's AI chip", as the
+            // turbo body's did. The card renders on a Galaxy Tab S8 (the `8gen1` family) once a
+            // small pair is imported there, and a card may not call a tablet a phone. The measured
+            // speed claim is byte-identical; no MediaTek family offers this tier at all.
+            body = "Runs on this device's AI chip, much faster on this device.",
         ),
         // 4.1 wrote this card as "Best quality, slower" against the OTHER NPU card, back when no
         // WER existed for any w8a16 variant and the two NPU tiers were offered side by side. Both
@@ -439,8 +457,82 @@ object ModelTierCopy {
             // scoped to the device in the user's hand, never an absolute. "The best choice on
             // this device" is the steer — turbo HEADS the steer wherever it is offered
             // (`steerIdForLanguageTagFor`, the owner's pick) — stated where the user reads it.
-            body = "Runs on this phone's AI chip — the most accurate model that runs there, " +
+            //
+            // P3a (the MediaTek APU tier, design §2.8): "this phone's AI chip" became "this
+            // device's AI chip". The census reaches tablets on both vendors now — the Galaxy Tab
+            // S8 family on `8gen1` and the Tab S10+ / S10 Ultra on `mt6989` — and a card may not
+            // call a tablet a phone. Nothing else in the sentence moved. The MediaTek families do
+            // NOT read this card at all: [forIdOn] hands them [mediatekCopyById]'s, because this
+            // body's speed half is false on the Tab S10+ (see there).
+            body = "Runs on this device's AI chip — the most accurate model that runs there, " +
                 "and the fastest on this device. The best choice on this device.",
+        ),
+    )
+
+    /**
+     * **THE CARDS A MEDIATEK FAMILY READS INSTEAD (P3a; design §2.8, plan P3-2).** Only the cards
+     * whose claims are not true on that vendor's silicon are here; every other card — and every
+     * card on a Qualcomm row — is [copyById]'s. [forIdOn] is the one reader.
+     *
+     * The turbo card is here because its SPEED half is false on the Tab S10+. On Qualcomm the
+     * claim is measured and owner-ruled ("the fastest on this device"); on the tablet the APU's
+     * commit is ≈ 2.3 s (encode 1,718-1,725 ms warm + ≈ 30 ms a token — the product engine on the
+     * APU, `docs/measurements/2026-09-24-tab-apu-turbo-encoder.md` §6, P1's device gate) against
+     * the CPU's `small-q8` at 1,217 ms and `medium-q8` at 1,341 ms per commit
+     * (`docs/measurements/2026-09-17-tab-cpu-ladder.md`, medians). The same model on the tablet's
+     * CPU (`ultra-q8`) was 4,849 ms and fell behind in the owner's evening sessions, so the APU
+     * tier is much faster than THAT — a comparative the owner has not ruled on either.
+     *
+     * TODO(owner): the speed claim on MediaTek families is PENDING his wording (plan P3-2; design
+     * §2.8 and §7 q3). Until he rules, this card carries NO speed claim at all — no headline
+     * "fastest", no body speed word — and `ModelTierCopyTest`'s TODO(owner) pin fails the moment
+     * the Qualcomm speed sentence renders on a MediaTek row. His ruling replaces the body, and the
+     * pin with it.
+     */
+    private val mediatekCopyById: Map<String, TierCopy> = mapOf(
+        // THE ONE CLAIM THIS CARD MAKES — accuracy, scoped to the SET of models that run on this
+        // device's AI chip, and nothing else:
+        //   "The most accurate model that runs on this device's AI chip." is 4.6 T2's scoped
+        //   accuracy claim — the Qualcomm card's "the most accurate model that runs there" — in a
+        //   clause of its own that names the set it ranks against. It ranks NOTHING that runs on
+        //   the CPU. On a MediaTek family that set is one model: the census row offers `npu-turbo`
+        //   alone (the owner's turbo-only ruling, on the row), so the claim is true by
+        //   construction, and it would stay true of large-v3-turbo beside any smaller Whisper a
+        //   later MediaTek tier added (whisper's own size order).
+        //   WHY NOT THE DESIGN'S PROPOSAL (§2.8), "The most accurate model this device can run, on
+        //   its AI chip." — the first P3a draft. It ranked EVERY model the device can run, the CPU
+        //   rungs included: `ultra-q8` is the same large-v3-turbo weights at Q8_0, and the retired
+        //   `large-v3` — whisper's full checkpoint, more accurate — is still installed on some
+        //   internal-track phones. So it claimed the device-wide top beside `ultra-q8`'s "The most
+        //   accurate one.", which is the draft the 4.9.1 review rejected ("our most accurate
+        //   model"), and it passed the census only because ", on its AI chip" was not split off as
+        //   a clause of its own. The census splits at ", " now too (the P3a review, FIX-NOW 2).
+        //   WHAT THE TWO SHEETS SHOW, and what they do not:
+        //    * docs/measurements/2026-09-24-tab-apu-turbo-encoder.md §6 (P1's device gate): the
+        //      product's own engine on the tablet's APU transcribed all seven utterances — three
+        //      rounds of jfk and the canary, and one after a re-arm — with
+        //      `matches_reference=true`: word-perfect against the app-mode reference, timestamps
+        //      paired and monotonic; the recompiled pair did too (§7). It shows this model RUNS
+        //      CORRECTLY on the AI chip. It ranks it against nothing.
+        //    * docs/measurements/2026-09-17-tab-cpu-ladder.md: the owner's accuracy order of the
+        //      three CPU rungs on the same tablet, in his words after dictating on all three
+        //      ("For small, we say fast — fastest, less accurate. Medium: balanced speed and
+        //      accuracy. V3 turbo: highest accuracy") beside their timing (1,217 / 1,341 / 4,849 ms
+        //      per commit). It orders the CPU rungs. It does not compare the APU with any of them.
+        //   Neither sheet ranks the APU model against a CPU rung, and nothing in this repo compares
+        //   the fp16 APU transcripts with the Q8_0 CPU ones — which is why the body ranks only what
+        //   runs on the AI chip, and `ultra-q8` stays the one unscoped claimant
+        //   (`exactly_one_card_claims_the_top_of_the_accuracy_order` on every family's lineup).
+        // The headline is the Qualcomm card's with its speed word taken out: "Best AI-chip
+        // accuracy" is 4.6 T2's scoped accuracy claim, true of the one model that runs on a
+        // MediaTek AI chip. The badge is the mt6989 pair's own bytes (1,302,606,488 +
+        // 584,862,184 = 1,887,468,672 B), by the badge rule every card follows — SI megabytes,
+        // truncated ([sizeBadge]) — and [forIdOn] derives it from the family's census row, so
+        // a second MediaTek family gets its own pair's number without an edit here.
+        "npu-turbo" to TierCopy(
+            headline = "Best AI-chip accuracy",
+            badges = listOf("90+ languages", "1887 MB"),
+            body = "The most accurate model that runs on this device's AI chip.",
         ),
     )
 
@@ -452,6 +544,52 @@ object ModelTierCopy {
      * the per-tier gate decides whether each renders.
      */
     fun forId(id: String): TierCopy? = copyById[id]
+
+    /**
+     * **THE CARD AS THIS DEVICE'S FAMILY READS IT (P3a; design §2.8)** — what BOTH chooser
+     * surfaces render (`ChooserSteerWiringPinTest` and `ModelTierCopyTest` hold that neither calls
+     * the family-blind [forId]). Two things move with the family, nothing else:
+     *
+     *  * **The card.** A MediaTek family reads [mediatekCopyById]'s card where it has one — the
+     *    turbo card without its speed claim, which is false on the Tab S10+ — and every other
+     *    family, and every other card, reads [copyById]'s. [family] null (off the census) is the
+     *    reference card, which is also what [forId] answers.
+     *  * **The size badge.** A gated card's badge states THE FAMILY'S measured pair
+     *    ([familyPairBytes]) by the badge rule ([sizeBadge]) — the 4.2 F7 rule the Settings
+     *    picker's title row already follows, now on the badge the card body sits under too.
+     *    Before P3a the badge was the reference family's literal on every device: "981 MB" on a
+     *    Tab S10+ that downloads a 1,887,468,672-byte pair. On a Qualcomm row the number moves
+     *    by the family's own bytes (976-999 MB turbo at v0.63.0) or not at all (8gen3, the
+     *    reference). Every card the census cannot answer for keeps its literal.
+     */
+    fun forIdOn(id: String, family: NpuSocFamily?): TierCopy? {
+        val card = (if (family?.vendor == NpuVendor.MEDIATEK) mediatekCopyById[id] else null)
+            ?: copyById[id]
+            ?: return null
+        val pairBytes = familyPairBytes(family, id) ?: return card
+        return card.copy(badges = card.badges.map { if (it.endsWith(" MB")) sizeBadge(pairBytes) else it })
+    }
+
+    /**
+     * The family's measured pair for a gated tier — encoder plus decoder, what the user installs
+     * — or null where the census cannot answer (no family, a CPU tier, a tier the family has no
+     * row for). ONE DERIVATION OF THE BYTES for the badge ([forIdOn]) and the onboarding size line
+     * (`OnboardingLogic.speechModelSize`), so both state the same pair — ROUNDED TWO WAYS, by
+     * design: the badge truncates to whole SI megabytes, the rule every badge follows ("981 MB"),
+     * and the line rounds to the nearest with "about", the refresh notice's rule ("about 982 MB").
+     * The same 981,968,552 bytes, read twice; not two sizes.
+     */
+    fun familyPairBytes(family: NpuSocFamily?, tierId: String): Long? =
+        family?.let { NpuFleetCensus.artifactFor(it.id, tierId) }
+            ?.let { it.encoder.bytes + it.decoder.bytes }
+
+    /**
+     * THE BADGE RULE, spelled once (P3a): SI megabytes, TRUNCATED — the rule every literal badge
+     * in this file follows (981,968,552 B is "981 MB", 264,464,607 B is "264 MB"), and the one
+     * `ModelTierCopyTest.the_size_badge_tells_the_truth_about_the_download` measures a badge
+     * against. The mt6989 pair, 1,887,468,672 B, is "1887 MB".
+     */
+    fun sizeBadge(bytes: Long): String = "${bytes / 1_000_000L} MB"
 
     /**
      * The tier a fresh install is steered to, from the device's primary language tag (3.7,

@@ -1592,4 +1592,57 @@ class NpuAssetImportTest {
             bounded.contains("Nothing was installed"),
         )
     }
+
+    /**
+     * THE IMPORT PANEL ONLY WHERE THE FAMILY OFFERS THE TIER IT IMPORTS (P3a). The Settings
+     * picker's panel imports the npu (small) pair and says so — "about 338 MB once installed",
+     * "much faster than the CPU", a zip from the release page. A MediaTek family is turbo only
+     * (the owner's ruling, on the census row): no small pair exists for it, the AI chip is not
+     * faster than the Tab S10+'s CPU rungs, and no MediaTek zip is published. So the panel is
+     * offered exactly on the families whose `tiers` carry the tier — every Qualcomm row — and on
+     * no MediaTek row and no off-census device. The picker's gate is pinned to this predicate by
+     * `ChooserSteerWiringPinTest`.
+     */
+    @Test
+    fun theImportPanelIsOfferedExactlyWhereTheFamilyOffersTheTierItImports() {
+        for (family in NpuFleetCensus.families) {
+            assertEquals(
+                "${family.id} (${family.vendor}): the panel follows the family's own tiers",
+                NpuAssetImport.TIER_ID in family.tiers,
+                NpuAssetImport.panelOfferedOn(family),
+            )
+            assertEquals(
+                "${family.id}: every Qualcomm row offers it and no MediaTek row does",
+                family.vendor == NpuVendor.QUALCOMM,
+                NpuAssetImport.panelOfferedOn(family),
+            )
+        }
+        assertFalse("mt6989 — the Tab S10+ — is shown no small-pair import", NpuAssetImport.panelOfferedOn(NpuFleetCensus.familyById("mt6989")))
+        assertFalse("off the census, nothing", NpuAssetImport.panelOfferedOn(null))
+    }
+
+    /**
+     * THE PANEL'S RULE IS THE DEVICE'S WHOLE IMPORT RULE (the P3a review, small 1) — the card's
+     * "Import model pair…" / "Re-import model pair…" control, the sentence above it and every
+     * refusal that names it follow it too. That is right only while its proxy holds: a family
+     * offers the small tier exactly when every one of its pairs is a VENDOR package (a census row
+     * with a vendor zip, `sourceBytes`), whose delivery zips are published beside every release;
+     * a LOCAL pair (compiled here — the mt6989 one) has no published zip. Held row by row, so a
+     * census change that breaks the coincidence — a published MediaTek zip, a vendor family
+     * without small — fails HERE rather than silently offering an import nothing can fill, or
+     * hiding one a published zip could.
+     */
+    @Test
+    fun theImportRuleIsExactlyTheFamiliesWhosePairsAreVendorPackages() {
+        for (family in NpuFleetCensus.families) {
+            val pairs = NpuFleetCensus.artifacts.filter { it.familyId == family.id }
+            assertTrue("${family.id} has pairs", pairs.isNotEmpty())
+            assertEquals(
+                "${family.id}: the import is offered exactly where every pair is a vendor package " +
+                    "(${pairs.map { "${it.tierId}=${it.sourceBytes}" }})",
+                pairs.all { it.sourceBytes != null },
+                NpuAssetImport.panelOfferedOn(family),
+            )
+        }
+    }
 }

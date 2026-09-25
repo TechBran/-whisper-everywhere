@@ -121,7 +121,8 @@ object NpuPackController {
     /**
      * Which fetch [readings] belong to — bumped at every [start] (the P2b review's FIX-NOW), so the
      * fetch Task's answer to an EARLIER fetch (a retry tapped before it arrived) never fills a later
-     * fetch's readings. Guarded by this object's monitor.
+     * fetch's readings — and at every [cancel] (the P2c review's later item), so an answer to a
+     * CANCELLED fetch never folds in after the user cancelled it. Guarded by this object's monitor.
      */
     private var fetchGeneration: Int = 0
 
@@ -205,8 +206,18 @@ object NpuPackController {
      * cancelled — `installFromPack`'s own finally clears its `.part` files — and the card reads
      * Cancelled at once, because from the user's point of view the fetch they cancelled is over
      * the moment they say so.
+     *
+     * **The cancel ends the fetch's GENERATION too (the P2c review, a LATER item).** The fetch
+     * Task's answer ([onFetchAnswered]) is dropped only when its generation is stale, and until
+     * this line only [start] moved the generation: an answer arriving after a Cancel still folded
+     * in, and could flip Cancelled back to Pending — or, when Play already held every part, to
+     * Verifying, and run the install the user had just cancelled (reachable on Qualcomm too, since
+     * the Task success listener). So the cancel advances it FIRST, under the same monitor the fetch
+     * bump and the answer's check take, and any answer to the cancelled fetch is an answer to an
+     * earlier one.
      */
     fun cancel() {
+        synchronized(this) { fetchGeneration++ }
         val tierId = _activeTier.value
         val parts = activeParts
         if (parts.isNotEmpty()) runCatching { manager?.cancel(parts.map { it.packName }) }
@@ -286,7 +297,16 @@ object NpuPackController {
      */
     private fun publish(tierId: String, packName: String, next: NpuPackFetch.FetchState) {
         val previousWord = NpuPackFetch.statusWord(_state.value)
-        _state.value = next
+        // (The P3a review, small 1) Every refusal is worded for THIS device's import route: the
+        // machine's sentences name "'Import model pair…' below", which is true where the device is
+        // offered the import and false on a MediaTek row, which is offered none (no zip is
+        // published for its pair). This is the one funnel every published state passes, so the
+        // picker's card and the onboarding row both read the device's truth.
+        _state.value = if (next is NpuPackFetch.FetchState.Failed) {
+            NpuPackFetch.FetchState.Failed(NpuPackFetch.reasonFor(next.reason, importRouteOffered()))
+        } else {
+            next
+        }
         val word = NpuPackFetch.statusWord(next)
         val soFar: Long
         val total: Long
@@ -306,6 +326,15 @@ object NpuPackController {
         }
         Log.i(NpuDiag.TAG, NpuDiag.packLine(tierId, packName, word, soFar, total))
     }
+
+    /**
+     * Is THIS device offered the SAF import route at all? `NpuAssetImport.panelOfferedOn` for its
+     * census family — the one rule the Settings picker's panel, the gated card's import control
+     * and every refusal that names the import all follow (the P3a review, small 1). Read off the
+     * app's family memo, a table lookup.
+     */
+    private fun importRouteOffered(): Boolean =
+        NpuAssetImport.panelOfferedOn((appContext as? WhisperEverywhereApp)?.npuSocFamily)
 
     /** Launch the install exactly once per delivery, joining a cancelled predecessor first —
      *  the import controller's N4 lesson, kept: two installs write the same staging paths. */

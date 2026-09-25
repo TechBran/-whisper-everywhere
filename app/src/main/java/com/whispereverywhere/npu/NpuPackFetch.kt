@@ -384,6 +384,68 @@ object NpuPackFetch {
         "Google Play can't deliver the model to this install — it wasn't installed from Play. " +
             "Use 'Import model pair…' below instead."
 
+    // ---------------------------------- the reasons that name the import, and their twins (P3a)
+
+    /** [failureReason]'s APP_UNAVAILABLE sentence — one of the family that names the import. */
+    private const val APP_UNAVAILABLE_ANSWER: String =
+        "Google Play says this app is currently unavailable, so it can't deliver the " +
+            "model right now. Try again later, or use 'Import model pair…' below."
+
+    /** [failureReason]'s PACK_UNAVAILABLE sentence — one of the family that names the import. */
+    private const val PACK_UNAVAILABLE_ANSWER: String =
+        "This version of the app doesn't offer that model pack on Google Play. Update " +
+            "the app from Play, or use 'Import model pair…' below."
+
+    /** [emptyDeliveryRefusal] for a device-targeted pair — names the import. */
+    private const val EMPTY_TARGETED: String =
+        "Google Play delivered no model for this device — it is not in any device group this " +
+            "app publishes a pack for, so the pack arrived empty. Use 'Import model pair…' " +
+            "below instead. Nothing was installed."
+
+    /** [emptyDeliveryRefusal] for an untargeted pair — names the import. */
+    private const val EMPTY_UNTARGETED: String =
+        "Google Play delivered no model for this device — the model's pack was not delivered. " +
+            "Retry the download, or use 'Import model pair…' below instead. Nothing was installed."
+
+    /**
+     * EVERY SENTENCE THE MACHINE WRITES THAT NAMES THE IMPORT, and the same sentence for a device
+     * that is offered no import route (the P3a review, small 1). The machine's reasons name
+     * "'Import model pair…' below" because on the Settings picker that control IS below — the F5
+     * carrier rule — and a Qualcomm row keeps them verbatim. A MediaTek row is offered no import at
+     * all (`NpuAssetImport.panelOfferedOn`: no zip is published for its pair — Play only, until
+     * the owner's NeuroPilot Express ruling), so there the same failure is worded without it:
+     * the fact, and the one path forward that exists. Keyed on the exact sentence, so the twin can
+     * never drift from its original; `NpuPackFetchTest` holds that no reason any builder produces
+     * still names the import once it is worded for such a device.
+     */
+    private val WITHOUT_IMPORT_ROUTE: Map<String, String> = mapOf(
+        SIDELOAD_ANSWER to
+            "Google Play can't deliver the model to this install — it wasn't installed from Play, " +
+            "and on this device the model comes from Google Play only.",
+        APP_UNAVAILABLE_ANSWER to
+            "Google Play says this app is currently unavailable, so it can't deliver the " +
+            "model right now. Try again later.",
+        PACK_UNAVAILABLE_ANSWER to
+            "This version of the app doesn't offer that model pack on Google Play. Update " +
+            "the app from Play.",
+        EMPTY_TARGETED to
+            "Google Play delivered no model for this device — it is not in any device group this " +
+            "app publishes a pack for, so the pack arrived empty. Nothing was installed.",
+        EMPTY_UNTARGETED to
+            "Google Play delivered no model for this device — the model's pack was not delivered. " +
+            "Retry the download. Nothing was installed.",
+    )
+
+    /**
+     * [reason] as THIS device should read it (the P3a review, small 1): verbatim where the device
+     * is offered the import route ([importRoute] — `NpuAssetImport.panelOfferedOn` for its
+     * family), and without the import where it is not. The pack controller publishes every
+     * refusal through this, so every surface that renders the fetch's state — the Settings
+     * picker's card, the onboarding flow's engine row — reads the device's truth.
+     */
+    fun reasonFor(reason: String, importRoute: Boolean): String =
+        if (importRoute) reason else WITHOUT_IMPORT_ROUTE[reason] ?: reason
+
     /**
      * Every error code in user words with the honest next action. Unknown codes render
      * `"Google Play reported error <n>"` — never silence; `NpuPackFetchTest` enumerates the
@@ -397,12 +459,8 @@ object NpuPackFetch {
     fun failureReason(errorCode: Int, pairBytes: Long = 0L): String = when (errorCode) {
         ERROR_NO_ERROR ->
             "Google Play reported a failure without naming a reason. Retry the download."
-        ERROR_APP_UNAVAILABLE ->
-            "Google Play says this app is currently unavailable, so it can't deliver the " +
-                "model right now. Try again later, or use 'Import model pair…' below."
-        ERROR_PACK_UNAVAILABLE ->
-            "This version of the app doesn't offer that model pack on Google Play. Update " +
-                "the app from Play, or use 'Import model pair…' below."
+        ERROR_APP_UNAVAILABLE -> APP_UNAVAILABLE_ANSWER
+        ERROR_PACK_UNAVAILABLE -> PACK_UNAVAILABLE_ANSWER
         ERROR_INVALID_REQUEST ->
             "Google Play rejected the download request as invalid. Restart the app and retry."
         ERROR_DOWNLOAD_NOT_FOUND ->
@@ -487,17 +545,11 @@ object NpuPackFetch {
      *    be false. What is true is that the pack was not delivered (Play gave a part no location,
      *    or part 1 arrived without its `metadata.json`), and a retry is the first thing to try.
      *
-     * Both name the import fallback as the path forward, and both say nothing was installed.
+     * Both name the import fallback as the path forward, and both say nothing was installed. (On
+     * a device offered no import route the controller words them without it — [reasonFor].)
      */
     fun emptyDeliveryRefusal(parts: List<PackPart>): String =
-        if (isDeviceTargeted(parts)) {
-            "Google Play delivered no model for this device — it is not in any device group this " +
-                "app publishes a pack for, so the pack arrived empty. Use 'Import model pair…' " +
-                "below instead. Nothing was installed."
-        } else {
-            "Google Play delivered no model for this device — the model's pack was not delivered. " +
-                "Retry the download, or use 'Import model pair…' below instead. Nothing was installed."
-        }
+        if (isDeviceTargeted(parts)) EMPTY_TARGETED else EMPTY_UNTARGETED
 
     private fun mb(bytes: Long): Long = bytes / 1_000_000
 }

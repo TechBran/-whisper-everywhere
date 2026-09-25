@@ -558,6 +558,9 @@ class ChooserSteerWiringPinTest {
     fun theGuidedFlowCardCallIsFullyNamedSoSteeredCannotTransposeWithSelected() {
         // `steered` and `selected` are adjacent Booleans. A positional call compiles, passes the
         // whole suite, and swaps the badge with the highlight. The named form IS the guard.
+        // (P3a: the copy is the card THIS DEVICE'S FAMILY reads — forIdOn(id, family) — so a
+        // MediaTek row never renders the Qualcomm turbo card's speed claim; ModelTierCopyTest's
+        // TODO(owner) pin holds both surfaces to it. The named-argument guard is unchanged.)
         assertEquals(
             "TierChoiceCard is called with every argument named, `steered` distinct from `selected`",
             1,
@@ -566,7 +569,7 @@ class ChooserSteerWiringPinTest {
                 block(
                     "                TierChoiceCard(",
                     "                    model = model,",
-                    "                    copy = ModelTierCopy.forId(model.id),",
+                    "                    copy = ModelTierCopy.forIdOn(model.id, npuFamily),",
                     "                    steered = model.id == steerId,",
                     "                    selected = pickedTierId == model.id,",
                     "                    onClick = { onPick(model.id) },",
@@ -919,12 +922,23 @@ class ChooserSteerWiringPinTest {
                 ),
             ),
         )
+        // RE-SPECCED AT P3a: the gate gained ONE conjunct — the device's family OFFERS the tier the
+        // panel imports (NpuAssetImport.panelOfferedOn, a census fact) — so a MediaTek row
+        // (turbo only) is not shown a 338 MB small-pair import, "much faster than the CPU" and a
+        // release-page zip that is not published. What this assertion exists for is unchanged:
+        // the gate is capability, never the offer gate, never the tier being installed.
         assertEquals(
-            "the import panel's gate is `npuCapable` — the hardware — and nothing else. Gated on " +
-                "the offer gate instead, the only route the asset pair has onto a device would " +
-                "require the asset pair to already be on that device",
+            "the import panel's gate is `npuCapable` — the hardware — and the family offering the " +
+                "tier it imports; nothing else. Gated on the offer gate instead, the only route the " +
+                "asset pair has onto a device would require the asset pair to already be on that device",
             1,
-            count(picker, block("            if (npuCapable) {", "                NpuImportPanel(")),
+            count(
+                picker,
+                block(
+                    "            if (npuCapable && NpuAssetImport.panelOfferedOn(npuFamily)) {",
+                    "                NpuImportPanel(",
+                ),
+            ),
         )
         assertEquals(
             "the offer gate is asked exactly once, for the lineup — not a second time as the " +
@@ -1529,6 +1543,8 @@ class ChooserSteerWiringPinTest {
                     "                    unavailableNote = NpuTierStatus.cardNote(",
                     "                        npuTierReasons[model.id], cpuFallbackInstalled,",
                     "                        stillSelected = model.id == selectedTierId,",
+                    // (P3a) and whose chip declined — the device's family's vendor, never assumed.
+                    "                        vendor = npuFamily?.vendor,",
                     "                    ),",
                 ),
             ),
@@ -1536,6 +1552,9 @@ class ChooserSteerWiringPinTest {
         listOf(
             "cardNote(npuTierReasons[model.id])",
             "cpuFallbackInstalled = true",
+            // P3a: the fourth input's assumed spelling, which would print "It is slower" on a
+            // MediaTek row whose CPU fallback commits faster than its AI chip.
+            "vendor = NpuVendor.QUALCOMM",
             // 4.3 micro-round: the third input's own assumed-true spelling, which would reinstate
             // the false restart promise on every card the selection has moved away from.
             "stillSelected = true",

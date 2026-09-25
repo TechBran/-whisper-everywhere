@@ -1,5 +1,8 @@
 package com.whispereverywhere.model
 
+import com.whispereverywhere.npu.NpuFleetCensus
+import com.whispereverywhere.npu.NpuSocFamily
+import com.whispereverywhere.npu.NpuVendor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -1277,7 +1280,10 @@ class ModelTierCopyTest {
         // controller ruling forbade exactly that re-pointing; a sentence can do it by shape as
         // well as by name, so the same-weights fact lives in the KDoc and not beside the speed
         // claim.
-        assertEquals("Runs on this phone's AI chip, much faster on this device.", copy.body)
+        // P3a review (small 3): "this device's AI chip", not "this phone's" — the card can render on
+        // a Galaxy Tab S8 (8gen1) after a small-pair import. The speed clause is byte-identical.
+        assertEquals("Runs on this device's AI chip, much faster on this device.", copy.body)
+        assertFalse("the npu body is device-neutral since the P3a review", copy.body.lowercase().contains("phone"))
         // The claim is scoped to the hardware in the user's hand, and the comparand it was
         // measured against is recorded beside the card — the two things that make "much faster"
         // a statement someone could check.
@@ -1388,11 +1394,16 @@ class ModelTierCopyTest {
         // beside the card, VERBATIM, per the 4.7 controller ruling — the plain body names no
         // comparand, which is neither the re-pointing that ruling forbade nor a deletion of the
         // measured claim.
+        // P3a: "this phone's AI chip" became "this device's AI chip" — the census reaches tablets on
+        // both vendors (the Tab S8 family on 8gen1, the Tab S10+ on mt6989), and a card may not
+        // call a tablet a phone. Nothing else in the sentence moved. (A MediaTek family never reads
+        // this card: forIdOn hands it its own — the_mediatek_turbo_card_... below.)
         assertEquals(
-            "Runs on this phone's AI chip — the most accurate model that runs there, and the fastest " +
+            "Runs on this device's AI chip — the most accurate model that runs there, and the fastest " +
                 "on this device. The best choice on this device.",
             copy.body,
         )
+        assertFalse("the turbo body is device-neutral since P3a", copy.body.lowercase().contains("phone"))
         // The scope is a word, and the word has to be in the SAME clause as the superlative:
         // without it the clause is a second unscoped claimant.
         val accuracySentences = sentencesOf(copy).filter { SUPERLATIVE.containsMatchIn(it) && ACCURACY_WORD.containsMatchIn(it) }
@@ -1573,6 +1584,253 @@ class ModelTierCopyTest {
         )
     }
 
+    // ------------------------------------------------- P3a — THE CARD A DEVICE'S FAMILY READS
+    //
+    // The census gained a MediaTek family (mt6989: the Galaxy Tab S10+ / S10 Ultra). Both chooser
+    // surfaces render ModelTierCopy.forIdOn(id, family): a MediaTek family reads its own turbo
+    // card — accuracy only, because the Qualcomm card's "fastest" is false on the tablet — and
+    // every gated card's size badge states the family's own pair. These pins run every claim rule
+    // above over EVERY card a census family reads, and hold the copy exactly.
+
+    /** Every card a chooser can render on [family] — the offered tiers, through [ModelTierCopy.forIdOn]. */
+    private fun cardsOn(family: NpuSocFamily?): Map<String, ModelTierCopy.TierCopy> =
+        offeredTiers.associate { it.id to ModelTierCopy.forIdOn(it.id, family)!! }
+
+    private val mediatekFamilies: List<NpuSocFamily> =
+        NpuFleetCensus.families.filter { it.vendor == NpuVendor.MEDIATEK }
+
+    /**
+     * THE MEDIATEK TURBO CARD, EXACTLY — and the claim rules over it. Accuracy only, and scoped to
+     * the SET it ranks against: "The most accurate model that runs on this device's AI chip." —
+     * 4.6 T2's scoped claim, which ranks nothing that runs on the CPU (on a MediaTek family the set
+     * is `npu-turbo` alone). The first P3a draft, the design's proposal "The most accurate model
+     * this device can run, on its AI chip.", ranked every model the device can run — `ultra-q8`'s
+     * same weights, a retired `large-v3` still installed on some internal-track phones — and was
+     * held off the census only because ", on its AI chip" was not a clause of its own; the census
+     * splits at ", " since the P3a review (FIX-NOW 2), and this test holds that the draft now fails
+     * it. The two sheets cited beside the card say what they show — the APU runs this model
+     * word-perfect (§6), the owner's order of the CPU rungs (the ladder) — and neither ranks the
+     * APU model against a CPU rung. The badge is the mt6989 pair, 1,302,606,488 + 584,862,184 =
+     * 1,887,468,672 B, by the badge rule (SI MB, truncated): "1887 MB".
+     */
+    @Test fun the_mediatek_turbo_card_is_pinned_exactly_and_claims_accuracy_alone() {
+        assertEquals("the census has the mt6989 MediaTek family", listOf("mt6989"), mediatekFamilies.map { it.id })
+        for (family in mediatekFamilies) {
+            val card = ModelTierCopy.forIdOn("npu-turbo", family)!!
+            assertEquals("Best AI-chip accuracy", card.headline)
+            assertEquals(listOf("90+ languages", "1887 MB"), card.badges)
+            assertEquals("The most accurate model that runs on this device's AI chip.", card.body)
+            val all = (card.headline + " " + card.body + " " + card.badges.joinToString(" ")).lowercase()
+            // The position the 3.7 census demands, in the headline where the eye lands first.
+            assertTrue("the MediaTek turbo headline takes no position", POSITION_WORDS.any { card.headline.lowercase().contains(it) })
+            // No speed claim of any kind — the ruling is pending (the TODO(owner) pin below).
+            SPEED_CLAIM_WORDS.forEach { word ->
+                assertFalse(
+                    "the MediaTek turbo card claims speed with <<$word>> — its speed claim awaits the owner's wording",
+                    Regex("\\b" + Regex.escape(word) + "\\b").containsMatchIn(all),
+                )
+            }
+            sentencesOf(card).forEach { sentence ->
+                assertFalse("<<$sentence>> is an absolute speed claim", isAbsoluteSpeedClaim(sentence))
+                assertNull("<<$sentence>> ranks speed", speedSuperlativeIn(sentence))
+                assertFalse(
+                    "<<$sentence>> claims the top of the accuracy order unscoped — ultra-q8 is the one card that may",
+                    isUnscopedAccuracyTopClaim(sentence),
+                )
+            }
+            // The accuracy superlative carries its scope in its own clause, and the scope is the
+            // SET it ranks against — the models that run on this device's AI chip — never the
+            // device as a whole (the P3a review's FIX-NOW 2).
+            val accuracyClause = sentencesOf(card).single { it != card.headline.lowercase() }
+            assertTrue(
+                "the clause names the set it ranks against: <<$accuracyClause>>",
+                accuracyClause.contains("that runs on this device's ai chip"),
+            )
+            assertFalse("…and ranks nothing the device runs on its CPU", accuracyClause.contains("this device can run"))
+            // THE DRAFT THE P3a REVIEW REJECTED is caught now: split at ", " as the census splits,
+            // its "the most accurate model this device can run" is an unscoped top claim — a
+            // second claimant beside ultra-q8 on the same screen.
+            val rejected = ModelTierCopy.TierCopy(
+                headline = card.headline,
+                badges = card.badges,
+                body = "The most accurate model this device can run, on its AI chip.",
+            )
+            assertTrue(
+                "the rejected draft must fail the census the card passes",
+                sentencesOf(rejected).any { isUnscopedAccuracyTopClaim(it) },
+            )
+            // The plain-body rules (4.9.1), the absolutes and the cross-app list.
+            TECHNICAL_TOKENS.forEach { token -> assertFalse("the MediaTek body carries <<$token>>", card.body.contains(token)) }
+            assertTrue(card.body.split(". ").filter { it.isNotBlank() }.size in 1..3)
+            assertTrue(card.body.endsWith(".") && card.body.length <= 140)
+            assertFalse(Regex("\\d{4}-\\d{2}-\\d{2}").containsMatchIn(card.body))
+            listOf("owner", "recommended", "phone", "tablet").forEach { assertFalse("the MediaTek card says <<$it>>", all.contains(it)) }
+            listOf(
+                "instant", "real-time", "realtime", "no delay", "no lag", "zero lag", "guaranteed", "always", "never", "unlimited",
+                "other app", "any app", "every app", "any other", "than other", "competitor", "gboard", "google", "apple", "siri",
+                "otter", "dragon", "whisperkit", "times faster", "x faster",
+            ).forEach { assertFalse("the MediaTek card says <<$it>>", all.contains(it)) }
+            assertTrue("the coverage badge every multilingual card carries", card.badges.contains("90+ languages"))
+            // The badge IS the family's pair, by the one rule — the literal and the derivation agree.
+            val pair = NpuFleetCensus.artifactFor(family.id, "npu-turbo")!!
+            assertEquals(1_887_468_672L, pair.encoder.bytes + pair.decoder.bytes)
+            assertEquals(ModelTierCopy.sizeBadge(pair.encoder.bytes + pair.decoder.bytes), card.badges.last())
+        }
+    }
+
+    /**
+     * TODO(owner): THE SPEED CLAIM ON MEDIATEK FAMILIES AWAITS THE OWNER'S WORDING (plan P3-2;
+     * design §2.8 and §7 q3). The Qualcomm turbo card's "fastest" / "the fastest on this device" is
+     * measured and owner-ruled on Qualcomm silicon and FALSE on the Tab S10+ — its CPU commits
+     * `small-q8` in 1,217 ms and `medium-q8` in 1,341 against the APU's ≈ 2.3 s (the two sheets the
+     * card's KDoc cites). Until he rules, the MediaTek card carries NO speed claim, and this pin
+     * fails the moment the Qualcomm speed sentence renders on a MediaTek row — through the card, or
+     * through a chooser surface that stops asking for the family's card. His wording replaces the
+     * MediaTek body and this pin together.
+     */
+    @Test fun todo_owner_the_qualcomm_speed_sentence_never_renders_on_a_mediatek_row() {
+        val qualcomm = ModelTierCopy.forId("npu-turbo")!!
+        assertTrue("the Qualcomm card still carries its measured speed claim", qualcomm.body.contains("the fastest on this device"))
+        for (family in mediatekFamilies) {
+            cardsOn(family).forEach { (id, card) ->
+                assertFalse(
+                    "$id on ${family.id} renders the Qualcomm speed sentence",
+                    (card.headline + " " + card.body).lowercase().contains("the fastest on this device"),
+                )
+            }
+            val turbo = ModelTierCopy.forIdOn("npu-turbo", family)!!
+            assertFalse(
+                "the turbo card on ${family.id} says 'fastest' — its speed claim awaits the owner's wording",
+                Regex("\\bfastest\\b").containsMatchIn((turbo.headline + " " + turbo.body).lowercase()),
+            )
+            assertTrue("the MediaTek turbo card is not the Qualcomm one", turbo.headline != qualcomm.headline && turbo.body != qualcomm.body)
+        }
+        // The render path: both chooser surfaces ask for THE FAMILY'S card. A surface that went
+        // back to the family-blind forId would render the Qualcomm sentence on a Tab S10+ with
+        // every card test above still green.
+        val picker = appSource("src/main/java/com/whispereverywhere/ui/screens/OnboardingModelScreen.kt")
+        val flow = appSource("src/main/java/com/whispereverywhere/ui/screens/OnboardingFlowScreen.kt")
+        assertEquals("the Settings picker's card reads the family's copy", 1, liveCount(picker, "val copy = ModelTierCopy.forIdOn(model.id, family)"))
+        assertEquals("…with the device's family memo handed to every card", 1, liveCount(picker, "family = npuFamily,"))
+        assertEquals("…remembered once from the app's census resolution", 1, liveCount(picker, "val npuFamily: NpuSocFamily? = remember { app.npuSocFamily }"))
+        assertEquals("the guided flow's card reads the family's copy", 1, liveCount(flow, "copy = ModelTierCopy.forIdOn(model.id, npuFamily),"))
+        assertEquals("…from the same memo", 1, liveCount(flow, "val npuFamily = remember { WhisperEverywhereApp.getInstance().npuSocFamily }"))
+        assertEquals("and neither surface calls the family-blind forId", 0, liveCount(picker, "ModelTierCopy.forId(") + liveCount(flow, "ModelTierCopy.forId("))
+    }
+
+    /**
+     * THE SIZE BADGE IS THE FAMILY'S PAIR, BY THE ONE RULE, ON EVERY FAMILY. Before P3a the turbo
+     * badge was the 8gen3 pair's literal on every device — "981 MB" on a Tab S10+ that downloads
+     * 1,887,468,672 B. [ModelTierCopy.forIdOn] derives each gated card's badge from the family's own
+     * census row ([ModelTierCopy.familyPairBytes]) by [ModelTierCopy.sizeBadge] — SI megabytes,
+     * truncated, the rule every literal badge already followed — and nothing else on a Qualcomm
+     * card moves.
+     */
+    @Test fun every_familys_gated_cards_badge_its_own_pair_and_nothing_else_moves() {
+        // The rule, against the literals it was read off.
+        assertEquals("981 MB", ModelTierCopy.sizeBadge(981_968_552L))
+        assertEquals("338 MB", ModelTierCopy.sizeBadge(338_422_512L))
+        assertEquals("264 MB", ModelTierCopy.sizeBadge(264_464_607L))
+        assertEquals("1887 MB", ModelTierCopy.sizeBadge(1_887_468_672L))
+        // The reference card (and any family the census cannot answer for) keeps its literals.
+        assertEquals(listOf("90+ languages", "981 MB"), ModelTierCopy.forIdOn("npu-turbo", null)!!.badges)
+        assertEquals(ModelTierCopy.forId("npu")!!, ModelTierCopy.forIdOn("npu", null))
+        for (family in NpuFleetCensus.families) {
+            val cards = cardsOn(family)
+            for (tier in family.tiers) {
+                val pair = NpuFleetCensus.artifactFor(family.id, tier)!!
+                val bytes = pair.encoder.bytes + pair.decoder.bytes
+                assertEquals("${family.id}/$tier: the family's pair bytes", bytes, ModelTierCopy.familyPairBytes(family, tier))
+                val badge = cards.getValue(tier).badges.single { it.endsWith(" MB") }
+                assertEquals("${family.id}/$tier's badge is its own pair, by the rule", ModelTierCopy.sizeBadge(bytes), badge)
+                assertTrue("${family.id}/$tier: and states the PAIR, not the encoder", badge.removeSuffix(" MB").toLong() > pair.encoder.bytes / 1_000_000L)
+            }
+            // The CPU rungs are no family's: their cards are the reference cards, byte for byte.
+            offeredTiers.filter { !it.gated }.forEach {
+                assertEquals("${family.id}/${it.id} is the reference card", ModelTierCopy.forId(it.id), cards.getValue(it.id))
+                assertNull(ModelTierCopy.familyPairBytes(family, it.id))
+            }
+            // On a Qualcomm row only the badge moves: headline and body are the reference card's.
+            if (family.vendor == NpuVendor.QUALCOMM) {
+                listOf("npu", "npu-turbo").forEach {
+                    assertEquals("${family.id}/$it headline", ModelTierCopy.forId(it)!!.headline, cards.getValue(it).headline)
+                    assertEquals("${family.id}/$it body", ModelTierCopy.forId(it)!!.body, cards.getValue(it).body)
+                }
+            }
+        }
+        // The spread the move buys, stated: every Qualcomm family's turbo pair at v0.63.0.
+        assertEquals(
+            mapOf("8gen3" to "981 MB", "8elite_galaxy" to "981 MB", "8elite5_galaxy" to "983 MB", "7gen4" to "999 MB",
+                "qcs8550" to "981 MB", "8gen1" to "976 MB", "mt6989" to "1887 MB"),
+            NpuFleetCensus.families.associate { it.id to cardsOn(it).getValue("npu-turbo").badges.last() },
+        )
+    }
+
+    /**
+     * The census rules that range over the lineup — one unscoped accuracy claimant, one headline
+     * per card — hold on EVERY family's lineup, not only on the reference cards: a MediaTek device
+     * with `ultra-q8` installed renders both turbo cards together, and the MediaTek card ranks only
+     * the models that run on the AI chip, so `ultra-q8` stays the one unscoped claimant. (Run with
+     * the ", " split since the P3a review — the first MediaTek draft would fail here.)
+     */
+    @Test fun the_lineup_censuses_hold_on_every_familys_cards() {
+        for (family in NpuFleetCensus.families + listOf(null)) {
+            val cards = cardsOn(family)
+            assertEquals(
+                "${family?.id}: exactly one card claims the top of the accuracy order, unscoped",
+                listOf("ultra-q8"),
+                cards.filter { (_, c) -> sentencesOf(c).any { isUnscopedAccuracyTopClaim(it) } }.keys.toList(),
+            )
+            val headlines = cards.values.map { it.headline }
+            assertEquals("${family?.id}: two cards share a headline: $headlines", headlines.size, headlines.toSet().size)
+            cards.forEach { (id, c) ->
+                assertTrue("${family?.id}/$id has a size badge", c.badges.any { it.endsWith(" MB") })
+                assertTrue("${family?.id}/$id has the coverage badge", c.badges.contains("90+ languages"))
+            }
+        }
+    }
+
+    /**
+     * NOTHING WAS INVENTED: the MediaTek card's one claim is cited beside it — the owner's ladder
+     * words and the doc, the APU sheet's §6 and its verdict, the tie with ultra-q8 — and the
+     * pending speed ruling is a TODO(owner) there, with the numbers that make the Qualcomm claim
+     * false on the tablet. Read out of ModelTierCopy.kt itself (a declared input of the test task).
+     */
+    @Test fun the_mediatek_cards_evidence_lives_in_the_kdoc_beside_it() {
+        val src = MODEL_TIER_COPY_SOURCE
+        val start = src.indexOf("private val mediatekCopyById")
+        assertTrue("the MediaTek card map is declared", start >= 0)
+        val block = src.substring(src.lastIndexOf("/**", start), src.indexOf("\n    )\n", start))
+        listOf(
+            "docs/measurements/2026-09-17-tab-cpu-ladder.md", "V3 turbo: highest accuracy", "1,217", "1,341",
+            "docs/measurements/2026-09-24-tab-apu-turbo-encoder.md", "§6", "matches_reference=true",
+            "the same large-v3-turbo weights at Q8_0", "It ranks it against nothing.",
+            "It does not compare the APU with any of them.",
+            "Neither sheet ranks the APU model against a CPU rung", "It ranks NOTHING that runs on",
+            "TODO(owner)", "plan P3-2", "1,887,468,672",
+        ).forEach { needle ->
+            assertTrue("the MediaTek card's KDoc no longer carries <<$needle>>", block.contains(needle))
+        }
+        assertEquals("the MediaTek map carries exactly the turbo card", 1, Regex("\" to TierCopy\\(").findAll(block).count())
+    }
+
+    /** `app/<relative>`'s text, LF-normalised — the same walk [MODEL_TIER_COPY_SOURCE] uses. */
+    private fun appSource(relative: String): String {
+        var dir: java.io.File? = java.io.File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(java.io.File(dir, relative), java.io.File(dir, "app/$relative"))) {
+                if (candidate.isFile) return candidate.readText().replace("\r\n", "\n")
+            }
+            dir = dir.parentFile
+        }
+        throw AssertionError("cannot locate $relative from ${System.getProperty("user.dir")}")
+    }
+
+    /** Occurrences of [needle] on LIVE lines of [src] — a comment quoting a call is not the call. */
+    private fun liveCount(src: String, needle: String): Int =
+        src.lines().filterNot { it.trimStart().let { t -> t.startsWith("//") || t.startsWith("*") || t.startsWith("/*") } }
+            .sumOf { line -> line.split(needle).size - 1 }
+
     private companion object {
         /** The 3.7 census's position vocabulary, shared so the npu pin cannot drift from the loop. */
         val POSITION_WORDS = listOf("fastest", "fast", "slower", "accuracy")
@@ -1733,9 +1991,18 @@ class ModelTierCopyTest {
          * model" passed the census as one sentence because the opener's "AI chip" counted as the
          * claim's scope, when it only names where the model RUNS, not the set it is ranked
          * against.
+         *
+         * **And at ", " since the P3a review (FIX-NOW 2), for the same reason one punctuation mark
+         * over.** The first MediaTek draft, "The most accurate model this device can run, on its AI
+         * chip.", ranked every model the device can run and passed only because its trailing
+         * ", on its AI chip" — where the model runs, again — rode in the claim's clause. Split at
+         * the comma, the claim stands alone and is read as what it is. Every card that ships still
+         * passes (the Qualcomm turbo body's accuracy clause, "the most accurate model that runs
+         * there", carries its own scope); the headline is not split, and never was.
          */
         fun sentencesOf(copy: ModelTierCopy.TierCopy): List<String> =
-            (listOf(copy.headline) + copy.body.split(". ").flatMap { it.split(" — ") }).map { it.lowercase() }
+            (listOf(copy.headline) + copy.body.split(". ").flatMap { it.split(" — ") }.flatMap { it.split(", ") })
+                .map { it.lowercase() }
 
         /** Superlative forms only — a COMPARATIVE ("sharper accuracy") claims no top. */
         val SUPERLATIVE = Regex("\\b(best|highest|most|sharpest|top)\\b")

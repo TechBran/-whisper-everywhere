@@ -262,7 +262,10 @@ object NpuDiag {
      * emitted **once per install epoch** (once per process per `ModelInstallSignal` generation —
      * re-armed by an install, never by a chooser open; 4.1 L8, L5 review I1), at the gate's
      * first evaluation of each epoch — and on a MediaTek row **once more** when the driver
-     * verdict lands after a line that said `probe=unknown` (P2-7, L6).
+     * verdict lands after a line that said `probe=unknown` (P2-7, L6). **Through native logging
+     * since P3a** (`WhisperNative.diag`, under this [TAG]) — the channel [apuVerdict] and the
+     * native `apu:` driver line already use — because release builds strip `android.util.Log`,
+     * so until P3a a Play build never printed this line at all.
      *
      * **This line is the run-book's first read.** The gate composes three predicates and its
      * answer is one set, so "the card never showed" collapses three very different next actions

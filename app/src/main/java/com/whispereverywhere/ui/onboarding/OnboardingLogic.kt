@@ -1,8 +1,13 @@
 package com.whispereverywhere.ui.onboarding
 
 import com.whispereverywhere.data.local.PreferencesManager
+import com.whispereverywhere.model.ModelTierCopy
+import com.whispereverywhere.model.WhisperModel
 import com.whispereverywhere.npu.NpuPackFetch
+import com.whispereverywhere.npu.NpuRefreshNotice
+import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.ui.onboarding.OnboardingSetupViewModel.EngineState
+import com.whispereverywhere.util.formatBytes
 
 /**
  * Pure decisions for the guided onboarding flow and Home's permission chip — kept free of Compose
@@ -614,6 +619,41 @@ object OnboardingLogic {
 
     /** The chooser hint under the model cards (spec A3) — plants the switching habit. */
     const val TIER_SWITCH_HINT = "Not sure? Pick one — you can switch models anytime in Settings."
+
+    /**
+     * THE DOWNLOAD PHASE'S SPEECH-MODEL LINE (P3a; design §2.8) — the subtitle under "Speech model
+     * — <name>" while the engines download. It read the CATALOG's size for every device, and the
+     * catalog's `npu-turbo` is the 8gen3 pair: a Tab S10+ was told 982 MB about a 1,887,468,672-byte
+     * pair. A gated tier on a census family now states THE FAMILY'S pair
+     * ([ModelTierCopy.familyPairBytes] — the same derivation as the card's badge), approximately
+     * ([approxSize]): Play deflates the pack in transit, and for the MediaTek row there is no vendor
+     * zip to quote at all — the pair IS what it delivers — so "about 1.9 GB" on an mt6989 device,
+     * "about 982 MB" on an 8 Gen 3. Every other tier keeps its catalog figure, which is its exact
+     * file ("264.5 MB"). Pure, so the whole sentence a user reads is a JVM test subject.
+     */
+    fun speechModelSubtitle(model: WhisperModel, family: NpuSocFamily?): String =
+        "Transcribes your dictation on-device (${speechModelSize(model, family)})"
+
+    /** [speechModelSubtitle]'s size: the family's pair, approximately, or the catalog's exact file. */
+    fun speechModelSize(model: WhisperModel, family: NpuSocFamily?): String {
+        val pair = ModelTierCopy.familyPairBytes(family, model.id) ?: return formatBytes(model.approxBytes)
+        return approxSize(pair)
+    }
+
+    /**
+     * "about 982 MB" / "about 1.9 GB" — the refresh notice's own derivation
+     * ([NpuRefreshNotice.downloadMb]: SI megabytes, rounded to the nearest), carried one step up
+     * the scale: from a thousand megabytes it is SI gigabytes to one decimal, rounded the same way
+     * (and "about 1 GB", not "1.0"). Derived from the census bytes, never a literal, so the next
+     * pair moves the sentence with it.
+     */
+    fun approxSize(bytes: Long): String {
+        val mb = NpuRefreshNotice.downloadMb(bytes)
+        if (mb < 1_000L) return "about $mb MB"
+        val tenths = (bytes + 50_000_000L) / 100_000_000L
+        val gb = if (tenths % 10L == 0L) "${tenths / 10L}" else "${tenths / 10L}.${tenths % 10L}"
+        return "about $gb GB"
+    }
 
     /** The engines step's single primary action: Download until downloads begin, then Continue. */
     data class EnginesAction(val label: String, val enabled: Boolean, val startsDownloads: Boolean)

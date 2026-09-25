@@ -205,8 +205,23 @@ object NpuTierStatus {
      * @param stillSelected does `prefs.selectedModelId` still name THIS tier? Also no default, and
      *        for the same reason: assumed true, it reinstates the false restart promise the
      *        micro-round removed.
+     * @param vendor whose AI chip declined — the device's census family's vendor, or null off the
+     *        census (P3a). It decides ONE clause: "It is slower" is measured on Qualcomm silicon
+     *        (the Fold6's NPU commit against the CPU tier) and FALSE on a MediaTek family, where
+     *        the fallback's CPU rungs commit faster than the APU turbo (the Tab S10+: `small-q8`
+     *        1,217 ms, `medium-q8` 1,341 ms against ≈ 2.3 s, docs/measurements/
+     *        2026-09-17-tab-cpu-ladder.md and 2026-09-24-tab-apu-turbo-encoder.md §6). So the
+     *        speed half is stated only where it was measured — [NpuVendor.QUALCOMM] — and every
+     *        other answer states the accuracy half alone. No default, for the reason the other two
+     *        have none: assumed Qualcomm, a MediaTek card would claim a speed that is false there.
+     *        The refusals a MediaTek driver check can produce (`adapter-missing`, `adapter-<name>`,
+     *        `driver-major-<got>-want-<want>`, `probe-crashed`) never reach this note at all: they
+     *        refuse the tier at the gate, before any backend exists to publish a reason, so the
+     *        tier is simply not offered — the QNN behaviour — and they are read in the diag
+     *        (`npu: offer … probe=fail:<reason>`, `apu: verdict=refuse(<reason>)`). The chip-stamp
+     *        mismatch refuses at `init`, a stage, and is a decline like any other.
      */
-    fun cardNote(reason: String?, cpuFallbackInstalled: Boolean, stillSelected: Boolean): String? {
+    fun cardNote(reason: String?, cpuFallbackInstalled: Boolean, stillSelected: Boolean, vendor: NpuVendor?): String? {
         val stage = stageOf(reason) ?: return null
         if (!cpuFallbackInstalled) {
             // 4.3 fix round, I-1(b): the two remedies are stated as ALTERNATIVES, in that order,
@@ -233,10 +248,29 @@ object NpuTierStatus {
         // A fallback card that tells a user they lost only speed, when they also lost the accuracy
         // they chose the tier for, is the same class of comfortable falsehood this file has now
         // corrected twice. State the real trade; it is still a good outcome, and it is honest.
+        //
+        // P3a: and the trade is not the same on every vendor's silicon. On a MediaTek family the
+        // CPU rungs a decline falls back to (small-q8, medium-q8 — the 80-bin fallbacks) commit
+        // FASTER than the APU turbo on the Tab S10+, so "It is slower" would be the same class of
+        // comfortable falsehood in the other direction; the accuracy half is still true there
+        // (whisper's size order, and the owner's "accuracy just suffers a bit" was reported off a
+        // MediaTek tablet). The speed half is stated only where it was measured.
         return "The AI chip is unavailable on this device right now (stage: $stage), so speech is " +
-            "running on the multilingual CPU model. It is slower, and a little less accurate than " +
-            "the AI chip model. " + retryRemedy(stillSelected)
+            "running on the multilingual CPU model. " + fallbackTrade(vendor) + " " +
+            retryRemedy(stillSelected)
     }
+
+    /**
+     * What the CPU fallback costs, in the one sentence [cardNote]'s fallback-installed arm states
+     * (P3a): the speed half only where it was measured — Qualcomm silicon — and the accuracy half
+     * everywhere. See [cardNote]'s `vendor`.
+     */
+    private fun fallbackTrade(vendor: NpuVendor?): String =
+        if (vendor == NpuVendor.QUALCOMM) {
+            "It is slower, and a little less accurate than the AI chip model."
+        } else {
+            "It is a little less accurate than the AI chip model."
+        }
 
     /**
      * How to make this device try the AI chip again — the ONE place either arm of [cardNote] gets

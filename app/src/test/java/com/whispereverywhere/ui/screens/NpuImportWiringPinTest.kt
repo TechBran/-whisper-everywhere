@@ -306,6 +306,8 @@ class NpuImportWiringPinTest {
                     "                    unavailableNote = NpuTierStatus.cardNote(",
                     "                        npuTierReasons[model.id], cpuFallbackInstalled,",
                     "                        stillSelected = model.id == selectedTierId,",
+                    // (P3a) whose chip declined decides the note's speed clause.
+                    "                        vendor = npuFamily?.vendor,",
                     "                    ),",
                 ),
             ),
@@ -552,6 +554,71 @@ class NpuImportWiringPinTest {
     }
 
     /**
+     * THE P3a REVIEW'S SMALL 1 — **a MediaTek row is never shown, nor told of, an import.** The
+     * gated card offered "Import model pair…" in every state and the fetch refusals named it
+     * ("use 'Import model pair…' below"), while no zip is published for a MediaTek pair — the
+     * reason the panel was already hidden there. So the card takes the panel's own rule
+     * (`NpuAssetImport.panelOfferedOn`, the device's one import rule), handed in with no default,
+     * and every route and every sentence naming one is behind it: the three fetch arms' control,
+     * the failed arm's bridge sentence, and the installed card's "Re-import model pair…". The
+     * refusal sentences themselves are worded for the device by the pack controller
+     * (`NpuPackFetch.reasonFor`, executed in `NpuPackFetchTest`), so the card still renders
+     * the machine's reason verbatim — now the device's truth.
+     */
+    @Test
+    fun aMediatekCardNeverShowsNorNamesAnImport() {
+        assertEquals(
+            "the card is handed the device's import rule — the panel's own, over the family memo",
+            1,
+            count(picker, "importOffered = NpuAssetImport.panelOfferedOn(npuFamily),"),
+        )
+        assertEquals(
+            "…as a parameter with no default: assumed true, a MediaTek card would offer an import " +
+                "no published zip can satisfy",
+            listOf(1, 0),
+            listOf(
+                count(picker, block("    importOffered: Boolean,", "    onSelect: () -> Unit,")),
+                count(picker, "importOffered: Boolean = "),
+            ),
+        )
+        assertEquals(
+            "the installed card's repair names the import only where the device is offered one",
+            1,
+            count(
+                picker,
+                block(
+                    "                    if (downloadable || importOffered) {",
+                    "                        TextButton(",
+                    "                            onClick = if (downloadable) onSelect else onImport,",
+                ),
+            ),
+        )
+        assertEquals(
+            "both fetch areas take the rule",
+            2,
+            count(picker, block("    importOffered: Boolean,", "    onFetch: () -> Unit,")),
+        )
+        assertEquals(
+            "…and the resting and failed arms hand it on",
+            1,
+            count(picker, "else -> FetchStateArea(fetch = fetch, importOffered = importOffered, onFetch = onFetch, onImport = onImport)"),
+        )
+        assertEquals(
+            "the bridge sentence renders only with the control it promises, inside the rule",
+            0,
+            count(
+                picker,
+                block("            Text(", "                text = \"You can also import the model pair from a zip below.\","),
+            ),
+        )
+        assertEquals(
+            "the panel's gate is the same rule (the panel and the card cannot disagree)",
+            1,
+            count(picker, "if (npuCapable && NpuAssetImport.panelOfferedOn(npuFamily)) {"),
+        )
+    }
+
+    /**
      * F7 fix round 1, I-2 — **the failure copy's import route must exist for the tier the card
      * is about.** F7 made the uninstalled gated card reachable here for the first time and, in
      * the same stroke, replaced that arm's per-tier Import button with the fetch affordance —
@@ -578,6 +645,11 @@ class NpuImportWiringPinTest {
                 ),
             ),
         )
+        // RE-SPECCED BY THE P3a REVIEW (small 1): each of the three routes renders only where the
+        // device is offered the import at all (`importOffered` — NpuAssetImport.panelOfferedOn,
+        // the panel's own rule); a MediaTek row is offered none, no zip being published for its
+        // pair. What these assertions guard is unchanged: one declaration, the three arms with no
+        // fetch of this tier running, the route directly under the sentence that promises it.
         assertEquals(
             "it is rendered from ONE declaration, reached by each of the three arms in which " +
                 "no fetch of this tier's is running — refused, failed, resting — so the route " +
@@ -585,7 +657,15 @@ class NpuImportWiringPinTest {
                 "drift apart. The in-flight arms deliberately do NOT offer it: nothing there " +
                 "promises it, and a second route mid-fetch would be a competing button",
             3,
-            count(picker, "            FetchImportRoute(onImport)"),
+            count(picker, "FetchImportRoute(onImport)"),
+        )
+        assertEquals(
+            "…and every one of the three is behind the device's import rule",
+            listOf(2, 1),
+            listOf(
+                count(picker, "            if (importOffered) FetchImportRoute(onImport)"),
+                count(picker, "                FetchImportRoute(onImport)"),
+            ),
         )
         assertEquals(
             "the resting arm carries it, under the Get button",
@@ -595,22 +675,27 @@ class NpuImportWiringPinTest {
                 block(
                     "        else -> {",
                     "            FetchGetButton(onFetch)",
-                    "            FetchImportRoute(onImport)",
+                    "            if (importOffered) FetchImportRoute(onImport)",
                     "        }",
                 ),
             ),
         )
         assertEquals(
-            "and the failed arm carries it directly under the sentence that promises it",
+            "and the failed arm carries it directly under the sentence that promises it — the two " +
+                "inside one import-rule block, so the sentence never renders without the control",
             1,
             count(
                 picker,
                 block(
-                    "                text = \"You can also import the model pair from a zip below.\",",
-                    "                style = MaterialTheme.typography.bodySmall,",
-                    "                color = MaterialTheme.colorScheme.onSurfaceVariant,",
-                    "            )",
-                    "            FetchImportRoute(onImport)",
+                    "            if (importOffered) {",
+                    "                Spacer(modifier = Modifier.height(4.dp))",
+                    "                Text(",
+                    "                    text = \"You can also import the model pair from a zip below.\",",
+                    "                    style = MaterialTheme.typography.bodySmall,",
+                    "                    color = MaterialTheme.colorScheme.onSurfaceVariant,",
+                    "                )",
+                    "                FetchImportRoute(onImport)",
+                    "            }",
                 ),
             ),
         )
@@ -621,9 +706,17 @@ class NpuImportWiringPinTest {
             count(picker, "onImport = { onImportNpuAssets(model.id) },"),
         )
         assertEquals(
-            "the fetch area is handed that per-tier import",
+            "the fetch area is handed that per-tier import, and the device's import rule",
             1,
-            count(picker, "FetchActionArea(fetch = fetch, refusal = refusal, onFetch = onFetch, onImport = onImport)"),
+            count(
+                picker,
+                block(
+                    "                    FetchActionArea(",
+                    "                        fetch = fetch, refusal = refusal, importOffered = importOffered,",
+                    "                        onFetch = onFetch, onImport = onImport,",
+                    "                    )",
+                ),
+            ),
         )
     }
 
