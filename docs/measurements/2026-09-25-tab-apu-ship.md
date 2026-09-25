@@ -76,8 +76,9 @@ reading a burst of old timestamps), or the NPU tier's VAD-standalone route being
 ## Notes
 
 - The capture: `docs/measurements/raw/2026-09-25-tab-113-ship-capture.txt` (the diag/tombstone lines; the full log stays on the MS-02 and the PC under `~/.androidbuild/probe-logs/`).
-- Ship when every row passes; the owner's rulings still open at the time of writing: the speed-claim wording (the
-  card carries no speed claim until then) and the NeuroPilot Express notice on the licences page.
+- 113 went to the internal track on 2026-09-25 after this session; the two rulings that were open at the time of writing
+  (the speed-claim wording — accuracy only, by ruling; the NeuroPilot Express notice — the licence accepted, the notice on
+  the page) are in 114, which changes no behaviour.
 
 ## Verdict (2026-09-25 10:55)
 
@@ -86,8 +87,7 @@ pre-existing, fleet-wide loss of the words spoken during the arm (F3, a 4.16.1 i
 crash under memory pressure before the session proper, not repeated in 45 minutes of use (F2's mmap item is the
 lever). The owner, after 32 minutes on the APU: "works fantastic. Very consistent. Speed increases, of course,
 are a different level than CPU." 4.16.0/113 goes to the internal track once the owner's last ruling of the
-session is in the build — see below — beside the two rulings still open (the speed-claim wording; the
-NeuroPilot notice).
+session is in the build — see below — — the two rulings then still open were given the same afternoon (the speed claim stays accuracy-only: "the MediaTek speed claim copy is fine for now"; the NeuroPilot Express licence: "we already agreed to the license") and ride in 114 with the licences-page notice.
 
 **Owner ruling 2026-09-25 (row 15's addendum):** the tablet's chooser showed the three Q8 CPU rungs beside the
 NPU card, because they are INSTALLED on this tablet (the 2026-09-17 ladder session) and the 4.3 one-tier rule
