@@ -181,10 +181,10 @@ object NpuApuDriverCheck {
      * load — the runtime load failed (`runtime: …`).
      *
      * SINCE P2-6 the manifest declares the adapter and `libLiteRt.so` ships in `lib/`, so on the
-     * Tab S10+ this CAN PASS — and a pass makes the tier offered there, while the selector still
-     * builds the QNN engine for every family until P2-7's vendor switch (a MediaTek row's QNN
-     * prepare refuses at `stage=skel`, the loud CPU fallback). So no build between P2-6 and P2-7
-     * may reach a track.
+     * Tab S10+ this CAN PASS — and a pass makes the tier offered there. SINCE P2-7 the selector
+     * builds `LiteRtAsrEngine` for the row, so an offered tier arms on the APU. (Between the two,
+     * a pass would have offered a tier the QNN engine then refused at `stage=skel` after the pair
+     * had downloaded — the reason no build of that stretch went to a track.)
      */
     fun probeNow(
         probe: (dispatchDir: String, libDir: String, wantMajor: Int) -> String,

@@ -489,13 +489,15 @@ object NpuFleetCensus {
         // is {npu-turbo}, the family has one artifact row, and the cross-product pins are
         // vendor-scoped: a Qualcomm family has both tiers, a MediaTek family turbo only.
         //
-        // What it does NOT have yet: the selector's vendor switch (P2-7), and with it anything that
-        // RUNS the pair from the Play build. The per-part machinery (P2-4), the two untargeted pack
-        // modules (P2-5), the runtime packaging, the dispatch stage and the adapter declaration
-        // (P2-6) are in — so from P2-6 the driver check on the tablet CAN pass and the tier is
-        // offered there, while the selector still builds the QNN engine for every family, whose
-        // prepare refuses this row at stage=skel (the loud CPU fallback). No build between P2-6 and
-        // P2-7 may reach a track.
+        // What it HAS since P2-7: the whole path from the gate to the APU. The per-part machinery
+        // (P2-4), the two untargeted pack modules (P2-5), the runtime packaging, the dispatch stage
+        // and the adapter declaration (P2-6), and the selector's vendor switch (P2-7): a Tab S10+
+        // whose driver check passes is offered the tier, fetches the pair's two parts, and arms it
+        // through LiteRtAsrEngine — the dispatch staged into filesDir, both files' chip stamps
+        // checked, the pair restored on the APU. What it does NOT have yet: a run from a Play build
+        // (the P3 sheet on the tablet — the in-app cold arm, per-commit timing, the 30-minute
+        // session), the bundle built and size-verified on the MS-02 (P2-8), and the owner's
+        // acceptance of the NeuroPilot Express licence, which gates the first Play upload.
         NpuSocFamily(
             id = "mt6989",
             packGroup = "soc_mt6989",

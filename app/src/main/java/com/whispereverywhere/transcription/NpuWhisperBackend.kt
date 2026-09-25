@@ -127,10 +127,10 @@ import java.util.Locale
  *
  * ### The engine is required as well, with no default (P1a)
  *
- * `engine` is the runtime this tier's session runs on. The selector constructs it — [QnnAsrEngine]
- * for every family until the census names a second vendor — and a default here would be the same
- * silent wrong choice as a defaulted family, one layer down: a runtime chosen by this file instead
- * of by the row that says which silicon it is on.
+ * `engine` is the runtime this tier's session runs on. The selector constructs it by the row's
+ * vendor — [QnnAsrEngine] for a Qualcomm row, [LiteRtAsrEngine] for a MediaTek one (P2-7) — and a
+ * default here would be the same silent wrong choice as a defaulted family, one layer down: a
+ * runtime chosen by this file instead of by the row that says which silicon it is on.
  *
  * ### Handles
  *
@@ -142,8 +142,9 @@ import java.util.Locale
  *
  * **No JVM test may name this class.** It touches [WhisperNative] (directly and through
  * [GgmlBackends]), whose `init` block runs `System.loadLibrary("whisper_jni")`, and its capability
- * probe and its production engine touch `com.whispereverywhere.npu.QnnAsrNative`, whose `init`
- * block runs `System.loadLibrary("qnnasr")`; neither library is on the unit-test classpath. Its
+ * probe and its production engines touch `com.whispereverywhere.npu.QnnAsrNative`, whose `init`
+ * block runs `System.loadLibrary("qnnasr")` — and, on a MediaTek row, `LiteRtAsrNative`
+ * (`"litertasr"`); none of those libraries is on the unit-test classpath. Its
  * invariants are therefore pinned as SOURCE TEXT in `NpuNativeContractTest`, `NpuDiagTest` and
  * `NpuStageTest`, its pure parts live in `NpuGate`, `NpuDiag`, `NpuQuantize` and
  * `NpuDecodePolicy` where they are fully tested, and its runtime behaviour is first executed on
@@ -452,9 +453,11 @@ class NpuWhisperBackend(
             // (5) THE RUNTIME'S OWN STAGING — THIS FAMILY'S ROW, through the engine (P1a). For the
             // QNN engine this is the DSP-side skel stage, moved whole into QnnAsrEngine.prepare
             // with its reasoning: the family row's one skel, staged into filesDir through the
-            // marker fast path, before the dlopen that makes FastRPC look for it. Here, after
-            // every cheap refusal and before the expensive stage, because the first arm of it
-            // writes ~18 MB — and its refusal leaves through the same funnel as every stage in
+            // marker fast path, before the dlopen that makes FastRPC look for it. For the LiteRT
+            // engine (P2-7) it is the MediaTek dispatch, staged into the directory the LiteRT
+            // environment is bound to at init. Here, after every cheap refusal and before the
+            // expensive stage, because the first arm of it writes ~18 MB (the skel) or ~400 KB
+            // (the dispatch) — and its refusal leaves through the same funnel as every stage in
             // this file, under the stage's own wire word.
             engine.prepare(appContext, family)?.let { refusal ->
                 return@serialized fallBackToCpuTier(refusal.stage.wire, refusal.detail)

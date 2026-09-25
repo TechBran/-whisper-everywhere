@@ -354,9 +354,8 @@ class WhisperEverywhereApp : Application() {
      * and the manifest did not declare the adapter, so on a MediaTek device the answer was a
      * refusal (`adapter-missing`, or `runtime: …`), which a later build re-probes rather than
      * inherits (the verdict is keyed on the build as well as the ROM). Since P2-6 (the adapter
-     * declared, `libLiteRt.so` in `lib/`) the Tab S10+ can PASS — and until P2-7's selector picks
-     * the LiteRT engine, an offered tier arms through the QNN one and falls back loudly at
-     * `stage=skel`, which is why no build between the two may reach a track.
+     * declared, `libLiteRt.so` in `lib/`) the Tab S10+ can PASS, and since P2-7 the selector builds
+     * the LiteRT engine for the row, so an offered tier arms on the APU.
      *
      * The service's boot prewarm running the probe when this has not (design §2.3 item 1) is
      * P2-7's; the `apu:` driver line is the native probe's own, and this adds one

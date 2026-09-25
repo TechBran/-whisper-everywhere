@@ -3,6 +3,8 @@ package com.whispereverywhere.transcription
 import android.content.Context
 import com.whispereverywhere.WhisperEverywhereApp
 import com.whispereverywhere.npu.NpuModelSpec
+import com.whispereverywhere.npu.NpuSocFamily
+import com.whispereverywhere.npu.NpuVendor
 
 /**
  * Which [WhisperBackend] a session runs on — the NPU-class routing decision, as a truth table
@@ -54,12 +56,14 @@ import com.whispereverywhere.npu.NpuModelSpec
  *
  * The [backendFor] that takes a lambda is the JVM-testable form and it exists for one reason:
  * **no unit test may name `NpuWhisperBackend`** (it reaches `libwhisper_jni.so` through
- * `WhisperNative`, and its production engine `QnnAsrEngine` runs `System.loadLibrary("qnnasr")`
- * through `QnnAsrNative`; neither library is on the test classpath), so a test that asserted on
- * the concrete type would be asserting by being killed. The table is therefore executed against a
- * stand-in backend, and the *production* overload's one construction call is pinned as source
- * text by `NpuBackendWiringTest` — the same split, for the same reason, that `NpuDiag` uses for
- * its format strings.
+ * `WhisperNative`, and its production engines load their own runtimes — `QnnAsrEngine` runs
+ * `System.loadLibrary("qnnasr")` through `QnnAsrNative`, `LiteRtAsrEngine`
+ * `System.loadLibrary("litertasr")` through `LiteRtAsrNative`; none of those libraries is on the
+ * test classpath), so a test that asserted on the concrete type would be asserting by being
+ * killed. The table is therefore executed against a stand-in backend, and the *production*
+ * overload's one construction call and its vendor switch are pinned as source text by
+ * `NpuBackendWiringTest` — the same split, for the same reason, that `NpuDiag` uses for its format
+ * strings.
  */
 object NpuBackendSelector {
 
@@ -134,12 +138,13 @@ object NpuBackendSelector {
      * anyway: that chain is a property of DIFFERENT objects, and "safe by a property of a
      * different object" is the shape this stack has paid for twice.
      *
-     * **The engine is QNN's, for every family (P1a — the engine seam).** The backend takes its
-     * runtime as a required [NpuAsrEngine], and this is where it is chosen: a fresh
-     * [QnnAsrEngine] per backend, because every census row is a Qualcomm row today. The vendor
-     * switch arrives with the census's own `vendor` field (P2) and lands HERE, on the row this
-     * overload already resolved — so the runtime a session arms and the silicon the gate offered
-     * it on remain one reading of one census row.
+     * **The engine is the ROW'S VENDOR'S (P2-7 — the vendor switch; design §2.4).** The backend
+     * takes its runtime as a required [NpuAsrEngine], and this is where it is chosen, by
+     * [engineFor], on the row this overload already resolved: [QnnAsrEngine] for a Qualcomm row,
+     * [LiteRtAsrEngine] for a MediaTek one — so the runtime a session arms and the silicon the gate
+     * offered it on remain one reading of one census row, handed as ONE object to both the backend
+     * and its engine. (Until P2-7 it was a fresh QNN engine for every family, the P1a seam's
+     * zero-behaviour-change shape.)
      */
     fun backendFor(
         tierId: String?,
@@ -151,7 +156,26 @@ object NpuBackendSelector {
         val family = (appContext.applicationContext as? WhisperEverywhereApp)?.npuSocFamily
             ?: return WhisperNativeBackend
         return backendFor(tierId, offeredNpuTierIds, declinedTiers, paths) { p, spec ->
-            NpuWhisperBackend(p, appContext, spec, family, QnnAsrEngine())
+            NpuWhisperBackend(p, appContext, spec, family, engineFor(family, appContext))
         }
+    }
+
+    /**
+     * THE VENDOR SWITCH (P2-7): the engine that runs [family]'s NPU runtime — exhaustive over
+     * [NpuVendor], so a third vendor is a compile error HERE rather than a row that silently arms
+     * through another vendor's engine (a MediaTek row handed to the QNN engine refused at `skel`
+     * after its pair had downloaded, which is what every build between P2-6 and this switch would
+     * have done on the Tab S10+).
+     *
+     * A FRESH engine per backend, as before: an engine carries its arm's own state (the QNN one's
+     * quant pair and buffer, the LiteRT one its row), so one shared across backends would hand one
+     * instance's arm to another's teardown. The LiteRT engine is built with the same [family] the
+     * backend is — its prepare refuses any other — and with `nativeLibraryDir`, where
+     * `libLiteRt.so` is packaged and which its probe hands native; the QNN engine takes its lib
+     * dir from the backend at init.
+     */
+    private fun engineFor(family: NpuSocFamily, appContext: Context): NpuAsrEngine = when (family.vendor) {
+        NpuVendor.QUALCOMM -> QnnAsrEngine()
+        NpuVendor.MEDIATEK -> LiteRtAsrEngine(family, appContext.applicationInfo.nativeLibraryDir)
     }
 }
