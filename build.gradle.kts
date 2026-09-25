@@ -17,7 +17,9 @@ plugins {
 // (and out of sync) fixes that; source is versioned via git/GitHub instead.
 // Applied only where that local root exists (the OneDrive dev machine) — CI and
 // other checkouts use Gradle's default build/ dirs.
-val localBuildRoot = File("C:/Users/bastr/.androidbuild/WhisperEverywhere")
+// A second checkout (a git worktree) passes its own root with `-PlocalBuildRoot=...` so two trees
+// never build into one directory; the default is the main checkout's root (2026-09-24).
+val localBuildRoot = File(providers.gradleProperty("localBuildRoot").orNull ?: "C:/Users/bastr/.androidbuild/WhisperEverywhere")
 if (localBuildRoot.isDirectory) {
     allprojects {
         layout.buildDirectory.set(File(localBuildRoot, project.name))

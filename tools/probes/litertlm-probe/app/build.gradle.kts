@@ -6,6 +6,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Where stageAppSeam (below) puts the app's five Kotlin sources for mode=litertasr. Declared before the
+// android block because the source set reads it there.
+val appSeamDir = layout.buildDirectory.dir("generated/appseam/java").get().asFile
+
 android {
     namespace = "com.whispereverywhere.probe"
     compileSdk = 36
@@ -46,6 +50,11 @@ android {
             // the Kotlin API needs libsherpa-onnx-jni.so + libonnxruntime.so only.
             excludes += "**/libsherpa-onnx-c-api.so"
             excludes += "**/libsherpa-onnx-cxx-api.so"
+            // mode=litertasr: tools/mtk-apu/stage_litertasr_into_probe.py puts libLiteRt.so into jniLibs beside
+            // liblitertasr.so (the product ships it in lib/ itself), and the litert AAR below carries a copy
+            // too. The script checks the staged file against the pinned 2.1.1 sha256 - the AAR's own bytes -
+            // so the two are one file and either may be the one packaged.
+            pickFirsts += "lib/arm64-v8a/libLiteRt.so"
         }
     }
 
@@ -53,8 +62,61 @@ android {
         getByName("main") {
             // fetch_mediatek_runtime.py drops libLiteRtDispatch_MediaTek.so + libLiteRtCompilerPlugin_MediaTek.so
             // (LiteRT v2.1.1's litert_npu_runtime_libraries_jit.zip, mediatek_runtime/) here. Gitignored.
+            // stage_litertasr_into_probe.py adds liblitertasr.so, libc++_shared.so and libLiteRt.so for
+            // mode=litertasr.
             jniLibs.srcDirs("src/main/jniLibs")
+            // mode=litertasr: the app's own JNI object and decode policy, compiled in VERBATIM (see
+            // stageAppSeam below) - the JNI symbol names are the class's fully qualified name, so the probe
+            // must carry com.whispereverywhere.npu.LiteRtAsrNative itself, not a copy under another package.
+            java.srcDirs("src/main/java", appSeamDir)
         }
+    }
+}
+
+// mode=litertasr drives the app's liblitertasr.so through the app's OWN Kotlin declarations: LiteRtAsrNative.kt
+// (the externals whose names are the JNI symbols) and the four pure decode-policy files that build the prompt,
+// the masks and the guard constants exactly as NpuWhisperBackend does. Copied from the checkout this probe sits
+// in on every build, into a generated source dir, so a change to any of them reaches the device gate without a
+// second copy to keep in step. None of the five imports anything outside itself.
+val appSeamSources = listOf("LiteRtAsrNative.kt", "WhisperTokens.kt", "WhisperTokenFamily.kt", "NpuDecodePolicy.kt", "NpuDecodeStats.kt")
+val stageAppSeam = tasks.register<Copy>("stageAppSeam") {
+    val from = rootProject.file("../../../app/src/main/java/com/whispereverywhere/npu")
+    from(from) { appSeamSources.forEach { include(it) } }
+    into(File(appSeamDir, "com/whispereverywhere/npu"))
+    doFirst {
+        appSeamSources.forEach { check(File(from, it).isFile) { "app seam source missing: ${File(from, it)}" } }
+    }
+}
+tasks.named("preBuild") { dependsOn(stageAppSeam) }
+
+// The PRODUCT'S native-library declarations in the MERGED manifest (see the comment in AndroidManifest.xml): the
+// litert AAR re-adds three MediaTek libraries the product never declares, the merger cannot be told to drop them
+// by name, so the merged manifest is transformed here - and the build fails if any of the three survives.
+abstract class StripAarMediatekDeclarations : DefaultTask() {
+    @get:InputFile abstract val mergedManifest: RegularFileProperty
+    @get:OutputFile abstract val updatedManifest: RegularFileProperty
+    @get:Input abstract val names: ListProperty<String>
+
+    @TaskAction
+    fun strip() {
+        var text = mergedManifest.get().asFile.readText()
+        for (n in names.get()) {
+            text = Regex("<uses-native-library[^>]*android:name=\"" + Regex.escape(n) + "\"[^>]*/>").replace(text, "")
+            check(!text.contains("\"$n\"")) { "merged manifest still declares $n" }
+        }
+        check(text.contains("\"libneuronusdk_adapter.mtk.so\"")) { "merged manifest lost libneuronusdk_adapter.mtk.so" }
+        updatedManifest.get().asFile.writeText(text)
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        val strip = project.tasks.register<StripAarMediatekDeclarations>("stripAarMediatekDeclarations${variant.name.replaceFirstChar { it.uppercase() }}") {
+            names.set(listOf("libneuron_sys_util.mtk.so", "libneuronusdk_adapter.9.mtk.so", "libneuron_adapter_mgvi.so"))
+        }
+        variant.artifacts.use(strip)
+            .wiredWithFiles(StripAarMediatekDeclarations::mergedManifest, StripAarMediatekDeclarations::updatedManifest)
+            .toTransform(com.android.build.api.artifact.SingleArtifact.MERGED_MANIFEST)
     }
 }
 

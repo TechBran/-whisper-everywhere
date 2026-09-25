@@ -94,7 +94,8 @@ android {
             // `<project>/app/C:/Users/bastr/.androidbuild/...` rather than failing. The root
             // build.gradle.kts guards its own relocation on `localBuildRoot.isDirectory` for the
             // same reason; this is that guard, applied to the half that was missing it.
-            val oneDriveEscape = File("C:/Users/bastr/.androidbuild/WhisperEverywhere/cxx-staging")
+            // Follows the same `-PlocalBuildRoot` a worktree passes to the root script (2026-09-24).
+            val oneDriveEscape = File((providers.gradleProperty("localBuildRoot").orNull ?: "C:/Users/bastr/.androidbuild/WhisperEverywhere") + "/cxx-staging")
             if (oneDriveEscape.parentFile?.isDirectory == true) {
                 buildStagingDirectory = oneDriveEscape
             }
@@ -614,6 +615,21 @@ tasks.withType<Test>().configureEach {
         "src/main/java/com/whispereverywhere/transcription/LocalWhisperEngine.kt",
         "src/main/java/com/whispereverywhere/npu/QnnAsrNative.kt",
         "src/main/java/com/whispereverywhere/npu/NpuDecodePolicy.kt",
+        // (P1b, the MediaTek APU tier) LiteRtNativeContractTest's read set, by this list's rule.
+        // litert_asr.cpp and LiteRtAsrNative.kt are the two halves of a JNI seam no JVM test may
+        // load (System.loadLibrary("litertasr")), so the symbol set, the arities, the adapter walk,
+        // "the environment is never destroyed" and the output-order assertion are all pinned as
+        // SOURCE; the KDoc of the Kotlin half is comment-shaped and compiles to identical bytes.
+        // CMakeLists.txt carries the target's name, link set and header guard, and is an input to
+        // no Gradle compile task at all. band_scan.h joins with them: its float twin is the detect
+        // pass's, and NpuNativeContractTest already read the header for the Android-free property
+        // without listing it - an edit confined to it left the suite UP-TO-DATE. litert_stamp.h is
+        // the chip check's parser, pinned Android-free for its host check.
+        "src/main/cpp/litert_asr.cpp",
+        "src/main/cpp/litert_stamp.h",
+        "src/main/cpp/band_scan.h",
+        "src/main/cpp/CMakeLists.txt",
+        "src/main/java/com/whispereverywhere/npu/LiteRtAsrNative.kt",
         // (4.2 F1) NpuGate.kt joins by this list's stated rule — membership follows what the
         // tests READ. NpuGateTest now source-pins the gate's derivation (SUPPORTED_SOCS spelled
         // as the census flatMap, isSocSupported spelled as familyFor != null, zero hand-typed

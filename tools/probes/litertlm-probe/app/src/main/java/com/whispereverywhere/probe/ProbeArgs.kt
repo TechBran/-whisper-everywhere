@@ -40,6 +40,21 @@ import android.content.Intent
  *   --ei duration  sherpa: loop the clip list for this many seconds instead of `loops` (the 10-minute thermal run)
  *   --ei load      sherpa: busy-loop threads spun for the whole run, the stand-in for whisper multi's 4 (default 0)
  *   --es provider  sherpa: cpu | nnapi | nospin (= cpu:<cfg> with ORT thread spinning off; forwarded on >= 1.13.5 only)
+ *   --ei perfmode  litertasr: MediaTek performance mode, -1 = LiteRT's default (default), 0 PreferLowPower,
+ *                  1 PreferFastSingleAnswer, 2 PreferSustainedSpeed, 3 PreferTurboBoost. INERT on LiteRT 2.1.1 with
+ *                  the AOT pair: the dispatch never reads it (its bytecode load hard-codes PREFER_SUSTAINED_SPEED),
+ *                  so no comparison between values is measurable on this runtime
+ *   --ei kvstrategy litertasr: nativeInit's selfKvStrategy - 1 = one self-KV set and a native copy of the 8 cache
+ *                  tensors per step (default: the engine's default, chosen at P1's gate, p1b2_litertasr_kv1),
+ *                  0 = two sets re-bound per step (the dispatch re-registers each re-bound buffer; the measured
+ *                  alternative)
+ *   --ei wantmajor litertasr: the Neuron major the family expects (default 8)
+ *   --es socstamp  litertasr: the chip the files' LiteRtStamp must name (default mt6989)
+ *   --ez diag      litertasr: nativeSetDiag - the npu-debug lines incl. `steptime` for each segment's first four
+ *                  steps and its last (default true)
+ *   --ez rearm     litertasr: after the rounds, release and re-init once to time a re-arm (default true)
+ *   --ez detect    litertasr: run nativeDetectLanguage after each encode, as the app does in auto (default true)
+ *   --es lang      litertasr: prompt language code, or `auto` to prompt with the detected one (default en)
  */
 data class ProbeArgs(
     val mode: String?,
@@ -75,6 +90,28 @@ data class ProbeArgs(
     val duration: Int,
     val load: Int,
     val provider: String,
+    /** `mode=sig`: comma list of input names (`name:0` = zeros) and of output names. */
+    val inputs: String?,
+    val outputs: String?,
+    /** `mode=e2eqc`: the decoder model path (`model` is the encoder). */
+    val dec: String?,
+    /**
+     * `mode=e2eqc`: the app's decode discipline — `suppress` is the always-on mask (comma list of ids, applied
+     * at every generated step), `beginsuppress` applies at the first generated step only, `topk` > 0 writes
+     * the top-k (id, logit) of every step to files/results/<tag>.steps.jsonl for a host differential test.
+     */
+    val suppress: String?,
+    val beginSuppress: String?,
+    val topk: Int,
+    /** `mode=litertasr`: liblitertasr.so's init knobs and the gate's run shape (see the KDoc above). */
+    val perfMode: Int,
+    val kvStrategy: Int,
+    val wantMajor: Int,
+    val socStamp: String,
+    val diag: Boolean,
+    val rearm: Boolean,
+    val detect: Boolean,
+    val lang: String,
 ) {
     companion object {
         fun from(intent: Intent?): ProbeArgs = ProbeArgs(
@@ -111,6 +148,20 @@ data class ProbeArgs(
             duration = intent?.getIntExtra("duration", 0) ?: 0,
             load = intent?.getIntExtra("load", 0) ?: 0,
             provider = intent?.getStringExtra("provider") ?: "cpu",
+            inputs = intent?.getStringExtra("inputs"),
+            outputs = intent?.getStringExtra("outputs"),
+            dec = intent?.getStringExtra("dec"),
+            suppress = intent?.getStringExtra("suppress"),
+            beginSuppress = intent?.getStringExtra("beginsuppress"),
+            topk = intent?.getIntExtra("topk", 0) ?: 0,
+            perfMode = intent?.getIntExtra("perfmode", -1) ?: -1,
+            kvStrategy = intent?.getIntExtra("kvstrategy", 1) ?: 1,
+            wantMajor = intent?.getIntExtra("wantmajor", 8) ?: 8,
+            socStamp = intent?.getStringExtra("socstamp") ?: "mt6989",
+            diag = intent?.getBooleanExtra("diag", true) ?: true,
+            rearm = intent?.getBooleanExtra("rearm", true) ?: true,
+            detect = intent?.getBooleanExtra("detect", true) ?: true,
+            lang = intent?.getStringExtra("lang") ?: "en",
         )
     }
 }

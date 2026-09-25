@@ -17,19 +17,32 @@
         <!-- MediaTek NeuroPilot, the SYSTEM-partition public list (/system/etc/public.libraries-mtk.txt,
              read on the tablet 2026-09-09, E0): the USDK adapter the LiteRT MediaTek dispatch dlopens,
              the sys_util it reads the NeuroPilot magic number from, and the AIDL client libs. -->
-        <uses-native-library android:name="libneuron_sys_util.mtk.so" android:required="false" />
+        <!-- P0 (2026-09-24): libneuron_sys_util.mtk.so is deliberately NOT declared. LiteRT v2.1.1 reads the
+             NeuroPilot magic number from it before choosing an adapter, and on this ROM that read waits 5 s on
+             an unregistered binder service (INeuronService) - once per adapter instantiation. Undeclared, the
+             dlopen fails at once and the loader goes straight to libneuronusdk_adapter.mtk.so. -->
+        <!-- P0 / P0c-ii undeclared: uses-native-library libneuron_sys_util.mtk.so -->
         <uses-native-library android:name="libneuronusdk_adapter.mtk.so" android:required="false" />
-        <uses-native-library android:name="libneuronusdk_adapter.9.mtk.so" android:required="false" />
-        <uses-native-library android:name="libneuronservice_adapter.mtk.so" android:required="false" />
-        <uses-native-library android:name="libneuron_graph_delegate.mtk.so" android:required="false" />
-        <uses-native-library android:name="libapuwareutils_v2.mtk.so" android:required="false" />
-        <uses-native-library android:name="libapuwareutils.mtk.so" android:required="false" />
-        <uses-native-library android:name="libapuwareapusys_v2.mtk.so" android:required="false" />
-        <uses-native-library android:name="libapuwareapusys.mtk.so" android:required="false" />
+        <!-- P1b (2026-09-24): the PRODUCT'S declaration set, in the MERGED manifest too. The litert 2.1.1 AAR's
+             own manifest declares libneuron_sys_util.mtk.so, libneuronusdk_adapter.9.mtk.so and
+             libneuron_adapter_mgvi.so, and the merger puts them back into every build of this probe even while
+             the lines above are commented out (sheet §4c). The merger folds library uses-native-library entries
+             into this file's first one rather than keying them by name, so neither tools:node="remove" nor
+             "removeAll" can reach them (both tried: "no other declaration present"). app/build.gradle.kts'
+             stripAarMediatekDeclarations transforms the MERGED manifest instead and fails the build if any of
+             the three survives - so every mode of this probe, mode=litertasr and mode=e2eqc alike, runs with
+             the product's single MediaTek declaration. -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libneuronusdk_adapter.9.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libneuronservice_adapter.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libneuron_graph_delegate.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libapuwareutils_v2.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libapuwareutils.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libapuwareapusys_v2.mtk.so" android:required="false" /> -->
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libapuwareapusys.mtk.so" android:required="false" /> -->
         <!-- The VENDOR-partition adapter LiteRT tries first; NOT in /vendor/etc/public.libraries.txt on
              this tablet (E0), so this line is expected to resolve to nothing — kept so the linker log
              says so rather than the probe assuming it. -->
-        <uses-native-library android:name="libneuron_adapter_mgvi.so" android:required="false" />
+        <!-- P0c-ii undeclared: <uses-native-library android:name="libneuron_adapter_mgvi.so" android:required="false" /> -->
 
         <activity
             android:name=".MainActivity"

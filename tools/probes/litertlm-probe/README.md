@@ -64,6 +64,82 @@ first partial whose k-th `WerMath` word equals the final's k-th word, minus the 
 1's definition). `provider=nospin` writes an ORT session-config file (`SessionConfig.session.intra_op.allow_spinning=0`)
 and passes `cpu:<path>` — forwarded on >= 1.13.5 only. Never `reset`: each clip is its own stream, released.
 
+## `mode=litertasr` (P1b device gate — the app's `liblitertasr.so` in the product's shape)
+
+The MediaTek tier's native engine (`app/src/main/cpp/litert_asr.cpp`) driven through the app's OWN Kotlin
+declarations: the `stageAppSeam` task compiles `LiteRtAsrNative.kt` and the four decode-policy files
+(`WhisperTokens`, `WhisperTokenFamily`, `NpuDecodePolicy`, `NpuDecodeStats`) into this APK verbatim, so the JNI
+names, the prompt, the masks, the ladder and the guard constants are the ones `NpuWhisperBackend` uses. The shape:
+dispatch from `files/litert_dispatch/` (staged there from this APK's own copy when absent; exactly one file), no
+compiler plugin configured, buffers typed and sized by the compiled models' requirements and made WITHOUT their
+strides (the v2.1.1 dispatch refuses a strided buffer; `LiteRtCreateManagedTensorBufferFromRequirements` would
+have given every buffer the requirements' strides), the encoder on the NPU alone and the decoder on NPU + CPU (its
+embedding lookups stay on the CPU), and a merged manifest whose only MediaTek declaration is
+`libneuronusdk_adapter.mtk.so` (`stripAarMediatekDeclarations` removes the three the litert AAR re-adds, and fails
+the build if one survives — this applies to every mode of this APK).
+
+```
+# in the repo root: BUILD the app (never install it), then stage its .so into this probe
+gradlew.bat :app:assembleDebug -PlocalBuildRoot=C:/Users/bastr/.androidbuild/WhisperEverywhere-spike
+python tools/mtk-apu/stage_litertasr_into_probe.py --build-root C:/Users/bastr/.androidbuild/WhisperEverywhere-spike
+# here (fetch_mediatek_runtime.py first if jniLibs has no libLiteRtDispatch_MediaTek.so)
+gradlew.bat :app:assembleDebug
+```
+
+The staging script copies `liblitertasr.so` and `libc++_shared.so` out of the app's built APK (the app builds with
+`ANDROID_STL=c++_shared`) and `libLiteRt.so` 2.1.1 out of the litert AAR, refusing any `libLiteRt.so` whose sha256
+is not the pinned `6ddc1b3d…`. The probe itself refuses a `files/litert_dispatch/libLiteRtDispatch_MediaTek.so`
+that is neither of the dispatch's two identities — both the one v2.1.1 file, 409,728 B: the release zip member
+`9e963c56…` (the design's pin) or the copy AGP packages into an APK, `f47bd9c0…` (what P0(c) staged there) — and
+logs which one it found (`identity=zip-member|apk-copy`).
+
+Run it with the AOT pair and the two mels already in `files/` (push recipe above):
+
+```
+F=/data/user/0/com.whispereverywhere.probe/files
+python drive.py --serial R52XC00LL9K --pid --tag p1b_litertasr_copy mode=litertasr \
+    model=$F/turbo_encoder_qcio_f32_MediaTek_MT6989_apply_plugin.tflite \
+    dec=$F/turbo_decoder_mtk_f32_MediaTek_MT6989_apply_plugin.tflite mels=jfk_mel128.bin,canary_mel128.bin utts=3
+python drive.py ... --tag p1b_litertasr_rebind ... kvstrategy=0    # the measured alternative: two sets re-bound
+```
+
+The two self-KV strategies are the plan's "per-step time with one and with two self-KV sets". The gate ran both
+(`p1b2_litertasr_kv1` / `_kv0`, both passing) and **`kvstrategy=1` is the default** — the engine's, and this
+probe's: it keeps one input set and copies the step's 8 cache tensors (~8 MB) back into it natively, with no
+binding ever changed — step mean 30.0 ms (25.6–33.2), init 2,752 ms, 29.7 ms/step after the re-arm.
+`kvstrategy=0`, the measured alternative, swaps two sets by RE-BINDING — no byte moves, but the v2.1.1 dispatch
+re-registers each of the 16 re-bound buffers at the next run, a cost inside the run's time (so the JSON's
+`cache_copy_ms_mean` is `null`, not a 0.0 it never was) — step mean 32.5 ms (30.0–35.8), init 3,555 ms, and
+45.7 ms/step after the re-arm, where every re-bound buffer meets the dispatch for the first time. Compare
+`step_ms_mean`, which includes either advance.
+
+**`perfmode` is not a comparison this runtime can make.** On LiteRT 2.1.1 with the AOT pair the MediaTek dispatch
+never reads the performance mode: it hands its options to the adapter loader (which reads only the SDK version
+type), and its bytecode load hard-codes `NEURON_PRIORITY_HIGH`, `NEURON_PREFER_SUSTAINED_SPEED` and an execution
+boost hint of 100. Every run is already in `PreferSustainedSpeed`; the extra is passed through (the init line
+says `perfmode=N (inert on LiteRT 2.1.1 AOT)`) and a run per value measures nothing.
+
+Sequence: `nativeProbe` (the adapter walk, timed on its own — 169–239 ms at the first gate; with
+`libneuron_sys_util.mtk.so` stripped from the merged manifest there is no 5 s wait at all, sheet §4b) →
+`nativeInit` (runtime, environment, both files' `LiteRtStamp`, the IO census, both restores, the buffers, and the
+APU check: the decoder's first step on zeroed caches, refused over 250 ms) → per round and mel: `nativeEncode` →
+`nativeDetectLanguage` (`detect=false` skips it) → `nativeDecodeSegment` with the app's arguments →
+`nativeRelease` → with `rearm=true` (default) a second `nativeInit` + one window + release: the re-arm after a trim,
+which pays the restores and must not walk the adapter again. The result JSON is checkpointed after every
+utterance, and a non-finite number (the stats' documented NaN for "not measured") is written as `null` with a
+`litertasr|nonfinite|field=…` line. Extras: `kvstrategy` (1 default | 0), `perfmode` (-1 default | 0..3, inert), `wantmajor` (8), `socstamp`
+(mt6989), `diag` (true: native `npu-debug: steptime` lines for each segment's first four steps and its last),
+`lang` (en | auto).
+
+Read back: `PROBE litertasr|…` lines (probe/init ms, per-utterance encode/detect/decode ms, steps, ms per step,
+nsp/lp/rung/terminator, timestamp pairing, `matches_reference` against t8's ids) and on `WE-DIAG` the native
+`apu:` driver line, the `stamp=` lines, both restores with their accelerator sets, the `apu: decoder step … pass`
+line, the `buffers:` line (each kind's requirements and the type made: 2 = AHWB, 4 = DMA-BUF for everything a
+DISPATCH_OP touches, 1 = host memory for `input_ids` and `position_ids`), `decode: … nsp=… lp=… ent=… step=… ms
+(run …, io …, kv …)` — an unmeasured stat printed as `nan(unmeasured: …)`, the advance as `kv re-bind, re-registered
+inside run` (0) or `kv copy N ms xC` (1, per copy) — and, with diag, the bounded step times. The result JSON keeps `detok.py`'s `utterances[].ids` shape.
+`mode=e2eqc` on the same pair is the Kotlin-API arm (a Kotlin copy per step).
+
 ## Utilization sampling (which unit actually ran — measurements §3.1, §3.2)
 
 Start a sampler in a second shell just before `drive.py`, so its window brackets the warm phase:

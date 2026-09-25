@@ -22,6 +22,9 @@ class ProbeRunner(private val ctx: Context, private val args: ProbeArgs) {
             when (args.mode) {
                 "info" -> LiteRtProbe(ctx, args).info(res)
                 "litert" -> LiteRtProbe(ctx, args).run(res)
+                "sig" -> SigProbe(ctx, args).run(res)
+                "e2eqc" -> E2eQcProbe(ctx, args).run(res)
+                "litertasr" -> LiteRtAsrProbe(ctx, args).run(res)
                 "lm" -> LmProbe(ctx, args).run(res)
                 "e2e" -> E2eProbe(ctx, args).run(res)
                 "sherpa" -> SherpaProbe(ctx, args).run(res)
@@ -62,12 +65,22 @@ class ProbeRunner(private val ctx: Context, private val args: ProbeArgs) {
         Metrics.snapshot(ctx, "start").let { res.put("mem_start", it) }
     }
 
-    private fun write(res: JSONObject) {
-        try {
-            val dir = File(ctx.filesDir, "results").apply { mkdirs() }
-            File(dir, args.tag + ".json").writeText(res.toString(2))
-        } catch (t: Throwable) {
-            ProbeLog.e("result write failed", t)
+    private fun write(res: JSONObject) = writeResult(ctx, args.tag, res)
+
+    companion object {
+        /**
+         * files/results/<tag>.json - the file drive.py pulls after `DONE`, or after it sees the process die
+         * without one. A mode may call this mid-run as a checkpoint (mode=litertasr does, after every
+         * utterance), so a late failure or a native crash still leaves every earlier result on disk; the final
+         * write, with `ok`, replaces it.
+         */
+        fun writeResult(ctx: Context, tag: String, res: JSONObject) {
+            try {
+                val dir = File(ctx.filesDir, "results").apply { mkdirs() }
+                File(dir, "$tag.json").writeText(res.toString(2))
+            } catch (t: Throwable) {
+                ProbeLog.e("result write failed", t)
+            }
         }
     }
 }

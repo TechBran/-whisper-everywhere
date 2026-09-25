@@ -40,6 +40,29 @@ const uint16_t kRaisedFloor[] = {65535, 11000, 11500, 11200, 65535};
 const uint16_t kTopOfDomain[] = {0, 65535, 65534, 0};
 const uint16_t kAllAtRaisedFloor[] = {65535, 11000, 11000, 65535};
 
+// The float twin (P1b): the MediaTek tier's logits are float32 and its floor is the real -infinity.
+struct ExpectF {
+    int32_t best;
+    int32_t second;
+    float bestVal;
+    float secondVal;
+    uint32_t ties;
+};
+
+bool holdsF(const float *a, uint32_t lo, uint32_t hi, ExpectF e) {
+    const BandTop2F r = scanBandTop2(a, lo, hi, -__builtin_inff());
+    return r.best == e.best && r.second == e.second && r.bestVal == e.bestVal &&
+           r.secondVal == e.secondVal && r.ties == e.ties;
+}
+
+const float kNegInf = -__builtin_inff();
+const float kFClearWin[] = {90.0f, 3.5f, 12.25f, 7.0f, -1.5f, 90.0f};
+const float kFTieAtTop[] = {90.0f, 4.0f, 9.5f, 9.5f, 2.0f, 90.0f};
+const float kFAllFloor[] = {90.0f, kNegInf, kNegInf, kNegInf, 90.0f};
+const float kFFloorFirst[] = {90.0f, kNegInf, kNegInf, 4.0f, kNegInf, 90.0f};
+const float kFNegatives[] = {90.0f, -9.0f, -3.0f, -3.5f, 90.0f};
+const float kFNanInBand[] = {90.0f, __builtin_nanf(""), 2.0f, 1.0f, 90.0f};
+
 int run() {
     // 1. A clear winner: the argmax, the runner-up, one entry at the top.
     if (!holds(kClearWin, 1, 5, 0, {2, 3, 12, 7, 1})) return 1;
@@ -69,6 +92,25 @@ int run() {
     // 12. Every entry at a RAISED floor is the refusal case: the floor is whatever the caller says
     //     it is, not 0.
     if (!holds(kAllAtRaisedFloor, 1, 3, 11000, {-1, -1, 0, 0, 0})) return 12;
+    // 13. Float: a clear winner inside live neighbours on both sides.
+    if (!holdsF(kFClearWin, 1, 5, {2, 3, 12.25f, 7.0f, 1})) return 13;
+    // 14. Float: a tie at the top resolves to the first index and counts both.
+    if (!holdsF(kFTieAtTop, 1, 5, {2, 3, 9.5f, 9.5f, 2})) return 14;
+    // 15. Float: every entry at -infinity is the refusal case.
+    if (!holdsF(kFAllFloor, 1, 4, {-1, -1, 0.0f, 0.0f, 0})) return 15;
+    // 16. Float: -infinity never wins but is a legitimate runner-up (the first of them).
+    if (!holdsF(kFFloorFirst, 1, 5, {3, 1, 4.0f, kNegInf, 1})) return 16;
+    // 17. Float: an all-negative band still has a winner - 0 is not a floor for float logits.
+    if (!holdsF(kFNegatives, 1, 4, {2, 3, -3.0f, -3.5f, 1})) return 17;
+    // 18. Float: an empty range is the refusal case.
+    if (!holdsF(kFClearWin, 3, 3, {-1, -1, 0.0f, 0.0f, 0})) return 18;
+    // 19. Float: a NaN never wins (every comparison with it is false); the winner is the best real
+    //     value. (It can be the runner-up only as the first entry scanned, which the NaN-refusing
+    //     caller never lets happen - checked here only for the winner.)
+    {
+        const BandTop2F r = scanBandTop2(kFNanInBand, 1, 4, kNegInf);
+        if (r.best != 2 || r.bestVal != 2.0f || r.ties != 1) return 19;
+    }
     return 0;
 }
 
@@ -78,6 +120,10 @@ int run() {
 // through the NDK's clang and lld (`mainCRTStartup`, no CRT), and a hosted clang++/g++ anywhere
 // else wants `main`. Both return run()'s case number.
 #if defined(BAND_SCAN_FREESTANDING)
+// The MSVC target references `_fltused` from any object that touches floating point, and the CRT
+// that normally defines it is exactly what this build leaves out. The float cases (13-19) made it
+// necessary; its value is never read.
+extern "C" int _fltused = 0;
 extern "C" int mainCRTStartup() { return run(); }
 #else
 int main() { return run(); }

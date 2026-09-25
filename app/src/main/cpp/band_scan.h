@@ -4,8 +4,8 @@
 // pass with no device in it, and keeping it apart lets tools/band_scan_check.py compile the SAME
 // code the .so carries with the NDK's own clang into a host executable and run
 // app/src/test/cpp/band_scan_test.cpp against it - the only test a C++ change here can have short
-// of a phone. qnn_asr.cpp includes it; nothing else does. NpuNativeContractTest pins the
-// Android-free property by source text.
+// of a phone. qnn_asr.cpp includes it for the uint16 scan and litert_asr.cpp for the float one
+// (P1b); nothing else does. NpuNativeContractTest pins the Android-free property by source text.
 #pragma once
 
 #include <stdint.h>
@@ -57,6 +57,54 @@ inline BandTop2 scanBandTop2(const uint16_t *logits, uint32_t lo, uint32_t hi, u
     bool haveSecond = false;
     for (uint32_t i = lo; i < hi; ++i) {
         const uint16_t v = logits[i];
+        if (v == bestVal) ++r.ties;
+        if (static_cast<int32_t>(i) == r.best) continue;
+        if (!haveSecond || v > r.secondVal) {
+            r.secondVal = v;
+            r.second = static_cast<int32_t>(i);
+            haveSecond = true;
+        }
+    }
+    return r;
+}
+
+/// The float32 twin, for liblitertasr.so's detect pass (P1b). The MediaTek tier's logits arrive as
+/// float and its -infinity is the real one, so the same scan is instantiated a second time rather than
+/// the float values being squeezed through uint16 codes. Same two passes, same rules, line for line:
+/// ties to the FIRST index, an entry AT the floor never wins, the runner-up pass does not exclude the
+/// floor, and a band entirely at the floor answers `best = -1`.
+///
+/// The floor is an argument here too, and for a reason of its own: this header's only test is a
+/// freestanding host build with no C library, so <cmath> and <limits> are not available to spell
+/// -infinity with. Callers pass `-std::numeric_limits<float>::infinity()`. A NaN entry never wins
+/// either (every comparison with it is false); liblitertasr.so refuses non-finite logits before it
+/// scans, so that is a property, not a policy.
+struct BandTop2F {
+    /// Argmax over the band; -1 when every entry sits at the floor.
+    int32_t best = -1;
+    /// Runner-up; -1 when there is no `best`, or the band has a single entry.
+    int32_t second = -1;
+    /// The logits behind the two ids. 0 whenever the id beside them is -1.
+    float bestVal = 0.0f;
+    float secondVal = 0.0f;
+    /// Entries equal to `bestVal`, `best` itself included.
+    uint32_t ties = 0;
+};
+
+inline BandTop2F scanBandTop2(const float *logits, uint32_t lo, uint32_t hi, float floor) {
+    BandTop2F r;
+    float bestVal = floor;
+    for (uint32_t i = lo; i < hi; ++i) {
+        if (logits[i] > bestVal) {
+            bestVal = logits[i];
+            r.best = static_cast<int32_t>(i);
+        }
+    }
+    if (r.best < 0) return r;
+    r.bestVal = bestVal;
+    bool haveSecond = false;
+    for (uint32_t i = lo; i < hi; ++i) {
+        const float v = logits[i];
         if (v == bestVal) ++r.ties;
         if (static_cast<int32_t>(i) == r.best) continue;
         if (!haveSecond || v > r.secondVal) {
