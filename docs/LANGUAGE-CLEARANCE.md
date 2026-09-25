@@ -370,9 +370,9 @@ Before promoting a release from the internal track to production:
    **Speech recognition**, and reproduces the one further notice LiteRT's own licence file carries:
    Caffe's BSD 2-Clause notice, for code TensorFlow derives from Caffe, byte for byte as the litert
    2.1.1 AAR's `LICENSE` gives it (`OssNoticePackagingTest` holds the entries, the notice's digest
-   and the packaging needles). A `TODO(owner)` sits beside the MediaTek entry: the **NeuroPilot
-   Express** notice for the compiled mt6989 pair waits on the owner's reading of that licence, which
-   gates the tier's first Play upload. The committed page is now **44,799 B**,
+   and the packaging needles). A `TODO(owner)` sat beside the MediaTek entry then: the **NeuroPilot
+   Express** notice for the compiled mt6989 pair waited on the owner's reading of that licence, which
+   gated the tier's first Play upload (ACCEPTED 2026-09-25 — the next paragraph). The committed page was then **44,799 B**,
    `sha256 8505b13a3e38ce989093fc2642708129d06d5559a81fb0fbba0d2927389fca09` in its CRLF working-tree
    form, and **both numbers were READ OUT OF AN ARTEFACT**, not derived: the 4.16.0/113 **debug APK**
    (`:app:assembleDebug` of 2026-09-25 02:52 on `feat/mediatek-apu-tier-p3a`, 203,338,313 B,
@@ -384,6 +384,28 @@ Before promoting a release from the internal track to production:
    `assets/libLiteRtDispatch_MediaTek.so` (409,728 B, `9e963c56…`), the pinned 2.1.1 bytes. **A
    debug APK is not a release bundle**: no 4.16.0 `bundleRelease` has been opened, and one read of
    its `base/assets/oss_licenses.html` is what closes that gap before the upload.
+
+   **The NeuroPilot Express SDK licence was ACCEPTED by the owner on 2026-09-25 — *"we already
+   agreed to the license"* — and the page CHANGED once more, so the P3a read above no longer
+   describes it.** That licence is the one MediaTek's host compiler comes under, and the mt6989
+   pair was compiled with it (`tools/mtk-apu/README.md`; design §2.1 and the sheet's §7). The
+   `TODO(owner)` comment beside the MediaTek entry is gone; in its place the page carries a plain
+   provenance entry, `id="mediatek-apu-models"`: the two model files in the
+   `npu_turbo_mt6989_enc` / `npu_turbo_mt6989_dec` packs were compiled with MediaTek's NeuroPilot
+   Express SDK (the host compiler, NeuroPilot v8_0_10; each file records its compiler as
+   `adapter 8.2.30`) from the `openai/whisper-large-v3-turbo` weights (MIT), and are distributed
+   only inside this app, for MediaTek chips, as that SDK's licence permits. No licence term beyond
+   the one the README records is claimed, and none was invented. `OssNoticePackagingTest` holds
+   the entry, its place beside the dispatch entry, the pack names against the census row, the
+   compiler against the pack build's pin and the census's provenance, and that no `TODO(owner)` is
+   left on the page. The OpenAI Whisper weights' MIT notice needed no change: the page already
+   carries it ("OpenAI Whisper models — MIT License … (all tiers)", the MIT text in full at its
+   foot), and the AI-chip files are those same weights. The committed page is now **45,303 B**,
+   `sha256 4bce69be77470d41d70225eb54c2ac69dde7e2b00d8041670a20a05daee99592` in its CRLF
+   working-tree form — derived from the file, not yet read out of an artefact. **And the build
+   the owner uploaded to the internal track as 4.16.0/113 on 2026-09-25 does not carry this
+   page**: it was built before the page changed, so it carries the P3a page (44,799 B, above), the
+   `TODO(owner)` comment included.
 
    **And the gap, stated as a gap: no release bundle of 4.5.2 has been opened, because none has been
    built.** A debug bundle is not a release bundle — different build type, no R8, the payload gates

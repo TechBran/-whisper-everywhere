@@ -154,11 +154,15 @@ license and copyright terms herein.</pre></div>
         driver, which is part of the device and not of this app. It ships in every copy of
         this app, whichever chip the device has.
         <a href="https://github.com/google-ai-edge/LiteRT/releases/tag/v2.1.1">github.com/google-ai-edge/LiteRT/releases/tag/v2.1.1</a></div>
-    <!-- TODO(owner): the NeuroPilot Express notice for the compiled MediaTek pair (the mt6989
-         turbo encoder and decoder, compiled ahead of time by MediaTek's NeuroPilot compiler)
-         waits on the owner's reading of the NeuroPilot Express SDK licence, which gates the
-         tier's first Play upload. If that licence asks for a notice, it goes here, beside the
-         MediaTek entry. -->
+    <div class="license" id="mediatek-apu-models"><b>MediaTek AI-chip model files</b> — compiled
+        with MediaTek's <b>NeuroPilot Express SDK</b>, under its licence. The two model files in the
+        <code>npu_turbo_mt6989_enc</code> and <code>npu_turbo_mt6989_dec</code> packs, the speech
+        model's encoder and decoder for the AI chip of MediaTek MT6989 devices, were compiled ahead
+        of time with that SDK's host compiler (NeuroPilot v8_0_10; each file records its compiler
+        as <code>adapter 8.2.30</code>) from the <code>openai/whisper-large-v3-turbo</code> weights,
+        which are under the MIT License (the OpenAI Whisper models entry above). They are
+        distributed only inside this app, for MediaTek chips, as that SDK's licence permits.
+        <a href="https://huggingface.co/openai/whisper-large-v3-turbo">huggingface.co/openai/whisper-large-v3-turbo</a></div>
 
     <h2>Live words (the streaming preview)</h2>
     <p>When you pick a language, a second, small speech model can run beside the one above and put
