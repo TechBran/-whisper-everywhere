@@ -372,7 +372,8 @@ Before promoting a release from the internal track to production:
    2.1.1 AAR's `LICENSE` gives it (`OssNoticePackagingTest` holds the entries, the notice's digest
    and the packaging needles). A `TODO(owner)` sat beside the MediaTek entry then: the **NeuroPilot
    Express** notice for the compiled mt6989 pair waited on the owner's reading of that licence, which
-   gated the tier's first Play upload (ACCEPTED 2026-09-25 — the next paragraph). The committed page was then **44,799 B**,
+   gated the tier's first Play upload (ACCEPTED 2026-09-25 — the next paragraph). The committed
+   page was then **44,799 B**,
    `sha256 8505b13a3e38ce989093fc2642708129d06d5559a81fb0fbba0d2927389fca09` in its CRLF working-tree
    form, and **both numbers were READ OUT OF AN ARTEFACT**, not derived: the 4.16.0/113 **debug APK**
    (`:app:assembleDebug` of 2026-09-25 02:52 on `feat/mediatek-apu-tier-p3a`, 203,338,313 B,
@@ -402,10 +403,21 @@ Before promoting a release from the internal track to production:
    carries it ("OpenAI Whisper models — MIT License … (all tiers)", the MIT text in full at its
    foot), and the AI-chip files are those same weights. The committed page is now **45,303 B**,
    `sha256 4bce69be77470d41d70225eb54c2ac69dde7e2b00d8041670a20a05daee99592` in its CRLF
-   working-tree form — derived from the file, not yet read out of an artefact. **And the build
-   the owner uploaded to the internal track as 4.16.0/113 on 2026-09-25 does not carry this
-   page**: it was built before the page changed, so it carries the P3a page (44,799 B, above), the
-   `TODO(owner)` comment included.
+   working-tree form, and **both numbers were READ OUT OF AN ARTEFACT**, not derived: the
+   4.16.0/114 **debug APK** (`:app:assembleDebug` of 2026-09-25 13:32 on
+   `feat/mediatek-apu-tier-p3c` @ `00220736`, 203,321,512 B,
+   `sha256 b830654afad41119f250e97b1a8ec1b4a4c4ca17b8f5bd74c6b3d569582cafcf`, badging
+   `versionCode='114' versionName='4.16.0'`) was opened and its `assets/oss_licenses.html` is
+   **45,303 B**, `sha256 4bce69be77470d41d70225eb54c2ac69dde7e2b00d8041670a20a05daee99592` —
+   byte-identical to the committed page. The new entry and every fact it states (both pack names,
+   NeuroPilot v8_0_10, `adapter 8.2.30`, the weights, the distribution term) and the OpenAI
+   Whisper models MIT entry probed PRESENT inside the packaged entry, `TODO(owner)` and every HTML
+   comment ABSENT, and a deliberately wrong control probe (`npu_turbo_mt6991_enc`) MISSING. **A
+   debug APK is not a release bundle**: no `bundleRelease` carrying this page has been built or
+   opened, and one read of its `base/assets/oss_licenses.html` is what closes that gap before
+   114's upload. **And the build the owner uploaded to the internal track as 4.16.0/113 on
+   2026-09-25 does not carry this page**: it was built before the page changed, so it carries the
+   P3a page, the `TODO(owner)` comment included.
 
    **And the gap, stated as a gap: no release bundle of 4.5.2 has been opened, because none has been
    built.** A debug bundle is not a release bundle — different build type, no R8, the payload gates
