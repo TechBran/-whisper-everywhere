@@ -145,8 +145,13 @@ with P1a.
 
 1. **Copy and status.** Badge from the family's pair bytes; "phone" → device-neutral; onboarding size line from
    the family; HowToGuide names the Tab S10+/S10 Ultra; `apu:` line on the offer channel; copy census pins.
+   *Done at P3a, amended where it met the code (design §2.8, §2.3 item 5):* HowToGuide names no device on any
+   branch, so there was nothing to add the tablets beside and it is unchanged (naming devices is an owner call);
+   the offer line itself was `Log.i`, stripped from release builds, and joined the `apu:` lines on native logging;
+   the decline note's speed half and the small-pair import panel were false on a MediaTek row and were fixed.
 2. **The speed claim** on MediaTek families — the owner's wording (proposed: "the most accurate model this
-   device can run, on its AI chip").
+   device can run, on its AI chip"). *Still pending at P3a:* the MediaTek card carries no speed claim — that
+   proposal is its accuracy-only body — and a `TODO(owner)` pin guards it until he rules.
 3. **Version** 4.16.0 / 113 (or the next free code), `ReleaseIdentityTest` paragraph; internal track. (112 went
    out as 4.15.1 — the seam and the refresh-notice take-down, the regression gate of P1a-6 — by owner ruling
    2026-09-24: "you can seam it up for 112".)

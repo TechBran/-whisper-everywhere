@@ -182,6 +182,12 @@ What, therefore:
    has no compiler field, and the digests already name the bytes).
 5. The diag line, on the same channel as the QNN probe:
    `apu: driver=libneuronusdk_adapter.mtk.so 8.2.26 want=8 device=<name> stamp=mt6989 pass`.
+   *Corrected at P3a, where this met a release build:* the "same channel" held on debug builds
+   only. The `npu: offer` line was `android.util.Log.i`, which `proguard-rules.pro` strips from
+   every release build, so a Play build never printed it — on any vendor — while the native `apu:`
+   lines (and P2-7's `apu: verdict` line, through `WhisperNative.diag`) did. The offer line goes
+   out through `WhisperNative.diag` now, one route, under the same `WE-DIAG` tag, so the ship sheet
+   reads `soc=MT6989:pass` and the `apu:` lines side by side on the internal track.
 
 A refusal is visible in logcat and on the offer line (`probe=fail:<reason>`); the tier is then simply not
 offered — there is no card to say why (`NpuTierStatus` is fed only by a backend that exists), which is the
@@ -374,6 +380,25 @@ the family's census pair bytes; "phone" becomes device-neutral; the speed claim 
 **owner ruling** on wording (the claim rules forbid unscoped superlatives) — proposed: "the most accurate model
 this device can run, on its AI chip". Onboarding's size line reads the family's pair bytes too
 (`OnboardingFlowScreen.kt:995`). HowToGuide names the Galaxy Tab S10+/S10 Ultra.
+
+*Implemented at P3a, and corrected where this met the code.* The badge was the 8gen3 pair's
+**"981 MB"** by then (4.15's v0.63.0 pair), not "1072 MB". Both chooser surfaces now render
+`ModelTierCopy.forIdOn(id, family)`: every gated card's badge is the family's census pair by the
+badge rule (SI MB, truncated — mt6989 1,302,606,488 + 584,862,184 = 1,887,468,672 B, "1887 MB"),
+and a MediaTek family reads its own turbo card. The owner's wording for a MediaTek speed claim is
+still PENDING, so that card carries **no speed claim**: headline "Best AI-chip accuracy", body
+"The most accurate model this device can run, on its AI chip." (this proposal, accuracy only, with
+the tablet's ladder sheet and the APU sheet §6 cited beside it), and a `TODO(owner)` pin fails if
+the Qualcomm "the fastest on this device" ever renders on a MediaTek row. The Qualcomm body says
+"this device's AI chip" (the census has tablets on both vendors). The onboarding size line states
+the family's pair, approximately: "about 1.9 GB" on mt6989. Two surfaces this section did not list
+made claims false on a MediaTek row and were fixed with it: the decline note's "It is slower" (the
+tablet's CPU fallbacks commit faster than its APU turbo — the speed half now renders on Qualcomm
+rows only) and the Settings picker's small-pair import panel (338 MB, "much faster than the CPU", a
+release-page zip — offered now only where the family offers the tier it imports). **HowToGuide was
+not changed:** it names no device on any branch — its sections are device-neutral — so there is no
+list to add the tablets beside, and naming devices there would be a new claim for the owner to
+rule on.
 
 ### 2.9 Cadence, calibration, the ring
 
