@@ -419,6 +419,48 @@ class NpuRefreshNoticeTest {
         )
     }
 
+    private val manager: String by lazy { read("src/main/java/com/whispereverywhere/model/WhisperModelManager.kt") }
+    private val prefsSource: String by lazy { read("src/main/java/com/whispereverywhere/data/local/PreferencesManager.kt") }
+
+    @Test
+    fun theNoticeComesDownWhenThePairItAskedForLands() {
+        // 112: the notice is AUTO_CANCEL, which only a tap clears. The app's own gate is a second
+        // route to the same Download button, and on the owner's Fold6 (2026-09-24) the pack landed
+        // that way while the notice stood in the shade for hours. The shared finalise takes it down.
+        assertEquals(
+            "the receiver owns the take-down, beside the id it posts under",
+            1,
+            liveLineCount(receiver, "fun cancelRefreshNotice(context: Context) {"),
+        )
+        assertEquals(
+            "and it cancels exactly the notice's own id",
+            1,
+            liveLineCount(receiver, "NotificationManagerCompat.from(context).cancel(MODEL_UPDATE_NOTIFICATION_ID)"),
+        )
+        val finalise = body(manager, "WhisperModelManager.kt", "    private fun finalizeVerifiedPair(")
+        assertEquals(
+            "the shared finalise's committed branch cancels it on the SAME line that clears the record, " +
+                "and only when the record cleared — a landing for another tier leaves both standing",
+            1,
+            liveLineCount(finalise, "if (prefs.clearNpuRedownload(model.id)) BootReceiver.cancelRefreshNotice(context)"),
+        )
+        assertEquals("from nowhere else in the manager", 1, liveLineCount(manager, "cancelRefreshNotice("))
+        assertTrue(
+            "before the announce, like the clear it rides on",
+            liveIndexOfOrFail(finalise, "finalizeVerifiedPair", "BootReceiver.cancelRefreshNotice(context)") <
+                liveIndexOfOrFail(finalise, "finalizeVerifiedPair", "prefs.notifyModelInstalled()"),
+        )
+        assertEquals(
+            "clearNpuRedownload answers whether it cleared, which is what the take-down keys on",
+            1,
+            liveLineCount(prefsSource, "fun clearNpuRedownload(landedTierId: String): Boolean {"),
+        )
+        assertEquals(
+            1,
+            liveLineCount(prefsSource, "if (!NpuRedownload.clearedBy(_npuRedownload.value, landedTierId)) return false"),
+        )
+    }
+
     @Test
     fun theOnboardingFlowTheGateLandsOnShowsTheSentenceWhileTheRecordStands() {
         // The app-wide gate is firstRunStartDestination(hasModel): no installed model routes to

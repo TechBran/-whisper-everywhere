@@ -56,6 +56,24 @@ class BootReceiver : BroadcastReceiver() {
          * another in the shade.
          */
         private const val MODEL_UPDATE_NOTIFICATION_ID = 1004
+
+        /**
+         * Take the refresh notice down once the pair it asked for has landed (112). The notice is
+         * AUTO_CANCEL, which only a TAP clears — and the tap is not the only way to the Download
+         * button. A user who opens the app anyway lands on the same button through the app-wide
+         * gate, and on the owner's Fold6 (2026-09-24) the pack re-downloaded that way at about
+         * 19:50 while the notice stood in the shade untouched at 21:10. The shared finalise calls
+         * this on the line that clears the re-download record, and only when the record it
+         * announced was the one that cleared ([com.whispereverywhere.model.WhisperModelManager]).
+         * Cancelling an id that is not posted is a no-op, so the call is unconditional there.
+         */
+        fun cancelRefreshNotice(context: Context) {
+            try {
+                NotificationManagerCompat.from(context).cancel(MODEL_UPDATE_NOTIFICATION_ID)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Could not cancel the model refresh notice", t)
+            }
+        }
     }
 
     /** What the bubble's eligibility answered — three states, because "no model" has a notice. */

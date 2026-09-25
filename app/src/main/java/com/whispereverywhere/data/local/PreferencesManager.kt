@@ -392,15 +392,19 @@ class PreferencesManager(private val context: Context) {
      * A pair for [landedTierId] landed (the shared finalise's committed branch): the record for
      * that tier is resolved, and so is the note that the update notice already went out for it.
      * A landing for any other tier leaves the record alone — [NpuRedownload.clearedBy] is the rule.
+     *
+     * Answers whether it cleared (112): the finalise takes the shade notice down on a `true`, and
+     * a landing that left the record standing leaves the notice standing with it.
      */
-    fun clearNpuRedownload(landedTierId: String) {
-        if (!NpuRedownload.clearedBy(_npuRedownload.value, landedTierId)) return
+    fun clearNpuRedownload(landedTierId: String): Boolean {
+        if (!NpuRedownload.clearedBy(_npuRedownload.value, landedTierId)) return false
         deviceLocal.edit()
             .remove(KEY_NPU_REDOWNLOAD_TIER)
             .remove(KEY_NPU_REDOWNLOAD_CENSUS)
             .remove(KEY_NPU_REFRESH_NOTIFIED_CENSUS)
             .apply()
         _npuRedownload.value = null
+        return true
     }
 
     /**

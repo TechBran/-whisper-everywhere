@@ -43,6 +43,17 @@ package com.whispereverywhere.npu
  * best measured proxy for the transfer, and Play's own transfer size is not measured (sheet §7).
  * The INSTALLED size (981,968,552 B for the 8 Gen 3 turbo pair) is deliberately not in the
  * sentence: the question a user in the shade has is what the download costs them.
+ *
+ * ### When it comes down (112)
+ *
+ * The notice is AUTO_CANCEL, so a tap clears it, and the tap is the route it advertises. But the
+ * app's own gate is a second route to the same Download button, and on the owner's Fold6
+ * (2026-09-24) the pack re-downloaded that way at about 19:50 while the notice stood in the shade
+ * untouched at 21:10 — "download it" still showing for a model already installed. So the shared
+ * finalise takes it down the moment the pair it asked for lands
+ * (`WhisperModelManager.finalizeVerifiedPair` → `BootReceiver.cancelRefreshNotice`), on the same
+ * line that clears the re-download record, and only when the record it announced was the one
+ * that cleared: a landing for another tier leaves both standing.
  */
 object NpuRefreshNotice {
 

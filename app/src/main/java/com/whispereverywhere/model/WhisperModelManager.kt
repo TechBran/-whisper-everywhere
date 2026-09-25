@@ -18,6 +18,7 @@ import com.whispereverywhere.npu.NpuPackFetch
 import com.whispereverywhere.npu.NpuPackMetadata
 import com.whispereverywhere.npu.NpuSocFamily
 import com.whispereverywhere.npu.NpuStalePairSweep
+import com.whispereverywhere.receiver.BootReceiver
 import com.whispereverywhere.transcription.ModelPathProvider
 import com.whispereverywhere.whisper.WhisperNative
 import kotlinx.coroutines.Dispatchers
@@ -912,8 +913,12 @@ class WhisperModelManager(
         // in the committed branch of the ONE transaction both arrival routes share, so the Play
         // pack and a fresh SAF import clear it through the same line — and never on a refusal or
         // a rollback, which leave the tier exactly as absent as it was. Before the announce, so
-        // anything that re-reads on the install signal already sees the record gone.
-        prefs.clearNpuRedownload(model.id)
+        // anything that re-reads on the install signal already sees the record gone. And when it
+        // WAS this tier's record that cleared, the shade notice it produced comes down with it
+        // (112): the notice is AUTO_CANCEL, which only a tap clears, and the app's own gate is a
+        // second route to the same Download button — the owner's Fold6 landed its pack that way
+        // and carried "download it again" in the shade for hours afterwards (2026-09-24).
+        if (prefs.clearNpuRedownload(model.id)) BootReceiver.cancelRefreshNotice(context)
         // LAST, and only now. See the KDoc: the chooser's producers key on this.
         prefs.notifyModelInstalled()
         return NpuAssetImport.ImportState.Installed
