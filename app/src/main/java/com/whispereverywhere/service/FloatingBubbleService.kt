@@ -3517,8 +3517,28 @@ class FloatingBubbleService : Service(),
         val dropped = startupRing.append(chunk, amp, nowMs)
         if (dropped > 0 && !startupOverflowLogged) {
             startupOverflowLogged = true
-            android.util.Log.w("WE-DIAG", StartupRing.overflowLine(StartupRing.msOf(dropped), startupRing.capacityMs))
+            logRingLine(StartupRing.overflowLine(StartupRing.msOf(dropped), startupRing.capacityMs))
         }
+    }
+
+    /**
+     * THE STARTUP RING's evidence lines — drain, overflow, switch flush, stop flush — through the
+     * native export, so a Play build prints them (4.16.1). R8 strips every android.util.Log call
+     * from release, and the owner's field report — the words spoken during the ~4 s arm lost on
+     * every tier and device (the Tab S10+ ship sheet's F3, 2026-09-25) — had never been observable
+     * in a track build, although these four lines are the only record of what the ring held,
+     * dropped and flushed.
+     *
+     * OFF MAIN, the way the offer line and the stale-pair sweep emit theirs. Each caller composes
+     * its line where the numbers are true — the drain line on Main before `engineReady` flips, the
+     * overflow line on the capture thread at the first drop, the two flushes on Main beside the
+     * drainAll they report — and only the emission moves to IO, so the whisper JNI library is never
+     * first loaded on Main. The texts are [StartupRing]'s, byte for byte (the overflow line was
+     * `Log.w` and prints at INFO now, the native channel's one priority). Wrapped, so a log can
+     * never cost a session anything.
+     */
+    private fun logRingLine(ringLine: String) {
+        serviceScope.launch(Dispatchers.IO) { runCatching { WhisperNative.diag(ringLine) } }
     }
 
     /**
@@ -3907,7 +3927,7 @@ class FloatingBubbleService : Service(),
             val pendingMs = StartupRing.msOf(startupRing.byteSize())
             val flushed = startupRing.drainAll { pcm, _, _ -> sessionEngine.sendAudio(pcm) }
             if (flushed > 0) {
-                android.util.Log.i("WE-DIAG", StartupRing.switchFlushLine(flushed, pendingMs))
+                logRingLine(StartupRing.switchFlushLine(flushed, pendingMs))
             }
         }
     }
@@ -5343,10 +5363,10 @@ class FloatingBubbleService : Service(),
                     // through the same feedEngine path, paced, four buffered chunks per live one.
                     //
                     // ONE line, naming what the ring is holding and what this session lost at the
-                    // cap. It is emitted BEFORE the flag so its numbers are the ones the drain is
-                    // about to release, rather than whatever is left after the first slice.
-                    android.util.Log.i(
-                        "WE-DIAG",
+                    // cap. It is COMPOSED BEFORE the flag so its numbers are the ones the drain is
+                    // about to release, rather than whatever is left after the first slice; since
+                    // 4.16.1 it is emitted natively, off Main, so a Play build prints it.
+                    logRingLine(
                         StartupRing.drainLine(
                             chunks = startupRing.chunkCount(),
                             bufferedMs = StartupRing.msOf(startupRing.byteSize()),
@@ -5658,7 +5678,7 @@ class FloatingBubbleService : Service(),
             val pendingMs = StartupRing.msOf(startupRing.byteSize())
             val flushed = startupRing.drainAll { pcm, _, _ -> sessionEngine.sendAudio(pcm) }
             if (flushed > 0) {
-                android.util.Log.i("WE-DIAG", StartupRing.stopFlushLine(flushed, pendingMs))
+                logRingLine(StartupRing.stopFlushLine(flushed, pendingMs))
             }
         }
 
