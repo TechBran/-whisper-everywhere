@@ -283,15 +283,21 @@ object NpuPackFetch {
      *  - **Install begins only when EVERY part is delivered.** [FetchState.Verifying] — the state
      *    the controller launches the install on — is the best rank, so the fold answers it only
      *    when every part reads COMPLETED. One part delivered and the other failed is Failed, never
-     *    a partial install; the retry fetches the pair again, and Play answers the part it already
-     *    holds with COMPLETED at once, so only the failed part moves bytes.
+     *    a partial install; the retry fetches the pair again, and only the failed part moves
+     *    bytes. The part Play already holds reports COMPLETED in the fetch TASK's own result — the
+     *    `AssetPackStates` of every requested pack — and NOT through the state listener, which
+     *    fires on changes alone and has none to report for a finished pack; so the controller
+     *    fills that part's reading from the Task's answer ([unansweredParts]). (Corrected at P2-7:
+     *    this line once said Play answered "at once", which is true of the Task result only, and
+     *    the controller read nothing but the listener — the P2b review's FIX-NOW.)
      *  - **Bytes are summed.** Downloading and Verifying carry the sum over every part's reported
      *    bytes, so one progress bar covers the pair (a delivered part counts as all of its bytes).
      *    The pair's total also stands in for the part's in the per-part mapping, so a storage
      *    refusal names what the PAIR needs.
      *  - **Re-attach re-queries every part.** After process death the controller starts with no
-     *    readings — every part Pending — and fetching the pair makes Play replay each part's
-     *    status into this fold.
+     *    readings — every part Pending — and fetching the pair answers each part's status into
+     *    this fold: the fetch Task's result for a part Play already holds, the listener for one
+     *    still moving.
      *
      * For ONE part the fold is the per-part [advance], status for status — executed in
      * `NpuPackFetchTest` over every documented status and two off-table ones — which is what
@@ -313,6 +319,29 @@ object NpuPackFetch {
             else -> worst
         }
     }
+
+    /**
+     * WHICH PARTS THE FETCH TASK'S OWN ANSWER FILLS (the P2b review's FIX-NOW) — the pack names,
+     * in part order, of every part Play answered for in the Task result ([answered]: the result's
+     * `packStates()` keys) whose reading is still null in this fetch.
+     *
+     * Why the Task's answer matters at all: Play's state listener fires on CHANGES — its per-pack
+     * session updates — and a pack that is already COMPLETED (the encoder that landed before the
+     * decoder failed, was cancelled, or lost its process) has no change to report. Its COMPLETED
+     * arrives in exactly one place, the result of the `fetch` Task: the `AssetPackStates` of every
+     * requested pack as it stood at the request. A controller that read only the listener folded
+     * [null, …] to Pending for good — `isBusy()` true, every retry tap refused.
+     *
+     * Why only the null ones: a listener reading is never OLDER than the request's snapshot, so it
+     * is never overwritten — which also keeps the one-part path exactly what it was whenever the
+     * listener answers first. (bundletool's `--local-testing` fake replays PENDING, DOWNLOADING,
+     * TRANSFERRING for every pack on every fetch, so local testing cannot show the difference; a
+     * Play delivery can.)
+     */
+    fun unansweredParts(parts: List<PackPart>, readings: List<PartReading?>, answered: Set<String>): List<String> =
+        parts.withIndex()
+            .filter { (i, part) -> i < readings.size && readings[i] == null && part.packName in answered }
+            .map { it.value.packName }
 
     /** The fold's order (see the list [advance]): higher is worse. */
     private fun rank(state: FetchState): Int = when (state) {

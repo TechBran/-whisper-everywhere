@@ -133,6 +133,57 @@ class NpuPackPartsWiringPinTest {
         )
     }
 
+    /**
+     * THE P2b REVIEW'S FIX-NOW, wired: Play's state listener fires on CHANGES, so a part Play
+     * already holds (COMPLETED before this fetch) reports only in the fetch Task's own result. The
+     * shell now reads that result — the success listener on `fetch()`'s Task — and fills, through
+     * the ONE fold ([onPackState]), only the parts the listener has not spoken for in THIS fetch
+     * (`NpuPackFetch.unansweredParts`, executed in `NpuPackFetchTest`), under the monitor, keyed on
+     * a generation bumped at every start so an older fetch's answer never lands on a newer one.
+     * `NpuDiagTest`'s one-`NpuPackFetch.advance(` pin still holds: the Task's answer goes through
+     * `onPackState`, never beside it.
+     */
+    @Test
+    fun theFetchTasksOwnAnswerFillsTheUnansweredPartsThroughTheOneFold() {
+        assertEquals(
+            "the fetch's Task answers through a success listener, handed this fetch's generation",
+            1,
+            liveLineCount(start, ".addOnSuccessListener { states -> onFetchAnswered(generation, states.packStates()) }"),
+        )
+        val fresh = liveOffset(start, "repeat(parts.size) { readings += null }")
+        val generation = liveOffset(start, "val generation = ++fetchGeneration")
+        val fetch = liveOffset(start, "mgr.fetch(parts.map { it.packName })")
+        assertTrue(
+            "ORDER: the readings are reset ($fresh), the generation bumped ($generation), BEFORE the " +
+                "fetch ($fetch) — its answer can only be this fetch's",
+            fresh in 0 until generation && generation < fetch,
+        )
+        val answered = body(controller, "    private fun onFetchAnswered(generation: Int, states: Map<String, AssetPackState>) {")
+        assertEquals(
+            "under the monitor, an older fetch's answer is dropped",
+            listOf(1, 1),
+            listOf(
+                liveLineCount(answered, "synchronized(this) {"),
+                liveLineCount(answered, "if (generation != fetchGeneration) return"),
+            ),
+        )
+        assertEquals(
+            "only the parts the listener has not spoken for, through the pure rule",
+            1,
+            liveLineCount(answered, "for (name in NpuPackFetch.unansweredParts(activeParts, readings, states.keys)) {"),
+        )
+        assertEquals(
+            "…each through onPackState, the one fold — re-folded, published, installed on Verifying",
+            1,
+            liveLineCount(answered, "states[name]?.let { onPackState(it) }"),
+        )
+        assertEquals(
+            "and no fold of its own: the controller still maps statuses at ONE site",
+            1,
+            liveLineCount(controller, "NpuPackFetch.advance("),
+        )
+    }
+
     @Test
     fun cancelAndTheGiveBackApplyToEveryPart() {
         assertEquals(

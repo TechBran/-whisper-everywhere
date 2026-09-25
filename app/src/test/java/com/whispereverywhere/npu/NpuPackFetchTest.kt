@@ -560,6 +560,136 @@ class NpuPackFetchTest {
         )
     }
 
+    // ------------------------------------------------ the fetch Task's own answer (P2b review FIX-NOW)
+
+    /**
+     * The controller's readings, as a list the test drives the way `NpuPackController` does: the
+     * listener OVERWRITES a part's slot ([listener]); the fetch Task's answer fills only the slots
+     * [NpuPackFetch.unansweredParts] names ([taskAnswered]). Every fold is the machine's own.
+     */
+    private class Readings(private val parts: List<PackPart>) {
+        val slots: MutableList<NpuPackFetch.PartReading?> = MutableList(parts.size) { null }
+
+        fun listener(name: String, reading: NpuPackFetch.PartReading) {
+            slots[parts.indexOfFirst { it.packName == name }] = reading
+        }
+
+        fun taskAnswered(answer: Map<String, NpuPackFetch.PartReading>) {
+            for (name in NpuPackFetch.unansweredParts(parts, slots, answer.keys)) {
+                slots[parts.indexOfFirst { it.packName == name }] = answer.getValue(name)
+            }
+        }
+
+        fun fold(): NpuPackFetch.FetchState = NpuPackFetch.advance(slots.toList())
+    }
+
+    private val mt6989Parts: List<PackPart> by lazy {
+        NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("mt6989")))
+    }
+
+    private fun reading(status: Int, soFar: Long, total: Long) = NpuPackFetch.PartReading(status, 0, soFar, total)
+
+    /**
+     * THE FIX-NOW, executed as the review described it: the encoder (1.3 GB) landed in an earlier
+     * fetch, the decoder did not; the user retries. Play's listener fires on CHANGES, and a pack
+     * already COMPLETED has none — so part 1's reading arrives ONLY through the fetch Task's result,
+     * and part 2's through the listener. Folding the listener alone left [null, DONE] at Pending
+     * for good (asserted first, as the defect it was); counting the Task's answer reaches Verifying.
+     */
+    @Test
+    fun aPartPlayAlreadyHoldsIsCountedFromTheFetchTasksOwnAnswer() {
+        val (enc, dec) = mt6989Parts.map { it.packName }
+        val encTotal = 1_310_000_000L
+        val decTotal = 590_000_000L
+        // The defect: the listener alone never reports the finished encoder.
+        val listenerOnly = Readings(mt6989Parts)
+        listenerOnly.listener(dec, reading(NpuPackFetch.STATUS_COMPLETED, decTotal, decTotal))
+        assertEquals(
+            "listener alone: the delivered encoder is never counted — Pending forever, every tap refused",
+            NpuPackFetch.FetchState.Pending,
+            listenerOnly.fold(),
+        )
+        // The fix: the Task's answer (every requested pack, at the request) fills the encoder.
+        val fixed = Readings(mt6989Parts)
+        fixed.taskAnswered(
+            mapOf(
+                enc to reading(NpuPackFetch.STATUS_COMPLETED, encTotal, encTotal),
+                dec to reading(NpuPackFetch.STATUS_PENDING, 0L, decTotal),
+            ),
+        )
+        assertEquals("the retry is queued for the decoder alone", NpuPackFetch.FetchState.Pending, fixed.fold())
+        fixed.listener(dec, reading(NpuPackFetch.STATUS_DOWNLOADING, 100_000_000L, decTotal))
+        assertEquals(
+            "the decoder moves through the listener, and the bar counts the delivered encoder in full",
+            NpuPackFetch.FetchState.Downloading(encTotal + 100_000_000L, encTotal + decTotal),
+            fixed.fold(),
+        )
+        fixed.listener(dec, reading(NpuPackFetch.STATUS_COMPLETED, decTotal, decTotal))
+        assertEquals(
+            "…and the install begins: part 1 from the Task's answer, part 2 from the listener",
+            NpuPackFetch.FetchState.Verifying(0, encTotal + decTotal),
+            fixed.fold(),
+        )
+    }
+
+    @Test
+    fun theTaskAnswerNeverOverwritesAReadingTheListenerAlreadyGave() {
+        val (enc, dec) = mt6989Parts.map { it.packName }
+        val moving = reading(NpuPackFetch.STATUS_DOWNLOADING, 700_000_000L, 1_310_000_000L)
+        val r = Readings(mt6989Parts)
+        r.listener(enc, moving)
+        assertEquals(
+            "only the part the listener has not spoken for is filled — a listener reading is never " +
+                "older than the request's snapshot",
+            listOf(dec),
+            NpuPackFetch.unansweredParts(mt6989Parts, r.slots, setOf(enc, dec)),
+        )
+        r.taskAnswered(
+            mapOf(
+                enc to reading(NpuPackFetch.STATUS_PENDING, 0L, 1_310_000_000L),
+                dec to reading(NpuPackFetch.STATUS_PENDING, 0L, 590_000_000L),
+            ),
+        )
+        assertEquals("the encoder keeps its newer reading", moving, r.slots[0])
+        assertEquals(
+            "a pack the Task did not answer for is left unanswered",
+            emptyList<String>(),
+            NpuPackFetch.unansweredParts(mt6989Parts, listOf(null, null), emptySet()),
+        )
+        assertEquals(
+            "…and a part name that is not this fetch's is ignored",
+            emptyList<String>(),
+            NpuPackFetch.unansweredParts(mt6989Parts, listOf(null, null), setOf("npu_turbo")),
+        )
+    }
+
+    /**
+     * The ONE-PART regression cases: a Qualcomm pair is one pack. When the listener answers first
+     * (every fetch that moves bytes), the Task's answer changes nothing; when the pack was already
+     * delivered — an install refused and retried, the pack left in place — the Task's COMPLETED is
+     * what starts the verify (the same defect, one part wide).
+     */
+    @Test
+    fun forOnePartTheTaskAnswerChangesNothingWhenTheListenerAnsweredFirst() {
+        val one = NpuPackFetch.packsFor("npu-turbo", requireNotNull(NpuFleetCensus.familyById("8gen3")))
+        val name = one.single().packName
+        val first = Readings(one)
+        first.listener(name, reading(NpuPackFetch.STATUS_DOWNLOADING, 5L, 10L))
+        first.taskAnswered(mapOf(name to reading(NpuPackFetch.STATUS_PENDING, 0L, 10L)))
+        assertEquals(
+            "the listener's reading stands — the one-part path is what it was",
+            NpuPackFetch.FetchState.Downloading(5L, 10L),
+            first.fold(),
+        )
+        val held = Readings(one)
+        held.taskAnswered(mapOf(name to reading(NpuPackFetch.STATUS_COMPLETED, 10L, 10L)))
+        assertEquals(
+            "a pack Play already holds is delivered by the Task's answer alone",
+            NpuPackFetch.FetchState.Verifying(0, 10L),
+            held.fold(),
+        )
+    }
+
     @Test
     fun forOnePartTheFoldIsThePerPartMappingStatusForStatus() {
         // The Qualcomm fleet's whole guarantee: a one-part pair folds to EXACTLY what the per-part
